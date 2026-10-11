@@ -734,6 +734,12 @@ spelling, so the rule had only to be stated on the call rather than on one of it
 function parameter is a block that is called or passed on and never kept, and a field holds a value. Designing it
 found **five more silent divergences**, §8 items 9–13, all of which D20 closes. It supersedes **D18**.
 
+**2026-10-11.** **D20c** opened: D20 has no spelling for an *open* stored computation, whose effects are handled
+where it runs. That is the closed kind's counterpart, and §12's rejection argued against the closed kind only.
+A spike refuted option 1's hoped-for `runST` argument: a binding names an implementation, never a frame, so a kept
+hook exits into, or writes into, an unrelated frame of the same instantiation silently. That also showed §8 item
+10's failure is not always loud.
+
 ## 8. Where the tree diverges from Part I
 
 Found by probing the compiler while the user docs site was rewritten for v6 (2026-09-10) and by the flag day's
@@ -811,7 +817,9 @@ D20 rule that does it. The witnesses are the five programs below, which become D
     `leaky: {Console} Holder = capture(s -> printLine(s))`, a later `runIt(h: Holder): Unit` — declaring
     nothing — prints. With `escaped: Holder = catch[String, Holder](capture(s -> raise(s)), …)`, the `raise`
     runs after `catch` has returned and the program dies with a bare `RuntimeException` from
-    `Throw.exitInternal`: a frame the type system said was there is not. D20 rule 3.
+    `Throw.exitInternal`: a frame the type system said was there is not. That is the loud case. Fired inside an
+    unrelated frame of the same instantiation, the hook exits into *that* frame, and a hook bound through a named
+    implementation writes into an unrelated `Writer`'s log, both silently (D20c's spike, 2026-10-11). D20 rule 3.
 11. **A lambda written in a value position captures the enclosing bindings.** `built: {Console} Holder =
     Holder(s -> printLine(s))` — no function parameter involved — compiles, and the stored lambda prints when a
     def declaring nothing runs it. D20 rule 4.
@@ -1374,6 +1382,90 @@ mechanical migration that §10's byte-identity gate can watch.
   its declaration's spelling is undecided.
 - **D20b — a dual-parse window or a flag day** for steps 4–6. A window lets the migration land repository by
   repository; a flag day keeps one spelling in the tree at every commit.
+- **D20c — an open block, handled where it runs.** Opened 2026-10-11 and spiked the same day; below.
+
+#### D20c — an open block: a stored computation whose effects are handled where it runs
+
+**Opened 2026-10-11. Open; the decision is Robert's.** It does not block D20: rule 3 is what turns the spike's
+silent program into a compile error, and whatever D20c decides is a relaxation of rule 3 afterwards, as "not now"
+entry B is.
+
+**The question.** Declaring an algebra as an `effect`, writing code against it in direct style, storing that code
+and interpreting it later under a handler chosen *then* is one of the main things an effect system is for: hooks
+run at the end of a process, a job queue, an event loop's handler table. Under D20 it has no spelling. A block
+cannot be kept (rule 3) and a lambda in a value position may use no effects (rule 4), so the only route left is
+to declare a `data` type mirroring the algebra and an interpreter over it. That is a free monad written by hand,
+with the effect system playing no part.
+
+**Two kinds of stored computation, and D20 only examined one.**
+
+- **Closed**: its effects were bound where it was written. That is §2.3 today, and what rules 3 and 6 remove. It
+  is unsound for a control effect: the frame it was bound under may be gone, or replaced, when it runs.
+- **Open**: its effects are bound by whoever runs it. Here the frame problem does not arise, because the runner
+  installs the frame at the moment it runs the code.
+
+§12's rejection of "effects on function types" argues against the closed kind only: "the binding is fixed where
+the lambda is written while the effect is charged where it runs". The open kind was never weighed, so this is a
+gap in D20, not a consequence of its argument.
+
+**Compiling it is the obstacle, not soundness.** An implementation is a compile-time name, resolved by
+monomorphization and never passed at runtime. A stored open block must be compiled against the implementation it
+will meet at a run site somewhere else in the program. Three ways to bridge that:
+
+1. **The binding travels in the container's type** (`Hooks[I]`). A registration site gets `I` from its caller as
+   every phantom binder does, so monomorphization is unchanged and nothing new exists at runtime. The hoped-for
+   soundness argument was `runST`'s: a discharger's own binding is local to its slot, so its result type cannot
+   mention it, and a hook bound to a dying frame cannot escape. **The spike refutes that argument as stated**
+   (below).
+2. **The implementation is passed when the block runs.** This is the open semantics exactly, and it is sound against
+   frames by construction. Implementations then become runtime values inside structures, which is the 2026-09-06
+   "an implementation is a value" draft that was reversed the same day. The step-6 spike measured that storing a
+   polymorphic value needs six operations the compiler does not have. The D20c spike did not touch this option.
+3. **The compiler reifies the block**: `reify(body uses Cleanup: => A): Program[Cleanup, A]`, the free monad built
+   by the compiler from direct-style code. Its continuations use no effects, so D20 already lets them be stored,
+   and `interpret(program) uses Cleanup: A` runs it under the caller's binding. It needs continuation capture (a
+   CPS transform or a platform primitive), a recursive `Program` (blocked like `docs/recursive-data.md`) and a
+   native loop to interpret it. A partial form works under D20 today. An algebra whose operations return nothing
+   the code branches on can be recorded at registration by a named implementation that `tell`s each operation as
+   data, then interpreted at the end. It stops working at the first branch on an operation's result, since that
+   branch needs the continuation.
+
+**The spike (2026-10-11, on `97a6352c`).** It uses today's tree, where §8 item 10's hole still lets a function
+parameter be kept, so a kept hook stands in for option 1's stored block. `capture(f: String => {} Unit): Holder =
+Holder(f)` keeps the block, and `fire(h: Holder): Unit = run(h)("…")` runs it from a definition that declares
+nothing.
+
+- **`Throw`.** `armed: {Throw[String]} Holder = capture(s -> raise(s))`. Fired inside the `catch` it was armed
+  under, the live frame catches it. Armed under one `catch` and fired inside a *different*, unrelated
+  `catch[String, String]`, **the unrelated frame catches it**, silently. Fired with no frame at all, it is the
+  bare `RuntimeException` from `Throw.exitInternal` that item 10 records. All three are one specialisation, a
+  single `armed$Default` in the jar. The binding written is `Default` every time, because `Throw` has one
+  implementation per platform.
+- **An interpretation effect through a named implementation.** `register: {Console} Holder` captures
+  `s -> printLine(s)` under `with recordingConsole`, whose clause declares `{Writer[String]}`, inside
+  `runWriterToPair`. Fired later inside an unrelated `runWriterToLog`, the hook's output **lands in the unrelated
+  log** (`unrelated-own;late;`), exit 0, no diagnostic. The binding the hook carries, `recordingConsole`, is the
+  same name at registration and at run, so option 1's type comparison passes, and the program still writes into
+  the wrong frame.
+
+**What that settles.** A binding names an *implementation*, never a *frame*. A control effect has one
+implementation per platform, so every frame of `Throw[String]` shares one name and one specialisation. The frame
+an operation reaches is decided on the machine stack, inside the primitive (§3.4), where no type sees it. An
+interpretation effect is no escape: a named implementation closes over nothing, but its clauses' control effects
+are bound where the `with` stands, so the frame is reached through the implementation.
+
+For option 1 to be sound, a frame must have a name of its own. Each discharger call would bind a fresh region
+binder that its result type may not mention, and the region would follow a binding through every implementation's
+clause rows. Monomorphization can mint a region per call site at most, not per dynamic frame, and whether that is
+enough has not been measured. A site run twice, as inside a fold, installs two frames under one region. The
+subcase that is already sound is a block whose bindings reach no frame at all, for example the platform's
+`Console`. But the control/interpretation split is not a bit in the language (§3.5), so that criterion would have
+to be *derived* (reaches an escape or cell primitive), the way "not now" entry B derives *keeps*.
+
+**What is open.** Whether Eliot stores open computations at all. If it does, the choice is between option 1 with
+regions (a new kind of binder, unmeasured), option 2 (reverses the 2026-09-06 decision and runs into the step-6
+limit), and option 3 (blocked on recursive data). Until it is decided, D20's answer is option 3's partial form,
+or a hand-written `data` and interpreter.
 
 #### Reversals this records
 
@@ -1498,7 +1590,8 @@ handlers already applied) closed 2026-09-08, yes — `Mock` is `with` on a disch
 - **Effects on function types** (`A => B uses Console`), so a kept function could carry its effects and charge
   whoever calls it later. Rejected again 2026-10-05; it is "putting the row on `VPi`" above, and it brings back the
   stored-computation defect §8 item 12 measured — the binding is fixed where the lambda is written while the
-  effect is charged where it runs.
+  effect is charged where it runs. That argument covers a *closed* computation only. The *open* kind, bound
+  where it runs, was never weighed here and is open as D20c (§11).
 - **The `<Ability>Carrier` convention as an explicit declaration.** Its premise — that an effect *has* a
   representation — is gone; the property it named ("has a canonical monad transformer") is exactly what
   §3.4's two primitives replace.
