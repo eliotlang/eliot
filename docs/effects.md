@@ -738,7 +738,10 @@ found **five more silent divergences**, §8 items 9–13, all of which D20 close
 where it runs. That is the closed kind's counterpart, and §12's rejection argued against the closed kind only.
 A spike refuted option 1's hoped-for `runST` argument: a binding names an implementation, never a frame, so a kept
 hook exits into, or writes into, an unrelated frame of the same instantiation silently. That also showed §8 item
-10's failure is not always loud.
+10's failure is not always loud. **A fourth option was proposed the same day** (D20c, option 4): an open field is
+a *finite product* of closed specialisations, one per implementation of the effect in the pool, selected at the read
+by the binder in scope — the closed world of a whole-program monomorphiser standing in for runtime evidence. It
+needs no region, no runtime implementation and no reified continuation, and it is a *proposal*, not a decision.
 
 ## 8. Where the tree diverges from Part I
 
@@ -1410,7 +1413,8 @@ gap in D20, not a consequence of its argument.
 
 **Compiling it is the obstacle, not soundness.** An implementation is a compile-time name, resolved by
 monomorphization and never passed at runtime. A stored open block must be compiled against the implementation it
-will meet at a run site somewhere else in the program. Three ways to bridge that:
+will meet at a run site somewhere else in the program. Four ways to bridge that; the first three were written up
+when the entry opened, the fourth was proposed the same day and is set out after the spike:
 
 1. **The binding travels in the container's type** (`Hooks[I]`). A registration site gets `I` from its caller as
    every phantom binder does, so monomorphization is unchanged and nothing new exists at runtime. The hoped-for
@@ -1462,10 +1466,97 @@ subcase that is already sound is a block whose bindings reach no frame at all, f
 `Console`. But the control/interpretation split is not a bit in the language (§3.5), so that criterion would have
 to be *derived* (reaches an escape or cell primitive), the way "not now" entry B derives *keeps*.
 
+**Option 4 — an open field is a finite product, selected at the read (proposed 2026-10-11, not decided).** The
+options above all look for a way to carry *one* binding into the stored block. The fourth observes that there is
+nothing to carry: the whole program is monomorphised from `main`, so for any effect the compiler knows **every
+implementation that exists** — the anonymous default and each named one. A universally quantified binder over a
+finite domain is a finite product, and the domain is finite because the world is closed. Koka passes evidence at
+runtime because it cannot know this; Eliot never has to.
+
+*The surface.* One spelling, D20's own, in one more position: a `data` field may carry a clause,
+`data Hook(run uses Cleanup: => Unit)`. `uses` on any slot says what the *holder* of the slot gives it; a block
+additionally sees its writer's scope, a value sees nothing else, and which of the two a slot is follows from its
+position (D20 rule 2), so the user learns no third kind of parameter. The body written at the constructor is
+checked exactly as a `def` with that clause — it may use `Cleanup`, captures values from around it, and captures
+no effect from around it. Reading the field is calling such a `def`: `Cleanup` is charged and bound **at the read**,
+by whoever runs it, which is what "open" means. The construction site is irrelevant to interpretation.
+
+```eliot
+effect Cleanup {
+   def remove(path: Path): Unit
+}
+
+data Hook(run uses Cleanup: => Unit)
+
+def hookFor(path: Path): Hook = Hook(remove(path))
+def runAll(hooks: List[Hook]) uses Cleanup: Unit = hooks.foreach(h -> h.run)
+
+implement dryRun: Cleanup {
+   def remove(path: Path) uses Console: Unit = printLine("would remove " ++ show(path))
+}
+
+def main uses Console, FileSystem: Unit = runAll(hooks) with dryRun
+```
+
+`hookFor` declares nothing. A test binds `with recordingCleanup` on `runAll`, and that implementation's own
+clause row is charged at that `with`, as every `with` charges a clause row today. The same shape serves a control
+effect — `data Task[E](step uses Throw[E]: => String)`, run as `runThrow(task.step)` — and the frame is installed
+around the run, so a `raise` reaches a live frame by construction. Neither of the spike's two silent programs
+can be written: a stored body cannot capture the binding either one misfired through. A job queue, an at-exit
+list and an event handler table are all this shape, and so is what a Java programmer calls a `Runnable` field.
+
+*The mechanism, and what it leaves untouched.* The desugar lifts the field's body to a synthesised named
+definition carrying the field's clause as an ordinary phantom binder, so polymorphism stays where the step-6
+spike says it must live, on a named signature. The constructor instantiates that definition once per
+implementation of the effect in the pool and stores the tuple; the accessor becomes a definition with the same
+`uses` clause whose body selects the component by a compile-time `TypeMatch` on its binder, which reduces away
+before codegen. The write walk, the scope check, the two-site default and the mono key are untouched, nothing
+new exists at runtime, and the checker still holds no effect rule. The pool-wide implementation set is a fact
+the two-site search already reads. The monomorphiser is already a compile-time interpreter of handlers; this
+hands it a lambda instead of a `def`.
+
+*Costs.* **Code size**: a field using two interpretation effects with two implementations each is four
+specialisations of one body. A production build usually has one implementation per interpretation effect, so the
+product is one closure; a test module adds a factor; it is bounded by what the program declares and is never a
+runtime cost. **No effect-polymorphic stored value**: a `Hook` names its exact effects, there are no row
+variables, and blocks stay the only effect-transparent thing — and they are never stored. **A native that keeps a
+callback** runs it at the platform default, as an axiom of that native's declaration, which is D20's own answer
+for natives. **The "declares but does not perform" check (§4) must not fire on a field's clause**: a no-op hook
+is legitimate, and a field's clause is a contract like an ability member's, not a derived fact about a body.
+**The product is part of the data type's representation**, so adding a named implementation anywhere changes an
+open field's layout — fine in a whole-program compiler, and it enters the cache identity as every pool fact does.
+
+*What it reverses, named so it is signed off rather than amended in place (standing rule 1).* D20 rule 6's
+rejection of `uses` and `=> A` on a field is reversed; "a field holds a value" stays literally true, since an open
+computation *is* a value, and the old §2.3 row-typed field returns with the **opposite** binding site — run, not
+construction. D20 rule 4 narrows from "a lambda in a value position may use none" to "may use only what its own
+declaration gives it; nothing ambient". §12's rejection of "effects on function types" is not touched: the clause
+sits on a field declaration, D20's own metadata slot, and the stored thing is nominal, so nothing enters the type
+language. Options 1–3 are all avoided: no region binder, no implementation as a runtime value, no reified
+continuation.
+
+*Where to measure first.* How a named implementation's clause row reaches the lifted definition's instantiation
+(today a `with` site writes it; here the binding arrives ground through the accessor's binder), and the §4 check's
+exemption for a field's clause. Both are in `row/`, and the §10 gate applies: no example stores a computation, so
+the jars must not move.
+
+**A second property, recorded here because option 4's proposal found it and nothing else uses it yet.** Because
+the value-reference graph is acyclic, **no call site is ever dynamically nested inside itself**: a frame installed
+at a site is the only live frame of that site at any moment. The one caveat is a native that re-enters a callback
+while an earlier invocation is live, which strict folds never do and a lazy paramorphism would — a property such a
+native would have to declare. This is what the spike called "unmeasured" for option 1's regions, and it is
+decidable from the recursion gate alone: a discharger's frame can be a type-level value minted per call site, and
+every `raise` then has one static target. On the JVM that buys nothing. On a microcontroller it is `Throw` as a
+status flag and a jump with no exception machinery, and `State` threaded as parameters with no static cell, both
+derived by the backend from frames that are mono-key components; it would also make D19 free, since an
+undischarged control effect at `main` has no frame site to bind. It is independent of option 4 and not worth
+paying for until a non-JVM backend exists.
+
 **What is open.** Whether Eliot stores open computations at all. If it does, the choice is between option 1 with
 regions (a new kind of binder, unmeasured), option 2 (reverses the 2026-09-06 decision and runs into the step-6
-limit), and option 3 (blocked on recursive data). Until it is decided, D20's answer is option 3's partial form,
-or a hand-written `data` and interpreter.
+limit), option 3 (blocked on recursive data), and option 4 (a reversal of D20 rule 6, with the two measurements
+above outstanding). Until it is decided, D20's answer is option 3's partial form, or a hand-written `data` and
+interpreter.
 
 #### Reversals this records
 
