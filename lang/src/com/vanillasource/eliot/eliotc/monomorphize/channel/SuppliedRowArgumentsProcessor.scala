@@ -95,7 +95,7 @@ class SuppliedRowArgumentsProcessor
     */
   private def collectReferences(expr: MonomorphicExpression.Expression): Seq[(ValueFQN, Seq[GroundValue])] =
     expr match {
-      case MonomorphicExpression.MonomorphicValueReference(vfqn, typeArgs) => Seq((vfqn.value, typeArgs))
+      case MonomorphicExpression.MonomorphicValueReference(vfqn, typeArgs, _) => Seq((vfqn.value, typeArgs))
       case MonomorphicExpression.FunctionApplication(target, arg)          =>
         collectReferences(target.value.expression) ++ collectReferences(arg.value.expression)
       case MonomorphicExpression.FunctionLiteral(_, _, body)               => collectReferences(body.value.expression)

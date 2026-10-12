@@ -31,8 +31,13 @@ object MonomorphicExpression {
 
   case class ParameterReference(parameterName: Sourced[String]) extends Expression
 
+  /** @param dispatchedFrom
+    *   For a reference the checker dispatched from an ability member to an implementation's clause, the member's entry
+    *   and binding ([[MonomorphicEffects.Dispatch]]); [[None]] for every other reference.
+    */
   case class MonomorphicValueReference(
       valueName: Sourced[ValueFQN],
-      typeArguments: Seq[GroundValue]
+      typeArguments: Seq[GroundValue],
+      dispatchedFrom: Option[MonomorphicEffects.Dispatch] = None
   ) extends Expression
 }

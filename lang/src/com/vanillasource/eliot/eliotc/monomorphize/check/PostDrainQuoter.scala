@@ -6,11 +6,12 @@ import com.vanillasource.eliot.eliotc.module.fact.{Qualifier => CoreQualifier}
 import com.vanillasource.eliot.eliotc.module.fact.{UnifiedModuleValue, ValueFQN, WellKnownTypes}
 import com.vanillasource.eliot.eliotc.monomorphize.domain.{Env, MetaStore, SemValue}
 import com.vanillasource.eliot.eliotc.monomorphize.eval.{Evaluator, Quoter, SemExpressionEvaluator}
-import com.vanillasource.eliot.eliotc.monomorphize.fact.{GroundValue, MonomorphicExpression}
+import com.vanillasource.eliot.eliotc.monomorphize.fact.{GroundValue, MonomorphicEffects, MonomorphicExpression}
 import com.vanillasource.eliot.eliotc.monomorphize.fact.GroundValue.Literal
 import com.vanillasource.eliot.eliotc.monomorphize.processor.EscalatingReducer
 import com.vanillasource.eliot.eliotc.platform.Platform
 import com.vanillasource.eliot.eliotc.processor.CompilerIO.*
+import com.vanillasource.eliot.eliotc.resolve.fact.AbilityFQN
 import com.vanillasource.eliot.eliotc.source.content.Sourced
 import com.vanillasource.eliot.eliotc.source.content.Sourced.compilerAbort
 
@@ -538,15 +539,33 @@ class PostDrainQuoter(
       semTypeArgs: Seq[SemValue]
   ): MonomorphicExpression.Expression =
     vfqn.value.name.qualifier match {
-      case _: CoreQualifier.Ability =>
-        lookupResolution(vfqn, abilityArgsOf(vfqn.value, semTypeArgs)) match {
+      case CoreQualifier.Ability(abilityName) =>
+        val abilityArgs = abilityArgsOf(vfqn.value, semTypeArgs)
+        lookupResolution(vfqn, abilityArgs) match {
           case Some((implFqn, implTypeArgs)) =>
-            MonomorphicExpression.MonomorphicValueReference(vfqn.as(implFqn), implTypeArgs)
+            MonomorphicExpression.MonomorphicValueReference(
+              vfqn.as(implFqn),
+              implTypeArgs,
+              dispatchOf(AbilityFQN(vfqn.value.moduleName, abilityName), abilityArgs)
+            )
           case None                          =>
             MonomorphicExpression.MonomorphicValueReference(vfqn, typeArgs)
         }
-      case _                        =>
+      case _                                  =>
         MonomorphicExpression.MonomorphicValueReference(vfqn, typeArgs)
+    }
+
+  /** The entry and binding a dispatched reference came from: its ability-level arguments are the binding and then the
+    * ability's own parameters ([[ImplementationBinding]]), which are the entry's arguments.
+    */
+  private def dispatchOf(
+      ability: AbilityFQN,
+      abilityArgs: Option[Seq[GroundValue]]
+  ): Option[MonomorphicEffects.Dispatch] =
+    abilityArgs.flatMap {
+      case binding +: arguments if ImplementationBinding.fromGround(binding).isDefined =>
+        Some(MonomorphicEffects.Dispatch(MonomorphicEffects.Entry(ability, arguments), binding))
+      case _                                                                          => None
     }
 
   /** The ability-level type arguments of a method reference, derived **exactly** as `AbilityResolver.tryResolveOne`

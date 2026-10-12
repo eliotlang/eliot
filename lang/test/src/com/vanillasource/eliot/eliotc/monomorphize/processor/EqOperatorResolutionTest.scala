@@ -87,7 +87,7 @@ class EqOperatorResolutionTest
     }
 
   private def valueRefs(expr: MonomorphicExpression.Expression): Seq[(String, String)] = expr match {
-    case MonomorphicExpression.MonomorphicValueReference(vfqn, _)    => Seq((vfqn.value.moduleName.name, vfqn.value.name.name))
+    case MonomorphicExpression.MonomorphicValueReference(vfqn, _, _)    => Seq((vfqn.value.moduleName.name, vfqn.value.name.name))
     case MonomorphicExpression.FunctionApplication(target, argument) =>
       valueRefs(target.value.expression) ++ valueRefs(argument.value.expression)
     case MonomorphicExpression.FunctionLiteral(_, _, body)           => valueRefs(body.value.expression)

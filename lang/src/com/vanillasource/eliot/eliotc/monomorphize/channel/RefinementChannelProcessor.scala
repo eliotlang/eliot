@@ -120,7 +120,7 @@ class RefinementChannelProcessor
       case _: MonomorphicExpression.FunctionApplication =>
         val (head, args) = MetaInterpreter.flatten(node)
         head.value.expression match {
-          case MonomorphicExpression.MonomorphicValueReference(vfqn, typeArgs) =>
+          case MonomorphicExpression.MonomorphicValueReference(vfqn, typeArgs, _) =>
             // An ordinary call (or constructor). Descend into the arguments (so a literal/arithmetic argument narrows,
             // and a `where` precondition is demanded over their ranges, bounds-as-refinements §4.3). The call's own
             // result is whatever the callee's meta is — **stated** by a leaf (`Numeric[Int]::add`'s transfer, `fold`'s
@@ -162,7 +162,7 @@ class RefinementChannelProcessor
         // effects during the walk remain.
         walkFlow(body).as(Flow(None, recordAt(node, None)))
 
-      case MonomorphicExpression.MonomorphicValueReference(vfqn, typeArgs) =>
+      case MonomorphicExpression.MonomorphicValueReference(vfqn, typeArgs, _) =>
         // A **bare** reference to a def — *not* the head of a full application (that path is the `FunctionApplication`
         // arm's `checkWhere`). If the def carries a `where` precondition, passing it as a value silently bypasses that
         // precondition: its eventual call rides a function value whose head the channel never sees as a

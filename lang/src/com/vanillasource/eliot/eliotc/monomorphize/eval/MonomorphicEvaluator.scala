@@ -39,7 +39,7 @@ class MonomorphicEvaluator(lookupTopDef: ValueFQN => Option[SemValue])
       case MonomorphicExpression.ParameterReference(name) =>
         NbeEvaluator.Term.ParameterReference(name.value)
 
-      case MonomorphicExpression.MonomorphicValueReference(vfqn, _) =>
+      case MonomorphicExpression.MonomorphicValueReference(vfqn, _, _) =>
         NbeEvaluator.Term.ValueReference(vfqn.value, Seq.empty)
 
       case MonomorphicExpression.FunctionApplication(target, argument) =>

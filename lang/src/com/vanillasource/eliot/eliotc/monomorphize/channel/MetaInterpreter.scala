@@ -196,14 +196,14 @@ object MetaInterpreter {
           // A function value carries no meta of its own — that is the first-order limit, and the higher-order case
           // (§5's table) is where a lambda would instead become a *closure over metas*.
           unknown(budget - 1)
-        case MonomorphicExpression.MonomorphicValueReference(vfqn, ta) =>
+        case MonomorphicExpression.MonomorphicValueReference(vfqn, ta, _) =>
           // A bare reference is a *saturated* call when the callee takes no arguments, so a nullary def derives here
           // exactly as an applied one does below.
           metaOf(vfqn.value, ta, node.value.expressionType, Seq.empty, budget - 1)
         case _: MonomorphicExpression.FunctionApplication              =>
           val (head, args) = flatten(node)
           head.value.expression match {
-            case MonomorphicExpression.MonomorphicValueReference(vfqn, ta) =>
+            case MonomorphicExpression.MonomorphicValueReference(vfqn, ta, _) =>
               interpretAll(args, env, budget - 1).flatMap { case (left, argMetas) =>
                 metaOf(vfqn.value, ta, node.value.expressionType, argMetas, left)
               }

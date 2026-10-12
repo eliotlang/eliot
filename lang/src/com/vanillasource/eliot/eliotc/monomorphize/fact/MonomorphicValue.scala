@@ -23,6 +23,8 @@ import scala.annotation.tailrec
   *   The concrete ground type of this specialized instance
   * @param runtime
   *   The optional monomorphized runtime body
+  * @param effects
+  *   This specialisation's effect entries at their ground arguments, for the environment threading
   *
   * The `ambientCarriers` field went with the carrier (effects v6, F6), and nothing replaced it: the implementations an
   * instantiation received are its own phantom binders' arguments, already here in [[typeArguments]], and effects are
@@ -34,7 +36,8 @@ case class MonomorphicValue(
     typeArguments: Seq[GroundValue],
     name: Sourced[QualifiedName],
     signature: GroundValue,
-    runtime: Option[Sourced[MonomorphicExpression.Expression]]
+    runtime: Option[Sourced[MonomorphicExpression.Expression]],
+    effects: MonomorphicEffects = MonomorphicEffects.empty
 ) extends CompilerFact {
   override def key(): CompilerFactKey[MonomorphicValue] =
     MonomorphicValue.Key(vfqn, typeArguments)

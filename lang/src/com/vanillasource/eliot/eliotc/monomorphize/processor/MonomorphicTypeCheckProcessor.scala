@@ -58,7 +58,8 @@ class MonomorphicTypeCheckProcessor()
       key.typeArguments,
       value.signature.as(key.vfqn.name),
       result.signature,
-      result.body
+      result.body,
+      result.effects
     )
   }
 

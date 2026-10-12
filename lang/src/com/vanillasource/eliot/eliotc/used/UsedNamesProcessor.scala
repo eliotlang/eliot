@@ -126,7 +126,7 @@ class UsedNamesProcessor(maxNestedRepeats: Int = UsedNamesProcessor.DefaultMaxNe
       case MonomorphicExpression.FunctionApplication(target, argument) =>
         processApplicationChain(target.value.expression, 1, Seq(argument), ancestors)
 
-      case MonomorphicExpression.MonomorphicValueReference(vfqn, typeArgs) =>
+      case MonomorphicExpression.MonomorphicValueReference(vfqn, typeArgs, _) =>
         processValueReference(vfqn, typeArgs, 0, ancestors)
 
       case MonomorphicExpression.FunctionLiteral(_, _, body) =>
@@ -167,7 +167,7 @@ class UsedNamesProcessor(maxNestedRepeats: Int = UsedNamesProcessor.DefaultMaxNe
       case MonomorphicExpression.FunctionApplication(target, argument) =>
         processApplicationChain(target.value.expression, applicationCount + 1, nestedArguments :+ argument, ancestors)
 
-      case MonomorphicExpression.MonomorphicValueReference(vfqn, typeArgs) =>
+      case MonomorphicExpression.MonomorphicValueReference(vfqn, typeArgs, _) =>
         processValueReference(vfqn, typeArgs, applicationCount, ancestors) >> processNestedArguments
 
       case MonomorphicExpression.FunctionLiteral(_, _, body) =>

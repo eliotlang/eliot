@@ -122,7 +122,7 @@ class MonomorphicTypeCheckProcessorTest
         unwrapFunctionLiterals(normalizedBody(result)) match {
           case MonomorphicExpression.FunctionApplication(target, _) =>
             target.value.expression match {
-              case MonomorphicExpression.MonomorphicValueReference(name, typeArgs) =>
+              case MonomorphicExpression.MonomorphicValueReference(name, typeArgs, _) =>
                 name.value.name.qualifier shouldBe a[Qualifier.AbilityImplementation]
                 typeArgs shouldBe Seq.empty
               case other                                                            =>

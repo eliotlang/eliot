@@ -116,7 +116,7 @@ class ReificationTest extends ProcessorTest(LangProcessors()*) {
     case MonomorphicExpression.IntegerLiteral(v)                  => s"Int(${v.value})"
     case MonomorphicExpression.StringLiteral(v)                   => s"Str(${v.value})"
     case MonomorphicExpression.ParameterReference(n)              => s"Param(${n.value})"
-    case MonomorphicExpression.MonomorphicValueReference(fqn, ts) =>
+    case MonomorphicExpression.MonomorphicValueReference(fqn, ts, _) =>
       fqn.value.name.name + (if (ts.isEmpty) "" else ts.map(showType).mkString("[", ", ", "]"))
     case MonomorphicExpression.FunctionLiteral(p, _, b)           => s"\\${p.value}.${render(b.value.expression)}"
     case app: MonomorphicExpression.FunctionApplication          =>

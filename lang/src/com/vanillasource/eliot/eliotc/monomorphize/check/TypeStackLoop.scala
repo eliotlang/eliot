@@ -119,10 +119,60 @@ class TypeStackLoop(
       // Narrow-representation reconciliation happens in the backend's `ExpressionCodeGenerator` off the refinement
       // channel, so the body is read back directly.
       monoBody  <- runtime.traverse(srcSem => liftF(track.readBackBody(quoter, srcSem)))
+      effects   <- monomorphicEffects(resolvedValue, typeArguments, quoter, monoEnv)
     } yield TypeStackLoop.Result(
       groundSig,
-      monoBody.map(sourcedMono => sourcedMono.as(sourcedMono.value.expression))
+      monoBody.map(sourcedMono => sourcedMono.as(sourcedMono.value.expression)),
+      effects
     )
+
+  /** This specialisation's effect entries at their ground arguments ([[MonomorphicEffects]]), for the environment
+    * threading at the `WovenValue` seam. An entry's arguments are type expressions over this definition's binders, so
+    * they are reduced here, by the one evaluator, under the binders' ground values (`monoEnv`).
+    *
+    * A **received** entry is read off the constraint the desugar puts on every binding binder — `Impl ~ Console[Impl]`
+    * for a row entry, `T ~ Ord[Impl, T]` for a `~` constraint — whose first argument names the binder and whose rest
+    * are the entry's arguments. A **slot**'s entries are the parameter row's own. An entry whose arguments do not reduce
+    * to ground (a partial-arity key's leftover binder) is left out, which can only leave a reference with no frame to
+    * find — reported where the threading needs one, never guessed.
+    */
+  private def monomorphicEffects(
+      resolvedValue: OperatorResolvedValue,
+      typeArguments: Seq[GroundValue],
+      quoter: PostDrainQuoter,
+      monoEnv: Env
+  ): CheckIO[MonomorphicEffects] = {
+    val binders = SignatureView.of(resolvedValue.signature).binders.map(_.name.value)
+    def ground(arguments: Seq[OperatorResolvedExpression]): CheckIO[Option[Seq[GroundValue]]] =
+      arguments.toList
+        .traverse(argument => checker.evalExpr(argument, Some(monoEnv)).map(quoter.quoteSemOption))
+        .map(_.sequence)
+    val received =
+      resolvedValue.paramConstraints.values.flatten.toSeq
+        .flatMap { constraint =>
+          constraint.typeArgs.headOption
+            .collect { case OperatorResolvedExpression.ParameterReference(name) => binders.indexOf(name.value) }
+            .filter(index => index >= 0 && index < typeArguments.size)
+            .map(_ -> constraint)
+        }
+        .sortBy(_._1)
+    for {
+      receivedEntries <- received.toList.traverse { case (index, constraint) =>
+                           ground(constraint.typeArgs.drop(1)).map(
+                             _.map(arguments =>
+                               MonomorphicEffects.Received(index, MonomorphicEffects.Entry(constraint.abilityFQN, arguments))
+                             )
+                           )
+                         }
+      slots           <- resolvedValue.effectRow.parameterEffects.toList.traverse { slot =>
+                           slot.effects.toList
+                             .traverse(entry =>
+                               ground(entry.typeArgs).map(_.map(MonomorphicEffects.Entry(entry.abilityFQN, _)))
+                             )
+                             .map(entries => MonomorphicEffects.Slot(slot.parameterIndex, entries.flatten))
+                         }
+    } yield MonomorphicEffects(receivedEntries.flatten, slots)
+  }
 
   /** The signature twin's monomorphization as an **ordinary body mono** (signature-unification §3.1): the signature's
     * binder-stripped arrow chain *is* the body. Kind-check each declared binder against `VType` and bind its ground
@@ -475,7 +525,8 @@ object TypeStackLoop {
     */
   case class Result(
       signature: GroundValue,
-      body: Option[Sourced[MonomorphicExpression.Expression]]
+      body: Option[Sourced[MonomorphicExpression.Expression]],
+      effects: MonomorphicEffects = MonomorphicEffects.empty
   )
 
   /** Static convenience wrapper — constructs a [[TypeStackLoop]] and runs its [[process]]. */

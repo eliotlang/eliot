@@ -119,7 +119,7 @@ object ReducedBindingClosure {
   private[processor] def valueReferences(
       expr: MonomorphicExpression.Expression
   ): Set[(ValueFQN, Seq[GroundValue])] = expr match {
-    case MonomorphicExpression.MonomorphicValueReference(vfqn, typeArgs) => Set((vfqn.value, typeArgs))
+    case MonomorphicExpression.MonomorphicValueReference(vfqn, typeArgs, _) => Set((vfqn.value, typeArgs))
     case MonomorphicExpression.FunctionApplication(target, argument)     =>
       valueReferences(target.value.expression) ++ valueReferences(argument.value.expression)
     case MonomorphicExpression.FunctionLiteral(_, _, body)               => valueReferences(body.value.expression)

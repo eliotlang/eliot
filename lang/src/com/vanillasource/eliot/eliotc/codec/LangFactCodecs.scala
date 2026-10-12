@@ -49,6 +49,16 @@ object LangFactCodecs {
       : FactCodec[com.vanillasource.eliot.eliotc.resolve.processor.ValueResolverScope] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_resolve_fact_AbilityFQN
       : FactCodec[com.vanillasource.eliot.eliotc.resolve.fact.AbilityFQN] = FactCodec.derived
+  given codec_com_vanillasource_eliot_eliotc_monomorphize_fact_MonomorphicEffects_Entry
+      : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.fact.MonomorphicEffects.Entry] = FactCodec.derived
+  given codec_com_vanillasource_eliot_eliotc_monomorphize_fact_MonomorphicEffects_Received
+      : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.fact.MonomorphicEffects.Received] = FactCodec.derived
+  given codec_com_vanillasource_eliot_eliotc_monomorphize_fact_MonomorphicEffects_Slot
+      : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.fact.MonomorphicEffects.Slot] = FactCodec.derived
+  given codec_com_vanillasource_eliot_eliotc_monomorphize_fact_MonomorphicEffects_Dispatch
+      : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.fact.MonomorphicEffects.Dispatch] = FactCodec.derived
+  given codec_com_vanillasource_eliot_eliotc_monomorphize_fact_MonomorphicEffects
+      : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.fact.MonomorphicEffects] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_resolve_fact_Expression
       : FactCodec[com.vanillasource.eliot.eliotc.resolve.fact.Expression] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_resolve_fact_Expression_FunctionApplication
