@@ -1658,6 +1658,32 @@ frame object and a handler rethrows any exception that is not its own; a cell is
 static field per instantiation. On a microcontroller a frame is a pointer to a jump buffer or a stack slot, which is
 C's `setjmp`/`longjmp`. On the compile track the evaluator's intrinsics carry the same identities.
 
+*Abilities too, and the line is named versus default — no keyword (2026-10-12).* Nothing in the mechanism is
+effect-specific. A `~ Ord[T]` constraint is the same phantom binder as a `uses Console` entry, so a named ability
+implementation may take parameters, and the definitions specialised at that binding receive its environment exactly
+as above:
+
+```eliot
+implement byKey[T](key: T => Int): Ord[T] {
+   def compare(a: T, b: T): Ordering = compare(key(a), key(b))
+}
+
+people.sort with byKey(p -> p.age)
+```
+
+One implementation replaces one named implementation per key. What cannot take parameters is a **default**, of an
+ability and an effect alike: a default is chosen where nobody holds arguments — the two-site search, or `main` — so
+*parameters require a name, and a named implementation is never a default*. The grammar already says so, because
+parameters attach to the name and an anonymous `implement Console { … }` has nowhere to write them; it is the
+marker that separates `def f` from `def f(x)`. A keyword for implementations that take parameters (a "framed" or
+"stateful" mark, or Kotlin's `object` versus `class`) was considered and declined. It would mark a property nothing
+reads: a frame is an ordinary value of a platform-private type, so `throwing(frame: EscapeFrame[E])` and
+`byKey(key: T => Int)` are one construct differing only in a parameter's type, and a keyword over that difference
+would reinstate the control/interpretation bit §3.5 keeps out of the language. A reader sees what matters where it
+matters: the parameter list at the declaration, the arguments at the `with` (`with scripted(List("Bob"))` versus
+`with reverseOrd`), and nothing in a definition's `uses` — whether an environment flows is lowering, as how a
+`Console` prints is.
+
 *The lowering.* A definition that declares an entry whose implementation has an environment takes it as a hidden
 parameter and passes it on to the declaring definitions it calls. A definition that does not declare it — `guarded`,
 `map`, `foreach`, every pure body — receives nothing: a block reaches its frame by ordinary closure capture, as it
@@ -1688,6 +1714,7 @@ per-instantiation static cells are gone.
   5's own first measurement below.
 - **Stateful doubles.** `greet with scripted(List("Bob"))` lifts "a named implementation takes no parameters and
   closes over nothing".
+- **Parameterised ability implementations.** `sort with byKey(p -> p.age)`, by the same mechanism.
 - **Fibers, later.** A frame is an ordinary value, so a scheduler can hold a fiber's environments and resume it under
   them; a static cell could never be per fiber.
 
@@ -1751,7 +1778,8 @@ way.
   listing "a parameterised `implement name(params)`" among the things lost.
 - **§3.5's** control effects keep one implementation per platform, but it is named, parameterised and never a
   default; the anonymous `implement[E] Throw[E]` and its four siblings go.
-- **New surface:** `with` takes runtime arguments in body position.
+- **New surface:** `with` takes runtime arguments in body position, for an ability as for an effect. No new
+  keyword: parameters require a name, and a named implementation is never a default.
 - **The second property above**, refuted.
 
 *Where to measure first.* Building `recordingConsole`'s environment at the `with` that binds it: a definition
