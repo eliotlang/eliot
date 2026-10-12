@@ -564,7 +564,11 @@ platform's five control effects take a frame (`ThrowFrame`, `AbortFrame`, `State
 primitives make and hand to the thunk they run, so a frame reaches exactly the operations it was given: §8 items 14–15
 and D19 (an undischarged control effect at `main` is a compile error) are closed on the runtime track. Not built:
 `with Ability(args)` and user defaults with parameters, named implementations with parameters
-(`with scripted(List("Bob"))`), parameterised ability implementations, compile-track frames. A slot's ridden entry is given its frame where the block runs — (b), below. **D20 steps 1–3 are built
+(`with scripted(List("Bob"))`), parameterised ability implementations, compile-track frames. A slot's ridden entry is given its frame where the block runs — (b), below. **Chosen
+2026-10-12, half built: D21** — a function declares every effect it may perform, its blocks' included: slots close
+(a block performs only what its slot lists) and generic combinators take a row variable (`f: A => {E} Unit`) written
+by the walk from the call's own arguments. Three sub-decisions (D21a–c) are open. **The index of what is built,
+decided, open and planned is `docs/effects.md` Part II, "State, decisions and plan".** **D20 steps 1–3 are built
 (2026-10-12)**: rules 3–6 are enforced in today's syntax (blocks never kept, kept lambdas sealed, a body gives its
 block only what it has, a field holds a value), closing §8 items 10–13. The surface (steps 4–6) is not; until it
 lands, what follows is the tree, with rule 3 below retired.
@@ -715,7 +719,8 @@ and an ambient name colliding with a local declaration or explicit import is sil
 so the prelude can grow without breaking code), while explicit imports keep the strict shadowing errors. There is
 no `eliot.carrier` package any more: `{}` names nothing and needs no import.
 
-**One thing has no spelling and is worth knowing before you reach for it: a row cannot be closed.** A slot's row
+**One thing has no spelling yet and is worth knowing before you reach for it: a row cannot be closed** (D21 plans
+to change this). A slot's row
 says what it *supplies*, not what it forbids — an entry it does not supply continues the walk into the caller's
 scope — so "this body may perform nothing at all" is unsayable. That is what deleted `eliot.test`'s `pure { … }`,
 and making it expressible would be a language addition.

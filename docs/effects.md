@@ -1,5 +1,13 @@
 # Effects in Eliot — the design, and what is left to do
 
+**Status (2026-10-12): the index of what is built, decided, open and planned is Part II's first section, "State,
+decisions and plan".** Since the 2026-09-11 status below: D20's rules 3–6 are enforced in today's syntax; D20c option
+5 is built on the runtime track — an implementation's environment (an escape frame, a cell, its parameters) is passed
+after monomorphization and never searched for, which closed §8 items 5, 14 and 15 and D19; a definition can discharge
+the very effect it declares by "ride by code, give by frame" ((b)); and **D21** — every effect a function may perform
+in its signature, its blocks' included, by row variables — is chosen, half built, and waiting on three
+sub-decisions. Part I still describes some retired rules; its opening note lists which.
+
 **Status (2026-09-11): effects v6 is shipped, and this is its single document.** An effect is an ability
 declared with the `effect` keyword; an **implementation is a name**, bound by `with` and forwarded lexically
 from `main` inward through declarations. There is no carrier, no monad, no `Id`, and nothing to infer. Part I
@@ -20,7 +28,9 @@ declarations only — so an operation call is an ordinary call to a known method
 checker holds no effect rule at all.
 
 **How to read this document.** Part I states the shipped design; it is the authority for the tree, and the
-CLAUDE.md *Effects Are a Channel* cornerstone is its summary. Part II lists the divergences (§8), the planned
+CLAUDE.md *Effects Are a Channel* cornerstone is its summary. Part II opens with **"State, decisions and plan"** —
+the one place that says what exists, what was decided when, what is open and in what order the rest is built — then
+lists the divergences (§8), the planned
 change (§9), the method every change is run under (§10) and the open decisions (§11, numbered **D**). Part III
 holds the list of things **closed by measurement or decision and must not be re-proposed** (§12) and the
 provenance (§13). Where Part I and any code, stdlib signature, example or test disagree, Part I wins and the
@@ -32,8 +42,24 @@ flag-day log F1–F9 and the follow-ups A2–A11) is in git history, and §13 sa
 # Part I — The design
 
 *D20 (§11, decided 2026-10-05) replaces this Part's surface and three of its rules — §1 rules 3 and 4, §2.1's
-`{}`, §2.2's supply by `Default`, §2.3 and §2.4's form; its "Reversals this records" lists them. Until it lands,
-this Part is the tree.*
+`{}`, §2.2's supply by `Default`, §2.3 and §2.4's form; its "Reversals this records" lists them. Until its surface
+lands, this Part is the tree, except where the following has already changed it (2026-10-12, Part II's "State,
+decisions and plan" has the detail):*
+
+- *§1 rule 3 (a stored computation) is retired: a field holds a value (D20 rule 6, built). Rules 4–6 of D20 are
+  enforced in today's syntax: a block is used, never kept; a kept lambda uses no effect from around it; a body gives
+  its block only what it has.*
+- *§2's "a named implementation takes no parameters and closes over nothing" holds for named implementations only:
+  an anonymous implementation may take parameters (its environment), and the platform's control effects do.*
+- *§2.2's last paragraph — a definition may discharge the very effect it declares — now holds by (b): for an entry
+  a slot lists that the definition also declares, the block's code is the caller's binding and its frame is the one
+  where it runs.*
+- *§3.4 is updated below: a frame is passed, never searched for, and the "nearest enclosing frame" discipline is
+  gone on the runtime track. The compile track still keys its intrinsics on type.*
+- *§4's "running a suspended argument consumes nothing" holds for supplied entries only; running a block consumes
+  the entries it rides.*
+- *§7 item 7 is closed: an undischarged control effect at `main` is a compile error. §7 item 1 (a row cannot be
+  closed) is what D21 plans to change.*
 
 ## 1. The user model — four rules
 
@@ -211,7 +237,9 @@ Since v5's supply rule was per *entry* and syntactic, a definition could not sup
 return row already named. That limitation is **gone**: discharge is a frame installed at the discharger's
 call, and the nearest enclosing frame is its own, so a definition may now discharge the very effect it
 declares — which is what lets `describedAs(body: {Throw[AssertionError]} Unit): {Throw[AssertionError]} Unit`
-catch its body's failure and re-raise a better one.
+catch its body's failure and re-raise a better one. *Since option 5 (2026-10-12) there is no nearest frame, and this
+holds by (b), "ride by code, give by frame": the body's code is its caller's binding, and its frame is the one in
+scope where `describedAs` runs it — inside its own `catch` (§11, D20c).*
 
 ### 2.3 Storing a computation
 
@@ -461,14 +489,21 @@ the carrier existed. They are now three **platform-private leaves**, one per tar
 
 | primitive | shape | jvm | microcontroller | compile track |
 | --- | --- | --- | --- | --- |
-| escape | `escapeInternal[K, A, R](body: {} A, onExit: K => {} R, onValue: A => {} R): R` — abortive, never re-entered; the frame is the machine stack | an exception, one class per instantiation | a status flag and a jump (hypothetical, §13's A2) | an evaluator intrinsic |
-| cell | `withCellInternal[S, A, R](initial: S, body: {} A, combine: A => S => {} R): R` — scoped to one call, saved and restored around it | a static field per instantiation | a register | an evaluator intrinsic |
+| escape | `escapeInternal[K, A, R](body: {Throw[K]} A, onExit: K => {} R, onValue: A => {} R): R` and `exitInternal(frame, err)` — abortive, never re-entered; makes a fresh frame and hands it to `body` | a fresh `Object` frame; the exit is a shared exception carrying the frame, and an escape rethrows any frame but its own | a status flag and a jump (hypothetical, §13's A2) | an evaluator intrinsic, keyed by type |
+| cell | `withCellInternal[S, A, R](initial: S, body: {State[S]} A, combine: A => S => {} R): R`, `readCellInternal(cell)`, `writeCellInternal(cell, s)` — scoped to one call; makes a fresh cell and hands it to `body` | a one-slot `Object[]` local to the call | a register or a stack slot | an evaluator intrinsic, keyed by type |
 | loop | `foreverInternal` | `while(true)` | the super-loop | never runs (`Inf` is stuck) |
 
-The control effects' single implementations are written over them: `Throw[E]`'s `raise` is `exit`, `State[S]`'s
-`state`/`putState` are `read`/`write`, `Writer[W]` appends to a cell, `Dep[T]` reads one. The frame an operation
-reaches is the **nearest enclosing** one of its instantiation — the machine stack's discipline, inside the leaf
-and nowhere else.
+The control effects' single implementations are written over them, and each takes its frame as an
+**implementation parameter** (D20c option 5, built 2026-10-12): `implement[E] Throw[E](frame: ThrowFrame[E]) { def
+raise[A](err: E): A = exitInternal(frame, err) }`, `implement[S] State[S](cell: StateCell[S])` reading and writing that
+cell, `Writer[W]` appending to its cell, `Dep[T]` reading its cell. **A frame is passed, never searched for**: the
+installing leaf hands a fresh frame to the thunk it runs, the environment threading at the `WovenValue` seam passes it
+to exactly the operations written inside that computation (§11, D20c, "Option 5 built"), and an operation reaches the
+frame it was given. So a helper's own discharge of the same effect cannot intercept its caller's operations, two live
+frames of one instantiation are told apart, and an effect whose implementation needs a frame cannot run where nothing
+installed one. *(Until 2026-10-12 the frame an operation reached was the nearest enclosing one of its instantiation,
+the machine stack's discipline inside the leaf — §8 items 14 and 15 were its defects. The compile track still works
+that way.)*
 
 They are **private, and the dischargers are therefore abstract in the base.** A public cell is Landin's knot —
 a cell holding a closure that reads the cell is a loop, and `termination/PurityGuardTest` exists to keep it out
@@ -479,8 +514,9 @@ platform-independent bodies over those and stay in the base, where the base-laye
 
 Eliot has no *layer*-private visibility — `private` is module-scoped — so each jvm module needing a primitive
 declares its own copy. That is five copies of two shapes, and it is the right trade: one public `eliot.jvm.Cell`
-would put a mutable cell in reach of any jvm program. Repetition also separates the frames for free, since the
-backend keys a frame class on the name that installed it.
+would put a mutable cell in reach of any jvm program. The frame types (`ThrowFrame`, `AbortFrame`, `StateCell`,
+`WriterCell`, `DepCell`) are public body-less types with no constructor, because `private` reaches only `def` and
+`data`; only the private leaves make one, and they are named apart because `eliot.effect` is imported whole.
 
 ### 3.5 Discharge
 
@@ -683,8 +719,8 @@ Each is stated, fail-safe, and either has a plan entry or is a deliberate trade.
 
 1. **A row cannot be closed.** A slot's row says what it supplies, not what it forbids: an entry it does not
    supply continues the walk into the caller's scope. So there is no way to write "this body may perform
-   nothing at all", which is what `eliot.test`'s `pure { … }` meant and why it is deleted. Making it
-   expressible is a language addition and is not planned.
+   nothing at all", which is what `eliot.test`'s `pure { … }` meant and why it is deleted. *Planned since
+   2026-10-12 as D21 (§11): every slot is closed, and generic combinators take a row variable.*
 2. **A discharger's type arguments are sometimes written by hand.** Where no declaration determines a supplied
    entry's arguments (§2.2's three shapes), the call spells them. The rejection is loud and names the fix; the
    alternative — defaulting — compiles a `catch` against a frame it will not meet.
@@ -701,10 +737,13 @@ Each is stated, fail-safe, and either has a plan entry or is a deliberate trade.
    a rewrite of the slot rather than of the type naming it. Lifting it is **D18** (§9.5). The alias's *other*
    limit — that it had to be declared in the file using it — is gone: it is reached by ordinary name resolution
    (§2.4), so it crosses files, honours import scope, and is shadowed by a binder of the same name.
-6. **A stored computation's binding is fixed where it is constructed.** Deciding the handler before storing is
+6. ~~**A stored computation's binding is fixed where it is constructed.**~~ *No subject since D20 rule 6 (built
+   2026-10-12): a field holds a value.* Deciding the handler before storing is
    unambiguous and easier to understand; losing first-classness is the accepted price. A `with` applied to a
    stored computation later is an error, never a rebinding — rejected at the read, in both of `with`'s positions.
-7. **An undischarged control effect reaching `main` fails at runtime, not at the boundary.** The run boundary
+7. ~~**An undischarged control effect reaching `main` fails at runtime, not at the boundary.**~~ **Closed
+   2026-10-12** by D20c option 5: "The effect 'Throw' is performed here with nothing to discharge it", at the
+   operation. The run boundary
    binds every entry of `main`'s row to the two-site default, and a control effect's single implementation then
    exits into no frame. **Decided 2026-09-12: this must be a compile error** (D19, §11). The route is settled and
    costed; the remaining question is which of the two costs to pay, and until it is paid the runtime failure
@@ -752,6 +791,172 @@ D20). The same probe refuted D20c's "second property" — no compile-time identi
 *environment* (an escape frame, a cell, a parameter) is passed at runtime along the declared chain, so an operation
 reaches the frame it was handed. It would also settle D19 and give doubles state. Option 4 was corrected to
 specialise at the read, and found to need a positivity rule against Landin's knot. Both are proposals, not decisions.
+
+**2026-10-12, later the same day.** Option 5 was adopted, its build questions decided, and it was **built on the
+runtime track**; D20 steps 1–3 were built before it; a conflict it exposed (`describedAs`) was decided as (b) and
+built; and **D21** was chosen. Everything about that day — what exists, every decision and its status, what the build
+decided in code, what is open, and the plan — is in the next section.
+
+## State, decisions and plan (2026-10-12)
+
+The index of the effects work. It says what exists, what was decided and when, what is open, and in what order the
+rest is built; the sections it points to hold the reasoning. When it and a later section disagree, the later section's
+dated entry is the more recent, and this index is the one to fix.
+
+### What the tree does today
+
+- **The v6 core, unchanged.** A row entry is a phantom binding binder whose value is an implementation name, written
+  at every reference by the `row` phase's walk from declarations only; `with` binds a name; the scope check is the
+  walk; the checker holds no effect rule (§3).
+- **D20's rules 3–6, in today's syntax** (§11, D20, work-list steps 1–3). A function-typed parameter is a block: called
+  or passed on, never kept. A lambda kept as a value uses no effect from around it. A body gives its block only what it
+  has; an effect's default is given from nothing only by a body-less declaration (a platform primitive) and at `main`.
+  A field holds a value: a row on a field is an error.
+- **An implementation is code and an environment** (§11, D20c option 5). The code is the binding, as before. The
+  environment — an escape frame, a cell, an implementation's own parameters — is passed **after monomorphization**, at
+  the `WovenValue` seam (`monomorphize/channel/EnvironmentThreading`), and never searched for:
+  - a definition receives one frame per entry it declares, as hidden parameters ahead of its own;
+  - a block at a row-typed slot takes the frames of the entries its slot lists, in place of `unit`, and running it
+    passes the frames found where it runs;
+  - a dispatched operation passes the frame of the entry it was dispatched from;
+  - a frame is chosen **by entry at ground arguments**, so `{Throw[IoError], Throw[GitError]}` is two frames, and its
+    binding must be the one the reference was written with;
+  - an entry with no frame in scope gets its default only if that default takes no parameters; otherwise it is the
+    error "The effect '…' is performed here with nothing to discharge it" (D19).
+- **The platform's control effects take their frame.** `Throw`, `Abort`, `State`, `Writer` and `Dep` are anonymous
+  implementations with one parameter (`ThrowFrame`, `AbortFrame`, `StateCell`, `WriterCell`, `DepCell`); the private
+  leaves make a fresh frame and hand it to the thunk they run (§3.4).
+- **Ride by code, give by frame** ((b)). For an entry a slot lists — or that the slot's named implementation performs
+  — and that the definition also declares, the block keeps its caller's binding as code but takes its frame where it
+  runs. A definition can therefore discharge the very effect it declares (`describedAs`), and running a block performs
+  the entries it rides (§4).
+- **The compile track is unchanged**: its escape and cell intrinsics still find a frame by its type key, it threads
+  no environment, and a parameterised implementation gives way there to the overlay's parameterless one.
+
+### Built, in order
+
+| commit | what | gate |
+| --- | --- | --- |
+| `b83c8a90` | D20 step 1 — a block is used, never kept (rules 3, 4); closes §8 items 10, 11 | jars byte-identical |
+| `68cffe36` | D20 step 2 — a body gives its block only what it has (rule 5); closes §8 item 13 | jars byte-identical; eliot-test `d2dda86` |
+| `ee847c68` | D20 step 3 — a field holds a value (rule 6); closes §8 item 12 | jars byte-identical |
+| `5ccf5306` | option 5 spike — a slot's named implementation promises its clause rows; closes §8 item 16 | jars byte-identical |
+| `00315d14` | decision record: (iii) and 2(c) | — |
+| `ed57499a` | option 5 step 1 — an anonymous implementation takes parameters; `$parameters` declaration | jars byte-identical |
+| `a4e6ade6` | option 5 step 2 — `MonomorphicEffects`: entries at ground arguments; `dispatchedFrom` | jars byte-identical |
+| `1eb408ed` | option 5 step 3 — `EnvironmentThreading`; the walk rejects a `with`'s implementation used below a nearer binding of its clause effect | jars byte-identical |
+| `5cb9dd1b` | option 5 step 4 — the jvm control effects take frames; closes §8 items 5, 14, 15 and D19 | transcripts identical; 20/47 jars moved |
+| `8a13014b` | documents | — |
+| `ab56d2e5` | (b) — a ridden slot entry's frame is given where the block runs | transcripts identical; eliot-test 183/183 |
+| `8a8795a9` | D21 half 1 — (b) for a slot's named implementation; ridden entries compared whole | jars byte-identical to `ab56d2e5` |
+| `a5593006` | D21 designed | — |
+
+Against the pre-option-5 tree (`ba9fad1b`): every example's compile status, exit code and stdout identical; 20 of 47
+jars changed; jar bytes 647514 → 645235 (−0.4%), instructions 18751 → 19266 (+2.7%). The suite is green; eliot-test
+is 183/183; eliot-build's errors are unchanged (it does not build against `master` for unrelated reasons).
+
+### Decision log
+
+| date | decision | by | status | where |
+| --- | --- | --- | --- | --- |
+| 2026-10-05 | **D20**: effects are parameters (`uses`), `=> A` for lazy, a function parameter is a block never kept, a field holds a value | Robert | steps 1–3 built; steps 4–7 (surface, migration, documents) not | §11 D20 |
+| 2026-10-11 | **D20c** opened: storing an *open* computation | — | open; options 1–4 recorded | §11 D20c |
+| 2026-10-12 | **D20c option 5, as amended**: an implementation is code plus a runtime environment, passed and never searched for; closes D19; D20 rule 5 restated ("a body gives a default only by supplying its parameters") | Robert | built (runtime track) | §11 D20c |
+| 2026-10-12 | the four build questions: order (D20 1–3, then option 5 in today's syntax, then D20's surface); an anonymous implementation's parameters follow its pattern; the guarded-return read supplies a compile-track frame; parameterised ability implementations after the first cut | Robert | order followed; parameters built; compile-track frame **not** built; ability parameters not built | §11 D20c |
+| 2026-10-12 | **(iii)**: environments threaded after monomorphization, no `Env` binder; **2(c)**: a frame chosen by entry at ground arguments | Robert | built | §11 D20c, "The `transcriptOf` spike" |
+| 2026-10-12 | **(b)**: ride by code, give by frame | Robert | built; reverses §4's "running a block consumes nothing" for ridden entries | §11 D20c, "Decided … (b)" |
+| 2026-10-12 | **D21**: a function declares every effect it may perform, its blocks' included, by row variables ((a)) | Robert | half 1 built; the rest designed; D21a–c open | §11 D21 |
+
+### Decided in code while building, recorded for sign-off
+
+Each is fail-safe and reversible; none was a question the decisions above answered.
+
+1. **An implementation's parameters are part of its identity** (its pattern key), and **on the compile track a
+   parameterised implementation gives way to the overlay's parameterless one** of the same pattern. The compile track
+   borrows the runtime track's sources, and a runtime value's signature is computed on the compile track, so the
+   jvm `Abort` (with a frame) and the overlay's (without) must not merge into one value. *Do not relax the layer
+   merge's signature equality instead: that was tried and hands the jvm clause the overlay's signature.*
+2. **The platform primitives give the frame**, not the dischargers' bodies: `escapeInternal`/`withCellInternal` are
+   body-less, so they give their slot's default and now its environment too. The amendment's `p with State(cell)` is
+   therefore not needed by the platform and is unbuilt.
+3. **An `implement` clause receives no frame for an entry it only carries for a sibling** (`ImplementationRows`'
+   union): the binder keeps its position, but has no constraint (`FunctionDefinition.carriedEffects`).
+4. **An effect an ability member declares is per call** (`FileSystem.readFile`'s `{Throw[IoError]}`): its frame comes
+   from the call site, and an implementation's environment holds only what a clause performs that its member does not
+   declare.
+5. **Supplied-versus-rides is decided as the declaration spells it**, never at ground arguments: `raising[E](…, body:
+   {Throw[E]} Unit): {Throw[AssertionError]} Unit` supplies `Throw[E]` even at `E = AssertionError`.
+6. **Two frames of one entry at the same scope level are a use-site error**; across levels the innermost wins.
+7. **A body `with`'s named implementation is not a frame in scope** (the walk erases the `with`), so its frame is built
+   where it is used; to keep that sound, the walk rejects such a use below a nearer binding of an effect its clauses
+   perform.
+8. **The walk still keys bindings by ability** (§8 item 17); the threading keys frames by entry and reports any
+   disagreement between the two.
+9. **Frame types are public, body-less, constructor-less types** named apart per module (`ThrowFrame`, `StateCell`, …).
+   `termination/PurityGuardTest` is a name blocklist and does not list them; the property it guards — no public cell —
+   still holds, because only the private leaves make or read one.
+10. **A slot's named implementation's clause effects are promised to the block** (the spike): supplied ones as the
+    default, ridden ones at the definition's own binding.
+
+### Open decisions
+
+- **D21a** — writing a row variable from the call's own arguments under standing rule 3. Recommendation: allow it, as a
+  new resolution-order step beside A6, with the union rule spelled out.
+- **D21b** — reversing D20's "a block closes over effects like a closure" (and §1 rule 4's predicate, §2.2's "the walk
+  continues outward"). Recommendation: yes; it is what D21 means.
+- **D21c** — D21 before D20's surface, in today's syntax. Recommendation: yes, and decide D20b once for both.
+- **D20a** — naming a set of effects; under D21 a row-valued alias over the row variable's binder kind.
+- **D20b** — a dual-parse window or a flag day for the surface, and now for D21's migration.
+- **D20c, open computations** — whether Eliot stores a computation whose effects are handled where it runs; options 1–4,
+  with option 4 corrected and its positivity rule. Undecided; nothing depends on it.
+- **D3** — `~` and `&` in user space. Blocked on meaning, as before.
+- **The compile track's frames.** Decided in principle (the guarded-return read supplies a frame); the mechanism —
+  whether the evaluator threads environments itself — is undesigned.
+
+### Known gaps, all loud or harmless
+
+- §8 items 1 (an unused `with` is a silent no-op), 4 (`runThrow("no failure")` accepted when spelled) and 6 (a row alias
+  in return position only) are open as before; item 17 is settled for frames and open for the walk.
+- The compile track still finds a frame by its type: items 14 and 15 are closed on the runtime track only, and a guarded
+  return still cannot carry its author's message (§7 item 4).
+- Named implementations take no parameters, `with` takes no arguments, and ability implementations take no
+  parameters.
+- An `effect` member with a body that performs its own effect gets no frame for it (its own entry is not recorded as
+  received): the threading reports it, it never guesses.
+- A *generic* named implementation on a slot reads its clause entries at default type arguments; if that does not
+  monomorphize, the build fails rather than miscompiles.
+- Part I still states some retired rules; its opening note lists them until D20 step 7 rewrites it.
+- eliot-test must be released before an eliot release carrying D20 step 2 or option 5.
+
+### The plan, in order
+
+1. **D21a–c** — Robert's.
+2. **D21, in today's syntax** (assuming D21c as recommended):
+   1. *The row variable.* A generic binder used inside a row (`{E}`, `{Abort, E}`), marked `E: Row` by the desugar and
+      erased with the other marks; the parser and the desugar accept it beside ordinary entries.
+   2. *Writing it.* At each call the walk writes the row variable from the call's own arguments — a lambda's
+      outside effects, a call's declared row, a parameter's declared list — as their union; the scope check charges
+      each of its entries to the caller. Probes first, as tests.
+   3. *Closing slots.* The walk stops at a slot: an entry the slot does not list is "this block performs X, which its
+      slot does not list". `{}` performs nothing; a function-typed parameter's codomain row is its list.
+   4. *Threading it.* The row variable's ground value expands to entries in `MonomorphicEffects`, so its frames are
+      received, passed and given like any entry's.
+   5. *Migrating the base and the jvm layer* — some 50–80 higher-order definitions and 22 `{}` slots across the four
+      repositories, `if`/`else`/`match`/`fold`/`catch`/`foreach` among them. Gate: every example's transcript
+      identical.
+   6. *eliot-test and eliot-build*, and their releases.
+3. **Option 5's remainder**: `with Ability(args)` and user defaults with parameters; named implementations with
+   parameters (stateful doubles, `with scripted(List("Bob"))`); parameterised ability implementations; compile-track
+   frames and the guarded-return read's.
+4. **D20's surface** (work-list steps 4–6) — `uses`, `=> A`, D21's row variables in that spelling, D20a, by D20b's
+   answer.
+5. **Documents** (D20 step 7) — Part I rewritten to the model as built, the CLAUDE.md cornerstone, the user docs'
+   effect chapters and the `eliot-code` skill.
+
+**How each step is gated** (§10): a mechanical change keeps every example jar byte-identical; a semantic change keeps
+every example's compile status, exit code and stdout identical and states its size difference; each closes its
+probes as tests; eliot-test stays green and eliot-build's error list unchanged. The pre-option-5 baseline is
+`ba9fad1b`; sweeps are `scripts/example-sweep.sh`.
 
 ## 8. Where the tree diverges from Part I
 
