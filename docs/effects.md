@@ -2266,6 +2266,65 @@ a rowless arrow slot) closed 2026-09-08 as rule 4's third bullet. **D7** (the po
 closed 2026-09-10, retired by measurement — §3.3 and §12. **D13** (every `eliot-test` case built with its
 handlers already applied) closed 2026-09-08, yes — `Mock` is `with` on a discharge word's slot type.
 
+### D21 — a function declares every effect it may perform, its blocks' included
+
+**Chosen 2026-10-12 (Robert): "declare *all* effects a function might do, parameter or not — what most people would
+expect", by row variables (option (a)). Half 1 is built (`8a8795a9`); the rest is designed here and not built.** Three
+sub-decisions below are his before the build starts, because each reverses or narrows a decided rule.
+
+**What changes for a reader.** Today a block captures whatever its caller has, like a closure captures a variable
+(D20's "an effect is resolved like a variable"), so `guarded(body: {} Unit): {Console} Unit` says nothing about the
+`raise` its caller may put in `body`. Under D21 a signature is the whole story: a block may perform only what its slot
+lists, and every listed entry is either given by the function (a discharger) or declared by it.
+
+```eliot
+def guarded(body: {Throw[String]} Unit): {Throw[String], Console} Unit = …       -- must say so now
+def foreach[A, E](xs: List[A], f: A => {E} Unit): {E} Unit                        -- E: whatever f does
+def if[T, E](condition: Bool, value: {E} T): {Abort, E} T
+def catch[E, A, R](computation: {Throw[E], R} A, onError: E => {R} A): {R} A    -- R rides through both
+```
+
+**The three parts.**
+
+1. **Half 1 — built.** An entry a slot lists, or that a slot's named implementation performs, and that the function
+   also declares, keeps the caller's code and takes its frame where the block runs ((b)); running the block performs
+   it (§4). Ridden entries are compared whole.
+2. **Closed slots.** The walk stops at a slot: an entry the slot does not list is "this block performs X, which its
+   slot does not list" in the *caller*, never a capture of the caller's binding. `{}` means "performs nothing". A
+   function-typed parameter (a D20 block) closes the same way, its codomain row being its list.
+3. **Row variables.** A binder `E` standing for a set of entries, usable in a row beside ordinary entries (`{Abort,
+   E}`). Its value at a call is **written by the walk from that call's own arguments**: a lambda at an `E` position
+   gives the entries its body performs from outside itself (what D20's walk already computes to seal a kept lambda); a
+   call gives its callee's declared row; a parameter reference gives that parameter's declared list. Several `E`
+   positions give the union. The value is a ground row — the bindings in order — so monomorphization specialises on it
+   like any binding, the scope check charges each of its entries to the caller, and the environment threading passes
+   their frames as it passes any received entry's. Nothing new reaches the checker: `E` is a phantom binder of kind
+   `Type`, as every binding is.
+
+**What it costs.** Every higher-order definition gains a row variable: by a rough count 50–80 definitions across the
+standard library, the jvm layer, eliot-test and eliot-build, plus some 22 `{}` slots. No call site changes — `E` is
+written, not spelled — but a call to a higher-order function that is *not* annotated, with an effectful argument,
+becomes an error, so the migration is a flag day per repository (D20b's question again). The jars change wherever a
+specialisation now carries a row.
+
+**The sub-decisions, each Robert's.**
+
+- **D21a — is writing `E` from the call's arguments within standing rule 3?** It reads only the definition being
+  walked (§3.2) and no metavariable, join or unification is involved; but rule 3's "a rule that inspects a sibling
+  argument's expression shape is inference" can be read against deriving `E` from a lambda's *body*. Recommendation:
+  yes, stated as a new resolution-order step — a row variable is written from the call's arguments, as a supplied
+  entry's type arguments already are (A6) — with the union rule spelled out so nothing is ordering-sensitive.
+- **D21b — reverse D20's "a block closes over effects like a closure".** That sentence is D20's model; D21 replaces
+  it with "a block performs what its slot lists". §1 rule 4's predicate and §2.2's "the walk continues outward" go with
+  it. Recommendation: yes; it is what the choice of D21 means.
+- **D21c — order against D20's surface.** D21 changes every higher-order signature, and D20 steps 4–6 change every
+  signature's spelling. Recommendation: land D21 in today's syntax first (`[E]` with `{E}` in rows), so the surface
+  migration stays a byte-identical rename afterwards, and decide D20b (window or flag day) once, for both.
+
+**Spelling, proposed:** a row variable is an ordinary generic binder used inside a row (`{E}`); the desugar marks it
+`E: Row` the way a binding binder is marked `Implementation[A]`, and the mark is erased with the others. D20a (naming
+a set of effects) becomes a row-valued alias over the same binder kind.
+
 ---
 
 # Part III — What is closed, and provenance
