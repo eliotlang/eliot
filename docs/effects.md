@@ -1993,21 +1993,22 @@ limit), option 3 (blocked on recursive data), and option 4 (a reversal of D20 ru
 above outstanding, read-site specialisation in place of the constructor product, and the positivity rule).
 Until it is decided, D20's answer is option 3's partial form, or a hand-written `data` and interpreter.
 
-Option 5, as amended, is decided (above). Left before it is built:
+Option 5, as amended, is decided (above). Four questions about building it were **decided 2026-10-12 (Robert)**:
 
-- **Its order against D20's surface.** It needs D20 steps 1–3 first. After those, it either comes next, written
-  in today's syntax, or after steps 4–6, written once in the new syntax but waiting on D20a and D20b. Either order
-  keeps the two gates apart: the surface migration stays byte-identical, and option 5 is judged on transcripts.
-- **An anonymous implementation's parameter list.** `implement[S] State[S](cell: Cell[S])` is a placeholder.
-- **What gives a signature's control effect.** A guarded return's `if`/`else`/`raise` binds `Default` unchecked
-  today (`uncoveredDefaults`), and that default now needs a frame. The candidate: the guarded-return read
-  (`GuardDischargeResolver`) is the discharger, supplying a compile-track frame.
-- **Parameterised ability implementations** (`with byKey(…)`) in the first cut, or later. Later is proposed: they
-  bring compile-track evaluation and D19's undiagnosed constrained-implementation codegen failure.
-- **The marker grows.** The environment's binder makes `Implementation[A]` something like `Implementation[A, Env]`,
-  which the CLAUDE.md cornerstone describes; a mechanism choice, noted so it is not a surprise.
-- **The spike**, not a decision: a slot's `with` whose double performs a control effect (`transcriptOf`, under
-  "Where to measure first"). A fallback is chosen only if it fails.
+- **Order.** D20 steps 1–3 first, then option 5, written in today's syntax, then D20's surface (steps 4–6). The two
+  gates stay apart: option 5 is judged on transcripts, and the surface migration stays byte-identical.
+- **An anonymous implementation's parameters** follow its pattern: `implement[S] State[S](cell: Cell[S])`, supplied
+  as `with State(cell)`.
+- **A signature's control effect** (a guarded return's `if`/`else`/`raise`, which binds `Default` unchecked today
+  through `uncoveredDefaults`) is given by the guarded-return read, `GuardDischargeResolver`, acting as the
+  discharger and supplying a compile-track frame.
+- **Parameterised ability implementations** (`with byKey(…)`) come after the first cut: they bring compile-track
+  evaluation and sit on D19's undiagnosed constrained-implementation codegen failure.
+
+Not decisions: **the marker grows** (the environment's binder makes `Implementation[A]` something like
+`Implementation[A, Env]`, which the CLAUDE.md cornerstone describes), and **the spike** comes first in the build: a
+slot's `with` whose double performs a control effect (`transcriptOf`, under "Where to measure first"). A fallback is
+chosen only if it fails.
 
 #### Reversals this records
 
