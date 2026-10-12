@@ -82,8 +82,22 @@ object BindingWriter {
       ability: AbilityFQN,
       term: OperatorResolvedExpression,
       received: Boolean = false,
-      captured: Boolean = false
+      captured: Boolean = false,
+      clauses: Map[AbilityFQN, Option[Long]] = Map.empty,
+      serial: Long = Binding.nextSerial()
   )
+
+  /** A binding's [[Binding.serial]] tells two bindings apart however alike their terms are, and survives the copies
+    * [[Scope.seal]] makes. [[Binding.clauses]] holds, for a body `with`'s implementation, the serial of the binding in
+    * scope at the `with` for each effect its clauses perform: the environment threading builds that implementation's
+    * frame where it is used, from the frames in scope there, so they must be the ones at the `with`
+    * ([[Writer.checkClauses]]).
+    */
+  private object Binding {
+    private val serials = new java.util.concurrent.atomic.AtomicLong()
+
+    def nextSerial(): Long = serials.incrementAndGet()
+  }
 
   /** What a row-typed parameter's declaration promises its block for one ability (D20 rule 5).
     *
@@ -502,9 +516,12 @@ object BindingWriter {
         case WithBinding(subject, implementation) =>
           abilityOf(implementation.value, universe) match {
             case Some(ability) =>
+              val clauses = clauseAbilities(implementation.value, universe).map(clause =>
+                clause -> scope.binding(clause).map(_.serial)
+              )
               walk(
                 subject,
-                scope.bind(Binding(ability, boundImplementation(implementation, scope))),
+                scope.bind(Binding(ability, boundImplementation(implementation, scope), clauses = clauses.toMap)),
                 kept
               )
             case None          =>
@@ -958,6 +975,7 @@ object BindingWriter {
         case Some(binding) =>
           if (isEffect) use(binding, at)
           else consume(binding)
+          checkClauses(binding, at, scope)
           binding.term
         case None          =>
           if (isEffect) reportUncovered(ability, at, scope)
@@ -981,6 +999,23 @@ object BindingWriter {
           )
         )
       else consume(binding)
+
+    /** A body `with`'s implementation used below a nearer binding of an effect its clauses perform. Its clauses were
+      * written to perform that effect on the binding at the `with`, but the frame they would reach at runtime is the
+      * nearer one: the implementation's frame is built where it is used (effects D20c option 5), and a discharge between
+      * the `with` and the use is exactly what that would intercept.
+      */
+    private def checkClauses(binding: Binding, at: Sourced[?], scope: Scope): Unit =
+      binding.clauses.toSeq.sortBy(_._1.abilityName).foreach { case (clause, serial) =>
+        if (scope.binding(clause).map(_.serial) != serial)
+          violations += Violation(
+            at.as(
+              s"The implementation of '${binding.ability.abilityName}' bound by the `with` around this performs " +
+                s"'${clause.abilityName}', and a nearer binding of '${clause.abilityName}' stands between them."
+            ),
+            Seq(s"Move the `with` inside the nearer binding of '${clause.abilityName}', or that binding outside it.")
+          )
+      }
 
     private def reportUncovered(ability: AbilityFQN, at: Sourced[?], scope: Scope): Unit =
       if (!scope.uncoveredDefaults)
