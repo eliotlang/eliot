@@ -254,6 +254,10 @@ subset of its data.
     is wrapped in a lambda, a reference to one of this definition's row-typed parameters is applied to `unit` — wrap and
     apply are inverse, so a pass-through is an η-expansion); and erase the `with` nodes. The walk **is** the pre-mono
     scope check: an effect with no covering declaration is the "performs but does not declare" error at that reference.
+    It also enforces D20 rules 3–4, built ahead of D20's surface: a function-typed parameter is a **block**, legal only
+    called or handed straight to a definition's function parameter, and a lambda in a *kept* position (field, generic
+    slot, result, `val`) is walked sealed, so it may use no block and no effect from around it. `match` arms are
+    blocks by a read-through of `handleCases`'s selector, as `.` is read through.
     `row/RowChecker` is now just the demand-driven `Universe` the walk consults (its `onMiss` is what lets a
     demand-driven consumer avoid guessing the consulted set); `row/RunBoundaryFunctions` is the platform run-boundary
     predicate, where every effect's chain ends and an uncovered entry binds the two-site `Default` instead. See the

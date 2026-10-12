@@ -22,11 +22,17 @@ object RowChecker {
     * for — every consultation of a name the map does not hold reports it, so the processor can fetch the reported names
     * and re-run until nothing is missing. Without it a demand-driven consumer would have to guess the consulted set,
     * and a wrong guess silently leaves a binder unwritten.
+    *
+    * `constructors` are the `data` value constructors among `values` — read off
+    * [[com.vanillasource.eliot.eliotc.module.fact.ModuleConstructors]], the one owner of that question. A constructor's
+    * parameters are fields, and a field holds a value, so a block passed there is kept (D20 rule 2). A universe that
+    * names none treats every callee as a definition, which only ever accepts more.
     */
   case class Universe(
       values: Map[ValueFQN, OperatorResolvedValue],
       runBoundaries: Set[ValueFQN] = Set.empty,
-      onMiss: ValueFQN => Unit = _ => ()
+      onMiss: ValueFQN => Unit = _ => (),
+      constructors: Set[ValueFQN] = Set.empty
   ) {
 
     /** Consult a *referenced* name (a callee, a type alias, a run boundary), reporting a miss. Reading the value

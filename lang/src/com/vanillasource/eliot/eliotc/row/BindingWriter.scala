@@ -44,10 +44,13 @@ import scala.collection.mutable
   * recorded ([[com.vanillasource.eliot.eliotc.ast.fact.AbilityMembers]]) and for an ordinary definition is what its
   * `{ … }` says. A `~` constraint's ability is in no row, so it defaults. Nothing keys on a name or a shape.
   *
-  * The walk crosses a lambda boundary iff the lambda's slot has a row (D5, §9.4): a lambda at a rowless arrow may bind
-  * and discharge locally but never reaches the enclosing declarations. That falls out of the walk rather than being a
-  * rule of its own — a rowless slot is not entered with a slot scope, and a lambda's own parameter shadows a thunk of
-  * the same name.
+  * **A block is used, never kept** (D20 rules 3 and 4, `docs/effects.md` §11). A function-typed parameter of a
+  * definition is a *block*: code its caller wrote, seeing the caller's effects. The walk carries whether each position
+  * is *kept* — a field, a generic slot, a result, a `val` — and a block may stand only where it is not: called, or
+  * handed straight to another definition's function-typed parameter. A lambda in a kept position is walked *sealed*:
+  * any block of this definition or any effect binding from outside it would be carried into a value that runs after
+  * the scope it came from is gone, so both are reported. A lambda handed to a definition's function parameter is a
+  * block itself, and sees the effects around it.
   */
 object BindingWriter {
 
@@ -77,16 +80,26 @@ object BindingWriter {
     *   Whether this is the definition's own **received** binding — resolution-order step 2, a row entry its caller
     *   fills. Only these are tracked as consumed ([[Writer.consumed]]), because only a declared entry can be declared
     *   for nothing.
+    * @param captured
+    *   Whether this binding is in scope only from *outside* a lambda that is kept as a value (D20 rule 4). Using it
+    *   there would carry the binding into a value that runs after the scope it came from is gone.
     */
   private case class Binding(
       ability: AbilityFQN,
       term: OperatorResolvedExpression,
       byWith: Boolean = false,
-      received: Boolean = false
+      received: Boolean = false,
+      captured: Boolean = false
   )
 
   /** The lexical environment at one point. `bindings` is innermost-first, so a nearer `with` shadows an outer one for
     * the same ability; `thunks` are the row-typed parameters in scope, whose references apply.
+    *
+    * `functions` are this definition's function-typed parameters — its **blocks** (D20 rule 2) — with the number of
+    * arguments each takes; `captured` are the blocks, of either kind, in scope only from outside a lambda kept as a
+    * value. A block may be called or passed on, never kept (D20 rule 3). Both are empty, and `checksBlocks` false,
+    * wherever the rules do not apply: a signature, and a platform run boundary. `selectors` are the `match` selector
+    * parameters in scope, whose arguments are the arms ([[Writer.walkArgument]]).
     *
     * @param uncoveredDefaults
     *   Whether an **effect** with nothing in scope binds `Default` instead of being reported. True in exactly two
@@ -94,9 +107,29 @@ object BindingWriter {
     *   boundary**, where every effect's chain ends (§9.5), and a **signature**, whose `raise`/`abort` is the guard
     *   channel's vocabulary and is discharged by the guarded-return read, not performed at runtime at all.
     */
-  private case class Scope(bindings: Seq[Binding], thunks: Set[String], uncoveredDefaults: Boolean = false) {
+  private case class Scope(
+      bindings: Seq[Binding],
+      thunks: Set[String],
+      uncoveredDefaults: Boolean = false,
+      functions: Map[String, Int] = Map.empty,
+      captured: Set[String] = Set.empty,
+      checksBlocks: Boolean = false,
+      selectors: Set[String] = Set.empty
+  ) {
     def bind(binding: Binding): Scope = copy(bindings = binding +: bindings)
-    def shadow(name: String): Scope   = copy(thunks = thunks - name)
+    def shadow(name: String): Scope   =
+      copy(
+        thunks = thunks - name,
+        functions = functions - name,
+        captured = captured - name,
+        selectors = selectors - name
+      )
+
+    /** The scope inside a lambda kept as a value: everything in scope so far is outside it. */
+    def seal: Scope =
+      if (checksBlocks)
+        copy(bindings = bindings.map(_.copy(captured = true)), captured = captured ++ thunks ++ functions.keySet)
+      else this
 
     /** This scope with `abilities` bound to `Default` — what a slot's `with` resolves its own bindings against, since
       * the scope that covers them is the callee's and not this one.
@@ -125,15 +158,27 @@ object BindingWriter {
   def write(orv: OperatorResolvedValue, universe: RowChecker.Universe, atBoundary: Boolean = false): Written = {
     val writer     = new Writer(universe)
     val received   = receivedBindings(orv, universe)
-    val scope      = Scope(received, thunkParameters(orv), uncoveredDefaults = atBoundary)
+    val thunks     = thunkParameters(orv)
+    val scope      = Scope(
+      received,
+      thunks,
+      uncoveredDefaults = atBoundary,
+      functions = functionParameters(orv, thunks, universe),
+      checksBlocks = !atBoundary
+    )
     val view       = SignatureView.of(orv.signature)
     val body       = Option
       .when(writableBody(orv))(orv.runtime)
       .flatten
-      .map(writer.walkDefinition(_, scope, view.binders.size + view.parameters.size))
+      .map(writer.walkDefinition(_, scope, view.binders.size + view.parameters.size, kept = true))
     val overstated = body.filterNot(_ => atBoundary).toSeq.flatMap(_ => overDeclared(orv, writer.consumed.toSet))
     val signature  =
-      writer.walkDefinition(orv.signature, Scope(received, Set.empty, uncoveredDefaults = true), view.binders.size)
+      writer.walkDefinition(
+        orv.signature,
+        Scope(received, Set.empty, uncoveredDefaults = true),
+        view.binders.size,
+        kept = true
+      )
     Written(
       orv.copy(runtime = body.orElse(orv.runtime), signature = signature),
       writer.violations.toSeq,
@@ -241,6 +286,64 @@ object BindingWriter {
     orv.effectRow.parameterEffects.flatMap(pe => valueParamNames.lift(pe.parameterIndex)).toSet
   }
 
+  /** This definition's **blocks** of function type (D20 rule 2), each with the number of arguments it takes: every
+    * value parameter whose declared type is a function, except a row-typed one, which is a thunk and runs when
+    * mentioned.
+    *
+    * The names are the body's leading lambdas past the generic binders (as [[valueParameterCount]] reads them — a
+    * binder the desugar minted into the signature has no lambda in the body), matched to the declared parameters from
+    * the front: a body returning a lambda (`compose(f, g) = a -> f(g(a))`) has more leading lambdas than parameters, and
+    * the extra ones are the result's, not the definition's.
+    */
+  private def functionParameters(
+      orv: OperatorResolvedValue,
+      thunks: Set[String],
+      universe: RowChecker.Universe
+  ): Map[String, Int] = {
+    val view        = SignatureView.of(orv.signature)
+    val binderNames = view.binders.map(_.name.value).toSet
+    val (names, _)  = RowChecker.peelBinders(orv.runtime.map(_.value).getOrElse(view.returnType.value))
+    names
+      .dropWhile(binderNames.contains)
+      .zip(view.parameters)
+      .map { case (name, tpe) => name -> functionArity(tpe.value, universe) }
+      .filter { case (name, arity) => arity > 0 && !thunks.contains(name) }
+      .toMap
+  }
+
+  /** Whether a declared parameter type is a function — a block, D20 rule 2. */
+  private def isFunctionType(tpe: OperatorResolvedExpression, universe: RowChecker.Universe): Boolean =
+    functionArity(tpe, universe) > 0
+
+  /** How many arguments a declared type takes before it stops being a function, read through **one level of alias
+    * expansion** at each step — `A => B` is the alias `=>[A, B] = Function[A, B]` — which is all a declaration read is
+    * allowed (`docs/effects.md` §3.2).
+    */
+  private def functionArity(tpe: OperatorResolvedExpression, universe: RowChecker.Universe): Int =
+    asArrow(tpe).orElse(expandAlias(tpe, universe).flatMap(asArrow)) match {
+      case Some((_, codomain)) => 1 + functionArity(codomain.value, universe)
+      case None                => 0
+    }
+
+  /** A type alias applied to its arguments, with the arguments substituted into its body; [[None]] for anything else.
+    * An infix alias such as `=>` resolves in the value namespace, so the alias is recognised by having a body to expand,
+    * not by its qualifier.
+    */
+  private def expandAlias(
+      tpe: OperatorResolvedExpression,
+      universe: RowChecker.Universe
+  ): Option[OperatorResolvedExpression] =
+    spine(tpe) match {
+      case (ValueReference(name, _), args) if args.nonEmpty =>
+        universe.lookup(name.value).flatMap(_.runtime).flatMap { body =>
+          val (binders, inner) = RowChecker.peelBinders(body.value)
+          Option.when(binders.size === args.size)(binders.zip(args).foldLeft(inner) { case (acc, (binder, arg)) =>
+            OperatorResolvedExpression.substitute(acc, binder, arg.value)
+          })
+        }
+      case _                                                 => None
+    }
+
   /** A definition's **binding binders**, as `(index, ability)` pairs in index order — read off the **marks** its own
     * declaration carries, and off nothing else.
     *
@@ -315,12 +418,15 @@ object BindingWriter {
     def walkDefinition(
         expr: Sourced[OperatorResolvedExpression],
         scope: Scope,
-        remaining: Int
+        remaining: Int,
+        kept: Boolean
     ): Sourced[OperatorResolvedExpression] =
       expr.value match {
         case FunctionLiteral(paramName, paramType, body) if remaining > 0 =>
-          expr.as(FunctionLiteral(paramName, paramType.map(unmarked), walkDefinition(body, scope, remaining - 1)))
-        case _                                                           => walk(expr, scope)
+          expr.as(
+            FunctionLiteral(paramName, paramType.map(unmarked), walkDefinition(body, scope, remaining - 1, kept))
+          )
+        case _                                                           => walk(expr, scope, kept)
       }
 
     /** Erase a binding binder's **mark**: `Impl: Implementation[Console]` becomes the ordinary `Impl: Type` it is
@@ -336,24 +442,52 @@ object BindingWriter {
       if (markedAbility(paramType.value).isDefined) paramType.as(ValueReference(paramType.as(WellKnownTypes.typeFQN)))
       else paramType
 
-    def walk(expr: Sourced[OperatorResolvedExpression], scope: Scope): Sourced[OperatorResolvedExpression] =
+    /** Walk one expression. `kept` says whether its value may outlive the call it is written in — a field, a generic
+      * slot, a result, a `val` — as opposed to being called, or handed to a definition's function parameter, where it is
+      * a **block** (D20 rules 3 and 4).
+      */
+    def walk(
+        expr: Sourced[OperatorResolvedExpression],
+        scope: Scope,
+        kept: Boolean
+    ): Sourced[OperatorResolvedExpression] =
       expr.value match {
         // A `with` puts its implementation in scope for its subject, innermost first, and disappears.
         case WithBinding(subject, implementation) =>
           abilityOf(implementation.value, universe) match {
             case Some(ability) =>
-              walk(subject, scope.bind(Binding(ability, boundImplementation(implementation, scope), byWith = true)))
+              walk(
+                subject,
+                scope.bind(Binding(ability, boundImplementation(implementation, scope), byWith = true)),
+                kept
+              )
             case None          =>
               violations += Violation(implementation.as("This name is not an implementation."))
-              walk(subject, scope)
+              walk(subject, scope, kept)
           }
+
+        // A block of this definition, written inside a lambda that is kept: the lambda keeps the block.
+        case ParameterReference(name) if scope.captured.contains(name.value) =>
+          violations += keptBlock(name, scope)
+          if (scope.thunks.contains(name.value)) expr.as(FunctionApplication(expr, unitValue(expr))) else expr
 
         // A reference to one of this definition's row-typed parameters is a thunk: running it is applying it.
         case ParameterReference(name) if scope.thunks.contains(name.value) =>
           expr.as(FunctionApplication(expr, unitValue(expr)))
 
+        case ParameterReference(name) if kept && scope.functions.contains(name.value) =>
+          violations += keptBlock(name, scope)
+          expr
+
+        // A lambda kept as a value sees nothing from around it but values (D20 rule 4). A curried chain of lambdas is
+        // one function, so the inner ones share the outer one's position.
         case FunctionLiteral(paramName, paramType, body) =>
-          expr.as(FunctionLiteral(paramName, paramType, walk(body, scope.shadow(paramName.value))))
+          val inner = (if (kept) scope.seal else scope).shadow(paramName.value)
+          val curry = body.value match {
+            case _: FunctionLiteral => kept
+            case _                  => true
+          }
+          expr.as(FunctionLiteral(paramName, paramType, walk(body, inner, curry)))
 
         case _: IntegerLiteral | _: StringLiteral | _: ParameterReference => expr
 
@@ -362,12 +496,59 @@ object BindingWriter {
           head match {
             case ValueReference(callee, existing) =>
               val written  = writeBindings(expr.as(head), callee.value, existing, scope, args)
-              val adjusted = args.zipWithIndex.map { case (arg, index) => walkArgument(arg, callee.value, index, scope) }
+              val adjusted = argumentsKept(callee.value, args.size, kept).zip(args).zipWithIndex.map {
+                case ((argumentKept, arg), index) => walkArgument(arg, callee.value, index, scope, argumentKept)
+              }
               runStored(expr.as(applyChain(written, adjusted)), head, args, scope)
             case _                                =>
-              expr.as(applyChain(walk(expr.as(head), scope), args.map(walk(_, scope))))
+              head match {
+                // A block applied to fewer arguments than it takes is a function still holding the block.
+                case ParameterReference(name) if kept && scope.functions.get(name.value).exists(_ > args.size) =>
+                  violations += keptBlock(name, scope)
+                case _                                                                                         => ()
+              }
+              val arms = head match {
+                case ParameterReference(name) => scope.selectors.contains(name.value)
+                case _                        => false
+              }
+              expr.as(applyChain(walk(expr.as(head), scope, kept = false), args.map(walk(_, scope, kept = !arms))))
           }
       }
+
+    /** Whether each of a call's arguments is kept: everything except an argument at a **definition's** function-typed
+      * parameter, which is a block. A constructor's parameters are fields and a row-typed slot hands its payload back
+      * as a value, so neither is a block. A call applied to fewer arguments than its callee takes is itself a function
+      * holding its arguments, so when that function is kept, so are they.
+      *
+      * A callee the universe does not hold failed upstream and has reported why; its arguments are taken as blocks,
+      * which only ever accepts more.
+      */
+    private def argumentsKept(callee: ValueFQN, count: Int, kept: Boolean): Seq[Boolean] =
+      universe.lookup(callee) match {
+        case None      => Seq.fill(count)(false)
+        case Some(orv) =>
+          val taken      = valueParameterCount(orv)
+          val parameters = SignatureView.of(orv.signature).parameters
+          val holds      = kept && count < taken
+          (0 until count).map { index =>
+            val block = !universe.constructors.contains(callee) && index < taken && rowSlot(orv, index).isEmpty &&
+              parameters.lift(index).exists(tpe => isFunctionType(tpe.value, universe))
+            !block || holds
+          }
+      }
+
+    /** A block of this definition kept where only a value may stand (D20 rule 3). */
+    private def keptBlock(name: Sourced[String], scope: Scope): Violation =
+      if (scope.thunks.contains(name.value))
+        Violation(
+          name.as(s"'${name.value}' is a suspended parameter: it can be run or passed on, not kept."),
+          Seq("Run it here, or pass it directly to a parameter that takes a computation.")
+        )
+      else
+        Violation(
+          name.as(s"'${name.value}' is a function parameter: it can be called or passed on, not kept."),
+          Seq("Call it here, or pass it directly to a function parameter of a definition.")
+        )
 
     /** A saturated call to a value whose declared return is a **stored computation** — a `data` field accessor (A7,
       * `docs/effects.md` §9.5 "Storage") — runs it: the value it hands back is the thunk the field holds, and running a
@@ -446,7 +627,7 @@ object BindingWriter {
                 "and let it propagate."
             )
           )
-        case Some(binding)                    => consume(binding)
+        case Some(binding)                    => use(binding, at)
       }
 
     /** One actual, at the callee's parameter `index`. A row-typed slot is a thunk, so the actual is wrapped — and the
@@ -456,10 +637,27 @@ object BindingWriter {
         arg: Sourced[OperatorResolvedExpression],
         callee: ValueFQN,
         index: Int,
-        scope: Scope
+        scope: Scope,
+        kept: Boolean
     ): Sourced[OperatorResolvedExpression] =
       universe.lookup(callee).flatMap(orv => rowSlot(orv, index).map(orv -> _)) match {
-        case None                    => walk(arg, scope)
+        case None                    =>
+          arg.value match {
+            // The arms of a `match` run inside it, as `if`'s do, so they are blocks. `match` lowers to
+            // `handleCases(scrutinee, $selector -> $selector(arm₁)…(armₙ))`, which puts the arms at the selector rather
+            // than at a definition's parameter; this reads through it, as [[calledSpine]] reads through `.`.
+            case FunctionLiteral(selector, selectorType, body) if WellKnownTypes.isPatternMatchHandleCases(callee) =>
+              val inside = scope.shadow(selector.value)
+              arg.as(
+                FunctionLiteral(
+                  selector,
+                  selectorType,
+                  walk(body, inside.copy(selectors = inside.selectors + selector.value), kept = true)
+                )
+              )
+            case _                                                                                              =>
+              walk(arg, scope, kept)
+          }
         case Some((calleeOrv, slot)) =>
           val name    = thunkParameter
           val inside  = suppliedScope(calleeOrv, index, slot, scope, arg).shadow(name)
@@ -467,7 +665,7 @@ object BindingWriter {
             FunctionLiteral(
               arg.as(name),
               Some(arg.as(ValueReference(arg.as(WellKnownTypes.unitTypeFQN)))),
-              walk(arg, inside)
+              walk(arg, inside, kept)
             )
           )
       }
@@ -728,12 +926,31 @@ object BindingWriter {
     ): OperatorResolvedExpression =
       scope.binding(ability) match {
         case Some(binding) =>
-          consume(binding)
+          if (isEffect) use(binding, at)
+          else consume(binding)
           binding.term
         case None          =>
           if (isEffect) reportUncovered(ability, at, scope)
           defaultBinding(at)
       }
+
+    /** Consume an **effect's** binding at `at`, unless it is in scope only from outside a lambda kept as a value: a
+      * kept function runs after the scope that bound the effect is gone, so it may use none from around it (D20 rule
+      * 4). Binding and discharging one inside the lambda is fine, since that binding is the lambda's own.
+      */
+    private def use(binding: Binding, at: Sourced[?]): Unit =
+      if (binding.captured)
+        violations += Violation(
+          at.as(
+            s"This function is kept as a value, so it cannot use the effect '${binding.ability.abilityName}' from " +
+              "around it."
+          ),
+          Seq(
+            "Pass the function directly to a function parameter of a definition, or bind and discharge the effect " +
+              "inside it."
+          )
+        )
+      else consume(binding)
 
     private def reportUncovered(ability: AbilityFQN, at: Sourced[?], scope: Scope): Unit =
       if (!scope.uncoveredDefaults)

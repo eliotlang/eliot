@@ -823,7 +823,8 @@ D20 rule that does it. The witnesses are the five programs below, which become D
    for a lambda written at the slot. So the tree already treats every function parameter as a block, just
    without the restriction that makes that safe (item 10). D20 makes this the rule (rule 2) rather than the
    accident, and adds the restriction (rule 3).
-10. **A function parameter can be kept, and its lambda runs after the call that bound it.** Rows erase from
+10. ~~**A function parameter can be kept, and its lambda runs after the call that bound it.**~~ **Closed 2026-10-12**
+    by D20 rule 3 (work-list step 1, below). Rows erase from
     types, so `capture(f: String => {} Unit): Holder = Holder(f)` stores the block in a rowless field. With
     `leaky: {Console} Holder = capture(s -> printLine(s))`, a later `runIt(h: Holder): Unit` — declaring
     nothing — prints. With `escaped: Holder = catch[String, Holder](capture(s -> raise(s)), …)`, the `raise`
@@ -831,7 +832,8 @@ D20 rule that does it. The witnesses are the five programs below, which become D
     `Throw.exitInternal`: a frame the type system said was there is not. That is the loud case. Fired inside an
     unrelated frame of the same instantiation, the hook exits into *that* frame, and a hook bound through a named
     implementation writes into an unrelated `Writer`'s log, both silently (D20c's spike, 2026-10-11). D20 rule 3.
-11. **A lambda written in a value position captures the enclosing bindings.** `built: {Console} Holder =
+11. ~~**A lambda written in a value position captures the enclosing bindings.**~~ **Closed 2026-10-12** by D20
+    rule 4 (work-list step 1, below). `built: {Console} Holder =
     Holder(s -> printLine(s))` — no function parameter involved — compiles, and the stored lambda prints when a
     def declaring nothing runs it. D20 rule 4.
 12. **A data constructor supplies a field's row by `Default`.** With `data Job(run: {Console} Unit)`,
@@ -1382,6 +1384,31 @@ mechanical migration that §10's byte-identity gate can watch.
 
 1. **Rules 3 and 4** — the keep check and the value-position lambda check, in the `row` phase beside the walk
    that already knows which slots are blocks. Closes §8 items 10 and 11. Gate: §10, plus the probes as tests.
+   **Built 2026-10-12**, in today's syntax. `BindingWriter`'s walk carries whether each position is *kept*. A
+   reference to a function-typed parameter is legal only as an application head or as the direct argument of a
+   definition's function-typed parameter; a lambda in a kept position is walked **sealed**, so a block or an
+   effect binding from outside it is reported. "Is a definition" excludes `data` constructors, read from
+   `ModuleConstructors`, the one owner of that question. The gate held: all 45 example jars byte-identical, the
+   suite green, eliot-test's 183 cases green, and eliot-build's errors identical before and after (it does not
+   currently build against `master`, for reasons unrelated to this step). The probes are
+   `BlockKeepingIntegrationTest`. Five findings, recorded rather than folded into the rules (standing rule 1):
+   - **A suspended parameter can be kept too.** Rule 3 says a `=> A` parameter "needs no such check: mentioning
+     it runs it". That holds except inside a lambda that is itself kept: `Holder(s -> body)` keeps `body`, which
+     then runs after its frames are gone. The check covers it, which is rule 3's own intent ("a block is never
+     kept"), but the sentence is wrong as written.
+   - **`compose` is not a cost.** Functions are curried, so `compose(f, g) = a -> f(g(a))` takes three parameters
+     and its result lambda is its own last one. Called in full it keeps nothing. What keeps a block is a call
+     applied to fewer arguments than it takes — a function still holding them — and that is rejected where it
+     stands in a kept position (`loud(f) = compose(f, …)`). "What it costs" overstates this.
+   - **`match` arms are blocks, by a read-through.** `match` lowers to
+     `handleCases(scrutinee, $selector -> $selector(arm₁)…(armₙ))`, so the arms reach the call as arguments of a
+     lambda's parameter, which rule 4 treats as a value. In the source the arms run in place, as `if`'s do, so the
+     walk reads through `WellKnownTypes.isPatternMatchHandleCases` the way `calledSpine` reads through `.`.
+   - **An arm's or a lambda's result is a kept position**, even when the lambda is a block. Returning a block
+     from a `match` arm is therefore rejected even when the `match` itself stands at a block slot. Fail-safe, and
+     no code in the corpus does it.
+   - **Only effect bindings are sealed.** A `~` constraint's binding from outside a kept lambda is still used
+     there: an ability implementation is a compile-time choice with no frame to outlive.
 2. **Rule 5** — the give-only-what-you-have check; the platform primitives' copies declare what they give; eliot-test
    names `recording`/`journal`. Closes item 13. Gate: §10; eliot-test's suites green.
 3. **Rule 6** — reject a row on a field, and delete the stored-read machinery it leaves without a subject
