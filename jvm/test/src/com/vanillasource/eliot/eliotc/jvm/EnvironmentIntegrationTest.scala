@@ -98,4 +98,27 @@ class EnvironmentIntegrationTest extends FullIntegrationTest {
         |}""".stripMargin
     ).asserting(_ should include("The effect 'Throw' is performed here with nothing to discharge it"))
   }
+
+  "a definition running its block inside its own discharger of an effect it also declares" should
+    "catch the block's raise and re-raise a better one" in {
+      compileAndRun(
+        """import eliot.effect.Console
+          |
+          |def describedAs(body: {Throw[String]} Unit, message: String): {Throw[String]} Unit =
+          |   catch[String, Unit](body, cause -> raise(message ++ " (" ++ cause ++ ")"))
+          |def main: {Console} Unit = catch[String, Unit](describedAs(raise("boom"), "described"), e -> printLine(e))""".stripMargin
+      ).asserting(_ shouldBe "described (boom)")
+    }
+
+  "a block whose slot rides the definition's own entry" should "be given the definition's own frame where it runs" in {
+    compileAndRun(
+      """import eliot.effect.Console
+        |
+        |def twice(body: {Throw[String]} Unit): {Throw[String]} Unit = {
+        |   body
+        |   body
+        |}
+        |def main: {Console} Unit = catch[String, Unit](twice(raise("once")), e -> printLine(e))""".stripMargin
+    ).asserting(_ shouldBe "once")
+  }
 }

@@ -564,8 +564,7 @@ platform's five control effects take a frame (`ThrowFrame`, `AbortFrame`, `State
 primitives make and hand to the thunk they run, so a frame reaches exactly the operations it was given: §8 items 14–15
 and D19 (an undischarged control effect at `main` is a compile error) are closed on the runtime track. Not built:
 `with Ability(args)` and user defaults with parameters, named implementations with parameters
-(`with scripted(List("Bob"))`), parameterised ability implementations, compile-track frames. **Open**: §2.2's
-"discharge the very effect it declares" (`describedAs`) no longer works — see below. **D20 steps 1–3 are built
+(`with scripted(List("Bob"))`), parameterised ability implementations, compile-track frames. A slot's ridden entry is given its frame where the block runs — (b), below. **D20 steps 1–3 are built
 (2026-10-12)**: rules 3–6 are enforced in today's syntax (blocks never kept, kept lambdas sealed, a body gives its
 block only what it has, a field holds a value), closing §8 items 10–13. The surface (steps 4–6) is not; until it
 lands, what follows is the tree, with rule 3 below retired.
@@ -637,10 +636,10 @@ nothing**, or the slot's row names the **same ability twice**.
 through, so the entry simply never joins the row and there is nothing to spell as a negative effect. **Nesting
 order at the run site decides interaction** — `runStateToPair(s, runThrow(c))` versus
 `runThrow(runStateToPair(s, c))` is the difference between state surviving a `raise` and not — and there is no
-canonical form for the compiler to choose. *A definition discharging the **very effect it declares** — what let
-`describedAs` rewrite its body's failure message — relied on the nearest-frame search option 5 removed, and is OPEN
-(`docs/effects.md` D20c, "Open: a definition discharging the very effect it declares"; recommended (b): ride by code,
-give by frame).* A
+canonical form for the compiler to choose. A definition may discharge the **very effect it declares**, which is
+what lets `describedAs` rewrite its body's failure message: since option 5 that holds by **(b), ride by code, give by
+frame** — for an entry a slot lists that the definition also declares, the block's code is the caller's binding and
+its frame is the one where it runs (`docs/effects.md` D20c). A
 discharger may be called any way a function can be; v5's "must be called directly" rule has no subject.
 
 **Three platform-private primitives, and nothing else.** A finishing clause is a non-local exit; a stateful
@@ -666,8 +665,9 @@ declaration metadata (like `paramConstraints`), consumed by the desugar; verific
 with **one verifier**: the pre-mono **scope check**, which is the write's own walk, is complete before
 monomorphization and emits "This value performs the effect 'X' but does not declare it…" at the reference. It
 checks the other direction too: a declared entry no reference in the body is written from is "This value declares
-the effect 'X' but does not perform it" (§4) — running a suspended argument consumes nothing, since its effects were
-bound where it was written.
+the effect 'X' but does not perform it" (§4). Running a suspended argument consumes the entries its slot *rides*
+(the definition declares them too) — the block's code is the caller's binding but its frame is given where it runs,
+D20c's decided (b) — and nothing else, since a supplied entry's binding is the slot's.
 *Forward what is declared, derive what is done* — a forwarded per-operation verdict would be a checker self-report
 and is rejected, as is any negative-effect surface. There was a post-mono second verifier until **D7 retired it
 (2026-09-10)** on the measurement that its "performs X" could only see propagation through a declaring callee, never

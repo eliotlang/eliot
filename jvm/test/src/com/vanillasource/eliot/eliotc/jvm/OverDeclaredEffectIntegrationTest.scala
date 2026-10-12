@@ -18,17 +18,18 @@ class OverDeclaredEffectIntegrationTest extends FullIntegrationTest {
     ).asserting(_ should include("declares the effect 'Abort' but does not perform it"))
   }
 
-  // A slot whose entry the definition also declares rides the caller's binding, so the argument's effect is bound where
-  // the argument is written and running it consumes nothing here — the same as a `{}` slot.
-  "a pass-through of a computation at a slot naming the declared effect" should "be rejected" in {
-    compileForErrors(
+  // A slot whose entry the definition also declares rides the caller's binding for its code, but its frame is given
+  // where it runs (docs/effects.md D20c, decided (b)): running it consumes this definition's received entry. A `{}` slot
+  // lists nothing and passes nothing, which is the case above.
+  "a pass-through of a computation at a slot naming the declared effect" should "count as performing it" in {
+    compileAndRun(
       """import eliot.effect.Console
         |
         |def passThrough[A](v: {Console} A): {Console} A = v
         |
         |def main: {Console} Unit = passThrough(printLine("hi"))
         |""".stripMargin
-    ).asserting(_ should include("declares the effect 'Console' but does not perform it"))
+    ).asserting(_ shouldBe "hi")
   }
 
   "an effect performed only through a declaring callee" should "count as performed" in {

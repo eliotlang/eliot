@@ -134,7 +134,8 @@ object BindingWriter {
       captured: Set[String] = Set.empty,
       checksBlocks: Boolean = false,
       selectors: Set[String] = Set.empty,
-      promises: Map[String, Map[AbilityFQN, Promise]] = Map.empty
+      promises: Map[String, Map[AbilityFQN, Promise]] = Map.empty,
+      ridden: Map[String, Set[AbilityFQN]] = Map.empty
   ) {
     def bind(binding: Binding): Scope = copy(bindings = binding +: bindings)
     def shadow(name: String): Scope   =
@@ -143,7 +144,8 @@ object BindingWriter {
         functions = functions - name,
         captured = captured - name,
         selectors = selectors - name,
-        promises = promises - name
+        promises = promises - name,
+        ridden = ridden - name
       )
 
     /** The scope inside a lambda kept as a value: everything in scope so far is outside it. */
@@ -186,7 +188,8 @@ object BindingWriter {
       uncoveredDefaults = atBoundary,
       functions = functionParameters(orv, thunks, universe),
       checksBlocks = !atBoundary,
-      promises = if (atBoundary) Map.empty else promisedBindings(orv, universe)
+      promises = if (atBoundary) Map.empty else promisedBindings(orv, universe),
+      ridden = riddenEntries(orv)
     )
     val view       = SignatureView.of(orv.signature)
     val body       = Option
@@ -355,6 +358,19 @@ object BindingWriter {
   /** The abilities an implementation's clauses perform — its marker's phantom binders. */
   private def clauseAbilities(marker: ValueFQN, universe: RowChecker.Universe): Seq[AbilityFQN] =
     universe.lookup(marker).toSeq.flatMap(orv => phantoms(orv).map(_._2))
+
+  /** The entries each row-typed parameter's slot **rides** — those this definition's own row also has. The block's
+    * code for them is the caller's binding, but its frame is given where it runs (`docs/effects.md` D20c, decided (b)),
+    * so running it consumes this definition's received binding: `describedAs` declares `Throw[AssertionError]` in
+    * order to run its body inside a `catch` of it.
+    */
+  private def riddenEntries(orv: OperatorResolvedValue): Map[String, Set[AbilityFQN]] = {
+    val names = valueParameterNames(orv)
+    val rides = orv.effectRow.returnEffects.map(_.abilityFQN).toSet
+    orv.effectRow.parameterEffects.flatMap { slot =>
+      names.lift(slot.parameterIndex).map(_ -> slot.effects.map(_.abilityFQN).filter(rides).toSet)
+    }.toMap
+  }
 
   /** This definition's **blocks** of function type (D20 rule 2), each with the number of arguments it takes: every
     * value parameter whose declared type is a function, except a row-typed one, which is a thunk and runs when
@@ -537,6 +553,7 @@ object BindingWriter {
         // A reference to one of this definition's row-typed parameters is a thunk: running it is applying it.
         case ParameterReference(name) if scope.thunks.contains(name.value) =>
           checkGiven(name, scope)
+          scope.ridden.getOrElse(name.value, Set.empty).foreach(ability => scope.binding(ability).foreach(consume))
           expr.as(FunctionApplication(expr, unitValue(expr)))
 
         case ParameterReference(name) if kept && scope.functions.contains(name.value) =>

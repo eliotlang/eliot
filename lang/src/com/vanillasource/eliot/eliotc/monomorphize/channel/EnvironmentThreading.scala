@@ -41,7 +41,9 @@ import scala.collection.mutable
   *     per `~` constraint ([[MonomorphicEffects.received]]), ahead of its own parameters, and a reference to it passes
   *     the frame in scope for each.
   *   - **a block takes what its slot gives.** A row-typed slot's thunk took `unit`; it now takes the frames of the
-  *     entries the slot supplies, and running the block passes them, found in scope where it runs.
+  *     entries the slot lists, and running the block passes them, found in scope where it runs. For an entry the slot
+  *     rides (the definition declares it too), the block's *code* is the caller's binding but its *frame* is still the
+  *     run site's — so a definition can discharge the very effect it declares (`describedAs`), decided as (b).
   *   - **a dispatched operation gets its frame's parts.** A reference the checker dispatched to an implementation's
   *     clause passes the frame of the entry it was dispatched from: the frames its clauses perform on, then the
   *     implementation's own parameters, which the clause receives ahead of the member's.
@@ -83,6 +85,16 @@ object EnvironmentThreading {
   }
 
   private val emptyShape = Shape(Seq.empty, Seq.empty)
+
+  /** What a block is given for one entry its slot lists. */
+  private enum Listed {
+
+    /** An entry the slot supplies, at the implementation its `with` names, or the default. */
+    case Supplied(entry: Entry, named: Option[ValueFQN])
+
+    /** An entry the slot rides: the block's code for it is the caller's `binding`, and its frame is the run site's. */
+    case Rides(entry: Entry, binding: GroundValue)
+  }
 
   private val defaultBinding: GroundValue = ImplementationBinding.defaultGround
 
@@ -410,9 +422,11 @@ object EnvironmentThreading {
       }
 
     /** The frames a block at `slot` of `callee` is given, and the parts the block now takes as its parameters: one frame
-      * per entry the slot **supplies** (an entry the callee's own row lacks), held by fresh parameters. A slot naming an
-      * implementation with `with` gives that implementation, whose clauses perform on frames the slot supplies for them
-      * and, for a clause the callee rides, on the caller's frame in scope — captured, not passed.
+      * per entry the slot lists, held by fresh parameters. An entry the slot **supplies** (one the callee's own row
+      * lacks) is held at its default, or at the implementation the slot names with `with`, whose clauses perform on
+      * frames the slot supplies for them and, for a clause the callee rides, on the caller's frame in scope — captured,
+      * not passed. An entry the slot **rides** is held at the caller's binding, which is the block's code for it: the
+      * code rides, the frame is given where the block runs (`docs/effects.md` D20c, decided (b)).
       */
     private def givenFrames(
         callee: MonomorphicValue,
@@ -420,14 +434,19 @@ object EnvironmentThreading {
         context: Context,
         arg: Sourced[?]
     ): CompilerIO[(Seq[Frame], Seq[Part])] =
-      supplied(callee, slot)
+      listed(callee, slot)
         .flatMap(_.traverse {
-          case (entry, None)         =>
+          case Listed.Rides(entry, binding) =>
+            shapeOf(entry, binding).map { shape =>
+              val frame = held(entry, binding, shape)
+              (frame, frame.parts)
+            }
+          case Listed.Supplied(entry, None) =>
             shapeOf(entry, defaultBinding).map { shape =>
               val frame = held(entry, defaultBinding, shape)
               (frame, frame.parts)
             }
-          case (entry, Some(marker)) =>
+          case Listed.Supplied(entry, Some(marker)) =>
             namedClauses(marker).flatMap { clauses =>
               clauses
                 .traverse { clauseEntry =>
@@ -445,7 +464,9 @@ object EnvironmentThreading {
         })
         .map(offered => (offered.map(_._1), offered.flatMap(_._2)))
 
-    /** Running one of this definition's row-typed parameters passes the frames its slot supplies, found where it runs. */
+    /** Running one of this definition's row-typed parameters passes the frames of the entries its slot lists, found
+      * where it runs — a ridden entry's at this definition's own binding for it, which is the block's code.
+      */
     private def runBlock(
         head: Sourced[MonomorphicExpression],
         name: Sourced[String],
@@ -455,9 +476,10 @@ object EnvironmentThreading {
       val index = context.runs(name.value)
       val slot  = mv.effects.slots.find(_.parameterIndex == index).getOrElse(MonomorphicEffects.Slot(index, Seq.empty))
       for {
-        frames <- supplied(mv, slot).flatMap(_.traverse {
-                    case (entry, None)         => lookup(context.frames, entry, defaultBinding, name)
-                    case (entry, Some(marker)) =>
+        frames <- listed(mv, slot).flatMap(_.traverse {
+                    case Listed.Rides(entry, binding)         => lookup(context.frames, entry, binding, name)
+                    case Listed.Supplied(entry, None)         => lookup(context.frames, entry, defaultBinding, name)
+                    case Listed.Supplied(entry, Some(marker)) =>
                       namedClauses(marker).flatMap(
                         _.filterNot(rides(mv, _)).traverse(clause => lookup(context.frames, clause, defaultBinding, name))
                       ).map(clauseFrames => Frame(entry, namedBinding(marker), clauseFrames, Seq.empty))
@@ -469,17 +491,31 @@ object EnvironmentThreading {
         else applyAll(retyped, parts.map(partReference(name, _)), keepTypes = None)
     }
 
-    /** The entries `slot` supplies — those `value`'s own received entries lack — each with the implementation the slot
-      * names for it with `with`, read off the slot's declared type.
+    /** Every entry `slot` lists, as what the block is given for it: an entry it **supplies**, with the implementation
+      * the slot names for it with `with`, read off the slot's declared type; or an entry it **rides**, with `value`'s
+      * own binding for it.
       */
-    private def supplied(
-        value: MonomorphicValue,
-        slot: MonomorphicEffects.Slot
-    ): CompilerIO[Seq[(Entry, Option[ValueFQN])]] =
+    private def listed(value: MonomorphicValue, slot: MonomorphicEffects.Slot): CompilerIO[Seq[Listed]] =
       for {
         named <- slotImplementations(value, slot.parameterIndex)
         rides <- ridingFlags(value, slot)
-      } yield slot.entries.zip(rides).collect { case (entry, false) => entry -> named.get(entry.ability) }
+        listing <- slot.entries.zip(rides).traverse {
+                   case (entry, false) => (Listed.Supplied(entry, named.get(entry.ability)): Listed).pure[CompilerIO]
+                   case (entry, true)  =>
+                     value.effects.received.find(_.entry == entry) match {
+                       case Some(received) =>
+                         (Listed.Rides(
+                           entry,
+                           value.typeArguments.lift(received.binderIndex).getOrElse(defaultBinding)
+                         ): Listed).pure[CompilerIO]
+                       case None           =>
+                         compilerAbort[Listed](value.name.as("Internal: a ridden entry is not among the received ones."))
+                     }
+                 }
+      } yield listing
+
+    private def rides(value: MonomorphicValue, entry: Entry): Boolean =
+      value.effects.received.exists(_.entry == entry)
 
     /** Whether each entry of `slot` **rides** the definition's own row rather than being supplied by the slot (§2.2) —
       * decided as the declaration spells it, never at ground arguments: `raising[E](…, body: {Throw[E]} Unit):
@@ -494,9 +530,6 @@ object EnvironmentThreading {
           compilerAbort(value.name.as("Internal: a row-typed parameter's entries did not reduce to ground arguments."))
         else declared.map(entry => row.contains((entry.abilityFQN, entry.typeArgs.map(_.render)))).pure[CompilerIO]
       }
-
-    private def rides(value: MonomorphicValue, entry: Entry): Boolean =
-      value.effects.received.exists(_.entry == entry)
 
     /** The implementations a slot's declared type names with `with`, by ability. The row phase strips them from the
       * signature it hands on, so they are read off the operator-resolved declaration, as the row phase read them.
@@ -540,11 +573,12 @@ object EnvironmentThreading {
         case _                                    => parameterType
       }
 
-    /** What a block at `slot` of `value` takes: the parts of the frames the slot supplies, in order. */
+    /** What a block at `slot` of `value` takes: the parts of the frames of the entries the slot lists, in order. */
     private def slotDomain(value: MonomorphicValue, slot: MonomorphicEffects.Slot): CompilerIO[Seq[GroundValue]] =
-      supplied(value, slot).flatMap(_.flatTraverse {
-        case (entry, None)         => shapeOf(entry, defaultBinding).map(_.types)
-        case (entry, Some(marker)) =>
+      listed(value, slot).flatMap(_.flatTraverse {
+        case Listed.Rides(entry, binding)         => shapeOf(entry, binding).map(_.types)
+        case Listed.Supplied(entry, None)         => shapeOf(entry, defaultBinding).map(_.types)
+        case Listed.Supplied(entry, Some(marker)) =>
           namedClauses(marker).flatMap(
             _.filterNot(rides(value, _)).flatTraverse(clause => shapeOf(clause, defaultBinding).map(_.types))
           )

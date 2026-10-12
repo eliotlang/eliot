@@ -579,8 +579,10 @@ write's own walk (§3.1), so this is a spec of `row/BindingWriter` rather than o
   declare an effect on no evidence, all the way to `main`. Consumed means written from at least once — by an
   operation, a declaring callee, a `with`'s clause-row bindings, or a stored read — on any path, so `if(ok, v)`
   consumes `Abort` whatever `ok` is. An actual at a slot that does not supply the entry is bound in the *caller's*
-  scope (§2.1), so running it consumes nothing: `def run[A](v: {Console} A): {Console} A = v` is rejected, being its
-  `{}`-slot twin with a declaration nobody needs. Exempt: a body-less value (its row is a contract a later layer
+  scope (§2.1) for its code, ~~so running it consumes nothing~~ — **reversed 2026-10-12 by D20c's decided (b)**: its
+  frame is given where it runs, so running it consumes the definition's received entry, and
+  `def run[A](v: {Console} A): {Console} A = v` is accepted. Its `{}`-slot twin lists nothing, passes nothing and still
+  consumes nothing. Exempt: a body-less value (its row is a contract a later layer
   bodies), a run boundary, and a signature's own references. An `implement` clause declares the union of its block's
   clause rows (`ImplementationRows`), so it is held only to the entries it wrote. The error waits for the
   definition's callees: a callee performing the effect *undeclared* is its usual cause, and that callee's error is
@@ -2206,7 +2208,15 @@ above:
    including the guard read's (the compile track still finds an escape or a cell by its key, so items 14–15 are
    closed on the runtime track only); and option 4.
 
-**Open: a definition discharging the very effect it declares (2026-10-12).** §2.2 says "a definition may now
+**Decided 2026-10-12 (Robert): (b), and built the same day.** Below is the question as it was put. Built in
+`EnvironmentThreading`: a ridden entry's frame is a block parameter like a supplied one's, typed by the caller's
+binding and passed from the run site at the definition's own binding, so the code and the frame still agree. One
+consequence, recorded as a reversal in §4: running a block consumes the entries it rides (`BindingWriter`'s
+`riddenEntries`), since the definition's received frame is now what the block runs on. eliot-test is 183/183 again;
+every example's transcript is unchanged; 20 of 47 jars changed against the pre-option-5 baseline, bytes 647514 →
+645235, instructions 18751 → 19266 (+2.7%).
+
+**The question: a definition discharging the very effect it declares (2026-10-12).** §2.2 says "a definition may now
 discharge the very effect it declares — which is what lets `describedAs(body: {Throw[AssertionError]} Unit):
 {Throw[AssertionError]} Unit` catch its body's failure and re-raise a better one". That rested on the nearest-frame
 search option 5 removed, and option 5's reversals did not list it. `describedAs`'s slot entry is its own row's entry,
