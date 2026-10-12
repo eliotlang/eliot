@@ -1692,6 +1692,80 @@ caller's frame, and `guarded` was never handed it. The `unit` a suspended slot's
 where the environment goes instead. The cost is one pointer per call between declaring definitions, and the
 per-instantiation static cells are gone.
 
+*A worked example: where a `State` is seeded, and where an implementation is invoked.* An implementation is invoked
+in exactly one place, the `with` that binds it. `with celled(cell)` names the code at compile time — every `state`
+and `putState` the block runs is compiled against `celled`'s methods — and builds the environment at runtime, here
+just `cell`. No implementation object with methods exists at runtime; the methods are ordinary functions taking the
+environment. The seed is the discharger's: it hands `initial` to the cell primitive, which makes a fresh cell. There
+is no global seed, and every discharge has its own cell.
+
+```eliot
+-- user code
+def increment uses State[Int]: Unit = putState(state + 1)
+def double uses State[Int]: Unit = putState(state * 2)
+
+def main uses Console: Unit =
+   printLine(show(runStateToFinalState(5, {
+      increment
+      double
+   })))                                                                   -- prints 12
+
+-- jvm layer: the only place a cell is made and the only place `celled` is invoked
+private type Cell[S]                                                      -- a mutable box
+private def withCellInternal[S, R](initial: S, body: Cell[S] => R): R    -- makes the cell holding `initial`
+private def readCell[S](cell: Cell[S]): S
+private def writeCell[S](cell: Cell[S], s: S): Unit
+
+implement[S] celled(cell: Cell[S]): State[S] {
+   def state: S = readCell(cell)
+   def putState(s: S): Unit = writeCell(cell, s)
+}
+
+def runStateToPair[S, A](initial: S, p uses State[S]: => A): Pair[A, S] =
+   withCellInternal(initial, cell -> {
+      val a = p with celled(cell)                                         -- the invocation
+      Pair(a, readCell(cell))
+   })
+
+-- base layer, unchanged: passes the block on
+def runStateToFinalState[S, A](initial: S, p uses State[S]: => A): S = second(runStateToPair(initial, p))
+```
+
+After the row phase and monomorphisation, in pseudo-code:
+
+```
+celled$state(cell)          = readCell(cell)
+celled$putState(cell, s)    = writeCell(cell, s)
+
+increment$celled(env)       = celled$putState(env, celled$state(env) + 1)
+double$celled(env)          = celled$putState(env, celled$state(env) * 2)
+
+runStateToPair(initial, p)  = withCellInternal(initial, cell -> {
+                                 val a = p(cell)                  -- the block receives the environment
+                                 Pair(a, readCell(cell))
+                              })
+runStateToFinalState(i, p)  = second(runStateToPair(i, p))
+
+main()                      = printLine(show(runStateToFinalState(5, env -> {
+                                 increment$celled(env)
+                                 double$celled(env)
+                              })))
+```
+
+Two routes carry an environment, and they are complementary. **A block receives what its slot gives, as an
+argument**: `p uses State[S]` lowers to `Env => A` where today it is `Unit => A`, and the discharger calls `p(cell)`
+where today it calls `p(unit)`. **A definition that declares the entry receives it as a hidden parameter**:
+`increment` and `double` take `env` and are specialised at the binding `celled`. Anything else a block uses it
+captured where it was written. That is §8 item 15 resolved: `counted`'s own `runStateToFinalState("helper", body)`
+makes a second cell and passes it to `body`, but `body` was written in `main` with its `putState` already bound to
+`main`'s `env`, which it captured. The helper's cell is a different value, and `body` never reads it.
+
+On the JVM `withCellInternal` is `body.apply(new Cell(initial))`. On a microcontroller the cell is a slot in
+`withCellInternal`'s own stack frame, with no heap allocation and no way to outlive the call, since nothing can keep
+it. The other two kinds of invocation follow the same pattern. A platform default such as `Console` is invoked
+implicitly at `main` with no arguments; its environment is empty and erased. A double is invoked by the user at the
+`with`, as in `with scripted(List("Bob"))`, and its environment is its parameters.
+
 *Why it is sound.* Three properties, each structural:
 
 - **The right frame.** An operation reaches the frame it was handed, so it reaches the one its discharger
