@@ -5,10 +5,10 @@ effect Abort {
 
 /**
  * The JVM `Abort` implementation — the single one for this platform, `Throw` without a reason: `abort` leaves through
- * the nearest enclosing `runAbort` frame carrying nothing.
+ * the frame its `runAbort` made, carrying nothing.
  */
-implement Abort {
-   def abort[A]: A = exitInternal(unit)
+implement Abort(frame: AbortFrame[Unit]) {
+   def abort[A]: A = exitInternal(frame, unit)
 }
 
 /**
@@ -21,14 +21,20 @@ implement Abort {
 def runAbort[A](obj: {Abort} A): Option[A] = escapeInternal(obj, (nothing: Unit) -> None, a -> Some(a))
 
 /**
- * Install an escape frame carrying nothing, run `body` inside it, and answer `Right` of its result or `Left(unit)` if
- * it left. `eliot.effect.Throw`'s leaf of the same shape and purpose; per-module `private` means each module declares
- * its own, which is also what keeps the two frames apart. Implemented by the backend. `body` is given `Abort`, as
- * `Throw`'s copy gives `Throw[K]` (D20 rule 5).
+ * The frame an `abort` leaves through: made by `escapeInternal`. It has no constructor, so nothing else
+ * can make one.
+ */
+type AbortFrame[K]
+
+/**
+ * Make a fresh escape frame, run `body` with it, and answer `Right` of its result or `Left(unit)` if it left through that
+ * frame. `eliot.effect.Throw`'s leaf of the same shape and purpose; per-module `private` means each module declares its
+ * own, which is also what keeps the two frames apart. Implemented by the backend. `body` is given `Abort` and its frame,
+ * as `Throw`'s copy gives `Throw[K]` (D20 rule 5).
  */
 private def escapeInternal[K, A, R](body: {Abort} A, onExit: K => {} R, onValue: A => {} R): R
 
 /**
- * Leave through the nearest enclosing `escapeInternal` frame of this module. Implemented by the backend.
+ * Leave through `frame`. Implemented by the backend.
  */
-private def exitInternal[K, A](nothing: K): A
+private def exitInternal[K, A](frame: AbortFrame[K], nothing: K): A

@@ -3,7 +3,14 @@ package com.vanillasource.eliot.eliotc.monomorphize.channel
 import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.ability.fact.AbilityImplementation
 import com.vanillasource.eliot.eliotc.ast.fact.ImplementationParameters
-import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, Qualifier, UnifiedModuleNames, ValueFQN, WellKnownTypes}
+import com.vanillasource.eliot.eliotc.module.fact.{
+  ModuleAbilities,
+  QualifiedName,
+  Qualifier,
+  UnifiedModuleNames,
+  ValueFQN,
+  WellKnownTypes
+}
 import com.vanillasource.eliot.eliotc.monomorphize.check.ImplementationBinding
 import com.vanillasource.eliot.eliotc.monomorphize.fact.MonomorphicEffects.Entry
 import com.vanillasource.eliot.eliotc.monomorphize.fact.{GroundValue, MonomorphicEffects, MonomorphicExpression, MonomorphicValue}
@@ -12,6 +19,7 @@ import com.vanillasource.eliot.eliotc.operator.fact.{OperatorResolvedExpression,
 import com.vanillasource.eliot.eliotc.platform.Platform
 import com.vanillasource.eliot.eliotc.processor.CompilerIO.*
 import com.vanillasource.eliot.eliotc.source.content.Sourced
+import com.vanillasource.eliot.eliotc.resolve.fact.AbilityFQN
 import com.vanillasource.eliot.eliotc.source.content.Sourced.compilerAbort
 
 import scala.collection.mutable
@@ -63,7 +71,7 @@ object EnvironmentThreading {
   /** A frame in scope: the entry it answers, the binding its code was written with, the frames its implementation's
     * clauses perform on, and the implementation's own parameters.
     */
-  private case class Frame(entry: Entry, binding: GroundValue, clauses: Seq[Frame], own: Seq[Part]) {
+  private case class Frame(entry: Entry, binding: GroundValue, clauses: Seq[Frame], own: Seq[Part], level: Int = 0) {
     def parts: Seq[Part] = clauses.flatMap(_.parts) ++ own
   }
 
@@ -173,7 +181,10 @@ object EnvironmentThreading {
       * this definition's row-typed parameters by index — running one passes its frames.
       */
     private case class Context(frames: Seq[Frame], types: Map[String, GroundValue], runs: Map[String, Int]) {
-      def push(more: Seq[Frame]): Context = copy(frames = more ++ frames)
+      def push(more: Seq[Frame]): Context = {
+        val level = frames.headOption.fold(0)(_.level) + 1
+        copy(frames = more.map(_.copy(level = level)) ++ frames)
+      }
       def shadow(name: String): Context  = copy(types = types - name, runs = runs - name)
 
       def declare(name: String, tpe: GroundValue, run: Option[Int]): Context =
@@ -283,14 +294,86 @@ object EnvironmentThreading {
     ): CompilerIO[Passed] =
       for {
         frame    <- lookup(context.frames, dispatch.entry, dispatch.binding, at)
+        perCall  <- memberDeclared(memberOf(clause.vfqn, dispatch.entry.ability))
+        own      <- declaredEntries(clause.vfqn)
         received <- clause.effects.received.traverse { received =>
                       val binding = clause.typeArguments.lift(received.binderIndex).getOrElse(defaultBinding)
+                      val callSite = own.get(received.binderIndex).exists(perCall.contains)
                       frame.clauses.find(candidate => candidate.entry == received.entry) match {
-                        case Some(clauseFrame) => clauseFrame.pure[CompilerIO]
-                        case None              => lookup(context.frames, received.entry, binding, at)
+                        case Some(clauseFrame) if !callSite => clauseFrame.pure[CompilerIO]
+                        case _                              => lookup(context.frames, received.entry, binding, at)
                       }
                     }
       } yield Passed(received.flatMap(_.parts) ++ frame.own, frame.own.size)
+
+    /** The ability member an implementation's clause implements. */
+    private def memberOf(clause: ValueFQN, ability: AbilityFQN): ValueFQN =
+      ValueFQN(ability.moduleName, QualifiedName(clause.name.name, Qualifier.Ability(ability.abilityName)))
+
+    /** An effect entry as its declaration spells it: the ability and its arguments, rendered. What compares a clause's
+      * row with its member's, before either is specialised.
+      */
+    private type Declared = (AbilityFQN, Seq[String])
+
+    /** The entries an ability member declares beyond its own ability — `FileSystem.readFile`'s `{Throw[IoError]}`. Each
+      * call performs them on the caller's binding, so their frames come from the call site, never from the
+      * implementation's environment, even where the implementation's clause repeats them.
+      */
+    private def memberDeclared(member: ValueFQN): CompilerIO[Set[Declared]] =
+      memberRows.get(member) match {
+        case Some(declared) => declared.pure[CompilerIO]
+        case None           =>
+          getFactIfProduced(OperatorResolvedValue.Key(member, Platform.Runtime))
+            .map(
+              _.toSeq
+                .flatMap(_.effectRow.returnEffects)
+                .map(entry => (entry.abilityFQN, entry.typeArgs.map(_.render)))
+                .toSet
+            )
+            .map(declared =>
+              member.name.qualifier match {
+                case Qualifier.Ability(name) => declared.filterNot(_._1 == AbilityFQN(member.moduleName, name))
+                case _                       => declared
+              }
+            )
+            .flatTap(declared => memberRows.update(member, declared).pure[CompilerIO])
+      }
+
+    private val memberRows: mutable.Map[ValueFQN, Set[Declared]] = mutable.Map.empty
+
+    /** The effect entries a definition performs itself, by the index of the binder each binds — read off the constraint
+      * on the binder, which an entry an `implement` clause only carries for a sibling does not have.
+      */
+    private def declaredEntries(vfqn: ValueFQN): CompilerIO[Map[Int, Declared]] =
+      getFactIfProduced(OperatorResolvedValue.Key(vfqn, Platform.Runtime)).map(_.fold(Map.empty[Int, Declared]) { orv =>
+        val binders = SignatureView.of(orv.signature).binders.map(_.name.value)
+        val row     = orv.effectRow.returnEffects.map(_.abilityFQN).toSet
+        orv.paramConstraints.values.flatten.flatMap { constraint =>
+          constraint.typeArgs.headOption
+            .collect { case OperatorResolvedExpression.ParameterReference(name) => binders.indexOf(name.value) }
+            .filter(index => index >= 0 && row.contains(constraint.abilityFQN))
+            .map(_ -> (constraint.abilityFQN, constraint.typeArgs.drop(1).map(_.render)))
+        }.toMap
+      })
+
+    /** The effect entries an implementation's **environment** holds: those one of its clauses performs itself while the
+      * member it implements does not declare them. `recordingConsole`'s `printLine` performs `Writer[String]`, which
+      * `Console.printLine` does not declare, so the implementation holds a `Writer` frame from where it is bound;
+      * `FileSystem`'s clauses perform `Throw[IoError]`, which every member declares, so it holds none and each call
+      * brings its own.
+      */
+    private def environmentEntries(marker: ValueFQN, ability: AbilityFQN): CompilerIO[Set[Declared]] =
+      getFactOrAbort(ModuleAbilities.Key(marker.moduleName, Platform.Runtime)).flatMap { abilities =>
+        abilities.implementations
+          .filter(impl => impl.vfqn.name.qualifier == marker.name.qualifier && impl.methodName != impl.abilityName)
+          .traverse { impl =>
+            for {
+              own      <- declaredEntries(impl.vfqn)
+              declared <- memberDeclared(memberOf(impl.vfqn, ability))
+            } yield own.values.toSet -- declared
+          }
+          .map(_.flatten.toSet)
+      }
 
     /** A block at a callee's slot: the thunk the row phase wrapped it in now takes the frames the slot supplies. */
     private def block(
@@ -302,8 +385,8 @@ object EnvironmentThreading {
       arg.value.expression match {
         case MonomorphicExpression.FunctionLiteral(name, parameterType, body) =>
           for {
-            frames  <- givenFrames(callee, slot, context, arg)
-            parts    = frames.flatMap(_.parts)
+            offered <- givenFrames(callee, slot, context, arg)
+            (frames, parts) = offered
             inner   <- walk(body, context.shadow(name.value).push(frames))
           } yield
             if (parts.isEmpty)
@@ -326,28 +409,41 @@ object EnvironmentThreading {
           compilerAbort(arg.as("Internal: a block at a row-typed slot is not a thunk."))
       }
 
-    /** The frames a block at `slot` of `callee` is given, each held by a fresh parameter of the block: one per entry the
-      * slot **supplies** (an entry the callee's own row lacks). A slot naming an implementation with `with` gives that
-      * implementation, whose clauses perform on the frames the slot supplies for them and on the caller's for the rest.
+    /** The frames a block at `slot` of `callee` is given, and the parts the block now takes as its parameters: one frame
+      * per entry the slot **supplies** (an entry the callee's own row lacks), held by fresh parameters. A slot naming an
+      * implementation with `with` gives that implementation, whose clauses perform on frames the slot supplies for them
+      * and, for a clause the callee rides, on the caller's frame in scope — captured, not passed.
       */
     private def givenFrames(
         callee: MonomorphicValue,
         slot: MonomorphicEffects.Slot,
         context: Context,
         arg: Sourced[?]
-    ): CompilerIO[Seq[Frame]] =
-      supplied(callee, slot).flatMap(_.traverse {
-        case (entry, None)         => shapeOf(entry, defaultBinding).map(shape => held(entry, defaultBinding, shape))
-        case (entry, Some(marker)) =>
-          namedClauses(marker).flatMap { clauses =>
-            clauses
-              .traverse { clauseEntry =>
-                if (rides(callee, clauseEntry)) lookupAny(context.frames, clauseEntry, arg)
-                else shapeOf(clauseEntry, defaultBinding).map(shape => held(clauseEntry, defaultBinding, shape))
-              }
-              .map(clauseFrames => Frame(entry, namedBinding(marker), clauseFrames, Seq.empty))
-          }
-      })
+    ): CompilerIO[(Seq[Frame], Seq[Part])] =
+      supplied(callee, slot)
+        .flatMap(_.traverse {
+          case (entry, None)         =>
+            shapeOf(entry, defaultBinding).map { shape =>
+              val frame = held(entry, defaultBinding, shape)
+              (frame, frame.parts)
+            }
+          case (entry, Some(marker)) =>
+            namedClauses(marker).flatMap { clauses =>
+              clauses
+                .traverse { clauseEntry =>
+                  if (rides(callee, clauseEntry)) lookupAny(context.frames, clauseEntry, arg).map(_ -> Seq.empty[Part])
+                  else
+                    shapeOf(clauseEntry, defaultBinding).map { shape =>
+                      val frame = held(clauseEntry, defaultBinding, shape)
+                      (frame, frame.parts)
+                    }
+                }
+                .map(clauseFrames =>
+                  (Frame(entry, namedBinding(marker), clauseFrames.map(_._1), Seq.empty), clauseFrames.flatMap(_._2))
+                )
+            }
+        })
+        .map(offered => (offered.map(_._1), offered.flatMap(_._2)))
 
     /** Running one of this definition's row-typed parameters passes the frames its slot supplies, found where it runs. */
     private def runBlock(
@@ -380,8 +476,23 @@ object EnvironmentThreading {
         value: MonomorphicValue,
         slot: MonomorphicEffects.Slot
     ): CompilerIO[Seq[(Entry, Option[ValueFQN])]] =
-      slotImplementations(value, slot.parameterIndex).map { named =>
-        slot.entries.filterNot(rides(value, _)).map(entry => entry -> named.get(entry.ability))
+      for {
+        named <- slotImplementations(value, slot.parameterIndex)
+        rides <- ridingFlags(value, slot)
+      } yield slot.entries.zip(rides).collect { case (entry, false) => entry -> named.get(entry.ability) }
+
+    /** Whether each entry of `slot` **rides** the definition's own row rather than being supplied by the slot (§2.2) —
+      * decided as the declaration spells it, never at ground arguments: `raising[E](…, body: {Throw[E]} Unit):
+      * {Throw[AssertionError]} Unit` supplies `Throw[E]` even where `E` is `AssertionError`, so the block's frame is the
+      * slot's. An entry list that does not line up with the declaration's is a failure, never a guess.
+      */
+    private def ridingFlags(value: MonomorphicValue, slot: MonomorphicEffects.Slot): CompilerIO[Seq[Boolean]] =
+      getFactOrAbort(OperatorResolvedValue.Key(value.vfqn, Platform.Runtime)).flatMap { orv =>
+        val row      = orv.effectRow.returnEffects.map(entry => (entry.abilityFQN, entry.typeArgs.map(_.render))).toSet
+        val declared = orv.effectRow.parameterEffects.find(_.parameterIndex == slot.parameterIndex).toSeq.flatMap(_.effects)
+        if (declared.size != slot.entries.size)
+          compilerAbort(value.name.as("Internal: a row-typed parameter's entries did not reduce to ground arguments."))
+        else declared.map(entry => row.contains((entry.abilityFQN, entry.typeArgs.map(_.render)))).pure[CompilerIO]
       }
 
     private def rides(value: MonomorphicValue, entry: Entry): Boolean =
@@ -390,7 +501,7 @@ object EnvironmentThreading {
     /** The implementations a slot's declared type names with `with`, by ability. The row phase strips them from the
       * signature it hands on, so they are read off the operator-resolved declaration, as the row phase read them.
       */
-    private def slotImplementations(value: MonomorphicValue, index: Int): CompilerIO[Map[com.vanillasource.eliot.eliotc.resolve.fact.AbilityFQN, ValueFQN]] =
+    private def slotImplementations(value: MonomorphicValue, index: Int): CompilerIO[Map[AbilityFQN, ValueFQN]] =
       getFactIfProduced(OperatorResolvedValue.Key(value.vfqn, Platform.Runtime)).flatMap {
         case None      => Map.empty.pure[CompilerIO]
         case Some(orv) =>
@@ -409,7 +520,7 @@ object EnvironmentThreading {
       case _                                                               => Seq.empty
     }
 
-    private def abilityOfMarker(marker: ValueFQN): CompilerIO[Option[com.vanillasource.eliot.eliotc.resolve.fact.AbilityFQN]] =
+    private def abilityOfMarker(marker: ValueFQN): CompilerIO[Option[AbilityFQN]] =
       getFactIfProduced(OperatorResolvedValue.Key(marker, Platform.Runtime)).map(_.flatMap(_.name.value.qualifier match {
         case com.vanillasource.eliot.eliotc.resolve.fact.Qualifier.AbilityImplementation(ability, _, _) => Some(ability)
         case _                                                                                          => None
@@ -477,7 +588,7 @@ object EnvironmentThreading {
 
     /** The frame in scope for `entry`, which the reference was written to run on `binding`. */
     private def lookup(frames: Seq[Frame], entry: Entry, binding: GroundValue, at: Sourced[?]): CompilerIO[Frame] =
-      frames.find(_.entry == entry) match {
+      nearest(frames, entry, at).flatMap {
         case Some(frame) if sameImplementation(frame.binding, binding) => frame.pure[CompilerIO]
         case Some(frame) if !isNamed(binding)                          =>
           compilerAbort(
@@ -491,9 +602,26 @@ object EnvironmentThreading {
 
     /** The frame in scope for `entry` whatever binding it holds: a slot implementation's clause the callee rides. */
     private def lookupAny(frames: Seq[Frame], entry: Entry, at: Sourced[?]): CompilerIO[Frame] =
-      frames.find(_.entry == entry) match {
+      nearest(frames, entry, at).flatMap {
         case Some(frame) => frame.pure[CompilerIO]
         case None        => built(frames, entry, defaultBinding, at)
+      }
+
+    /** The nearest frame for `entry`. Two at the same distance — a definition receiving `{Throw[E1], Throw[E2]}` at an
+      * instantiation where `E1` and `E2` coincide — are an error at this use: which one an operation reaches is not
+      * decided by anything written.
+      */
+    private def nearest(frames: Seq[Frame], entry: Entry, at: Sourced[?]): CompilerIO[Option[Frame]] =
+      frames.filter(_.entry == entry) match {
+        case first +: rest if rest.exists(other => other.level == first.level && other.parts != first.parts) =>
+          compilerAbort(
+            at.as(
+              s"Two entries of the effect '${entry.ability.abilityName}' in scope here coincide at this instantiation, " +
+                "so which one this performs is not decided."
+            )
+          )
+        case matching                                                                                      =>
+          matching.headOption.pure[CompilerIO]
       }
 
     /** A frame nothing in scope holds: a default, or a named implementation a body `with` bound, built from the frames in
@@ -592,12 +720,24 @@ object EnvironmentThreading {
         else {
           val arguments =
             typeArguments.getOrElse(Seq.fill(SignatureView.of(orv.signature).binders.size)(defaultBinding))
-          getFactOrAbort(MonomorphicValue.Key(marker, arguments)).map(
-            _.effects.received
-              .filter(received => performed.contains(received.entry.ability))
-              .map(received => received.entry -> arguments.lift(received.binderIndex).getOrElse(defaultBinding))
-          )
+          for {
+            held   <- abilityOfImplementation(orv).fold(Set.empty[Declared].pure[CompilerIO])(environmentEntries(marker, _))
+            own    <- declaredEntries(marker)
+            ground <- getFactOrAbort(MonomorphicValue.Key(marker, arguments))
+          } yield ground.effects.received
+            .filter(received =>
+              performed.contains(received.entry.ability) && own.get(received.binderIndex).exists(held.contains)
+            )
+            .map(received => received.entry -> arguments.lift(received.binderIndex).getOrElse(defaultBinding))
         }
+      }
+
+    private def abilityOfImplementation(
+        orv: OperatorResolvedValue
+    ): Option[AbilityFQN] =
+      orv.name.value.qualifier match {
+        case com.vanillasource.eliot.eliotc.resolve.fact.Qualifier.AbilityImplementation(ability, _, _) => Some(ability)
+        case _                                                                                          => None
       }
 
     /** The types of an implementation's own parameters at its type arguments, read off its parameters declaration's

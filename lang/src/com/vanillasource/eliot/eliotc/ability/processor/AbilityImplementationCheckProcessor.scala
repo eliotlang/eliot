@@ -161,7 +161,7 @@ class AbilityImplementationCheckProcessor
       .traverse_ { case (abstractMethod, implMethod) =>
         for {
           implMarkerSig <- loadMarkerSignature(implMethod.vfqn, abilityFQN.abilityName, platform)
-          parameters    <- implementationParameterCount(implMethod.vfqn, platform)
+          parameters    <- implementationParameterCount(implMethod, platform)
           compatible    <- AbilityMatcher.signaturesCompatible(
                              abstractMethod.methodSig,
                              withoutLeadingParameters(implMethod.methodSig, parameters),
@@ -180,9 +180,9 @@ class AbilityImplementationCheckProcessor
     * receives them ahead of the ability member's own, so they are not part of the contract compared here. Zero when
     * the implementation declares none, which is when it has no parameters declaration at all.
     */
-  private def implementationParameterCount(method: ValueFQN, platform: Platform): CompilerIO[Int] = {
-    val declaration = ImplementationParameters.of(method)
-    getFactOrAbort(UnifiedModuleNames.Key(method.moduleName, platform)).flatMap { names =>
+  private def implementationParameterCount(method: ResolvedMethod, platform: Platform): CompilerIO[Int] = {
+    val declaration = ImplementationParameters.of(method.vfqn)
+    getFactOrAbort(UnifiedModuleNames.Key(method.vfqn.moduleName, platform)).flatMap { names =>
       if (names.names.contains(declaration.name))
         getFactOrAbort(OperatorResolvedValue.Key(declaration, platform)).map(declared =>
           SignatureView.of(declared.signature).parameters.size

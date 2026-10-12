@@ -28,6 +28,14 @@ object NativeType {
   def systemFileType(moduleName: String, typeName: String): ValueFQN =
     ValueFQN(ModuleName(Seq("eliot", "file"), moduleName), QualifiedName(typeName, Qualifier.Default))
 
+  /** A control effect's private frame type in the `eliot.effect` package — `Throw.ThrowFrame`, `State.StateCell` — which the
+    * platform's control primitives make and the effect's implementation takes as its parameter (`docs/effects.md` §11,
+    * D20c option 5). Every one is an opaque `Object`: an escape frame is compared by identity, and a cell is a one-slot
+    * `Object[]` only the primitives look inside.
+    */
+  def effectFrameType(moduleName: String, typeName: String): ValueFQN =
+    ValueFQN(ModuleName(ModuleName.effectPackage, moduleName), QualifiedName(typeName, Qualifier.Default))
+
   /** A type in the `eliot.system` package, represented by a native JVM type rather than an Eliot `data` type — the
     * `Process.ProcessOutcome` holder.
     */
@@ -69,6 +77,12 @@ object NativeType {
       // The private `eliot.system.Process.ProcessOutcome` holder is a four-slot `Object[]` (error message, exit code,
       // captured stdout, captured stderr), for the same reason `IoResult` is a two-slot one.
       (systemSystemType("Process", "ProcessOutcome"), eliot_system_ProcessOutcome),
+      // The control effects' frames (D20c option 5): opaque to everything but the primitives that make them.
+      (effectFrameType("Throw", "ThrowFrame"), eliot_lang_Any),
+      (effectFrameType("Abort", "AbortFrame"), eliot_lang_Any),
+      (effectFrameType("State", "StateCell"), eliot_lang_Any),
+      (effectFrameType("Writer", "WriterCell"), eliot_lang_Any),
+      (effectFrameType("Dep", "DepCell"), eliot_lang_Any),
       // The fixed set of JVM representation types `Int[MIN, MAX]` can lower to (see jvm `Int.els`). These five entries
       // are the entire backend "type knowledge" of integer widths; all width *policy* (which range picks which) lives
       // in Eliot's opaque `Int` body (Phase 2) and the unfold pass (Phase 3).

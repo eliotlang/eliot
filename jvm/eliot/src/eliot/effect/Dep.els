@@ -5,12 +5,11 @@ effect Dep[X] {
 }
 
 /**
- * The JVM `Dep[X]` implementation — the single one for this platform, the reader's `ask`: `dependency` reads the
- * nearest enclosing cell for `X`, which is whatever the enclosing `provide` put there. Two distinct dependency types
- * are two distinct cells, so two nested `provide`s do not see each other.
+ * The JVM `Dep[X]` implementation — the single one for this platform, the reader's `ask`: `dependency` reads the cell
+ * its `provide` made and handed to exactly the computation it provides for.
  */
-implement[X] Dep[X] {
-   def dependency: X = readCellInternal
+implement[X] Dep[X](cell: DepCell[X]) {
+   def dependency: X = readCellInternal(cell)
 }
 
 /**
@@ -21,13 +20,19 @@ implement[X] Dep[X] {
 def provide[X, A](x: X, computation: {Dep[X]} A): A = withCellInternal(x, computation, a -> _ -> a)
 
 /**
- * Install a cell for `S` holding `initial`, run `body` inside it, and answer the result paired with the cell's final
- * content. `eliot.effect.State`'s leaf of the same shape and purpose; per-module `private` means each module declares
- * its own. Implemented by the backend. `body` is given `Dep[S]`, as `State`'s copy gives `State[S]` (D20 rule 5).
+ * The cell `dependency` reads: made by `withCellInternal`. It has no constructor, so nothing else
+ * can make one.
+ */
+type DepCell[S]
+
+/**
+ * Make a fresh cell holding `initial`, run `body` with it, and answer the result paired with the cell's final content.
+ * `eliot.effect.State`'s leaf of the same shape and purpose; per-module `private` means each module declares its own.
+ * Implemented by the backend. `body` is given `Dep[S]` and the cell, as `State`'s copy gives `State[S]` (D20 rule 5).
  */
 private def withCellInternal[S, A, R](initial: S, body: {Dep[S]} A, combine: A => S => {} R): R
 
 /**
- * The content of the nearest enclosing cell for `S`. Implemented by the backend.
+ * The content of `cell`. Implemented by the backend.
  */
-private def readCellInternal[S]: S
+private def readCellInternal[S](cell: DepCell[S]): S

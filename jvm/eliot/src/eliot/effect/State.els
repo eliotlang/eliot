@@ -5,13 +5,14 @@ effect State[S] {
 }
 
 /**
- * The JVM `State[S]` implementation — the single one for this platform: the threaded value lives in the nearest
- * enclosing cell of this instantiation, so `state` reads it and `putState` replaces it, and neither wraps the result.
+ * The JVM `State[S]` implementation — the single one for this platform: the threaded value lives in the cell its
+ * discharger made and handed to exactly the computation it discharges, so `state` reads it and `putState` replaces it,
+ * and a helper's own `State` never sees its caller's.
  */
-implement[S] State[S] {
-   def state: S = readCellInternal
+implement[S] State[S](cell: StateCell[S]) {
+   def state: S = readCellInternal(cell)
 
-   def putState(s: S): Unit = writeCellInternal(s)
+   def putState(s: S): Unit = writeCellInternal(cell, s)
 }
 
 /**
@@ -25,26 +26,32 @@ def runStateToPair[S, A](initial: S, p: {State[S]} A): Pair[A, S] =
    withCellInternal(initial, p, a -> s -> Pair(a, s))
 
 /**
- * Install a cell for `S` holding `initial`, run `body` inside it, and answer the result paired with the cell's final
- * content. The stateful half of the platform's two control-flow primitives (`docs/effects.md` §9.6): on the JVM a cell
- * is a static field per instantiation, saved and restored around this call, so it is scoped to it and gone afterwards
- * — including when the call is exited through.
+ * The cell `state` and `putState` reach: made by `withCellInternal`. It has no constructor, so nothing else
+ * can make one.
+ */
+type StateCell[S]
+
+/**
+ * Make a fresh cell holding `initial`, run `body` with it, and answer the result paired with the cell's final content.
+ * The stateful half of the platform's control-flow primitives (`docs/effects.md` §9.6): on the JVM a cell is a one-slot
+ * array local to this call, so it is gone when the call returns or is exited through.
  *
  * `private`, and re-declared per module rather than shared: a public cell *is* Landin's knot — a cell holding a closure
  * that reads the cell is a loop — and the recursion gate (`termination/PurityGuardTest`) exists to keep that out.
  * Implemented by the backend.
  *
- * `body` is given `State[S]`: a body-less declaration is the only kind that gives an effect from nothing, so the
- * platform's default reaches a discharger's block here and nowhere else (`docs/effects.md` §11, D20 rule 5).
+ * `body` is given `State[S]`, and with it the cell: a body-less declaration is the only kind that gives an effect from
+ * nothing, so the platform's default reaches a discharger's block here and nowhere else (`docs/effects.md` §11, D20
+ * rule 5).
  */
 private def withCellInternal[S, A, R](initial: S, body: {State[S]} A, combine: A => S => {} R): R
 
 /**
- * The content of the nearest enclosing cell for `S`. Implemented by the backend.
+ * The content of `cell`. Implemented by the backend.
  */
-private def readCellInternal[S]: S
+private def readCellInternal[S](cell: StateCell[S]): S
 
 /**
- * Replace the content of the nearest enclosing cell for `S`. Implemented by the backend.
+ * Replace the content of `cell`. Implemented by the backend.
  */
-private def writeCellInternal[S](s: S): Unit
+private def writeCellInternal[S](cell: StateCell[S], s: S): Unit

@@ -6,11 +6,11 @@ effect Writer[W] {
 
 /**
  * The JVM `Writer[W]` implementation — the single one for this platform, `State` restricted to append-only: `tell`
- * joins `w` onto the content of the nearest enclosing cell with the `Combine[W]` monoid, and nothing here can read it
- * back out, which is the whole contract.
+ * joins `w` onto the content of its discharger's cell with the `Combine[W]` monoid, and nothing here can read it back
+ * out, which is the whole contract.
  */
-implement[W ~ Combine[W]] Writer[W] {
-   def tell(w: W): Unit = writeCellInternal(combine(readCellInternal, w))
+implement[W ~ Combine[W]] Writer[W](cell: WriterCell[W]) {
+   def tell(w: W): Unit = writeCellInternal(cell, combine(readCellInternal(cell), w))
 }
 
 /**
@@ -21,19 +21,24 @@ def runWriterToPair[W ~ Combine[W], A](p: {Writer[W]} A): Pair[A, W] =
    withCellInternal(empty, p, a -> w -> Pair(a, w))
 
 /**
- * Install a cell for `W` holding `initial`, run `body` inside it, and answer the result paired with the cell's final
- * content. `eliot.effect.State`'s leaf of the same shape and purpose; per-module `private` means each module declares
- * its own — which is also what keeps a writer's cell and a state's cell apart at the same type. Implemented by the
- * backend. `body` is given `Writer[S]`, as `State`'s copy gives `State[S]` (D20 rule 5).
+ * The cell `tell` appends to: made by `withCellInternal`. It has no constructor, so nothing else
+ * can make one.
+ */
+type WriterCell[S]
+
+/**
+ * Make a fresh cell holding `initial`, run `body` with it, and answer the result paired with the cell's final content.
+ * `eliot.effect.State`'s leaf of the same shape and purpose; per-module `private` means each module declares its own.
+ * Implemented by the backend. `body` is given `Writer[S]` and the cell, as `State`'s copy gives `State[S]` (D20 rule 5).
  */
 private def withCellInternal[S, A, R](initial: S, body: {Writer[S]} A, combine: A => S => {} R): R
 
 /**
- * The content of the nearest enclosing cell for `S`. Implemented by the backend.
+ * The content of `cell`. Implemented by the backend.
  */
-private def readCellInternal[S]: S
+private def readCellInternal[S](cell: WriterCell[S]): S
 
 /**
- * Replace the content of the nearest enclosing cell for `S`. Implemented by the backend.
+ * Replace the content of `cell`. Implemented by the backend.
  */
-private def writeCellInternal[S](s: S): Unit
+private def writeCellInternal[S](cell: WriterCell[S], s: S): Unit

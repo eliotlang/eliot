@@ -9,11 +9,12 @@ effect Throw[E] {
  * discharger only installs the frame it exits to (`docs/effects.md` §9.6). It is anonymous, so it is the default every
  * `{Throw[E]}` declaration binds; a test does not replace it, it discharges it.
  *
- * `raise` is the non-local exit itself: it leaves through the nearest enclosing frame of *this* instantiation, so a
- * `raise` of a `NetError` passes straight through a `runThrow` installed for a `ParseError`.
+ * Its parameter is the frame `raise` leaves through, which the discharger that installed it hands to exactly the
+ * computation it discharges (`docs/effects.md` §11, D20c option 5): never the nearest frame of its type, so a helper's
+ * own `catch` cannot swallow its caller's `raise`, and a `raise` nothing discharges does not compile.
  */
-implement[E] Throw[E] {
-   def raise[A](err: E): A = exitInternal(err)
+implement[E] Throw[E](frame: ThrowFrame[E]) {
+   def raise[A](err: E): A = exitInternal(frame, err)
 }
 
 /**
@@ -25,22 +26,28 @@ def runThrow[E, A](obj: {Throw[E]} A): Either[E, A] =
    escapeInternal(obj, (err: E) -> Left(err), a -> Right(a))
 
 /**
- * Install an escape frame for the error type `E`, run `body` inside it, and answer `Right` of its result or `Left` of
- * whatever `exitInternal` left with. The abortive half of the platform's two control-flow primitives
- * (`docs/effects.md` §9.6): on the JVM a frame is an exception, one class per instantiation of `E`, and the machine
- * stack is what makes "the nearest enclosing frame" mean what it says.
+ * The frame a `raise` leaves through: made by `escapeInternal`. It has no constructor, so nothing else
+ * can make one.
+ */
+type ThrowFrame[K]
+
+/**
+ * Make a fresh escape frame, run `body` with it, and answer `Right` of its result or `Left` of whatever `exitInternal`
+ * left through that frame with. The abortive half of the platform's control-flow primitives (`docs/effects.md` §9.6):
+ * on the JVM a frame is an object compared by identity, and an exit through any other frame passes through this one.
  *
  * `private`, and re-declared per module rather than shared from one place, exactly as `isNull` is: a public escape is
  * one half of Landin's knot, and the recursion gate (`termination/PurityGuardTest`) exists to keep the other half out.
  * Implemented by the backend.
  *
- * `body` is given `Throw[K]`: a body-less declaration is the only kind that gives an effect from nothing, so the
- * platform's default reaches a discharger's block here and nowhere else (`docs/effects.md` §11, D20 rule 5).
+ * `body` is given `Throw[K]`, and with it the frame: a body-less declaration is the only kind that gives an effect from
+ * nothing, so the platform's default reaches a discharger's block here and nowhere else (`docs/effects.md` §11, D20
+ * rule 5).
  */
 private def escapeInternal[K, A, R](body: {Throw[K]} A, onExit: K => {} R, onValue: A => {} R): R
 
 /**
- * Leave through the nearest enclosing `escapeInternal` frame of this instantiation, carrying `err`. Control does not
- * return, so the result stands in for a value of any type. Implemented by the backend.
+ * Leave through `frame`, carrying `err`. Control does not return, so the result stands in for a value of any type.
+ * Implemented by the backend.
  */
-private def exitInternal[K, A](err: K): A
+private def exitInternal[K, A](frame: ThrowFrame[K], err: K): A

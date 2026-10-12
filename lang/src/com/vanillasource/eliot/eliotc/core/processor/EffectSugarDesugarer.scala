@@ -68,12 +68,15 @@ object EffectSugarDesugarer {
       val names                        = NameSource(function.genericParameters.map(_.name.value).toSet)
       // One binder per distinct entry of the declared (return) row, in declared order, each carrying its own
       // constraint with itself appended — `{Console, Log} Unit` mints `Impl ~ Console[Impl]` and `Impl0 ~ Log[Impl0]`.
+      // An `implement` clause's entry it only carries for a sibling gets its binder and no constraint
+      // ([[FunctionDefinition.carriedEffects]]).
       val rowBinders                   = returnRowEntries(function).map { entry =>
         val binder = anchor.as(names.fresh(binderPrefix))
         GenericParameter(
           binder,
           GenericParameter.implementationMark(anchor, entry.abilityName),
-          Seq(UnresolvedAbilityConstraint(entry.abilityName, binder.as(typeExpr(binder)) +: entry.typeArgs.map(bare)))
+          if (function.carriedEffects.contains(UnresolvedAbilityConstraint.key(entry))) Seq.empty
+          else Seq(UnresolvedAbilityConstraint(entry.abilityName, binder.as(typeExpr(binder)) +: entry.typeArgs.map(bare)))
         )
       }
       // One unconstrained binder per `~` constraint, appended to that constraint in place. The constraint keeps the

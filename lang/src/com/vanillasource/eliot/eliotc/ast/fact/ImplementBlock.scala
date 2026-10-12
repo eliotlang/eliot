@@ -57,8 +57,14 @@ object ImplementBlock {
           // from an otherwise same-pattern sibling. `Show[Expression]` drops
           // source positions, so the key is stable across layers that spell the pattern identically (the same
           // character-exact discipline the layer merge already requires).
+          //
+          // An implementation's **parameters** are part of its identity too, which keeps a platform's control-effect
+          // implementation (`implement Abort(frame: EscapeFrame[Unit])`) apart from the compiler overlay's
+          // parameterless one of the same pattern: the compile track borrows the platform's sources, and the two must not
+          // merge into one value with two signatures.
           patternKey           = pattern.map(_.value.render).mkString(", ") +
-                                   guard.map(g => s" where ${g.value.render}").getOrElse("")
+                                   guard.map(g => s" where ${g.value.render}").getOrElse("") +
+                                   ImplementationParameters.identity(parameters)
         } yield (
           errors,
           functions.map((f, isClause) =>

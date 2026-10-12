@@ -1,8 +1,8 @@
 package com.vanillasource.eliot.eliotc.jvm.classgen.processor
 
 import cats.syntax.all.*
-import com.vanillasource.eliot.eliotc.jvm.classgen.asm.CommonPatterns.{mangleSuffix, valueType}
-import com.vanillasource.eliot.eliotc.jvm.classgen.asm.NativeType.{javaInternalName, systemFunctionValue, systemUnitValue, types}
+import com.vanillasource.eliot.eliotc.jvm.classgen.asm.CommonPatterns.valueType
+import com.vanillasource.eliot.eliotc.jvm.classgen.asm.NativeType.{systemAnyValue, systemFunctionValue, systemUnitValue, types}
 import com.vanillasource.eliot.eliotc.jvm.classgen.asm.{ClassGenerator, JvmIdentifier}
 import com.vanillasource.eliot.eliotc.module.fact.{ModuleName, QualifiedName, Qualifier, ValueFQN}
 import com.vanillasource.eliot.eliotc.monomorphize.fact.GroundValue
@@ -13,22 +13,21 @@ import org.objectweb.asm.{Label, Opcodes}
   * and the **cell** (a value threaded through calls that never mention it). Neither is expressible as a def in a
   * strict pure core, which is the whole reason the carrier existed; they are the only two things left of it.
   *
-  * Both come in a group of leaves sharing one frame, and both are **emitted once per instantiation** rather than once
-  * erased. That is what makes `raise` leave through the frame of *its own* error type: an exit from a
-  * `{Throw[NetError]}` passes straight through a `runThrow` installed for a `ParseError`, which a nearest-frame
-  * discipline cannot do. The instantiation reaches the emitter as its ground type arguments, and the **first** of them
-  * is the frame key by convention — every leaf here declares its key parameter first.
+  * **A frame is passed, never searched for** (effects D20c option 5, `docs/effects.md` §11). The leaf that installs one
+  * makes a fresh frame — an escape's is a plain `Object` compared by identity, a cell is a one-slot `Object[]` — and
+  * hands it to the thunk it runs, which is the computation it discharges; the environment threading at the
+  * `WovenValue` seam passes it on to exactly the operations written inside that computation. So an exit leaves through
+  * the frame it was given, and a cell is read and written through the one it was given: a helper's own discharge of
+  * the same effect is a different object, invisible to an operation it was not given, and nothing lives in a static
+  * field a nested discharge would have to save and restore.
   *
-  * Two things separate frames, at two scales. **Per effect**: each leaf is declared `private` in the module that needs
-  * it (`eliot.effect.Throw` and `eliot.effect.Abort` each own an escape; `State`, `Writer` and `Dep` each own a cell),
-  * so the fields below are per-module and an `Abort` escape can never see a `Throw` exit. **Per instantiation**: the
-  * key suffix, so a `Throw[NetError]` frame can never see a `Throw[ParseError]` exit.
+  * Each group is still declared `private` in the module that needs it (`eliot.effect.Throw` and `eliot.effect.Abort`
+  * each own an escape; `State`, `Writer` and `Dep` each own a cell) and emitted once per instantiation, but neither
+  * separates frames any more: identity does.
   *
-  * The exit is a **pre-allocated shared exception plus a tag**, not a generated exception class per instantiation. It
-  * is the same mechanism either way — the machine stack unwinds and the nearest *matching* handler wins, a
-  * non-matching one rethrows — and it needs no class generation, which for a leaf that must interoperate with the
-  * per-instantiation method naming is markedly less machinery. Reusing one instance also skips the stack-trace fill-in
-  * that makes exceptions expensive: an exit carries no diagnostic, only a value.
+  * The exit is a **pre-allocated shared exception** carrying the frame and the value in per-module fields: the machine
+  * stack unwinds, and each escape on the way compares the frame with its own and rethrows on a mismatch. Reusing one
+  * instance skips the stack-trace fill-in that makes exceptions expensive: an exit carries no diagnostic, only a value.
   *
   * The leaves are written in **continuation-passing** form (`escapeInternal(body, onExit, onValue)`) so that no native
   * here constructs an Eliot `data`: the result `Either`/`Pair` is built by the ordinary Eliot body of the discharger
@@ -36,9 +35,9 @@ import org.objectweb.asm.{Label, Opcodes}
   * it keeps the backend's knowledge of the standard library at zero.
   *
   * **Reference representations only.** A key or payload whose representation is a JVM primitive (`{State[Int]}`) is
-  * rejected by [[unsupportedInstantiation]] rather than mis-emitted: the cell is an `Object` field and `Function.apply`
-  * is `Object`-typed, so a primitive would need boxing decisions this does not make. The rejection is a loud build
-  * error at the definition, never a silent wrong store.
+  * rejected by [[unsupportedInstantiation]] rather than mis-emitted: the cell is an `Object[]` and `Function.apply` is
+  * `Object`-typed, so a primitive would need boxing decisions this does not make. The rejection is a loud build error
+  * at the definition, never a silent wrong store.
   */
 object ControlNatives {
 
@@ -79,19 +78,21 @@ object ControlNatives {
 
   /** The per-module fields. Names are prefixed so no Eliot value can collide with them. */
   private val exitSentinelField = JvmIdentifier("eliot$exit")
-  private val exitTagField      = JvmIdentifier("eliot$exitTag")
+  private val exitFrameField    = JvmIdentifier("eliot$exitFrame")
   private val exitValueField    = JvmIdentifier("eliot$exitValue")
 
   private val throwableDescriptor = "Ljava/lang/RuntimeException;"
-  private val stringDescriptor    = "Ljava/lang/String;"
   private val objectDescriptor    = "Ljava/lang/Object;"
   private val functionApply       = "(Ljava/lang/Object;)Ljava/lang/Object;"
+  private val cellClass           = "[Ljava/lang/Object;"
 
-  /** `escapeInternal[K, A, R](body: {} A, onExit: K => {} R, onValue: A => {} R): R` — install the frame keyed by `K`,
-    * run `body` inside it, and hand the result to `onValue`, or whatever left through this frame to `onExit`.
+  /** `escapeInternal[K, A, R](body: {Throw[K]} A, onExit: K => {} R, onValue: A => {} R): R` — make a fresh frame, run
+    * `body` with it, and hand the result to `onValue`, or whatever left through *this* frame to `onExit`.
     *
-    * An exit that is not this frame's — a different key, or a genuine exception from the body — is rethrown, which is
-    * exactly "the nearest *matching* enclosing frame": the stack keeps unwinding until one accepts.
+    * The frame is an `Object` compared by **identity**, and it reaches exactly the operations the discharger gave it
+    * to: the thunk `body` takes it as its argument (effects D20c option 5). An exit carrying any other frame — a
+    * caller's, passing through a helper's own discharge — is rethrown, so no frame intercepts an operation it was not
+    * given, and two live frames of one instantiation are told apart.
     */
   private def escapeInternal(name: JvmIdentifier, typeArgs: Seq[GroundValue]): NativeImplementation =
     new NativeImplementation {
@@ -113,12 +114,17 @@ object ControlNatives {
                 val rethrow  = new Label()
                 val end      = new Label()
 
+                methodVisitor.visitTypeInsn(Opcodes.NEW, "java/lang/Object")
+                methodVisitor.visitInsn(Opcodes.DUP)
+                methodVisitor.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false)
+                methodVisitor.visitVarInsn(Opcodes.ASTORE, 3)                // this call's frame
+
                 methodVisitor.visitTryCatchBlock(tryStart, tryEnd, handler, "java/lang/RuntimeException")
 
                 methodVisitor.visitLabel(tryStart)
                 methodVisitor.visitVarInsn(Opcodes.ALOAD, 2)                 // onValue
                 methodVisitor.visitVarInsn(Opcodes.ALOAD, 0)                 // body
-                methodVisitor.visitInsn(Opcodes.ACONST_NULL)                 // its ignored Unit argument
+                methodVisitor.visitVarInsn(Opcodes.ALOAD, 3)                 // given its frame
                 apply(methodVisitor)                                         // the body's value
                 apply(methodVisitor)                                         // onValue(value)
                 methodVisitor.visitLabel(tryEnd)
@@ -133,22 +139,14 @@ object ControlNatives {
                   throwableDescriptor
                 )
                 methodVisitor.visitJumpInsn(Opcodes.IF_ACMPNE, rethrow)      // not an Eliot exit at all
-                // The tag is the receiver's *constant*, so a never-set tag compares false instead of throwing.
-                methodVisitor.visitLdcInsn(frameKey(typeArgs))
                 methodVisitor.visitFieldInsn(
                   Opcodes.GETSTATIC,
                   classGenerator.internalName,
-                  exitTagField.value,
-                  stringDescriptor
+                  exitFrameField.value,
+                  objectDescriptor
                 )
-                methodVisitor.visitMethodInsn(
-                  Opcodes.INVOKEVIRTUAL,
-                  "java/lang/String",
-                  "equals",
-                  "(Ljava/lang/Object;)Z",
-                  false
-                )
-                methodVisitor.visitJumpInsn(Opcodes.IFEQ, rethrow)           // another instantiation's exit
+                methodVisitor.visitVarInsn(Opcodes.ALOAD, 3)
+                methodVisitor.visitJumpInsn(Opcodes.IF_ACMPNE, rethrow)      // another frame's exit
                 methodVisitor.visitInsn(Opcodes.POP)                         // drop the throwable
                 methodVisitor.visitVarInsn(Opcodes.ALOAD, 1)                 // onExit
                 methodVisitor.visitFieldInsn(
@@ -168,8 +166,8 @@ object ControlNatives {
             }
     }
 
-  /** `exitInternal[K, A](err: K): A` — leave through the nearest enclosing frame of this key, carrying `err`. Control
-    * does not return, so the `ARETURN` `createMethod` appends is dead code that `COMPUTE_FRAMES` rewrites.
+  /** `exitInternal[K, A](frame: EscapeFrame[K], err: K): A` — leave through `frame`, carrying `err`. Control does not
+    * return, so the `ARETURN` `createMethod` appends is dead code that `COMPUTE_FRAMES` rewrites.
     */
   private def exitInternal(name: JvmIdentifier, typeArgs: Seq[GroundValue]): NativeImplementation =
     new NativeImplementation {
@@ -178,7 +176,7 @@ object ControlNatives {
       override def generateMethod(classGenerator: ClassGenerator): CompilerIO[Unit] =
         declareExitFields(classGenerator) >>
           classGenerator
-            .createMethod[CompilerIO](name, Seq(valueType(typeArgs.head)), valueType(typeArgs(1)))
+            .createMethod[CompilerIO](name, Seq(systemAnyValue, valueType(typeArgs.head)), valueType(typeArgs(1)))
             .use { methodGenerator =>
               methodGenerator.runNative[CompilerIO] { methodVisitor =>
                 val allocated = new Label()
@@ -210,14 +208,14 @@ object ControlNatives {
                 )
                 methodVisitor.visitLabel(allocated)
 
-                methodVisitor.visitLdcInsn(frameKey(typeArgs))
+                methodVisitor.visitVarInsn(Opcodes.ALOAD, 0)
                 methodVisitor.visitFieldInsn(
                   Opcodes.PUTSTATIC,
                   classGenerator.internalName,
-                  exitTagField.value,
-                  stringDescriptor
+                  exitFrameField.value,
+                  objectDescriptor
                 )
-                methodVisitor.visitVarInsn(Opcodes.ALOAD, 0)
+                methodVisitor.visitVarInsn(Opcodes.ALOAD, 1)
                 methodVisitor.visitFieldInsn(
                   Opcodes.PUTSTATIC,
                   classGenerator.internalName,
@@ -235,129 +233,91 @@ object ControlNatives {
             }
     }
 
-  /** `withCellInternal[S, A, R](initial: S, body: {} A, combine: A => S => {} R): R` — a cell holding an `S`, scoped to
-    * this call: saved and restored around it, so a nested discharge of the same effect nests properly and an exit
-    * leaving through it does not strand the outer value.
+  /** `withCellInternal[S, A, R](initial: S, body: {State[S]} A, combine: A => S => {} R): R` — make a fresh cell holding
+    * `initial`, run `body` with it, and combine the result with the cell's final content. The cell is a one-slot
+    * `Object[]` local to this call: the thunk `body` takes it as its argument, so it reaches exactly the operations the
+    * discharger gave it to and is gone when the call returns or is exited through.
     */
   private def withCellInternal(name: JvmIdentifier, typeArgs: Seq[GroundValue]): NativeImplementation =
     new NativeImplementation {
       override val impure: Boolean = true
 
-      override def generateMethod(classGenerator: ClassGenerator): CompilerIO[Unit] = {
-        val cell = cellField(typeArgs)
+      override def generateMethod(classGenerator: ClassGenerator): CompilerIO[Unit] =
+        classGenerator
+          .createMethod[CompilerIO](
+            name,
+            Seq(valueType(typeArgs.head), systemFunctionValue, systemFunctionValue),
+            valueType(typeArgs(2))
+          )
+          .use { methodGenerator =>
+            methodGenerator.runNative[CompilerIO] { methodVisitor =>
+              methodVisitor.visitInsn(Opcodes.ICONST_1)
+              methodVisitor.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/Object")
+              methodVisitor.visitInsn(Opcodes.DUP)
+              methodVisitor.visitInsn(Opcodes.ICONST_0)
+              methodVisitor.visitVarInsn(Opcodes.ALOAD, 0)                   // initial
+              methodVisitor.visitInsn(Opcodes.AASTORE)
+              methodVisitor.visitVarInsn(Opcodes.ASTORE, 3)                  // this call's cell
 
-        classGenerator.createPrivateStaticFieldOnce[CompilerIO](cell, objectDescriptor) >>
-          classGenerator
-            .createMethod[CompilerIO](
-              name,
-              Seq(valueType(typeArgs.head), systemFunctionValue, systemFunctionValue),
-              valueType(typeArgs(2))
-            )
-            .use { methodGenerator =>
-              methodGenerator.runNative[CompilerIO] { methodVisitor =>
-                val tryStart = new Label()
-                val tryEnd   = new Label()
-                val handler  = new Label()
-                val end      = new Label()
-
-                methodVisitor.visitVarInsn(Opcodes.ALOAD, 0)
-                methodVisitor.visitFieldInsn(Opcodes.GETSTATIC, classGenerator.internalName, cell.value, objectDescriptor)
-                methodVisitor.visitVarInsn(Opcodes.ASTORE, 3)                // the enclosing value, to restore
-                methodVisitor.visitFieldInsn(Opcodes.PUTSTATIC, classGenerator.internalName, cell.value, objectDescriptor)
-
-                methodVisitor.visitTryCatchBlock(tryStart, tryEnd, handler, null)
-
-                methodVisitor.visitLabel(tryStart)
-                methodVisitor.visitVarInsn(Opcodes.ALOAD, 2)                 // combine
-                methodVisitor.visitVarInsn(Opcodes.ALOAD, 1)                 // body
-                methodVisitor.visitInsn(Opcodes.ACONST_NULL)
-                apply(methodVisitor)                                         // the body's value
-                apply(methodVisitor)                                         // combine(value)
-                // Read *after* the body has run, so the final state is the one the body left.
-                methodVisitor.visitFieldInsn(Opcodes.GETSTATIC, classGenerator.internalName, cell.value, objectDescriptor)
-                apply(methodVisitor)                                         // combine(value)(state)
-                methodVisitor.visitVarInsn(Opcodes.ASTORE, 4)
-                methodVisitor.visitLabel(tryEnd)
-                restore(methodVisitor, classGenerator, cell)
-                methodVisitor.visitVarInsn(Opcodes.ALOAD, 4)
-                methodVisitor.visitJumpInsn(Opcodes.GOTO, end)
-
-                methodVisitor.visitLabel(handler)                            // [throwable]
-                restore(methodVisitor, classGenerator, cell)
-                methodVisitor.visitInsn(Opcodes.ATHROW)
-
-                methodVisitor.visitLabel(end)
-              } >> methodGenerator.addCastTo[CompilerIO](valueType(typeArgs(2)))
-            }
-      }
-
-      private def restore(
-          methodVisitor: org.objectweb.asm.MethodVisitor,
-          classGenerator: ClassGenerator,
-          cell: JvmIdentifier
-      ): Unit = {
-        methodVisitor.visitVarInsn(Opcodes.ALOAD, 3)
-        methodVisitor.visitFieldInsn(Opcodes.PUTSTATIC, classGenerator.internalName, cell.value, objectDescriptor)
-      }
+              methodVisitor.visitVarInsn(Opcodes.ALOAD, 2)                   // combine
+              methodVisitor.visitVarInsn(Opcodes.ALOAD, 1)                   // body
+              methodVisitor.visitVarInsn(Opcodes.ALOAD, 3)                   // given its cell
+              apply(methodVisitor)                                           // the body's value
+              apply(methodVisitor)                                           // combine(value)
+              // Read *after* the body has run, so the final content is the one the body left.
+              methodVisitor.visitVarInsn(Opcodes.ALOAD, 3)
+              methodVisitor.visitInsn(Opcodes.ICONST_0)
+              methodVisitor.visitInsn(Opcodes.AALOAD)
+              apply(methodVisitor)                                           // combine(value)(content)
+            } >> methodGenerator.addCastTo[CompilerIO](valueType(typeArgs(2)))
+          }
     }
 
-  /** `readCellInternal[S]: S` — the cell's current value. */
+  /** `readCellInternal[S](cell: Cell[S]): S` — the cell's current content. */
   private def readCellInternal(name: JvmIdentifier, typeArgs: Seq[GroundValue]): NativeImplementation =
     new NativeImplementation {
       override val impure: Boolean = true
 
-      override def generateMethod(classGenerator: ClassGenerator): CompilerIO[Unit] = {
-        val cell = cellField(typeArgs)
-
-        classGenerator.createPrivateStaticFieldOnce[CompilerIO](cell, objectDescriptor) >>
-          classGenerator
-            .createMethod[CompilerIO](name, Seq.empty, valueType(typeArgs.head))
-            .use { methodGenerator =>
-              methodGenerator.runNative[CompilerIO] { methodVisitor =>
-                methodVisitor
-                  .visitFieldInsn(Opcodes.GETSTATIC, classGenerator.internalName, cell.value, objectDescriptor)
-              } >> methodGenerator.addCastTo[CompilerIO](valueType(typeArgs.head))
-            }
-      }
+      override def generateMethod(classGenerator: ClassGenerator): CompilerIO[Unit] =
+        classGenerator
+          .createMethod[CompilerIO](name, Seq(systemAnyValue), valueType(typeArgs.head))
+          .use { methodGenerator =>
+            methodGenerator.runNative[CompilerIO] { methodVisitor =>
+              methodVisitor.visitVarInsn(Opcodes.ALOAD, 0)
+              methodVisitor.visitTypeInsn(Opcodes.CHECKCAST, cellClass)
+              methodVisitor.visitInsn(Opcodes.ICONST_0)
+              methodVisitor.visitInsn(Opcodes.AALOAD)
+            } >> methodGenerator.addCastTo[CompilerIO](valueType(typeArgs.head))
+          }
     }
 
-  /** `writeCellInternal[S](s: S): Unit` — replace the cell's value. */
+  /** `writeCellInternal[S](cell: Cell[S], s: S): Unit` — replace the cell's content. */
   private def writeCellInternal(name: JvmIdentifier, typeArgs: Seq[GroundValue]): NativeImplementation =
     new NativeImplementation {
       override val impure: Boolean = true
 
-      override def generateMethod(classGenerator: ClassGenerator): CompilerIO[Unit] = {
-        val cell = cellField(typeArgs)
-
-        classGenerator.createPrivateStaticFieldOnce[CompilerIO](cell, objectDescriptor) >>
-          classGenerator
-            .createMethod[CompilerIO](name, Seq(valueType(typeArgs.head)), systemUnitValue)
-            .use { methodGenerator =>
-              methodGenerator.runNative[CompilerIO] { methodVisitor =>
-                methodVisitor.visitVarInsn(Opcodes.ALOAD, 0)
-                methodVisitor
-                  .visitFieldInsn(Opcodes.PUTSTATIC, classGenerator.internalName, cell.value, objectDescriptor)
-                methodVisitor.visitInsn(Opcodes.ACONST_NULL)
-              }
+      override def generateMethod(classGenerator: ClassGenerator): CompilerIO[Unit] =
+        classGenerator
+          .createMethod[CompilerIO](name, Seq(systemAnyValue, valueType(typeArgs.head)), systemUnitValue)
+          .use { methodGenerator =>
+            methodGenerator.runNative[CompilerIO] { methodVisitor =>
+              methodVisitor.visitVarInsn(Opcodes.ALOAD, 0)
+              methodVisitor.visitTypeInsn(Opcodes.CHECKCAST, cellClass)
+              methodVisitor.visitInsn(Opcodes.ICONST_0)
+              methodVisitor.visitVarInsn(Opcodes.ALOAD, 1)
+              methodVisitor.visitInsn(Opcodes.AASTORE)
+              methodVisitor.visitInsn(Opcodes.ACONST_NULL)
             }
-      }
+          }
     }
 
   private def declareExitFields(classGenerator: ClassGenerator): CompilerIO[Unit] =
     classGenerator.createPrivateStaticFieldOnce[CompilerIO](exitSentinelField, throwableDescriptor) >>
-      classGenerator.createPrivateStaticFieldOnce[CompilerIO](exitTagField, stringDescriptor) >>
+      classGenerator.createPrivateStaticFieldOnce[CompilerIO](exitFrameField, objectDescriptor) >>
       classGenerator.createPrivateStaticFieldOnce[CompilerIO](exitValueField, objectDescriptor)
 
   private def apply(methodVisitor: org.objectweb.asm.MethodVisitor): Unit =
     methodVisitor.visitMethodInsn(Opcodes.INVOKEINTERFACE, "java/util/function/Function", "apply", functionApply, true)
-
-  /** The frame key of an instantiation: its **first** type argument, mangled exactly as a method-name suffix is, so a
-    * key and the method names carrying it cannot disagree about what counts as the same instantiation.
-    */
-  private def frameKey(typeArgs: Seq[GroundValue]): String = mangleSuffix(typeArgs.take(1))
-
-  private def cellField(typeArgs: Seq[GroundValue]): JvmIdentifier =
-    JvmIdentifier.encode("eliot$cell" + frameKey(typeArgs))
 
   private def effectValueFQN(moduleName: String, valueName: String): ValueFQN =
     ValueFQN(ModuleName(ModuleName.effectPackage, moduleName), QualifiedName(valueName, Qualifier.Default))

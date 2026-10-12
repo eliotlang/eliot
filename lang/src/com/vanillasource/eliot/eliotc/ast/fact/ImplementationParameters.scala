@@ -51,6 +51,13 @@ object ImplementationParameters {
       )
     )
 
+  /** What the parameters add to an implementation's pattern key: nothing when there are none, so every existing
+    * implementation keeps its identity.
+    */
+  def identity(parameters: Seq[ArgumentDefinition]): String =
+    if (parameters.isEmpty) ""
+    else parameters.map(parameter => s"${parameter.name.value}: ${parameter.typeExpression.value.render}").mkString("(", ", ", ")")
+
   /** The parameters declaration of the implementation `member` belongs to — any value in its namespace. */
   def of(member: ValueFQN): ValueFQN =
     ValueFQN(member.moduleName, QualifiedName(name, member.name.qualifier))

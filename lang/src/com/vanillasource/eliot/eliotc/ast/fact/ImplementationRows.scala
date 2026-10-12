@@ -34,7 +34,8 @@ object ImplementationRows {
   def union(clauses: Seq[FunctionDefinition]): Seq[UnresolvedAbilityConstraint[Sourced[Expression]]] =
     clauses.flatMap(clause => entriesOf(clause.typeDefinition)).distinctBy(UnresolvedAbilityConstraint.key)
 
-  /** The definition with `row` as its declared return row, in place of whatever it declared.
+  /** The definition with `row` as its declared return row, in place of whatever it declared, recording the entries it
+    * only carries for its siblings ([[FunctionDefinition.carriedEffects]]).
     *
     * An entry the clause wrote itself keeps the clause's own copy, and with it the clause's own source position, so the
     * union is the same list in every clause while each entry still points at the clause that declared it. That is what
@@ -48,8 +49,10 @@ object ImplementationRows {
     if (row.isEmpty) definition
     else {
       val own = entriesOf(definition.typeDefinition).map(entry => UnresolvedAbilityConstraint.key(entry) -> entry).toMap
-      definition.copy(typeDefinition =
-        rowed(row.map(entry => own.getOrElse(UnresolvedAbilityConstraint.key(entry), entry)), definition.typeDefinition)
+      definition.copy(
+        typeDefinition =
+          rowed(row.map(entry => own.getOrElse(UnresolvedAbilityConstraint.key(entry), entry)), definition.typeDefinition),
+        carriedEffects = row.map(UnresolvedAbilityConstraint.key).filterNot(own.contains).toSet
       )
     }
 
