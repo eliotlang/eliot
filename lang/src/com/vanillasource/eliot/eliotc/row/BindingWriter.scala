@@ -85,6 +85,17 @@ object BindingWriter {
       captured: Boolean = false
   )
 
+  /** What a row-typed parameter's declaration promises its block for one ability (D20 rule 5).
+    *
+    * @param implementation
+    *   The implementation the slot names with `with`, or [[None]] for `Default`.
+    * @param through
+    *   The implementation the slot names whose **clauses** perform this ability, when the promise is one of those
+    *   clause rows rather than an entry of the slot itself. The caller writes that implementation's clause bindings
+    *   from the declaration ([[Writer.slotImplementation]]), so whoever runs the block must give them.
+    */
+  private case class Promise(implementation: Option[ValueFQN], through: Option[ValueFQN] = None)
+
   /** The lexical environment at one point. `bindings` is innermost-first, so a nearer `with` shadows an outer one for
     * the same ability; `thunks` are the row-typed parameters in scope, whose references apply.
     *
@@ -109,7 +120,7 @@ object BindingWriter {
       captured: Set[String] = Set.empty,
       checksBlocks: Boolean = false,
       selectors: Set[String] = Set.empty,
-      promises: Map[String, Map[AbilityFQN, Option[ValueFQN]]] = Map.empty
+      promises: Map[String, Map[AbilityFQN, Promise]] = Map.empty
   ) {
     def bind(binding: Binding): Scope = copy(bindings = binding +: bindings)
     def shadow(name: String): Scope   =
@@ -293,28 +304,43 @@ object BindingWriter {
   }
 
   /** What each row-typed parameter's declaration **promises** its block, per entry the slot *supplies* — an entry
-    * this definition's own row lacks (§2.2): the implementation the slot names with `with`, or [[None]] for `Default`.
-    * Running the parameter is checked against it (D20 rule 5).
+    * this definition's own row lacks (§2.2): the implementation the slot names with `with`, or `Default`. Running the
+    * parameter is checked against it (D20 rule 5).
+    *
+    * A slot's `with` promises more than its own entry. The implementation it names may perform effects in its clauses
+    * (`recordingConsole`'s `printLine` declares `{Writer[String]}`), and the caller writes those clause bindings as
+    * `Default` wherever this definition does not ride them ([[Writer.slotImplementation]]). So each such clause
+    * ability is promised as `Default` too: the block may only run where something gives it, or the double would
+    * perform it into whatever frame happens to enclose the run — or into none.
     */
   private def promisedBindings(
       orv: OperatorResolvedValue,
       universe: RowChecker.Universe
-  ): Map[String, Map[AbilityFQN, Option[ValueFQN]]] = {
+  ): Map[String, Map[AbilityFQN, Promise]] = {
     val names      = valueParameterNames(orv)
     val parameters = SignatureView.of(orv.signature).parameters
     val rides      = orv.effectRow.returnEffects.map(_.abilityFQN).toSet
     orv.effectRow.parameterEffects.flatMap { slot =>
       names.lift(slot.parameterIndex).map { name =>
-        val named = parameters
+        val named   = parameters
           .lift(slot.parameterIndex)
           .toSeq
           .flatMap(tpe => slotBindings(tpe.value))
           .flatMap(marker => abilityOf(marker.value, universe).map(_ -> marker.value))
           .toMap
-        name -> slot.effects.map(_.abilityFQN).filterNot(rides).map(ability => ability -> named.get(ability)).toMap
+        val entries =
+          slot.effects.map(_.abilityFQN).filterNot(rides).map(ability => ability -> Promise(named.get(ability))).toMap
+        val clauses = entries.values.flatMap(_.implementation).toSeq.distinct.flatMap { marker =>
+          clauseAbilities(marker, universe).filterNot(rides).map(_ -> Promise(None, Some(marker)))
+        }
+        name -> (clauses.toMap ++ entries)
       }
     }.toMap
   }
+
+  /** The abilities an implementation's clauses perform — its marker's phantom binders. */
+  private def clauseAbilities(marker: ValueFQN, universe: RowChecker.Universe): Seq[AbilityFQN] =
+    universe.lookup(marker).toSeq.flatMap(orv => phantoms(orv).map(_._2))
 
   /** This definition's **blocks** of function type (D20 rule 2), each with the number of arguments it takes: every
     * value parameter whose declared type is a function, except a row-typed one, which is a thunk and runs when
@@ -562,46 +588,52 @@ object BindingWriter {
       * block must be given here, and by the implementation promised. The block's bindings were written at the outer
       * call from that declaration, so what runs is fixed; a body that gives something else, or nothing, would make the
       * declaration a lie. A slot that names its implementation with `with` gives it by that declaration. An entry
-      * promised as `Default` must be given by a further slot that supplies it, which ends at a body-less declaration
-      * — the only kind that gives an effect from nothing.
+      * promised as `Default` — the slot's own, or one its named implementation's clauses perform — must be given by a
+      * further slot that supplies it, which ends at a body-less declaration: the only kind that gives an effect from
+      * nothing.
       */
     private def checkGiven(name: Sourced[String], scope: Scope): Unit =
-      scope.promises.getOrElse(name.value, Map.empty).toSeq.sortBy(_._1.abilityName).foreach { case (ability, promised) =>
+      scope.promises.getOrElse(name.value, Map.empty).toSeq.sortBy(_._1.abilityName).foreach { case (ability, promise) =>
         val giving = scope.binding(ability).map(binding => implementationOf(binding.term))
-        (promised, giving) match {
-          case (Some(_), None)                         => ()
-          case (None, None)                            =>
+        (promise.implementation, giving) match {
+          case (Some(_), None)                                   => ()
+          case (None, None)                                      =>
             violations += Violation(
               name.as(
-                s"'${name.value}' is promised the effect '${ability.abilityName}' by this definition's declaration, " +
-                  "but nothing here gives it."
+                s"'${name.value}' is promised the effect '${ability.abilityName}' by this definition's declaration" +
+                  performedBy(promise) + ", but nothing here gives it."
               ),
               Seq(
                 s"Declare '${ability.abilityName}' in this definition's { ... } effect set, or pass '${name.value}' to " +
                   "a parameter that gives it."
               )
             )
-          case (_, Some(actual)) if actual != promised => violations += mismatchedGiving(name, ability, promised, actual)
-          case _                                       => ()
+          case (_, Some(actual)) if actual != promise.implementation =>
+            violations += mismatchedGiving(name, ability, promise, actual)
+          case _                                                 => ()
         }
       }
 
     private def mismatchedGiving(
         name: Sourced[String],
         ability: AbilityFQN,
-        promised: Option[ValueFQN],
+        promise: Promise,
         actual: Option[ValueFQN]
     ): Violation = {
       def describe(implementation: Option[ValueFQN]): String =
         implementation.fold("the default implementation")(fqn => s"the implementation '${implementationName(fqn)}'")
       Violation(
         name.as(
-          s"'${name.value}' is promised ${describe(promised)} of '${ability.abilityName}' by this definition's " +
-            s"declaration, but is given ${describe(actual)} here."
+          s"'${name.value}' is promised ${describe(promise.implementation)} of '${ability.abilityName}' by this " +
+            s"definition's declaration${performedBy(promise)}, but is given ${describe(actual)} here."
         ),
         Seq("Name the implementation on the parameter with `with`, so the caller binds the same one.")
       )
     }
+
+    /** Which named implementation's clauses a promise comes from, as a clause of a message; empty for the slot's own. */
+    private def performedBy(promise: Promise): String =
+      promise.through.fold("")(marker => s" (its implementation '${implementationName(marker)}' performs it)")
 
     /** The implementation a binding term names: [[None]] for `Default`, else the marker at its head. */
     private def implementationOf(term: OperatorResolvedExpression): Option[ValueFQN] =
@@ -688,7 +720,7 @@ object BindingWriter {
           declared
             .get(ability)
             .fold(Binding(ability, defaultBinding(anchor)))(marker =>
-              Binding(ability, slotImplementation(marker, acc))
+              Binding(ability, slotImplementation(marker, acc, rides))
             )
         )
       }
@@ -714,23 +746,22 @@ object BindingWriter {
       ).value
 
     /** The term a **slot's** `with` binds (`program: {Console} Unit with recordingConsole`). Its clause-row bindings
-      * cannot be resolved here: the effects those clauses perform are supplied and discharged inside the *callee*,
-      * which is the whole point of a slot `with` — `transcriptOf`'s `runWriterToLog` covers the double's
-      * `{Writer[String]}`, and the caller writing the actual can neither see it nor name it. So they are written
-      * `Default`, "search at the ground arguments", which is what the callee's own body would have written for them.
+      * are resolved by §2.2's supplied-versus-rides rule, as a slot's own entries are. One the callee **supplies** —
+      * an ability its own declared row lacks — is performed inside the *callee*, which is the whole point of a slot
+      * `with`: `transcriptOf`'s `runWriterToLog` gives the double its `{Writer[String]}`, and the caller writing the
+      * actual can neither see nor name it. So it is written `Default`, and the callee's body is held to giving it
+      * where it runs the block ([[promisedBindings]]). One the callee **rides** is the caller's own binding, handed on
+      * as the callee's received one, so it is written from this scope like any other reference.
       */
     private def slotImplementation(
         implementation: Sourced[ValueFQN],
-        scope: Scope
+        scope: Scope,
+        rides: Set[AbilityFQN]
     ): OperatorResolvedExpression =
       boundImplementation(
         implementation,
-        scope.defaulting(bindingAbilities(implementation.value), implementation)
+        scope.defaulting(clauseAbilities(implementation.value, universe).filterNot(rides), implementation)
       )
-
-    /** Every ability the implementation `marker` is parameterised by — its phantom binders' abilities. */
-    private def bindingAbilities(marker: ValueFQN): Seq[AbilityFQN] =
-      universe.lookup(marker).toSeq.flatMap(orv => phantoms(orv).map(_._2))
 
     /** The abilities a callee's parameter `index` declares, when that parameter is a row position at all. */
     private def rowSlot(orv: OperatorResolvedValue, index: Int): Option[Seq[AbilityFQN]] =

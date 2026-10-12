@@ -72,4 +72,46 @@ class BlockGivingIntegrationTest extends FullIntegrationTest {
          |def main: {Console} Unit = printLine(transcriptOf(printLine("Bob")))""".stripMargin
     ).asserting(_ shouldBe "Bob;")
   }
+
+  "a block whose slot names an implementation performing an effect" should "be rejected where nothing gives that effect" in {
+    compileForErrors(
+      s"""import eliot.effect.Console
+         |$recordingConsole
+         |def transcriptOf(program: {Console} Unit with recordingConsole): String = {
+         |   program
+         |   "ran"
+         |}
+         |def main: {Console} Unit = printLine(transcriptOf(printLine("Bob")))""".stripMargin
+    ).asserting(
+      _ should include(
+        "'program' is promised the effect 'Writer' by this definition's declaration (its implementation " +
+          "'recordingConsole' performs it), but nothing here gives it"
+      )
+    )
+  }
+
+  it should "be rejected rather than perform it into a caller's unrelated frame" in {
+    compileForErrors(
+      s"""import eliot.effect.Console
+         |$recordingConsole
+         |def transcriptOf(program: {Console} Unit with recordingConsole): String = {
+         |   program
+         |   "ran"
+         |}
+         |def outer: {Console, Writer[String]} Unit = printLine(transcriptOf(printLine("Bob")))
+         |def main: {Console} Unit = printLine(runWriterToLog(outer))""".stripMargin
+    ).asserting(_ should include("(its implementation 'recordingConsole' performs it), but nothing here gives it"))
+  }
+
+  it should "perform it on the caller's binding when this definition's own row has it" in {
+    compileAndRun(
+      s"""import eliot.effect.Console
+         |$recordingConsole
+         |def transcriptOf(program: {Console} Unit with recordingConsole): {Writer[String]} Unit = {
+         |   tell("before;")
+         |   program
+         |}
+         |def main: {Console} Unit = printLine(runWriterToLog(transcriptOf(printLine("Bob"))))""".stripMargin
+    ).asserting(_ shouldBe "before;Bob;")
+  }
 }

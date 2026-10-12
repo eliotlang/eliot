@@ -865,6 +865,21 @@ option 5 is the proposed fix. The programs are in D20c.
     `runStateToFinalState("helper", …)`; a caller's `putState` written for its own `State[String]` lands in the
     helper's cell, and the caller's state is unchanged.
 
+**Items 16–17 were found on 2026-10-12** by D20c option 5's first spike (§11, "The `transcriptOf` spike").
+
+16. ~~**A slot's named implementation performed its clauses' effects into whatever frame enclosed the run.**~~
+    **Closed 2026-10-12** by the spike. `transcriptOf(program: {Console} Unit with recordingConsole)` whose body runs
+    `program` without discharging the double's `{Writer[String]}` compiled clean. Called inside an unrelated
+    `runWriterToLog`, the double's lines landed in *that* log (`outer;Bob;`, exit 0); called with no `Writer` frame
+    at all, it died with a `NullPointerException` in `Writer.tell`. The caller writes the double's clause bindings as
+    `Default`, and nothing held the callee to giving them. Now each such clause ability is promised to the block like
+    the slot's own entries (D20 rule 5).
+17. **Two entries of one effect are one binding in the walk.** `{Throw[IoError], Throw[GitError]}` mints two binders,
+    but `BindingWriter` keys its scope, the rides set and the promises by ability, so the innermost binding answers
+    for both, and a slot supplying `Throw[IoError]` under a definition riding `Throw[AssertionError]` supplies
+    nothing. Harmless today — both bindings are `Default` and the primitive picks a frame by instantiation — and the
+    first thing option 5 breaks, since there the binding *is* the frame. Open; the spike's second finding.
+
 ## 9. Built: a binding binder is marked by its type
 
 **Decision (2026-09-11).** A binder the desugar mints — for a row entry, for a `~` constraint, or for an
@@ -2065,6 +2080,64 @@ Not decisions: **the marker grows** (the environment's binder makes `Implementat
 `Implementation[A, Env]`, which the CLAUDE.md cornerstone describes), and **the spike** comes first in the build: a
 slot's `with` whose double performs a control effect (`transcriptOf`, under "Where to measure first"). A fallback is
 chosen only if it fails.
+
+**The `transcriptOf` spike (2026-10-12, on `ba9fad1b`).** Its question: at the place `transcriptOf`'s body runs
+`program`, can the walk find the bindings the double's environment is built from, reading only the definition being
+walked? **Yes**, and building that check closed a live hole (§8 item 16). It also turned up two things the
+environment's *construction* needs and the decision does not settle (§8 item 17 and the `Env` type of a default).
+Both are Robert's; nothing past the check below is built.
+
+1. **Built: a slot's named implementation promises its clause rows to the block.** §2.2's supplied-versus-rides rule
+   now applies to the double's clauses as it does to the slot's own entries. A clause ability the callee
+   **supplies** (its own row lacks it) is written `Default` by the caller, as before, and is now *promised* to the
+   block as `Default`: the callee must run the block where a further slot gives it, or it is rule 5's "nothing here
+   gives it", naming the double. A clause ability the callee **rides** is written from the caller's scope, like any
+   entry a slot does not supply, so the block captures it and the run site needs nothing. The callee then performs
+   nothing by declaring it, and §4 says so, which is right: `transcriptOf: {Writer[String]} Unit = program` declares
+   `Writer` for nothing, and the double writes into the caller's log. Under option 5 the double's environment is
+   exactly these bindings' environments — the supplied ones arrive as the block's parameter where it runs, the
+   riding ones were captured where it was written — so building it needs no further reading. The gate held: all 45
+   example jars byte-identical, the suite green, eliot-test green. The probes are three cases of
+   `BlockGivingIntegrationTest`.
+2. **Finding: the walk's unit is the ability, not the entry** (§8 item 17). Under option 5 the walk must choose the
+   frame, and with two entries of one effect in scope it cannot: an operation's arguments are inferred, so
+   `raise(err)` learns `E` from `err` in the checker, after the write. It occurs today in eliot-build's `Git` alias
+   (`Throw[IoError]`, `Throw[GitError]`) and eliot-test's `mocked` (`Throw[IoError]` supplied beside
+   `Throw[AssertionError]` ridden). Three ways out:
+   - **(a)** one entry per effect whose default takes an environment, checked at the row; the two programs nest
+     their dischargers or sum their errors.
+   - **(b)** an effect's environment in scope holds every frame of it the definition was handed, and the primitive
+     picks by instantiation among those. That is today's key comparison, but over frames passed rather than
+     searched, so items 14–15 stay closed; it costs a list per effect and a comparison per operation.
+   - **(c)** the entry is chosen at the reference's *ground* arguments, as `AbilityResolver` already prefers a
+     reference's own ground arguments over a same-ability constraint (`Dep[Database]` beside `Dep[Logger]`). A choice
+     made from a type, not a declaration, so §3.2 and standing rule 3 would need signing off; two entries equal at
+     some instantiation would be a use-site error.
+3. **Finding: `Env` at a `Default` binding has nothing to read.** The amendment fills the environment's binder "from
+   the implementation's declaration at a `with` or a slot's default". A `with` names a declaration; `Default` does
+   not — the two-site search chooses at ground arguments, during monomorphization. The base cannot spell it either:
+   `runStateToPair`'s body-less base signature must merge character-exactly with the jvm body, and `Cell[S]` is
+   private to jvm. What does work, measured: a slot `p: Env => A` with `Env` a binder the caller writes, because a
+   body is checked at its instantiation (`def f[A](x: A): String = x` compiles when used at `String`). Three ways
+   to fill it:
+   - **(i)** read an effect's default off its own module — its anonymous implementation — rejecting an effect with
+     anonymous implementations at more than one pattern when any takes parameters. The two-site search stays the
+     source of truth at monomorphization, so a disagreement must be a type error at the call; whether the checker
+     re-checks a call after `AbilityResolver` substitutes the implementation's method is unmeasured, and if it does
+     not, the disagreement is silent.
+   - **(ii)** `Env` is a type the checker computes from the ground binding, by an intrinsic over the resolved
+     implementation. The checker learns what an implementation's parameters are.
+   - **(iii)** no `Env` binder: environments are threaded after monomorphization, where every binding is ground
+     and every specialisation is its own method, so a parameter list that depends on the specialisation costs the
+     backend nothing. It is the shape the amendment set out to avoid, because the checker never sees the plumbing.
+     It is also the only one of the three that answers finding 2 for free, since at that point every entry's
+     arguments are ground and (c) is a lookup. The compile track evaluates unlowered terms, so under (iii) its
+     frames (`EffectIntrinsics`, the guard read's) are threaded by the evaluator itself rather than by the lowering.
+
+   **Recommendation: (iii) with 2(c)**, because it is the one reading under which both findings have an answer
+   from facts that exist, and the plumbing it hides from the checker is a lowering of ground terms, as `uncurry` is.
+   But it reverses the amendment's `Env` binder, which is recorded as a proposal ("Not decisions" above), and 2(c)
+   touches standing rule 3, so both need sign-off before option 5's environment is built.
 
 #### Reversals this records
 
