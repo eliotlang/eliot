@@ -22,6 +22,11 @@ object ImplementBlock {
           // No source in the tree writes a pattern-less `implement` today, so accepting one changes nothing until the
           // flag day; the named form (`NamedImplementation`) has always read its pattern optionally.
           pattern             <- optionalBracketedCommaSeparatedItems("[", sourced(Expression.typeRunParser), "]")
+          // The implementation's **parameters** (effects D20c option 5, `docs/effects.md` §11): its runtime
+          // environment, `implement[S] State[S](cell: Cell[S]) { … }`. Each clause receives them as leading value
+          // parameters, and [[ImplementationParameters]] records them for the readers that must tell them apart from
+          // the ability member's own.
+          parameters          <- optionalArgumentListOf(component[ArgumentDefinition])
           // Optional `where <guard>` clause (ability-guards Stage 1). `where` is a hard keyword (so a `def`'s
           // greedily-parsed return-type run stops cleanly at it, just as it stops at `infix`/`def` — the same reason
           // `where`-on-defs needs it hard). The guard is parsed with `typeRunParser` — the same parser as a return
@@ -42,7 +47,7 @@ object ImplementBlock {
           // so `with` can write the implementations those clauses run on (effects v6 §9.4 step 3).
           clauseRow            = ImplementationRows.union(members.collect { case (f, true) => f })
           functions            = members.map { case (f, isClause) =>
-                                   if (isClause) ImplementationRows.carrying(clauseRow, f) else f
+                                   if (isClause) (ImplementationRows.carrying(clauseRow, f), isClause) else (f, isClause)
                                  }
           // The implementation's identity: a canonical, position-independent string of *what* it implements — the
           // surface form of its type-argument pattern plus its `where` guard. Two `implement` blocks are the same
@@ -56,7 +61,7 @@ object ImplementBlock {
                                    guard.map(g => s" where ${g.value.render}").getOrElse("")
         } yield (
           errors,
-          functions.map(f =>
+          functions.map((f, isClause) =>
             // Transform the function into an "implement" function via `f.copy` — only the three deliberate overrides are
             // spelled out (name → implement qualifier including the instantiation type parameters, prepend the common
             // generic parameters, always-public visibility); everything else forwards by default. A *positional* rebuild
@@ -68,9 +73,19 @@ object ImplementBlock {
               name =
                 f.name.map(n => QualifiedName(n.name, Qualifier.AbilityImplementation(name.value.content, patternKey, None))),
               genericParameters = genericParameters ++ f.genericParameters,
+              args = (if (isClause) parameters else Seq.empty) ++ f.args,
               visibility = Visibility.Public
             )
-          ) :+
+          ) ++
+            ImplementationParameters
+              .declaration(
+                name,
+                Qualifier.AbilityImplementation(name.value.content, patternKey, None),
+                genericParameters,
+                parameters,
+                clauseRow
+              )
+              .toSeq :+
             // We add the implementation to the default method as a marker, that this type implements the marker.
             // The marker takes one argument per pattern element so its signature fully encodes the pattern,
             // which is what drives implementation selection during dispatch.

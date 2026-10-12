@@ -27,6 +27,18 @@ class AbilityImplementationCheckProcessorTest
     ).asserting(_ shouldBe Seq("Method not defined in ability." at "extra"))
   }
 
+  it should "pass when the implementation takes parameters ahead of each method's own" in {
+    runEngineForErrors(
+      "ability Show[A] { def show(x: A): A }\ndata Int\nimplement Show[Int](fallback: Int) { def show(x: Int): Int = fallback }\ndef f(x: Int): Int = show(x)"
+    ).asserting(_ shouldBe Seq.empty)
+  }
+
+  it should "fail when a method of an implementation with parameters has the wrong signature" in {
+    runEngineForErrors(
+      "ability Show[A] { def show(x: A): A }\ndata Int\ndata Bool\nimplement Show[Int](fallback: Int) { def show(x: Bool): Bool = x }\ndef f(x: Int): Int = show(x)"
+    ).asserting(_.map(_.message) shouldBe Seq("Signature of implementation does not match the ability definition."))
+  }
+
   it should "fail when an implementation method has the wrong signature" in {
     runEngineForErrors(
       "ability Show[A] { def show(x: A): A }\ndata Int\ndata Bool\nimplement Show[Int] { def show(x: Bool): Bool = x }\ndef f(x: Int): Int = show(x)"

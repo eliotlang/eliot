@@ -55,6 +55,17 @@ class EffectSyntaxParserTest extends ProcessorTest(new Tokenizer(), new ASTParse
       .asserting(a => (a.namedImplementations, a.functionDefinitions.size) shouldBe (Seq.empty, 2))
   }
 
+  "an anonymous implementation with parameters" should "give each clause the parameters ahead of its own" in {
+    ast("implement[S] State[S](cell: Cell[S]) {\n  def putState(s: S): Unit = write(cell, s)\n}")
+      .asserting(_.functionDefinitions.map(f => (f.name.value.name, f.args.map(_.name.value))) shouldBe
+        Seq(("putState", Seq("cell", "s")), ("$parameters", Seq("cell")), ("State", Seq("arg0"))))
+  }
+
+  "an anonymous implementation without parameters" should "declare no parameters" in {
+    ast("implement Show[String] {\n  def show(t: String): String = t\n}")
+      .asserting(_.functionDefinitions.map(_.name.value.name) shouldBe Seq("show", "Show"))
+  }
+
   "with in expression position" should "bind the whole flat expression as its subject" in {
     body("def a: X = xs.sort.render with reverseOrd")
       .asserting(_ shouldBe "xs . sort . render with reverseOrd")
