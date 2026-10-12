@@ -1658,7 +1658,8 @@ frame object and a handler rethrows any exception that is not its own; a cell is
 static field per instantiation. On a microcontroller a frame is a pointer to a jump buffer or a stack slot, which is
 C's `setjmp`/`longjmp`. On the compile track the evaluator's intrinsics carry the same identities.
 
-*Abilities too, and the line is named versus default — no keyword (2026-10-12).* Nothing in the mechanism is
+*Abilities too, and the line is named versus default — no keyword (2026-10-12; its "never a default" is amended
+below, under "Option 5, amended").* Nothing in the mechanism is
 effect-specific. A `~ Ord[T]` constraint is the same phantom binder as a `uses Console` entry, so a named ability
 implementation may take parameters, and the definitions specialised at that binding receive its environment exactly
 as above:
@@ -1784,8 +1785,9 @@ implicitly at `main` with no arguments; its environment is empty and erased. A d
   "nothing gives this" error. This is Route A with the names parameterised and written in the dischargers'
   *bodies* rather than their slots. Route A's first cost, a user-written discharger spelling the implementation,
   is expected not to arise: under D20 rule 5 such a discharger passes its block on to `catch` or `runThrow`, whose
-  body binds it. Not measured. Route A's second cost — a double whose clauses perform a control effect — is option
-  5's own first measurement below.
+  body binds it. **Wrong — see "Option 5, amended" below**: the block is written from the discharger's
+  *declaration*, and the name is only in a body. Route A's second cost — a double whose clauses perform a control
+  effect — is option 5's own first measurement below.
 - **Stateful doubles.** `greet with scripted(List("Bob"))` lifts "a named implementation takes no parameters and
   closes over nothing".
 - **Parameterised ability implementations.** `sort with byKey(p -> p.age)`, by the same mechanism.
@@ -1814,6 +1816,75 @@ so every caller would have to test the flag after every call — a rewrite of ev
 again, not a library. Option 5 makes one cheaper variant available to a *backend*: only calls to definitions that
 declare the entry need the test, which a target without `longjmp` may use. That is code generation, not a fourth
 way for a library to leave early.
+
+**Option 5, amended: the slot chooses the code, whoever gives it supplies the environment (proposed 2026-10-12, not
+decided).** As written, option 5 cannot be built: it moves the code half of the control implementations somewhere
+the write never reads.
+
+*The gap.* A block is not a named definition, so it gets no specialisation of its own: `{ increment; double }` is
+compiled as part of `main`'s, and the binding in `increment[Impl]` is written by the walk over `main`'s body. For a
+reference inside a slot's argument, that walk takes the binding from the slot's declaration (§3.1 step 3,
+`BindingWriter.suppliedScope`): the slot's `with`, or `Default`. Today that is `Default`, and the two-site search
+answers it with the anonymous `implement[S] State[S]`. Option 5 makes the implementation `celled`, never a default,
+and writes it only in `runStateToPair`'s body, two calls away:
+
+```
+main  ──block──▶  runStateToFinalState(p)  ──p──▶  runStateToPair(p)  ⟶  p with celled(cell)
+```
+
+No declaration that `main`'s walk may read names `celled`, so there is nothing to write. Monomorphization cannot
+recover it either. Following the lambda through two bodies to the `with` decides a binding from callee bodies (§3.2,
+standing rule 3). Specialising the block inside `runStateToPair` instead needs a polymorphic function value, which
+the step-6 spike measured the checker cannot hold. The D19 bullet under "What it settles" fails the same way: a
+caller of `runTest(test uses Throw[String]: => Unit)` writes its block from `runTest`'s declaration, and `throwing`
+appears only in `catch`'s body. Route A's first cost therefore returns in full: every discharger names a platform
+implementation, and the base needs public `Cell`/`EscapeFrame` types to declare one.
+
+*The rule.* Option 5 takes an implementation's code and its runtime part from the same place. The amendment takes
+them from two:
+
+- **The code comes from the declaration**, as today. A slot that names nothing gives the **default**, which for a
+  control effect is the platform's one implementation. `main`'s block is written `increment[Default]`, so every
+  binding is still known before monomorphization.
+- **The environment comes from whoever gives the binding.** A discharger's body supplies a frame, a `with`
+  supplies its arguments, and `main` supplies nothing. A default that needs an environment is therefore reachable
+  only through a slot whose body supplies it. At `main`, and at an ability's two-site search, nothing holds its
+  arguments, and it is the "nothing gives this" error. That is D19's error with no further mechanism.
+
+```eliot
+-- jvm layer: the default State; its environment is a cell
+implement[S] State[S](cell: Cell[S]) {
+   def state: S = readCell(cell)
+   def putState(s: S): Unit = writeCell(cell, s)
+}
+
+def runStateToPair[S, A](initial: S, p uses State[S]: => A): Pair[A, S] =
+   withCellInternal(initial, cell -> Pair(p with State(cell), readCell(cell)))
+```
+
+`p with State(cell)` chooses no code. It supplies the runtime part of the default the declaration already promised,
+and D20 rule 5's check is unchanged: a body giving `p` any other implementation is an error. The spelling (an
+anonymous implementation's parameters after its pattern, supplied by naming the ability) is a placeholder. In the
+worked example above, read `celled` as this default; the lowered pseudo-code is the same with `increment$celled`
+renamed `increment$Default`.
+
+*What a developer sees.* A handler's slot says which effect it gives, and the platform decides how. A name is
+written only to substitute an implementation (`with recordingConsole`, `sort with byKey(p -> p.age)`), which is what
+`with` already means: a name is a choice, and no name is the default. `runStateToFinalState(5, { increment; double })`
+and `def runTest(test uses Throw[String]: => Unit) uses Console: Unit = catch(test, …)` name nothing, and no
+implementation of a control effect has a name anywhere.
+
+*What it keeps.* §8 items 14 and 15 stay closed, because the frame is still passed and never searched for. D19
+stays settled, as "the default for `Throw` needs a frame, and nothing here gives one". Parameterised named
+implementations stay, for doubles and for abilities, because their `with` stands in the body whose references it
+binds, where the walk sees it.
+
+*What it reverses within option 5.* Option 5 is a proposal, but the reversal is recorded rather than edited in, per
+standing rule 1. It reverses "parameters require a name, and a named implementation is never a default" in the
+paragraph on abilities, and "named, parameterised and never a default" in the reversals list below. A default may
+now have an environment, and a default and a named implementation differ only in who chooses them: the declaration,
+or a `with`. The anonymous `implement[E] Throw[E]` and its four siblings stay anonymous and gain parameters, so that
+paragraph's "an anonymous `implement` has nowhere to write them" goes with it. Its rejection of a keyword stands.
 
 **Option 4, corrected: specialise at the read, not at the constructor.** Option 4's user model stands, and it
 unifies more than its proposal says. *Kept code gets its effects only from whoever runs it* already describes a named
@@ -1851,9 +1922,11 @@ way.
 - **§2's** "a named implementation … takes no parameters and closes over nothing"; with it, §12's record entry stops
   listing "a parameterised `implement name(params)`" among the things lost.
 - **§3.5's** control effects keep one implementation per platform, but it is named, parameterised and never a
-  default; the anonymous `implement[E] Throw[E]` and its four siblings go.
+  default; the anonymous `implement[E] Throw[E]` and its four siblings go. *Amended above: they stay anonymous and
+  the default, and gain parameters.*
 - **New surface:** `with` takes runtime arguments in body position, for an ability as for an effect. No new
-  keyword: parameters require a name, and a named implementation is never a default.
+  keyword: parameters require a name, and a named implementation is never a default. *Amended above: a default may
+  take parameters too, supplied by the discharger that gives it (`p with State(cell)`).*
 - **The second property above**, refuted.
 
 *Where to measure first.* Building `recordingConsole`'s environment at the `with` that binds it: a definition
@@ -1863,13 +1936,38 @@ else is the existing thunk-and-apply with the frame in place of `unit`. The §10
 the jars move by design. Its witnesses are §8 items 14 and 15 as regression tests, and the 45 examples' stdout and
 exit transcripts (`scripts/example-sweep.sh`) staying identical.
 
+*Amended:* the specialisation-dependent parameter list need not arise. Mint a second phantom binder per entry for
+the environment's type (`Impl: Implementation[State[S]], Env`) and give the definition an ordinary parameter
+`env: Env`. The write fills `Env` wherever it fills `Impl`: from the implementation's declaration at a `with` or a
+slot's default, and forwarded from the definition's own binder for a received binding. Arity is then the
+declaration's, the checker sees ordinary parametric polymorphism and still holds no effect rule, and an
+implementation with no environment has `Env := Unit`. Dropping that argument is a backend optimisation; until it
+exists, a `Console` call carries one more argument than today.
+
+What stays hard is a **slot's** `with` whose double performs a control effect:
+`transcriptOf(program uses Console with recordingConsole: => Unit) = runWriterToLog(program)`. Today
+`slotImplementation` writes the double's `Writer` as `Default`, and the nearest-frame search finds
+`runWriterToLog`'s frame at runtime; option 5 deletes that search. So where `transcriptOf`'s body passes `program`
+on to `runWriterToLog`, the walk must build `recordingConsole`'s environment from the `Writer` that slot gives, and
+check the double's clause row against the scope there. It reads only the definition being walked, so it stays
+within §3.2, but it is new, and it is Route A's second cost. **That is the first spike.**
+
+Smaller items. On the compile track a frame becomes a `SemValue` with identity in `EffectIntrinsics`, which meets the
+rule that an escape whose result is neutral stays stuck and fires again. A `raise` in a signature binds `Default` today
+(`uncoveredDefaults`), and with no frame there a guarded return needs an answer of its own. Parameterised *ability*
+implementations should start on the runtime track only, and D19's undiagnosed "Function not implemented." at a
+constrained named implementation sits on their path. The whole change lands **after D20 work-list steps 1–3**: the
+"live frame" argument needs rules 3 and 6, and on today's tree a kept function parameter or a stored row-typed field
+carries a frame past its discharger. For an escape that is a loud crash; for a cell it is a silent write to an
+orphaned box.
+
 **What is open.** Whether Eliot stores open computations at all. If it does, the choice is between option 1 with
 regions (a new kind of binder, unmeasured), option 2 (reverses the 2026-09-06 decision and runs into the step-6
 limit), option 3 (blocked on recursive data), and option 4 (a reversal of D20 rule 6, with the two measurements
 above outstanding, read-site specialisation in place of the constructor product, and the positivity rule).
-Separately and regardless of storage: **whether option 5 replaces the nearest-frame primitives**, since §8 items 14
-and 15 are open without it. Until it is decided, D20's answer is option 3's partial form, or a hand-written `data`
-and interpreter.
+Separately and regardless of storage: **whether option 5, as amended, replaces the nearest-frame primitives**,
+since §8 items 14 and 15 are open without it. Until it is decided, D20's answer is option 3's partial form, or a
+hand-written `data` and interpreter.
 
 #### Reversals this records
 
