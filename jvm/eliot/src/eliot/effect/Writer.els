@@ -24,9 +24,9 @@ def runWriterToPair[W ~ Combine[W], A](p: {Writer[W]} A): Pair[A, W] =
  * Install a cell for `W` holding `initial`, run `body` inside it, and answer the result paired with the cell's final
  * content. `eliot.effect.State`'s leaf of the same shape and purpose; per-module `private` means each module declares
  * its own — which is also what keeps a writer's cell and a state's cell apart at the same type. Implemented by the
- * backend.
+ * backend. `body` is given `Writer[S]`, as `State`'s copy gives `State[S]` (D20 rule 5).
  */
-private def withCellInternal[S, A, R](initial: S, body: {} A, combine: A => S => {} R): R
+private def withCellInternal[S, A, R](initial: S, body: {Writer[S]} A, combine: A => S => {} R): R
 
 /**
  * The content of the nearest enclosing cell for `S`. Implemented by the backend.

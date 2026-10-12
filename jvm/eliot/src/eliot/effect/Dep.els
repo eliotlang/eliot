@@ -23,9 +23,9 @@ def provide[X, A](x: X, computation: {Dep[X]} A): A = withCellInternal(x, comput
 /**
  * Install a cell for `S` holding `initial`, run `body` inside it, and answer the result paired with the cell's final
  * content. `eliot.effect.State`'s leaf of the same shape and purpose; per-module `private` means each module declares
- * its own. Implemented by the backend.
+ * its own. Implemented by the backend. `body` is given `Dep[S]`, as `State`'s copy gives `State[S]` (D20 rule 5).
  */
-private def withCellInternal[S, A, R](initial: S, body: {} A, combine: A => S => {} R): R
+private def withCellInternal[S, A, R](initial: S, body: {Dep[S]} A, combine: A => S => {} R): R
 
 /**
  * The content of the nearest enclosing cell for `S`. Implemented by the backend.

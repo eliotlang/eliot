@@ -257,7 +257,9 @@ subset of its data.
     It also enforces D20 rules 3–4, built ahead of D20's surface: a function-typed parameter is a **block**, legal only
     called or handed straight to a definition's function parameter, and a lambda in a *kept* position (field, generic
     slot, result, `val`) is walked sealed, so it may use no block and no effect from around it. `match` arms are
-    blocks by a read-through of `handleCases`'s selector, as `.` is read through.
+    blocks by a read-through of `handleCases`'s selector, as `.` is read through. And rule 5: running a row-typed
+    parameter is checked like a call against what its declaration promised — a body gives its block only what it
+    has, so the platform primitives' private copies declare what they give (`escapeInternal(body: {Throw[K]} A, …)`).
     `row/RowChecker` is now just the demand-driven `Universe` the walk consults (its `onMiss` is what lets a
     demand-driven consumer avoid guessing the consulted set); `row/RunBoundaryFunctions` is the platform run-boundary
     predicate, where every effect's chain ends and an uncovered entry binds the two-site `Default` instead. See the

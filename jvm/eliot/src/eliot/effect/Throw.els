@@ -33,8 +33,11 @@ def runThrow[E, A](obj: {Throw[E]} A): Either[E, A] =
  * `private`, and re-declared per module rather than shared from one place, exactly as `isNull` is: a public escape is
  * one half of Landin's knot, and the recursion gate (`termination/PurityGuardTest`) exists to keep the other half out.
  * Implemented by the backend.
+ *
+ * `body` is given `Throw[K]`: a body-less declaration is the only kind that gives an effect from nothing, so the
+ * platform's default reaches a discharger's block here and nowhere else (`docs/effects.md` §11, D20 rule 5).
  */
-private def escapeInternal[K, A, R](body: {} A, onExit: K => {} R, onValue: A => {} R): R
+private def escapeInternal[K, A, R](body: {Throw[K]} A, onExit: K => {} R, onValue: A => {} R): R
 
 /**
  * Leave through the nearest enclosing `escapeInternal` frame of this instantiation, carrying `err`. Control does not

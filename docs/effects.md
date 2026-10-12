@@ -842,7 +842,8 @@ D20 rule that does it. The witnesses are the five programs below, which become D
     through `useJob(j: Job): {Console} Unit` under `with recordingConsole` gets real output and an empty
     transcript: the read is charged to a binding the stored thunk never uses. A11 rejected a `with` *at* the read;
     this is the same lie one definition further out. D20 rule 6.
-13. **A slot launders an interpretation effect.** `launder(body: {Console} Unit): Unit = body` supplies `Console`
+13. ~~**A slot launders an interpretation effect.**~~ **Closed 2026-10-12** by D20 rule 5 (work-list step 2, below).
+    `launder(body: {Console} Unit): Unit = body` supplies `Console`
     by `Default`, so `looksPure(name: String): Unit = launder(printLine(…))` performs real I/O with a pure
     signature, and an outer `with recordingConsole` binds nothing (which is item 1, the unused `with`). The
     two-site default meant for `main` is reachable from any definition with a body. D20 rule 5.
@@ -1411,6 +1412,22 @@ mechanical migration that §10's byte-identity gate can watch.
      there: an ability implementation is a compile-time choice with no frame to outlive.
 2. **Rule 5** — the give-only-what-you-have check; the platform primitives' copies declare what they give; eliot-test
    names `recording`/`journal`. Closes item 13. Gate: §10; eliot-test's suites green.
+   **Built 2026-10-12.** Each reference that runs a row-typed parameter is checked like a call, against what the
+   parameter's declaration promised for every entry its slot supplies: the slot's `with` gives its implementation by
+   that declaration; an entry promised as `Default` must be in scope where the block runs, from a further slot that
+   supplies it; a binding in scope that names a different implementation is rejected, since the block already runs
+   on the promised one. The five primitive copies now declare what they give (`escapeInternal`'s `body: {Throw[K]} A`,
+   `{Abort} A`, and the cells' `{State[S]}`, `{Writer[S]}`, `{Dep[S]}`), so a discharger's chain ends at a body-less
+   declaration. eliot-test's `mocked` names `recording` and `journal` (eliot-test `d2dda86`, green on `v0.7` and on
+   `master`), so **eliot-test needs a release before an eliot release carrying this step**: its `v0.3` `mocked` does
+   not compile under rule 5. The gate held: 45 jars byte-identical, the suite green, eliot-test 183/183, eliot-build's
+   errors unchanged. The probes are `BlockGivingIntegrationTest`. Two notes:
+   - **A promise is compared by implementation name**, not by the clause-row arguments written with it: a slot's
+     `with` writes the double's clause rows as `Default` (§3.1) and a body's `with` writes them from its scope, so
+     the full terms differ for the same implementation.
+   - **A latent misreading is fixed on the way.** The names of a definition's row-typed parameters were taken from
+     the *end* of the body's leading lambdas, which misnames them when the body returns a lambda. Every reader now
+     takes them from the front, past the generic binders. No jar moved.
 3. **Rule 6** — reject a row on a field, and delete the stored-read machinery it leaves without a subject
    (`chargeStored`, A11's `byWith` read rule, `calledSpine`'s dot-read view if nothing else reads it,
    `StoredComputationIntegrationTest`). Closes item 12. No example stores a computation, so the jars do not move.

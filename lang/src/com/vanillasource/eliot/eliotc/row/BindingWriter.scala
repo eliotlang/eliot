@@ -99,7 +99,8 @@ object BindingWriter {
     * arguments each takes; `captured` are the blocks, of either kind, in scope only from outside a lambda kept as a
     * value. A block may be called or passed on, never kept (D20 rule 3). Both are empty, and `checksBlocks` false,
     * wherever the rules do not apply: a signature, and a platform run boundary. `selectors` are the `match` selector
-    * parameters in scope, whose arguments are the arms ([[Writer.walkArgument]]).
+    * parameters in scope, whose arguments are the arms ([[Writer.walkArgument]]). `promises` are what each row-typed
+    * parameter's declaration promised its block ([[promisedBindings]]), which running it is checked against.
     *
     * @param uncoveredDefaults
     *   Whether an **effect** with nothing in scope binds `Default` instead of being reported. True in exactly two
@@ -114,7 +115,8 @@ object BindingWriter {
       functions: Map[String, Int] = Map.empty,
       captured: Set[String] = Set.empty,
       checksBlocks: Boolean = false,
-      selectors: Set[String] = Set.empty
+      selectors: Set[String] = Set.empty,
+      promises: Map[String, Map[AbilityFQN, Option[ValueFQN]]] = Map.empty
   ) {
     def bind(binding: Binding): Scope = copy(bindings = binding +: bindings)
     def shadow(name: String): Scope   =
@@ -122,7 +124,8 @@ object BindingWriter {
         thunks = thunks - name,
         functions = functions - name,
         captured = captured - name,
-        selectors = selectors - name
+        selectors = selectors - name,
+        promises = promises - name
       )
 
     /** The scope inside a lambda kept as a value: everything in scope so far is outside it. */
@@ -164,7 +167,8 @@ object BindingWriter {
       thunks,
       uncoveredDefaults = atBoundary,
       functions = functionParameters(orv, thunks, universe),
-      checksBlocks = !atBoundary
+      checksBlocks = !atBoundary,
+      promises = if (atBoundary) Map.empty else promisedBindings(orv, universe)
     )
     val view       = SignatureView.of(orv.signature)
     val body       = Option
@@ -278,38 +282,62 @@ object BindingWriter {
     }
   }
 
+  /** The names of this definition's value parameters, in declaration order: the body's leading lambdas past the
+    * generic binders (as [[valueParameterCount]] reads them — a binder the desugar minted into the signature has no
+    * lambda in the body), matched to the declared parameters from the front. A body returning a lambda
+    * (`compose(f, g) = a -> f(g(a))`) has more leading lambdas than parameters, and the extra ones are the result's.
+    */
+  private def valueParameterNames(orv: OperatorResolvedValue): Seq[String] = {
+    val view        = SignatureView.of(orv.signature)
+    val binderNames = view.binders.map(_.name.value).toSet
+    val (names, _)  = RowChecker.peelBinders(orv.runtime.map(_.value).getOrElse(view.returnType.value))
+    names.dropWhile(binderNames.contains).take(view.parameters.size)
+  }
+
   /** The names of this definition's row-typed value parameters: a reference to one runs it. */
   private def thunkParameters(orv: OperatorResolvedValue): Set[String] = {
-    val view            = SignatureView.of(orv.signature)
-    val (names, _)      = RowChecker.peelBinders(orv.runtime.map(_.value).getOrElse(view.returnType.value))
-    val valueParamNames = names.takeRight(view.parameters.size)
+    val valueParamNames = valueParameterNames(orv)
     orv.effectRow.parameterEffects.flatMap(pe => valueParamNames.lift(pe.parameterIndex)).toSet
+  }
+
+  /** What each row-typed parameter's declaration **promises** its block, per entry the slot *supplies* — an entry
+    * this definition's own row lacks (§2.2): the implementation the slot names with `with`, or [[None]] for `Default`.
+    * Running the parameter is checked against it (D20 rule 5).
+    */
+  private def promisedBindings(
+      orv: OperatorResolvedValue,
+      universe: RowChecker.Universe
+  ): Map[String, Map[AbilityFQN, Option[ValueFQN]]] = {
+    val names      = valueParameterNames(orv)
+    val parameters = SignatureView.of(orv.signature).parameters
+    val rides      = orv.effectRow.returnEffects.map(_.abilityFQN).toSet
+    orv.effectRow.parameterEffects.flatMap { slot =>
+      names.lift(slot.parameterIndex).map { name =>
+        val named = parameters
+          .lift(slot.parameterIndex)
+          .toSeq
+          .flatMap(tpe => slotBindings(tpe.value))
+          .flatMap(marker => abilityOf(marker.value, universe).map(_ -> marker.value))
+          .toMap
+        name -> slot.effects.map(_.abilityFQN).filterNot(rides).map(ability => ability -> named.get(ability)).toMap
+      }
+    }.toMap
   }
 
   /** This definition's **blocks** of function type (D20 rule 2), each with the number of arguments it takes: every
     * value parameter whose declared type is a function, except a row-typed one, which is a thunk and runs when
     * mentioned.
-    *
-    * The names are the body's leading lambdas past the generic binders (as [[valueParameterCount]] reads them — a
-    * binder the desugar minted into the signature has no lambda in the body), matched to the declared parameters from
-    * the front: a body returning a lambda (`compose(f, g) = a -> f(g(a))`) has more leading lambdas than parameters, and
-    * the extra ones are the result's, not the definition's.
     */
   private def functionParameters(
       orv: OperatorResolvedValue,
       thunks: Set[String],
       universe: RowChecker.Universe
-  ): Map[String, Int] = {
-    val view        = SignatureView.of(orv.signature)
-    val binderNames = view.binders.map(_.name.value).toSet
-    val (names, _)  = RowChecker.peelBinders(orv.runtime.map(_.value).getOrElse(view.returnType.value))
-    names
-      .dropWhile(binderNames.contains)
-      .zip(view.parameters)
+  ): Map[String, Int] =
+    valueParameterNames(orv)
+      .zip(SignatureView.of(orv.signature).parameters)
       .map { case (name, tpe) => name -> functionArity(tpe.value, universe) }
       .filter { case (name, arity) => arity > 0 && !thunks.contains(name) }
       .toMap
-  }
 
   /** Whether a declared parameter type is a function — a block, D20 rule 2. */
   private def isFunctionType(tpe: OperatorResolvedExpression, universe: RowChecker.Universe): Boolean =
@@ -473,6 +501,7 @@ object BindingWriter {
 
         // A reference to one of this definition's row-typed parameters is a thunk: running it is applying it.
         case ParameterReference(name) if scope.thunks.contains(name.value) =>
+          checkGiven(name, scope)
           expr.as(FunctionApplication(expr, unitValue(expr)))
 
         case ParameterReference(name) if kept && scope.functions.contains(name.value) =>
@@ -535,6 +564,64 @@ object BindingWriter {
               parameters.lift(index).exists(tpe => isFunctionType(tpe.value, universe))
             !block || holds
           }
+      }
+
+    /** Running a row-typed parameter is checked like a call (D20 rule 5): every entry its declaration promised the
+      * block must be given here, and by the implementation promised. The block's bindings were written at the outer
+      * call from that declaration, so what runs is fixed; a body that gives something else, or nothing, would make the
+      * declaration a lie. A slot that names its implementation with `with` gives it by that declaration. An entry
+      * promised as `Default` must be given by a further slot that supplies it, which ends at a body-less declaration
+      * — the only kind that gives an effect from nothing.
+      */
+    private def checkGiven(name: Sourced[String], scope: Scope): Unit =
+      scope.promises.getOrElse(name.value, Map.empty).toSeq.sortBy(_._1.abilityName).foreach { case (ability, promised) =>
+        val giving = scope.binding(ability).map(binding => implementationOf(binding.term))
+        (promised, giving) match {
+          case (Some(_), None)                         => ()
+          case (None, None)                            =>
+            violations += Violation(
+              name.as(
+                s"'${name.value}' is promised the effect '${ability.abilityName}' by this definition's declaration, " +
+                  "but nothing here gives it."
+              ),
+              Seq(
+                s"Declare '${ability.abilityName}' in this definition's { ... } effect set, or pass '${name.value}' to " +
+                  "a parameter that gives it."
+              )
+            )
+          case (_, Some(actual)) if actual != promised => violations += mismatchedGiving(name, ability, promised, actual)
+          case _                                       => ()
+        }
+      }
+
+    private def mismatchedGiving(
+        name: Sourced[String],
+        ability: AbilityFQN,
+        promised: Option[ValueFQN],
+        actual: Option[ValueFQN]
+    ): Violation = {
+      def describe(implementation: Option[ValueFQN]): String =
+        implementation.fold("the default implementation")(fqn => s"the implementation '${implementationName(fqn)}'")
+      Violation(
+        name.as(
+          s"'${name.value}' is promised ${describe(promised)} of '${ability.abilityName}' by this definition's " +
+            s"declaration, but is given ${describe(actual)} here."
+        ),
+        Seq("Name the implementation on the parameter with `with`, so the caller binds the same one.")
+      )
+    }
+
+    /** The implementation a binding term names: [[None]] for `Default`, else the marker at its head. */
+    private def implementationOf(term: OperatorResolvedExpression): Option[ValueFQN] =
+      spine(term)._1 match {
+        case ValueReference(name, _) if name.value != WellKnownTypes.defaultImplementationFQN => Some(name.value)
+        case _                                                                               => None
+      }
+
+    private def implementationName(marker: ValueFQN): String =
+      marker.name.qualifier match {
+        case Qualifier.AbilityImplementation(_, _, Some(implementationName)) => implementationName
+        case _                                                               => marker.name.name
       }
 
     /** A block of this definition kept where only a value may stand (D20 rule 3). */
