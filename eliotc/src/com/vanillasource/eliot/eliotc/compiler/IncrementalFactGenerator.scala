@@ -509,7 +509,10 @@ final class IncrementalFactGenerator(
     * regenerates on its next demand.
     *
     * Only *direct* dependents need dropping: a retained entry pointing at one of them now finds no prior entry, which
-    * validation already reads as changed. And a run that moved nothing (the warm no-change build) does no work here.
+    * validation reads as changed. That holds only until some run builds the missing entry anew, so a key this run
+    * resolved **with no prior entry** has moved too: a retained entry recorded against it consumed some earlier
+    * generation's value, never this one, and would otherwise be accepted against it next run. And a run that moved
+    * nothing (the warm no-change build) does no work here.
     *
     * A **value-less** entry has nothing to compare a regenerated value against, so it moved unless this run's drill
     * proved it unchanged. That exception is not a nicety: a `SemValue` fact is regenerated whenever anything needs its
@@ -523,7 +526,7 @@ final class IncrementalFactGenerator(
       drilled: Set[CompilerFactKey[?]]
   ): Set[CompilerFactKey[?]] =
     deps.keySet.filter { key =>
-      prior.get(key).exists { entry =>
+      prior.get(key).forall { entry =>
         if (entry.hasValue) !factMap.get(key).exists(entry.matches)
         else !drilled(key)
       }

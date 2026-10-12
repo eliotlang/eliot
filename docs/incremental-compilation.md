@@ -1622,3 +1622,43 @@ because the run that moved it was, by this rule, unable to prove it unchanged an
   regenerations every run. From an empty cache, edit → revert → broken edit → fix returns to 1,232 on the run after
   each step; before the fix every one of them started the alternation.
 - `./mill __.test` green.
+
+## 28. A key built anew has moved too (2026-10-12)
+
+§26 drops the *direct* dependents of a moved key and leans on validation for the rest: "a retained entry pointing at
+one of those now finds no prior entry, which validation already reads as changed". That holds only while the entry
+stays missing. A later run that builds it anew gave it a fresh entry and did not count it as moved, because §26's
+`movedKeys` asked only about keys that *had* a prior entry, so the dependent recorded against the dropped one was
+retained a second time, now beside a value it never consumed.
+
+### The mechanism
+
+```
+run 1: demand w        leaf=10 → m1=10 → m2=10 → w=100     cache: leaf, m1, m2, w
+run 2: demand m1 only  leaf=20 → m1=20                     m1 moved: m2 dropped; w retained (m2 only dropped)
+run 3: demand m2 only  m2 has no entry → built anew, 20    m2 new, not "moved": w retained again at 100
+run 4: demand w        w's dep m2 validates "unchanged" (it is run 3's entry) → w served as 100
+```
+
+In the compiler this was a shared test session serving a previous program's field accessor. A program with
+`data Holder(run: String => Unit)` cached `BodyValueReferences(Test::run)`; later programs dropped and then rebuilt
+`SaturatedValue(Test::run)` for an unrelated `data Job(run: …)` without demanding the references; and the next compile
+accepted the Holder-era references, so the checker went looking for `handleCases^PatternMatch#Holder` in a program
+that had no `Holder`. As with §26, whether a suite met it depended on which suites ran before it in the worker.
+
+### The fix
+
+`movedKeys` counts a key the run resolved **with no prior entry** as moved. Whatever a retained entry recorded
+against such a key, it consumed some earlier generation's value, so it is dropped and regenerates on its next demand.
+A warm build over an unchanged tree resolves no new keys, so `WarmBuildLeafOnlyTest`'s invariant is untouched, and
+§27's value-less rule is unaffected: a value-less entry is carried forward, so it always has a prior entry to be judged
+by.
+
+### Verification
+
+- `IncrementalFactGeneratorTest` — the four-run scenario above, asserting run 4 answers 200. It fails on the pre-fix
+  engine with 100.
+- The original failure — `BlockKeepingIntegrationTest` (with its field named `run`) followed by
+  `StoredComputationIntegrationTest` in one session, on `68cffe36` — failed 3 of 36 cases on every run before and
+  passes 36 of 36 after.
+- `./mill __.test` green, `WarmBuildLeafOnlyTest` included.
