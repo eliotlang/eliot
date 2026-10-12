@@ -791,7 +791,9 @@ fix. The silent ones come first, because a silent acceptance is the one failure 
 4. **`runThrow("no failure")` is accepted.** §2.2 lists an actual that raises nothing among the shapes
    rejected for an argument nothing determines; the tree accepts it when the call spells the argument. Every
    case is loud (the argument is written by hand), so this is last.
-5. **An undischarged control effect reaching `main` fails at runtime**, not at the boundary (§7 item 7).
+5. ~~**An undischarged control effect reaching `main` fails at runtime**~~ **Closed 2026-10-12** by D20c option 5
+   step 4: the platform's control defaults take a frame and `main` holds none, so it is a compile error where the
+   effect is performed. Not at the boundary (§7 item 7).
    **Decided 2026-09-12: it must be a compile error.** The mechanism was measured rather than argued and is
    written up under **D19** (§11); one cost has to be chosen before it lands.
 6. **A row alias works in return position only** (§2.4). Interim by design. §9 step 5 made the alias itself an
@@ -857,11 +859,11 @@ rule. The cause is one — the primitives find a frame by its *instantiation* on
 operation reaches the nearest frame of its type rather than the one its binding was written under — and D20c's
 option 5 is the proposed fix. The programs are in D20c.
 
-14. **A helper's own `catch` swallows its caller's `raise`.** `guarded(body: {} Unit)` runs `body` inside a private
+14. ~~**A helper's own `catch` swallows its caller's `raise`.**~~ **Closed 2026-10-12** by D20c option 5 step 4. `guarded(body: {} Unit)` runs `body` inside a private
     `catch[String, Unit]`; a caller writing `guarded(raise("boom"))` inside its own `catch[String, Unit]` sees the
     helper's handler run and its own code carry on after the call. Accidental handling: a library's private use of
     `Throw` intercepts every block it runs.
-15. **A helper's own `State` receives its caller's `putState`.** `counted(body: {} Unit)` runs `body` inside a private
+15. ~~**A helper's own `State` receives its caller's `putState`.**~~ **Closed 2026-10-12** by D20c option 5 step 4. `counted(body: {} Unit)` runs `body` inside a private
     `runStateToFinalState("helper", …)`; a caller's `putState` written for its own `State[String]` lands in the
     helper's cell, and the caller's state is unchanged.
 
@@ -874,7 +876,10 @@ option 5 is the proposed fix. The programs are in D20c.
     at all, it died with a `NullPointerException` in `Writer.tell`. The caller writes the double's clause bindings as
     `Default`, and nothing held the callee to giving them. Now each such clause ability is promised to the block like
     the slot's own entries (D20 rule 5).
-17. **Two entries of one effect are one binding in the walk.** `{Throw[IoError], Throw[GitError]}` mints two binders,
+17. **Two entries of one effect are one binding in the walk.** *Settled for frames 2026-10-12 by 2(c)*: the
+    environment threading chooses a frame by entry at ground arguments, so the two `Throw`s are two frames; the walk
+    itself still keys bindings by ability, which is harmless while both bindings are `Default`, and a disagreement
+    between the two is an error at the threading, never a silent pick. `{Throw[IoError], Throw[GitError]}` mints two binders,
     but `BindingWriter` keys its scope, the rides set and the promises by ability, so the innermost binding answers
     for both, and a slot supplying `Throw[IoError]` under a definition riding `Throw[AssertionError]` supplies
     nothing. Harmless today — both bindings are `Default` and the primitive picks a frame by instantiation — and the
@@ -1195,7 +1200,9 @@ Needed before a row alias leaves return position.
 
 **Closed 2026-10-12 by D20c option 5, as amended, by neither route below**: the platform's control defaults take a
 frame as a parameter, a discharger's body supplies it, and `main` holds none, so an undischarged control effect
-there is the ordinary "nothing gives this" error. The routes and their costs are kept as the record.
+there is the ordinary "nothing gives this" error. The routes and their costs are kept as the record. **Built
+2026-10-12** (option 5 step 4): "The effect 'Throw' is performed here with nothing to discharge it", at the
+operation.
 
 **Decided 2026-09-12: it must be a compile error.** What is left is not *whether* but *which of two costs*, and
 that is the open half of this entry.
@@ -2143,11 +2150,82 @@ Both are Robert's; nothing past the check below is built.
 `WovenValue` seam — the step built for a post-mono lowering, whose ground re-check (`WovenRecheck`) then checks the
 plumbing as it checks every woven body. There is no `Env` binder and the marker does not grow; the checker never
 sees an environment. A reference's frame is chosen among the entries in scope **at its ground arguments**, so two
-entries of one effect are told apart by their instantiation, and two that coincide at one are a use-site error.
+entries of one effect are told apart by their instantiation, and two that coincide at one, at the same distance,
+are a use-site error.
 Reversed (standing rule 1): the amendment's "mint a second phantom binder per entry for the environment's type".
 Standing rule 3 stands: the walk still writes every binding from declarations and nothing infers one. What the
 ground arguments choose is only *which declared entry's frame* a reference uses, which no binding names; where that
 choice and the written binding disagree, it is an error, never a silent pick.
+
+**Option 5 built (2026-10-12, steps 1–4), in today's syntax.** What exists, and where it departs from the text
+above:
+
+1. **An anonymous implementation takes parameters** — `implement[S] State[S](cell: StateCell[S]) { … }`. Each clause
+   receives them as leading value parameters, so the checker types a clause body as any other; a body-less
+   `$parameters` declaration in the implementation's namespace records them for the conformance check and the
+   threading (`ast/fact/ImplementationParameters`). Named implementations do not take parameters yet, and `with`
+   takes no arguments yet: nothing in the tree needs either, because of item 4.
+2. **A value's mono records its effect entries at ground arguments** (`MonomorphicEffects`), read off the
+   constraint the desugar puts on each binding binder, and a dispatched reference records the member's entry and
+   binding (`MonomorphicValueReference.dispatchedFrom`).
+3. **Environments are threaded at the `WovenValue` seam** (`monomorphize/channel/EnvironmentThreading`), and the
+   woven re-check checks the result. A definition receives one frame per entry as hidden parameters; a block at a
+   row-typed slot takes the frames the slot supplies in place of `unit`, and running it passes them; a dispatched
+   clause gets its frame's parts. A frame is found by entry at ground arguments, its binding must be the one the
+   reference was written with, and an entry with no frame gets its default only when that default has no
+   parameters. A body `with`'s named implementation is not a frame in scope (the walk erases the `with`), so its
+   frame is built at the use, and the walk now rejects a use below a nearer binding of an effect its clauses perform
+   — the one shape that would intercept.
+4. **The platform primitives give the frame**, not the dischargers' bodies. The amendment's `p with State(cell)`
+   is not needed for the platform: `withCellInternal` and `escapeInternal` are body-less, so — as D20 rule 5 already
+   has it — they give their slot's default from nothing, and they now give its environment too, by handing the thunk
+   a fresh frame. The dischargers (`runThrow`, `runStateToPair`, …) are unchanged. `p with State(cell)` remains the
+   spelling for a *user* default with parameters, and is unbuilt.
+5. **Found while building, and decided in the code** — each is fail-safe and recorded here for sign-off:
+   - an implementation's **parameters are part of its identity** (its pattern key), and on the compile track a
+     parameterised implementation gives way to the overlay's parameterless one of the same pattern. The compile
+     track borrows the runtime track's sources, and the jvm `Abort` (with a frame) and the overlay's (without) must
+     not merge into one value: a runtime value's signature is computed on the compile track, so a merge that let
+     them differ would hand the jvm clause the overlay's signature. Where the overlay has none (`Throw`), the borrowed
+     one stays resolvable, and running it on the compile track is stuck — loud — as before;
+   - an `implement` clause gets **no frame for an entry it only carries** for a sibling (`ImplementationRows`'
+     union): its binder keeps its positional slot but no constraint (`FunctionDefinition.carriedEffects`);
+   - an effect a **member declares** (`FileSystem.readFile`'s `{Throw[IoError]}`) is per call: its frame comes from
+     the call site, and an implementation's environment holds only the effects a clause performs that its member
+     does not declare;
+   - **supplied-versus-rides is decided as the declaration spells it**, not at ground arguments:
+     `raising[E](…, body: {Throw[E]} Unit): {Throw[AssertionError]} Unit` supplies `Throw[E]` even at
+     `E = AssertionError`. Two frames that coincide at one scope level are a use-site error;
+   - frame types are public, body-less, constructor-less types (`ThrowFrame`, `StateCell`, …), because `private`
+     reaches only `def` and `data`, and they are named apart per module because `eliot.effect` is imported whole.
+6. **Gate** (behavioural — the jars move by design): every example's compile status, exit code and stdout
+   identical; 20 of 47 jars changed; jar bytes 647514 → 645311 (−0.3%), instructions 18751 → 19164 (+2.2%). The suite
+   is green, eliot-build's errors are unchanged, eliot-test is 182/183 — the one is the conflict below.
+7. **Not built**: user defaults with parameters and `with Ability(args)`; named implementations with parameters
+   (stateful doubles, `with scripted(List("Bob"))`); parameterised ability implementations; compile-track frames,
+   including the guard read's (the compile track still finds an escape or a cell by its key, so items 14–15 are
+   closed on the runtime track only); and option 4.
+
+**Open: a definition discharging the very effect it declares (2026-10-12).** §2.2 says "a definition may now
+discharge the very effect it declares — which is what lets `describedAs(body: {Throw[AssertionError]} Unit):
+{Throw[AssertionError]} Unit` catch its body's failure and re-raise a better one". That rested on the nearest-frame
+search option 5 removed, and option 5's reversals did not list it. `describedAs`'s slot entry is its own row's entry,
+so the slot rides: the body's `raise` is written on the caller's binding and runs on the caller's frame, and
+`describedAs`'s own `catch` — a frame the body was not given — cannot see it. eliot-test's "put the new message in
+front of the original failure" now fails. Two ways:
+
+- **(a) Accept it as a reversal of §2.2's sentence.** A definition can no longer rewrite a failure of the effect
+  it itself performs; `describedAs` has to change shape (for example, `runThrow` its body to an `Either` and
+  re-raise, with the body's slot no longer riding).
+- **(b) Ride by code, give by frame.** For an entry a slot lists, the block's *code* is decided as today — supplied,
+  or riding the caller's binding — but its *frame* is always the one in scope where the block runs, passed to it
+  like a supplied one's. `if`'s `value: {Abort} T` then gets `if`'s own received frame, which is the caller's, as
+  now; `describedAs`'s body gets `catch`'s frame, as §2.2 promised. It is not item 14 again: a `{}` slot lists
+  nothing and passes nothing, so a block reaches a helper's frame only for an entry the helper's own signature
+  says it gives, and the threading still requires the frame's binding to be the block's code.
+
+Recommendation: **(b)**. It keeps a documented feature, it is visible in the signature, and the cost is small: one
+more frame parameter on a block whose slot lists an entry its definition also declares.
 
 #### Reversals this records
 

@@ -551,13 +551,21 @@ is a value or a **block** — a function type, or `=> A` for a lazy argument (to
 or passed on, **never kept**; a handler's slot is `body uses Throw[E]: => A`; a definition with a body gives its
 block only what it has (an effect's default is handed out at `main` and by platform primitives only); a `data`
 field holds a value, so stored computations go. It closes `docs/effects.md` §8 items 9–13 — five programs that
-compile today and misbehave — and reverses rule 3 and rule 4's predicate below. **Decided 2026-10-12 with it, also
-not built: D20c option 5, as amended.** An implementation is compile-time code (the binding, unchanged) plus a
-runtime environment, passed and never searched for: the platform's control defaults take a frame as a parameter, a
-discharger's body supplies it (`p with State(cell)`), and a named implementation may take arguments
-(`with scripted(List("Bob"))`). A body gives a default only by supplying its parameters, so an environment-free
-default is still given only at `main`. It replaces the nearest-frame primitives below, closing §8 items 14–15 (a
-helper's private `catch`/`State` intercepting its caller's effects) and D19. **D20 steps 1–3 are built
+compile today and misbehave — and reverses rule 3 and rule 4's predicate below. **Decided 2026-10-12 with it: D20c
+option 5, as amended — steps 1–4 BUILT the same day** (`docs/effects.md` D20c, "Option 5 built"). An implementation is
+compile-time code (the binding, unchanged) plus a runtime environment, passed and never searched for. Built: an
+anonymous implementation takes parameters (`implement[S] State[S](cell: StateCell[S])`, recorded on a body-less
+`$parameters` declaration, `ast/fact/ImplementationParameters`); each value mono records its effect entries at
+ground arguments (`MonomorphicEffects`); and **environments are threaded after monomorphization, at the `WovenValue`
+seam** (`monomorphize/channel/EnvironmentThreading`, decided as (iii)), whose ground re-check checks the plumbing — a
+definition receives one frame per entry as hidden parameters, a row-typed slot's thunk takes the frames it supplies in
+place of `unit`, a frame is chosen by entry **at ground arguments** (2(c)) and its binding must be the code's. The
+platform's five control effects take a frame (`ThrowFrame`, `AbortFrame`, `StateCell`, …) that their body-less
+primitives make and hand to the thunk they run, so a frame reaches exactly the operations it was given: §8 items 14–15
+and D19 (an undischarged control effect at `main` is a compile error) are closed on the runtime track. Not built:
+`with Ability(args)` and user defaults with parameters, named implementations with parameters
+(`with scripted(List("Bob"))`), parameterised ability implementations, compile-track frames. **Open**: §2.2's
+"discharge the very effect it declares" (`describedAs`) no longer works — see below. **D20 steps 1–3 are built
 (2026-10-12)**: rules 3–6 are enforced in today's syntax (blocks never kept, kept lambdas sealed, a body gives its
 block only what it has, a field holds a value), closing §8 items 10–13. The surface (steps 4–6) is not; until it
 lands, what follows is the tree, with rule 3 below retired.
@@ -629,21 +637,24 @@ nothing**, or the slot's row names the **same ability twice**.
 through, so the entry simply never joins the row and there is nothing to spell as a negative effect. **Nesting
 order at the run site decides interaction** — `runStateToPair(s, runThrow(c))` versus
 `runThrow(runStateToPair(s, c))` is the difference between state surviving a `raise` and not — and there is no
-canonical form for the compiler to choose. A definition may now discharge the **very effect it declares** (the
-nearest enclosing frame is its own), which is what lets `describedAs` rewrite its body's failure message. A
+canonical form for the compiler to choose. *A definition discharging the **very effect it declares** — what let
+`describedAs` rewrite its body's failure message — relied on the nearest-frame search option 5 removed, and is OPEN
+(`docs/effects.md` D20c, "Open: a definition discharging the very effect it declares"; recommended (b): ride by code,
+give by frame).* A
 discharger may be called any way a function can be; v5's "must be called directly" rule has no subject.
 
 **Three platform-private primitives, and nothing else.** A finishing clause is a non-local exit; a stateful
 implementation threads a value through calls that never mention it. Neither is expressible in a strict pure core,
-so each target ships **escape** (`escapeInternal(body, onExit, onValue)` — an exception on jvm, one class per
-instantiation; an evaluator intrinsic on the compile track), **cell**
-(`withCellInternal(initial, body, combine)` — a static field per instantiation) and **loop** (`foreverInternal`).
+so each target ships **escape** (`escapeInternal(body, onExit, onValue)` — on jvm a fresh frame object handed to
+`body`, exited by identity; an evaluator intrinsic keyed by type on the compile track), **cell**
+(`withCellInternal(initial, body, combine)` — a one-slot array local to the call, handed to `body`) and **loop**
+(`foreverInternal`).
 The control effects' single implementations are written over them. They are private because a public cell is
 Landin's knot (`termination/PurityGuardTest` exists to keep it out), so `runThrow`/`runAbort`/`runStateToPair`/
 `runWriterToPair`/`provide` are **body-less in the base and bodied per platform**, while `catch`/`else`/
 `runStateToValue`/`runStateToFinalState`/`runWriterToValue`/`runWriterToLog` are ordinary base bodies over those.
 Eliot has no layer-private visibility, so each jvm module needing a primitive declares its own copy — five copies
-of two shapes, which also separates the frames for free.
+of two shapes. On the runtime track frames are separated by identity, never by which copy made them.
 
 **Two families, and only one is rebindable.** The **control effects** (`Throw`, `Abort`, `State`, `Writer`, `Dep`,
 `Inf`) have exactly one implementation per platform over those primitives; `with` has nothing to choose there. The
