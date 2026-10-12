@@ -181,64 +181,6 @@ class TerminationIntegrationTest extends FullIntegrationTest {
     ).asserting(_.linesIterator.count(_ == "loop") should be > 5)
   }
 
-  // An `Inf` action stored in a data structure, pulled back out through its field accessor and run, carries its `Inf`
-  // to the caller: a row-typed field is a thunk bound at construction (A7), so the stored action loops when the
-  // accessor's result is run — data is only a courier for the computation, it does not launder the effect.
-  "an Inf action stored in data then run through its accessor" should "loop endlessly" in {
-    compileAndRunBounded(
-      """import eliot.effect.Console
-        |import eliot.effect.Inf
-        |
-        |data Box(action: {Inf, Console} Unit)
-        |
-        |def runBox(b: Box): {Inf, Console} Unit = action(b)
-        |
-        |def main: {Inf, Console} Unit = runBox(Box(forever(printLine("boxed"))))""".stripMargin,
-      timeoutMillis = 400
-    ).asserting(_.linesIterator.count(_ == "boxed") should be > 5)
-  }
-
-  // The claim the test above rests on, made observable: a computation stored in a `data` field is *stored*, not run
-  // at construction (`docs/effects.md` §9.5 "Storage"). Without this ordering assertion the `forever` case above
-  // passes either way — it loops at construction just as happily. Under v6 the field is a thunk and the accessor
-  // hands it back unrun, so what orders the two lines is A7's rule that *reading* the field runs it.
-  "an effect stored in a data field" should "run when the accessor's computation is run, not at construction" in {
-    compileAndRun(
-      """import eliot.effect.Console
-        |
-        |data Box(action: {Console} Unit)
-        |
-        |def runBox(b: Box): {Console} Unit = action(b)
-        |
-        |def main: {Console} Unit = {
-        |   val b = Box(printLine("stored"))
-        |   printLine("before")
-        |   runBox(b)
-        |}""".stripMargin
-    ).asserting(_ shouldBe "before\nstored")
-  }
-
-  // The same claim for a field storing a computation that also carries a *control* effect. A stored row is one
-  // spelling now — v5's pinned `{Abort | IO}` is gone with the carrier — and the ordering must hold for it too: the
-  // field's `Abort` is supplied at construction and discharged where the read is, so what runs between the two
-  // `printLine`s is the read, not the build. This is the shape that arrived untagged before A7: the data-level pass
-  // thunked the field before the split into functions, so the constructor's slot was never a row position and the
-  // argument was charged to the builder.
-  "a control effect stored in a data field" should "also run at the accessor, not at construction" in {
-    compileAndRun(
-      """import eliot.effect.Console
-        |import eliot.effect.Abort
-        |
-        |data Holder(computation: {Abort, Console} Unit)
-        |
-        |def main: {Console} Unit = {
-        |   val h = Holder(if(true, printLine("stored")))
-        |   printLine("before")
-        |   computation(h) else unit
-        |}""".stripMargin
-    ).asserting(_ shouldBe "before\nstored")
-  }
-
   // The step's own effect is bound where the step is written: a `{Console}` step handed to an `{Inf}` driver through a
   // `{}` slot is charged to `main`, which writes it, and the driver declares only the `Inf` it performs itself — a
   // driver declaring the step's `Console` too would declare an effect it does not perform, which is rejected.

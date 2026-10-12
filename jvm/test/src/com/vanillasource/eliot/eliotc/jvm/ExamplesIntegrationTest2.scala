@@ -519,9 +519,8 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
 
   // A stored computation. Under v5 this was a *pinned row* (`{State[String] | Id} Unit`) — the one place a type could
   // contain a computation — and three cases pinned how one reached a `List` element, an alias body and a block
-  // statement. A pinned row has no v6 meaning and is rejected at core: a computation is a **thunk**, an ordinary arrow
-  // type, so storing one needs no spelling of its own. Nothing here replaces those three: what a stored computation
-  // has to do is covered where it is actually used, by `eliot-test`'s `List[TestCase]`.
+  // statement. A pinned row has no v6 meaning and is rejected at core, and since D20 rule 6 a field holds a value, so a
+  // computation is not stored at all. Nothing here replaces those three.
 
   // A `{State, Console}` program: both effects in one row, the print running while the state threads through and
   // discharges to a `Pair`. Two effects are two independent bindings under v6 — there is no stack for one to ride.

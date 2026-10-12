@@ -32,11 +32,6 @@ class CoreProcessor
     // Each data definition's synthetic PatternMatch/TypeMatch implementations are keyed by the data type's name (a
     // stable per-module identity), so no cross-cutting index bookkeeping is needed — they cannot collide with each
     // other or with user implementations (which are keyed by their own `(ability, pattern)`).
-    // A `data` is **split before** the effect-row sugar is touched (A7, `docs/effects.md` §9.5 "Storage"): a stored
-    // field row (`data Box(body: {Throw[E]} String)`) then reaches the value constructor as an ordinary parameter row,
-    // which `EffectSugarDesugarer.desugar(FunctionDefinition)` thunks and records like any other — so the actual at
-    // `Box(failing)` is thunked and its effects supplied there. Thunking on the `data` first erased the row before the
-    // split could see it, and the effect was charged to whoever built the value instead.
     val desugaredFromData: Seq[(FunctionDefinition, RoleHint)] =
       sourceAstData.typeDefinitions.flatMap(DataDefinitionDesugarer.desugar)
     // Meta-slot brace on a type declaration (`type Int {range: …}`) → the type's `^Meta` constructor
@@ -76,10 +71,9 @@ class CoreProcessor
     // contravariant position of a constructor field (the negative-recursive-datatype route to `Y`). See
     // StrictPositivityChecker. Errors are reported here but the CoreAST is still produced so other checks proceed.
     val positivityErrors = sourceAstData.typeDefinitions.flatMap(StrictPositivityChecker.check)
-    // Ill-formed effect rows: an *open* row in a stored (`data`-field) position, or in a **type alias** body — both
-    // cases where the lowering would mint a carrier the referencing site cannot reach, silently dropping the effect.
-    // Only a pinned row is a type (docs/effects-as-rows.md §1 rule 3), so both must pin. Reported here, with the
-    // definitions still lowered (see EffectSugarDesugarer) so other checks proceed.
+    // Ill-formed effect rows: a row on a `data` field, which would store a computation (D20 rule 6), and a pinned row
+    // anywhere, which names a carrier stack v6 does not have. Reported here, with the definitions still lowered (see
+    // EffectSugarDesugarer) so other checks proceed.
     val rowErrors        =
       sourceAstData.typeDefinitions.flatMap(EffectSugarDesugarer.rowErrors) ++
         sourceAstData.functionDefinitions.flatMap(EffectSugarDesugarer.rowErrors)

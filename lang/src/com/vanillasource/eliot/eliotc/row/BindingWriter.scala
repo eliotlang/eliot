@@ -70,12 +70,6 @@ object BindingWriter {
 
   /** A binding in scope: an implementation for one ability, and the term naming it.
     *
-    * @param byWith
-    *   Whether a `with` **chose** this implementation here — in a body, or on a slot's type, the construct's two
-    *   positions. False for a binding this definition merely *forwards*: its own received binder, and the `Default` a
-    *   slot supplies. The difference matters in exactly one place, [[Writer.chargeStored]]: a stored computation's
-    *   calls were bound where it was constructed, so a `with` over a *read* of one has nothing left to bind (rule 3),
-    *   while forwarding a declaration over it is an honest description of what running it performs.
     * @param received
     *   Whether this is the definition's own **received** binding — resolution-order step 2, a row entry its caller
     *   fills. Only these are tracked as consumed ([[Writer.consumed]]), because only a declared entry can be declared
@@ -87,7 +81,6 @@ object BindingWriter {
   private case class Binding(
       ability: AbilityFQN,
       term: OperatorResolvedExpression,
-      byWith: Boolean = false,
       received: Boolean = false,
       captured: Boolean = false
   )
@@ -197,10 +190,9 @@ object BindingWriter {
     *
     * Consumption is read off the body walk alone, which runs first: a signature's effects are the guard channel's,
     * discharged by the guarded-return read and never performed. A received binding is consumed wherever the write
-    * hands it on — to an operation, to a declaring callee, to a named implementation whose clauses perform it, or to
-    * the read of a stored computation. An actual at a slot that does not supply the entry runs in the *caller's*
-    * scope, so running it consumes nothing here: `def run[A](v: {Console} A): {Console} A = v` declares `Console` for
-    * nothing, exactly as its `{}`-slot twin would.
+    * hands it on — to an operation, to a declaring callee, or to a named implementation whose clauses perform it. An
+    * actual at a slot that does not supply the entry runs in the *caller's* scope, so running it consumes nothing here:
+    * `def run[A](v: {Console} A): {Console} A = v` declares `Console` for nothing, exactly as its `{}`-slot twin would.
     *
     * Only the declared row is checked, never a `~` constraint's binder, which binds an ability the body may well reach
     * only through a callee's own constraint. A body-less value has nothing to check — its row is a contract, stated where a later layer supplies the body — and
@@ -269,7 +261,7 @@ object BindingWriter {
   }
 
   /** How many **value** parameters a definition takes, which its signature alone cannot say: a signature's arrow chain
-    * runs straight through a returned function, so a field accessor handing back a thunk (`Box -> Unit -> String`)
+    * runs straight through a returned function, so a field accessor handing back a function (`Box -> String -> Unit`)
     * reads as two parameters. The body's own leading lambdas past the generic binders are what actually say it.
     */
   private def valueParameterCount(orv: OperatorResolvedValue): Int = {
@@ -486,7 +478,7 @@ object BindingWriter {
             case Some(ability) =>
               walk(
                 subject,
-                scope.bind(Binding(ability, boundImplementation(implementation, scope), byWith = true)),
+                scope.bind(Binding(ability, boundImplementation(implementation, scope))),
                 kept
               )
             case None          =>
@@ -528,7 +520,7 @@ object BindingWriter {
               val adjusted = argumentsKept(callee.value, args.size, kept).zip(args).zipWithIndex.map {
                 case ((argumentKept, arg), index) => walkArgument(arg, callee.value, index, scope, argumentKept)
               }
-              runStored(expr.as(applyChain(written, adjusted)), head, args, scope)
+              expr.as(applyChain(written, adjusted))
             case _                                =>
               head match {
                 // A block applied to fewer arguments than it takes is a function still holding the block.
@@ -637,86 +629,6 @@ object BindingWriter {
           Seq("Call it here, or pass it directly to a function parameter of a definition.")
         )
 
-    /** A saturated call to a value whose declared return is a **stored computation** — a `data` field accessor (A7,
-      * `docs/effects.md` §9.5 "Storage") — runs it: the value it hands back is the thunk the field holds, and running a
-      * thunk is applying it. This is the exact mirror of a reference to a row-typed *parameter*, and it is what makes
-      * wrap and apply cancel for a field read back at a rowed slot: `runThrow(body(b))` comes out as the η-expansion
-      * `$unit -> body(b)(unit)` rather than the double wrap `$unit -> body(b)` the type would reject.
-      *
-      * Running it **performs** what the field's row declares, so the entries are charged here exactly as a call to a
-      * declaring callee is charged — the binding itself was written where the value was *constructed*, so there is
-      * nothing to write, only a declaration to require. An *under*-applied accessor is left alone: it is a function
-      * being passed on, not a read.
-      */
-    private def runStored(
-        call: Sourced[OperatorResolvedExpression],
-        head: OperatorResolvedExpression,
-        args: Seq[Sourced[OperatorResolvedExpression]],
-        scope: Scope
-    ): Sourced[OperatorResolvedExpression] =
-      storedRow(head, args) match {
-        case Nil     => call
-        case entries =>
-          entries.foreach(entry => chargeStored(entry.abilityFQN, call, scope))
-          call.as(FunctionApplication(call, unitValue(call)))
-      }
-
-    /** The stored row a call **reads** — the field row of the accessor it saturates, and empty for everything else,
-      * an *under*-applied accessor included (it is a function being passed on, not a read).
-      *
-      * The spine is taken through [[calledSpine]], so the dot spelling is the written one: `task.step` is
-      * `.(task, step)`, whose effective callee is `step` with `task` as its argument, and both forms therefore charge
-      * the same entries and are applied the same way. The applied term stays what it was — the `.` call is still what
-      * runs — because the accessor's own bindings were already written when the walk reached it as an argument; only
-      * the missing application to `unit`, and the charge, are added here.
-      */
-    private def storedRow(
-        head: OperatorResolvedExpression,
-        args: Seq[Sourced[OperatorResolvedExpression]]
-    ): Seq[AbilityConstraint[OperatorResolvedExpression]] = {
-      val (calledHead, calledArgs) = calledSpine(head, args)
-      calledHead match {
-        case ValueReference(callee, _) =>
-          universe
-            .lookup(callee.value)
-            .filter(_.effectRow.returnThunkEffects.nonEmpty)
-            .filter(orv => calledArgs.size === valueParameterCount(orv))
-            .toSeq
-            .flatMap(_.effectRow.returnThunkEffects)
-        case _                         => Seq.empty
-      }
-    }
-
-    /** Require a covering declaration for an effect this reference performs but writes no binding for.
-      *
-      * A `with` is **not** such a declaration. Reading a stored computation writes no binding — the calls inside it
-      * were bound where the value was constructed — so a `with` covering the read would absorb the charge without
-      * changing what runs: the effect stops propagating outward while the thunk still runs on the implementation it
-      * was built with. That is rule 3's "a `with` applied to it afterwards is an error, not a rebinding — there is
-      * nothing left to bind" (§1, §7.6), and it is rejected here in both of the construct's positions, since a slot's
-      * `with` chooses an implementation for its argument exactly as a body's does.
-      *
-      * What stays legal is what merely *describes* the read: this definition's own declared row (the effect
-      * propagates to its caller, which is true), and the `Default` a slot supplies (the same implementation the
-      * construction bound, and the frame a discharger installs is entered by the thunk at runtime — `runThrow(step(t))`).
-      */
-    private def chargeStored(ability: AbilityFQN, at: Sourced[?], scope: Scope): Unit =
-      scope.binding(ability) match {
-        case None                             => reportUncovered(ability, at, scope)
-        case Some(binding) if binding.byWith  =>
-          violations += Violation(
-            at.as(
-              s"This reads a stored computation, whose effect '${ability.abilityName}' was bound where the value " +
-                "was constructed; `with` cannot rebind it."
-            ),
-            Seq(
-              s"Bind the implementation where the value is constructed, or declare '${ability.abilityName}' here " +
-                "and let it propagate."
-            )
-          )
-        case Some(binding)                    => use(binding, at)
-      }
-
     /** One actual, at the callee's parameter `index`. A row-typed slot is a thunk, so the actual is wrapped — and the
       * entries that slot *supplies* are bound inside it, which is resolution-order step 3.
       */
@@ -732,7 +644,7 @@ object BindingWriter {
           arg.value match {
             // The arms of a `match` run inside it, as `if`'s do, so they are blocks. `match` lowers to
             // `handleCases(scrutinee, $selector -> $selector(arm₁)…(armₙ))`, which puts the arms at the selector rather
-            // than at a definition's parameter; this reads through it, as [[calledSpine]] reads through `.`.
+            // than at a definition's parameter; this reads through it to the arms the author wrote.
             case FunctionLiteral(selector, selectorType, body) if WellKnownTypes.isPatternMatchHandleCases(callee) =>
               val inside = scope.shadow(selector.value)
               arg.as(
@@ -776,7 +688,7 @@ object BindingWriter {
           declared
             .get(ability)
             .fold(Binding(ability, defaultBinding(anchor)))(marker =>
-              Binding(ability, slotImplementation(marker, acc), byWith = true)
+              Binding(ability, slotImplementation(marker, acc))
             )
         )
       }
@@ -987,7 +899,7 @@ object BindingWriter {
           universe
             .lookup(name.value)
             .toSeq
-            .flatMap(orv => orv.effectRow.returnEffects ++ orv.effectRow.returnThunkEffects)
+            .flatMap(_.effectRow.returnEffects)
         case _                       => Seq.empty
       }
 
@@ -1055,27 +967,6 @@ object BindingWriter {
         case other                   =>
           throw IllegalStateException(s"An application head is not a value reference: ${other.render}")
       }
-  }
-
-  /** An already-decomposed [[OperatorResolvedExpression.spine]] with the **apply operator read through**: the head and
-    * arguments of the call an expression *spells*, whichever of its two spellings the author used.
-    *
-    * `a.f` is the ordinary call `.(a, f)` to `eliot.lang.Function::.`, whose body is `f(a)` — so the value actually
-    * called is `f`, with `a` as its last argument, and a chain `a.f.g` nests that. Every phase before `row` treats the
-    * dot as the ordinary operator it is, and so does the write: this view is only what the *reading* rules consult, so
-    * that a rule stated on a call ("a saturated accessor call runs the stored computation") is not silently a rule
-    * about one spelling of it (`docs/effects.md` §8 item 2). A module declaring its own `.` takes the name back and
-    * gets no reading-through, exactly as it takes back `&` (`WellKnownTypes.applyOperatorFQN`).
-    */
-  private def calledSpine(
-      head: OperatorResolvedExpression,
-      args: Seq[Sourced[OperatorResolvedExpression]]
-  ): (OperatorResolvedExpression, Seq[Sourced[OperatorResolvedExpression]]) = head match {
-    case ValueReference(name, _) if name.value === WellKnownTypes.applyOperatorFQN && args.size === 2 =>
-      val (innerHead, innerArgs)   = spine(args(1).value)
-      val (calledHead, calledArgs) = calledSpine(innerHead, innerArgs)
-      (calledHead, calledArgs :+ args.head)
-    case _                                                                                           => (head, args)
   }
 
   /** The `Default` sentinel: "search at the ground arguments", today's two-site resolution. */

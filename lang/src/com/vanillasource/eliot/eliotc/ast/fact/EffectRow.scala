@@ -31,16 +31,6 @@ import cats.syntax.all.*
   *   machinery entry `Effect` here (see [[core.processor.EffectSugarDesugarer.rowEntries]]), so the position is tagged
   *   exactly as the older `{Effect}` spelling tagged it — the tag is what tells a row position from a carrier-typed
   *   one, and an entry-less tag would silently turn every migrated slot into the latter.
-  * @param returnThunkEffects
-  *   The entries of a **stored computation** returned unrun — a `data` field accessor, whose declared return *is* the
-  *   field's row (`data Box(body: {Throw[E]} String)` ⤳ `def body(obj: Box): Unit => String`). It is not
-  *   [[returnEffects]] and must never be confused with it: a return row says "this definition performs these", mints a
-  *   phantom binder and is bound by the caller, whereas a stored row says "this definition hands back a computation
-  *   that performs these", mints nothing, and was bound where the value was *constructed* (`docs/effects.md` §9.5,
-  *   "Storage"). What it tells the write is that a saturated call here yields a thunk, so running it is applying it —
-  *   the exact mirror of a row-typed *parameter* reference, and what makes wrap and apply cancel for a field read back
-  *   at a rowed slot (`runThrow(body(b))`). The entries are what the read *performs*, so the scope check charges them
-  *   at the call.
   * @tparam C
   *   The phase's ability-constraint representation: [[UnresolvedAbilityConstraint]] over the ast's and then the core's
   *   expression type, and from resolution onwards
@@ -48,8 +38,7 @@ import cats.syntax.all.*
   */
 case class EffectRow[C](
     returnEffects: Seq[C] = Seq.empty[C],
-    parameterEffects: Seq[EffectRow.ParameterEffects[C]] = Seq.empty[EffectRow.ParameterEffects[C]],
-    returnThunkEffects: Seq[C] = Seq.empty[C]
+    parameterEffects: Seq[EffectRow.ParameterEffects[C]] = Seq.empty[EffectRow.ParameterEffects[C]]
 ) {
 
   /** Convert every entry with a pure function, preserving positions — the pure fact-chain hops (ast→core,
@@ -58,8 +47,7 @@ case class EffectRow[C](
   def map[D](f: C => D): EffectRow[D] =
     EffectRow(
       returnEffects.map(f),
-      parameterEffects.map(_.map(f)),
-      returnThunkEffects.map(f)
+      parameterEffects.map(_.map(f))
     )
 
   /** Convert every entry with an effectful function, preserving positions — the resolving fact-chain hops
@@ -68,8 +56,7 @@ case class EffectRow[C](
   def traverse[F[_]: Applicative, D](f: C => F[D]): F[EffectRow[D]] =
     (
       returnEffects.traverse(f),
-      parameterEffects.traverse(_.traverse(f)),
-      returnThunkEffects.traverse(f)
+      parameterEffects.traverse(_.traverse(f))
     ).mapN(EffectRow.apply)
 }
 

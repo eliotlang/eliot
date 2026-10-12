@@ -387,54 +387,11 @@ class OperatorResolverProcessorTest
     }
   }
 
-  // --- The **stored-computation** tag (effects v6 A7). A row-typed `data` field is a computation held unrun, and the
-  // two functions the field is split into see the same position from opposite sides: the value constructor takes it as
-  // a row-typed *parameter* (so an actual delivered there is thunked and its entries supplied), and the accessor hands
-  // it back as `returnThunkEffects` (so a saturated read runs it). The v5 group here recorded a *pinned* row's carrier
-  // stack instead; a pinned row has no v6 meaning and is rejected at the desugar, so its three fields are deleted
-  // rather than re-asserted. ---
-
-  "the stored-computation tag" should "record a row-typed `data` field on the value constructor it is split into" in {
-    val source = "data Str\nability X[F[_]] { def op: {X} Str }\n" +
-      "data Holder(tag: Str, run: {X} Str)"
-    runEngineForResolvedValue(source, "Holder").asserting { holder =>
-      (effectRowStoredReturn(holder), effectRowParameters(holder)) shouldBe (Seq.empty, Seq((1, Seq("X"))))
-    }
-  }
-
-  it should "record the same field on the accessor's return, as a stored computation and not as a performed row" in {
-    val source = "data Str\nability X[F[_]] { def op: {X} Str }\n" +
-      "data Holder(run: {X} Str)"
-    runEngineForResolvedValue(source, "run").asserting { accessor =>
-      (effectRowStoredReturn(accessor), effectRowReturn(accessor)) shouldBe (Seq("X"), Seq.empty)
-    }
-  }
-
-  it should "record every entry of a multi-entry stored field, in declared order" in {
-    val source = "data Str\nability X[F[_]] { def opX: {X} Str }\nability Y[F[_]] { def opY: {Y} Str }\n" +
-      "data Holder(run: {X, Y} Str)"
-    runEngineForResolvedValue(source, "run").asserting(effectRowStoredReturn(_) shouldBe Seq("X", "Y"))
-  }
-
-  it should "NOT mark a data-type parameter or an ordinary open-row parameter" in {
-    // `box: Box[Str]` is a plain data type; `eff: {Susp} Str` is a row position and belongs in `parameterEffects`.
-    // Neither is a stored return, so the stored tag stays empty — the two channels are disjoint.
-    val source =
-      "data Str\ndata Box[X]\nability Susp[F[_]] { def d(v: Str): {Susp} Str }\n" +
-        "def f(box: Box[Str], eff: {Susp} Str): {Susp} Str"
-    runEngineForResolvedValue(source, "f").asserting { f =>
-      (effectRowStoredReturn(f), effectRowParameters(f)) shouldBe (Seq.empty, Seq((1, Seq("Susp"))))
-    }
-  }
-
   private def effectRowReturn(rv: OperatorResolvedValue): Seq[String] =
     rv.effectRow.returnEffects.map(_.abilityFQN.abilityName)
 
   private def effectRowParameters(rv: OperatorResolvedValue): Seq[(Int, Seq[String])] =
     rv.effectRow.parameterEffects.map(pe => (pe.parameterIndex, pe.effects.map(_.abilityFQN.abilityName)))
-
-  private def effectRowStoredReturn(rv: OperatorResolvedValue): Seq[String] =
-    rv.effectRow.returnThunkEffects.map(_.abilityFQN.abilityName)
 
   private def signatureShow(rv: OperatorResolvedValue): String =
     rv.signature.value.render

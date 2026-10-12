@@ -712,29 +712,20 @@ class CoreProcessorTest extends ProcessorTest(Tokenizer(), ASTParser(), CoreProc
       .mapN { (rowed, plain) => rowed.signature.value.structure shouldBe plain.signature.value.structure }
   }
 
-  // A stored computation is an ordinary thunked field — no pin, and no generic parameter on the data type, because a
-  // thunk is an ordinary type.
-  "an effect row on a data field" should "keep the type constructor nullary" in {
-    namedValue("data Box(body: {Throw[Error]} Unit)", QualifiedName("Box", Qualifier.Type)).asserting { nv =>
-      nv.signature.value.structure shouldBe Ref("Type", T)
-    }
+  // A field holds a value (D20 rule 6): a row on a field would store a computation, so it is rejected at core.
+  "an effect row on a data field" should "be rejected" in {
+    coreErrors("data Box(body: {Throw[Error]} Unit)").asserting(_ should contain(storedRowError))
   }
 
-  it should "thunk the field in the value constructor" in {
-    namedValue("data Box(body: {Throw[Error]} Unit)", QualifiedName("Box", Qualifier.Default)).asserting { nv =>
-      nv.signature.value.structure shouldBe
-        App(App(Ref("Function", T), thunk(Ref("Unit", T))), Ref("Box", Qualifier.Type))
-    }
+  it should "be rejected when it is empty, too" in {
+    coreErrors("data Box(body: {} Unit)").asserting(_ should contain(storedRowError))
   }
 
-  it should "thunk it through the accessor too" in {
-    namedValue("data Box(body: {Throw[Error]} Unit)", QualifiedName("body", Qualifier.Default)).asserting { nv =>
-      nv.signature.value.structure shouldBe
-        App(App(Ref("Function", T), Ref("Box", Qualifier.Type)), thunk(Ref("Unit", T)))
-    }
+  it should "leave a function-typed field alone" in {
+    coreErrors("data Box(body: Unit => Unit)").asserting(_ should not contain storedRowError)
   }
 
-  it should "leave a data type with no effectful fields untouched" in {
+  "a data type with no effectful fields" should "be left untouched" in {
     namedValue("data Box(value: A)", QualifiedName("Box", Qualifier.Default)).asserting { nv =>
       nv.signature.value.structure shouldBe App(App(Ref("Function", T), Ref("A", T)), Ref("Box", Qualifier.Type))
     }
@@ -862,6 +853,10 @@ class CoreProcessorTest extends ProcessorTest(Tokenizer(), ASTParser(), CoreProc
   private val pinnedRowError =
     "An effect row has no base: write `{Throw[Error]} String` rather than `{Throw[Error] | Id} String`. " +
       "A computation is a thunk, and the implementation it runs on is bound by `with` or by the caller."
+
+  private val storedRowError =
+    "A field holds a value, so it cannot store a computation: run it where the value is built and store what it " +
+      "produces."
 
   private def coreErrors(source: String): IO[Seq[String]] =
     runGenerator(source, CoreAST.Key(file)).map(_._1.map(_.message))

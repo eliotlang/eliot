@@ -60,27 +60,6 @@ object EffectSugarDesugarer {
   /** The binder name minted for a row entry or a `~` constraint. Nothing reads it: it is written positionally. */
   private val binderPrefix = "Impl"
 
-  /** How a stored (`data`-field) row appears where the field's type is used **as a type** — an accessor's return, and
-    * the Church-encoded handler `handleCases` takes: as the thunk `Unit => A`, exactly as a parameter row does.
-    *
-    * A `data` is **split before this is applied** ([[DataDefinitionDesugarer]]), and that ordering is the whole of A7.
-    * Thunking the field on the `data` itself came first and erased the row before the split could see it, so the value
-    * constructor's slot was never recorded as a row position: the actual at `Box(failing)` was neither thunked nor
-    * supplied, and its effect was charged to whoever *built* the value. Splitting first hands the constructor an
-    * ordinary parameter row, which [[desugar(FunctionDefinition)]] then thunks and records like any other; what still
-    * has to be spelled out here are the two positions where the field's type is a type rather than a parameter.
-    *
-    * A field with no row is returned untouched, so a `data` that stores no computation lowers byte-for-byte as before.
-    */
-  def storedFieldType(field: Sourced[Expression]): Sourced[Expression] =
-    if (isRow(field)) thunked(field) else field
-
-  /** The entries of a stored field's row — what an accessor returning it records as
-    * [[com.vanillasource.eliot.eliotc.ast.fact.EffectRow.returnThunkEffects]].
-    */
-  def storedFieldEntries(field: Sourced[Expression]): Seq[UnresolvedAbilityConstraint[Sourced[Expression]]] =
-    topLevelRowEntries(field)
-
   /** Rewrite one function definition — see the object comment. */
   def desugar(function: FunctionDefinition): FunctionDefinition =
     if (signatureAndBodyRows(function).isEmpty && unprocessedConstraints(function).isEmpty) function
@@ -130,12 +109,7 @@ object EffectSugarDesugarer {
         body = function.body.map(bare),
         // An ability member arrives with the row its membership implies already recorded
         // ([[com.vanillasource.eliot.eliotc.ast.fact.AbilityMembers]]); its own row is added to that, never over it.
-        effectRow = declared.copy(
-          returnEffects = function.effectRow.returnEffects ++ declared.returnEffects,
-          // A stored row is recorded by whoever minted the definition ([[DataDefinitionDesugarer]]'s accessor) and is
-          // never derived from a signature, so it is carried through rather than recomputed.
-          returnThunkEffects = function.effectRow.returnThunkEffects
-        )
+        effectRow = declared.copy(returnEffects = function.effectRow.returnEffects ++ declared.returnEffects)
       )
     }
 
@@ -326,12 +300,22 @@ object EffectSugarDesugarer {
     * a stored row is an ordinary field type. Rejected rather than read as an open row, so a v5 signature that survives
     * the flag day fails loudly at the position that needs rewriting.
     */
-  def rowErrors(data: DataDefinition): Seq[Sourced[String]] =
-    data.constructors.toSeq.flatten
-      .flatMap(_.fields.map(_.typeExpression))
-      .flatMap(collectRows)
-      .filter(_.value.tail.isDefined)
-      .map(pinnedRowError)
+  def rowErrors(data: DataDefinition): Seq[Sourced[String]] = {
+    val fields = data.constructors.toSeq.flatten.flatMap(_.fields.map(_.typeExpression))
+    fields.filter(isRow).map(storedRowError) ++
+      fields.flatMap(collectRows).filter(_.value.tail.isDefined).map(pinnedRowError)
+  }
+
+  /** A field holds a value (D20 rule 6, `docs/effects.md` §11). A row on a field stored a computation bound where the
+    * value was built, which runs after the frames it was bound under are gone, and binds the platform's default for
+    * whoever builds it (§8 item 12). A function-typed field stays legal: the lambda stored there is a value, which uses
+    * no effect from around it.
+    */
+  private def storedRowError(field: Sourced[Expression]): Sourced[String] =
+    field.as(
+      "A field holds a value, so it cannot store a computation: run it where the value is built and store what it " +
+        "produces."
+    )
 
   def rowErrors(function: FunctionDefinition): Seq[Sourced[String]] =
     signatureAndBodyRows(function).filter(_.value.tail.isDefined).map(pinnedRowError)

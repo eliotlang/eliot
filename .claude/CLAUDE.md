@@ -557,8 +557,10 @@ runtime environment, passed and never searched for: the platform's control defau
 discharger's body supplies it (`p with State(cell)`), and a named implementation may take arguments
 (`with scripted(List("Bob"))`). A body gives a default only by supplying its parameters, so an environment-free
 default is still given only at `main`. It replaces the nearest-frame primitives below, closing §8 items 14–15 (a
-helper's private `catch`/`State` intercepting its caller's effects) and D19. Until they land, what follows is the
-tree.
+helper's private `catch`/`State` intercepting its caller's effects) and D19. **D20 steps 1–3 are built
+(2026-10-12)**: rules 3–6 are enforced in today's syntax (blocks never kept, kept lambdas sealed, a body gives its
+block only what it has, a field holds a value), closing §8 items 10–13. The surface (steps 4–6) is not; until it
+lands, what follows is the tree, with rule 3 below retired.
 
 **Four user rules, and the fourth outranks the other three** (§1):
 
@@ -567,10 +569,9 @@ tree.
 2. **Suspension is declared.** A parameter that must *not* run its argument declares a row (`whenTrue: {} A`,
    `if`'s `value: {Abort} T`). After desugaring such a slot is a **thunk** (`Unit => A`), but the thunk is the
    lowering: every phase goes by the **row tag** on the declaration, never the shape.
-3. **A stored computation is bound where it is written.** A row-typed `data` field
-   (`data Task[E](step: {Throw[E]} String, label: String)`) is a thunk whose operation calls were bound at
-   construction; reading the field runs it, so the field's row is charged **at the read**. No pin, no base, no
-   `| Id`. A `with` applied to it later is an error, not a rebinding.
+3. ~~**A stored computation is bound where it is written.**~~ **Retired 2026-10-12 by D20 rule 6** (step 3,
+   built): a field holds a value, and a row on a `data` field is rejected at core. The stored-read machinery
+   (`returnThunkEffects`, `chargeStored`, `calledSpine`) is deleted.
 4. **A binding passes into a position if and only if that position declares a row.** A **plain generic** is a
    payload, always. A **rowless slot** receives the *value*, computed where the argument stands — there is
    nothing to diagnose, the effects were the caller's. A **row on the slot** is what lets the lexical walk cross

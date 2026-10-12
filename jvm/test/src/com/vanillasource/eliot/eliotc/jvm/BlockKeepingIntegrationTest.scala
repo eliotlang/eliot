@@ -157,6 +157,16 @@ class BlockKeepingIntegrationTest extends FullIntegrationTest {
       .asserting(_ shouldBe "kept;")
   }
 
+  // D20 rule 6: a field holds a value. §8 item 12's program, which bound the platform's console at construction and
+  // charged a binding the stored thunk never used at the read.
+  "a data field with an effect row" should "be rejected, since a field holds a value" in {
+    compileForErrors(prelude + """
+      |data Job(run: {Console} Unit)
+      |def makeJob: Job = Job(printLine("job"))
+      |def main: {Console} Unit = run(makeJob)""".stripMargin)
+      .asserting(_ should include("A field holds a value, so it cannot store a computation"))
+  }
+
   "a lambda passed directly to a definition's function parameter" should "use the effects around it" in {
     compileAndRun(prelude + """
       |def main: {Console} Unit = callIt(s -> printLine(s ++ " here"))""".stripMargin)

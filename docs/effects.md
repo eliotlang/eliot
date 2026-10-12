@@ -779,6 +779,8 @@ fix. The silent ones come first, because a silent acceptance is the one failure 
    `runThrow(t.step)` determines it as `runThrow(step(t))` does, measured, not assumed. §10's gate held whole
    (all 45 jars byte-identical), which here can only say the change touched nothing else: no example stores a
    computation, so the witness for the feature is the eight cases added to `StoredComputationIntegrationTest`.
+   **Subject gone 2026-10-12**: D20 step 3 rejects a row on a field, so `calledSpine` and those cases were deleted
+   with the stored read they served.
 3. ~~**`val x = comp` then `x else …` fails**~~ — **closed 2026-09-12, and it was never a tree defect.**
    **D17 is decided: a `val` is a bind**, so rule 1 was right and §3.5's "a `val`-bound computation is
    dischargeable" was the wrong half; it is struck there and recorded as a reversal below. Measured before
@@ -836,7 +838,8 @@ D20 rule that does it. The witnesses are the five programs below, which become D
     rule 4 (work-list step 1, below). `built: {Console} Holder =
     Holder(s -> printLine(s))` — no function parameter involved — compiles, and the stored lambda prints when a
     def declaring nothing runs it. D20 rule 4.
-12. **A data constructor supplies a field's row by `Default`.** With `data Job(run: {Console} Unit)`,
+12. ~~**A data constructor supplies a field's row by `Default`.**~~ **Closed 2026-10-12** by D20 rule 6 (work-list
+    step 3, below): a row on a field is rejected. With `data Job(run: {Console} Unit)`,
     `makeJob: Job = Job(printLine(…))` declares nothing, because the constructor *supplies* `Console` (it is an
     entry the constructor's own row lacks, §2.2) and binds the **platform's** console. A test reading the job
     through `useJob(j: Job): {Console} Unit` under `with recordingConsole` gets real output and an empty
@@ -1431,6 +1434,15 @@ mechanical migration that §10's byte-identity gate can watch.
 3. **Rule 6** — reject a row on a field, and delete the stored-read machinery it leaves without a subject
    (`chargeStored`, A11's `byWith` read rule, `calledSpine`'s dot-read view if nothing else reads it,
    `StoredComputationIntegrationTest`). Closes item 12. No example stores a computation, so the jars do not move.
+   **Built 2026-10-12.** A top-level row on a field — `{}` included — is a core error beside the pinned-row one
+   (`EffectSugarDesugarer.rowErrors`); a function-typed field stays legal, its lambda being a value under rule 4.
+   Deleted with their subject: `EffectRow.returnThunkEffects`, the accessor's and `handleCases`'s stored-field
+   lowering, `BindingWriter`'s `runStored`/`storedRow`/`chargeStored`/`calledSpine` and `Binding.byWith`,
+   `StoredComputationIntegrationTest`, three `TerminationIntegrationTest` cases and the stored-field groups of
+   `CoreProcessorTest`/`OperatorResolverProcessorTest`. Nothing outside this repository stored one: eliot-test's
+   `TestCase` no longer does and eliot-build has none. The gate held: 45 jars byte-identical, the suite green,
+   eliot-test 183/183, eliot-build's errors unchanged. Part I (§1 rule 3, §2.3, A11, §7 item 6) still describes
+   the old rule and is rewritten in step 7.
 4. **The parser accepts the new surface** — `uses` on a definition and a parameter, `=> A` in parameter position —
    onto the *existing* `EffectRow` metadata, so no phase past `ast` learns anything. `A => {} B` and `A => B` are
    one shape (§8 item 9), so dropping the codomain `{}` must be byte-identical; that is this step's gate.
