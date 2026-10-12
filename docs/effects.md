@@ -2139,6 +2139,16 @@ Both are Robert's; nothing past the check below is built.
    But it reverses the amendment's `Env` binder, which is recorded as a proposal ("Not decisions" above), and 2(c)
    touches standing rule 3, so both need sign-off before option 5's environment is built.
 
+**Decided 2026-10-12 (Robert): (iii) and 2(c).** Environments are threaded **after monomorphization**, at the
+`WovenValue` seam — the step built for a post-mono lowering, whose ground re-check (`WovenRecheck`) then checks the
+plumbing as it checks every woven body. There is no `Env` binder and the marker does not grow; the checker never
+sees an environment. A reference's frame is chosen among the entries in scope **at its ground arguments**, so two
+entries of one effect are told apart by their instantiation, and two that coincide at one are a use-site error.
+Reversed (standing rule 1): the amendment's "mint a second phantom binder per entry for the environment's type".
+Standing rule 3 stands: the walk still writes every binding from declarations and nothing infers one. What the
+ground arguments choose is only *which declared entry's frame* a reference uses, which no binding names; where that
+choice and the written binding disagree, it is an error, never a silent pick.
+
 #### Reversals this records
 
 Standing rule 1: each is written down as a reversal, not amended in place. They take effect when D20 lands.
