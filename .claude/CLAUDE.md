@@ -545,8 +545,14 @@ is a value or a **block** — a function type, or `=> A` for a lazy argument (to
 or passed on, **never kept**; a handler's slot is `body uses Throw[E]: => A`; a definition with a body gives its
 block only what it has (an effect's default is handed out at `main` and by platform primitives only); a `data`
 field holds a value, so stored computations go. It closes `docs/effects.md` §8 items 9–13 — five programs that
-compile today and misbehave — and reverses rule 3 and rule 4's predicate below. Until it lands, what follows is
-the tree.
+compile today and misbehave — and reverses rule 3 and rule 4's predicate below. **Decided 2026-10-12 with it, also
+not built: D20c option 5, as amended.** An implementation is compile-time code (the binding, unchanged) plus a
+runtime environment, passed and never searched for: the platform's control defaults take a frame as a parameter, a
+discharger's body supplies it (`p with State(cell)`), and a named implementation may take arguments
+(`with scripted(List("Bob"))`). A body gives a default only by supplying its parameters, so an environment-free
+default is still given only at `main`. It replaces the nearest-frame primitives below, closing §8 items 14–15 (a
+helper's private `catch`/`State` intercepting its caller's effects) and D19. Until they land, what follows is the
+tree.
 
 **Four user rules, and the fourth outranks the other three** (§1):
 

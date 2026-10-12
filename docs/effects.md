@@ -1172,6 +1172,10 @@ Needed before a row alias leaves return position.
 
 ### D19 — an undischarged control effect at `main`: decided, and costed
 
+**Closed 2026-10-12 by D20c option 5, as amended, by neither route below**: the platform's control defaults take a
+frame as a parameter, a discharger's body supplies it, and `main` holds none, so an undischarged control effect
+there is the ordinary "nothing gives this" error. The routes and their costs are kept as the record.
+
 **Decided 2026-09-12: it must be a compile error.** What is left is not *whether* but *which of two costs*, and
 that is the open half of this entry.
 
@@ -1334,7 +1338,9 @@ user has to learn.
    effect's default is handed out at `main`, and by platform primitives, nowhere else.** Since a block's binding is
    still written at the outer call from the callee's declaration (§3.1), the check also requires what the body
    gives to *be* what the declaration promised: a block declared to receive `Default` may not be passed on to a
-   slot that gives `with recordingConsole`.
+   slot that gives `with recordingConsole`. *Restated 2026-10-12 by D20c option 5's decision 2: a body gives a
+   default only by supplying its parameters, so a frame-carrying default is given by the discharger holding the
+   frame, and an environment-free one still only at `main`.*
 6. **A field holds a value.** `uses` and `=> A` are rejected on a `data` field. A stored computation (§1 rule 3,
    §2.3) is gone: under rule 3 a block cannot be kept, and a field is the one place everything is kept.
 
@@ -1607,10 +1613,10 @@ the same with a single definition whose block parameter calls it again. **No com
 specialisation, a mono-key component — can tell two live frames apart.** The identity has to exist at runtime, and
 the question is only where it travels.
 
-**Option 5 — a frame is a parameter too (proposed 2026-10-12, not decided).** D20 says an effect is a parameter you
-don't spell. Option 5 takes that literally for the half of an implementation that is a runtime fact. It is needed
-for items 14 and 15 whether or not Eliot ever stores an open computation, and it is what makes option 4 sound for a
-control effect.
+**Option 5 — a frame is a parameter too (proposed 2026-10-12; adopted as amended the same day).** D20 says an effect
+is a parameter you don't spell. Option 5 takes that literally for the half of an implementation that is a runtime
+fact. It is needed for items 14 and 15 whether or not Eliot ever stores an open computation, and it is what makes
+option 4 sound for a control effect.
 
 *The model.* An implementation has two halves: its **code**, a compile-time name exactly as today — the phantom
 binder, the write, the mono key and erasure are untouched — and its **environment**, a runtime value. The hidden
@@ -1817,9 +1823,9 @@ again, not a library. Option 5 makes one cheaper variant available to a *backend
 declare the entry need the test, which a target without `longjmp` may use. That is code generation, not a fourth
 way for a library to leave early.
 
-**Option 5, amended: the slot chooses the code, whoever gives it supplies the environment (proposed 2026-10-12, not
-decided).** As written, option 5 cannot be built: it moves the code half of the control implementations somewhere
-the write never reads.
+**Option 5, amended: the slot chooses the code, whoever gives it supplies the environment (proposed and decided
+2026-10-12).** As written, option 5 cannot be built: it moves the code half of the control implementations
+somewhere the write never reads.
 
 *The gap.* A block is not a named definition, so it gets no specialisation of its own: `{ increment; double }` is
 compiled as part of `main`'s, and the binding in `increment[Impl]` is written by the walk over `main`'s body. For a
@@ -1885,6 +1891,26 @@ paragraph on abilities, and "named, parameterised and never a default" in the re
 now have an environment, and a default and a named implementation differ only in who chooses them: the declaration,
 or a `with`. The anonymous `implement[E] Throw[E]` and its four siblings stay anonymous and gain parameters, so that
 paragraph's "an anonymous `implement` has nowhere to write them" goes with it. Its rejection of a keyword stands.
+
+**Decided 2026-10-12 (Robert): option 5, as amended, is adopted. Not built.** Three decisions:
+
+1. **Adopted, with its reversals**: those under "What option 5 reverses" below, as amended, and those under "What it
+   reverses within option 5" above. It closes **D19** by neither of its routes: an undischarged control effect at
+   `main` is an error because the platform's default needs a frame and `main` holds none.
+2. **Who gives a default: D20 rule 5 restated.** *A body gives a default only by supplying its parameters.* An
+   environment-free default, such as the platform's `Console`, has nothing to supply, so only `main` gives it, and
+   `launder(body uses Console: => A) = body` stays an error (§8 item 13). A default that takes parameters is given
+   by the body that supplies them, which for the control effects is the platform's dischargers, holding a frame
+   from a primitive. The rule is judged on the merged body, never on a body-less signature in another layer, which
+   a module could otherwise satisfy by splitting one definition across two files. **User code may declare a
+   default with parameters.** `implement Config(s: Settings) { … }`, given by
+   `def withConfig[A](s: Settings, body uses Config: => A): A = body with Config(s)`, is a user-written discharger.
+   It is sound because the implementation's clause rows are charged where it is given.
+3. **Arguments are passed at the `with`, with no other syntax.** One construct chooses code and supplies arguments:
+   `with scripted(List("Bob"))` names a substitute and supplies its arguments, and `p with State(cell)` names the
+   default (by its ability, since an anonymous implementation has no other name) and supplies its arguments. A
+   default named at a `with` chooses nothing the declaration had not already chosen, and rule 5's check that a body
+   gives what its declaration promised is unchanged.
 
 **Option 4, corrected: specialise at the read, not at the constructor.** Option 4's user model stands, and it
 unifies more than its proposal says. *Kept code gets its effects only from whoever runs it* already describes a named
@@ -1965,9 +1991,23 @@ orphaned box.
 regions (a new kind of binder, unmeasured), option 2 (reverses the 2026-09-06 decision and runs into the step-6
 limit), option 3 (blocked on recursive data), and option 4 (a reversal of D20 rule 6, with the two measurements
 above outstanding, read-site specialisation in place of the constructor product, and the positivity rule).
-Separately and regardless of storage: **whether option 5, as amended, replaces the nearest-frame primitives**,
-since §8 items 14 and 15 are open without it. Until it is decided, D20's answer is option 3's partial form, or a
-hand-written `data` and interpreter.
+Until it is decided, D20's answer is option 3's partial form, or a hand-written `data` and interpreter.
+
+Option 5, as amended, is decided (above). Left before it is built:
+
+- **Its order against D20's surface.** It needs D20 steps 1–3 first. After those, it either comes next, written
+  in today's syntax, or after steps 4–6, written once in the new syntax but waiting on D20a and D20b. Either order
+  keeps the two gates apart: the surface migration stays byte-identical, and option 5 is judged on transcripts.
+- **An anonymous implementation's parameter list.** `implement[S] State[S](cell: Cell[S])` is a placeholder.
+- **What gives a signature's control effect.** A guarded return's `if`/`else`/`raise` binds `Default` unchecked
+  today (`uncoveredDefaults`), and that default now needs a frame. The candidate: the guarded-return read
+  (`GuardDischargeResolver`) is the discharger, supplying a compile-track frame.
+- **Parameterised ability implementations** (`with byKey(…)`) in the first cut, or later. Later is proposed: they
+  bring compile-track evaluation and D19's undiagnosed constrained-implementation codegen failure.
+- **The marker grows.** The environment's binder makes `Implementation[A]` something like `Implementation[A, Env]`,
+  which the CLAUDE.md cornerstone describes; a mechanism choice, noted so it is not a surprise.
+- **The spike**, not a decision: a slot's `with` whose double performs a control effect (`transcriptOf`, under
+  "Where to measure first"). A fallback is chosen only if it fails.
 
 #### Reversals this records
 
