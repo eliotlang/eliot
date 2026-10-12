@@ -743,6 +743,14 @@ a *finite product* of closed specialisations, one per implementation of the effe
 by the binder in scope — the closed world of a whole-program monomorphiser standing in for runtime evidence. It
 needs no region, no runtime implementation and no reified continuation, and it is a *proposal*, not a decision.
 
+**2026-10-12.** The spike's lesson turned out not to need storage: two programs that keep nothing let a helper's
+private `catch` or `State` intercept its caller's `raise` or `putState` (§8 items 14 and 15, open, and not closed by
+D20). The same probe refuted D20c's "second property" — no compile-time identity separates two live frames. **Option
+5 was proposed** (D20c): a frame is a parameter too — an implementation's code stays a compile-time name and its
+*environment* (an escape frame, a cell, a parameter) is passed at runtime along the declared chain, so an operation
+reaches the frame it was handed. It would also settle D19 and give doubles state. Option 4 was corrected to
+specialise at the read, and found to need a positivity rule against Landin's knot. Both are proposals, not decisions.
+
 ## 8. Where the tree diverges from Part I
 
 Found by probing the compiler while the user docs site was rewritten for v6 (2026-09-10) and by the flag day's
@@ -836,6 +844,20 @@ D20 rule that does it. The witnesses are the five programs below, which become D
     by `Default`, so `looksPure(name: String): Unit = launder(printLine(…))` performs real I/O with a pure
     signature, and an outer `with recordingConsole` binds nothing (which is item 1, the unused `with`). The
     two-site default meant for `main` is reachable from any definition with a body. D20 rule 5.
+
+**Items 14–15 were found on 2026-10-12**, probing `9c7a31c9` while D20c (§11) was analysed. Both compile clean and
+are wrong at runtime, and **D20 does not close them**: neither keeps a block, so both stay legal under every D20
+rule. The cause is one — the primitives find a frame by its *instantiation* on the machine stack (§3.4), so an
+operation reaches the nearest frame of its type rather than the one its binding was written under — and D20c's
+option 5 is the proposed fix. The programs are in D20c.
+
+14. **A helper's own `catch` swallows its caller's `raise`.** `guarded(body: {} Unit)` runs `body` inside a private
+    `catch[String, Unit]`; a caller writing `guarded(raise("boom"))` inside its own `catch[String, Unit]` sees the
+    helper's handler run and its own code carry on after the call. Accidental handling: a library's private use of
+    `Throw` intercepts every block it runs.
+15. **A helper's own `State` receives its caller's `putState`.** `counted(body: {} Unit)` runs `body` inside a private
+    `runStateToFinalState("helper", …)`; a caller's `putState` written for its own `State[String]` lands in the
+    helper's cell, and the caller's state is unchanged.
 
 ## 9. Built: a binding binder is marked by its type
 
@@ -1550,13 +1572,202 @@ every `raise` then has one static target. On the JVM that buys nothing. On a mic
 status flag and a jump with no exception machinery, and `State` threaded as parameters with no static cell, both
 derived by the backend from frames that are mono-key components; it would also make D19 free, since an
 undischarged control effect at `main` has no frame site to bind. It is independent of option 4 and not worth
-paying for until a non-JVM backend exists.
+paying for until a non-JVM backend exists. **Refuted 2026-10-12** by the tunnelling probe below: a higher-order
+argument nests a site inside itself with no cycle in the reference graph, so the property does not hold and is kept
+only so its citations resolve.
+
+**The tunnelling probes (2026-10-12, on `9c7a31c9`).** The spike's conclusion — a binding names an implementation,
+never a frame — does not need a stored computation. Two programs that keep nothing, and are therefore legal under
+every rule of D20, misbehave on today's tree. They are §8 items 14 and 15:
+
+```eliot
+def guarded(body: {} Unit): {Console} Unit =
+   catch[String, Unit]({ body; printLine("helper: body finished") }, e -> printLine("helper caught: " ++ e))
+
+def main: {Console} Unit =
+   catch[String, Unit]({ guarded(raise("boom")); printLine("caller: after guarded") },
+                       e -> printLine("caller caught: " ++ e))
+-- prints "helper caught: boom", then "caller: after guarded"
+
+def counted(body: {} Unit): {Console} Unit = printLine("helper's state: " ++ runStateToFinalState("helper", body))
+def main: {Console} Unit =
+   printLine("caller's state: " ++ runStateToFinalState("caller", counted(putState("written by caller"))))
+-- prints "helper's state: written by caller", then "caller's state: caller"
+```
+
+The `raise` and the `putState` are written inside the caller's discharger, and the binding the write gives them is
+the right one; the frame the primitive reaches at runtime is the nearest of the same instantiation (§3.4), which is
+the helper's. This is *accidental handling*: a library's private use of a control effect intercepts the effects of
+every block it runs. D20 rule 1 states the right semantics and the runtime does not implement it. D20 does not
+close it, since running a block inside a frame the callee installed is D20's normal case, not an edge.
+
+The same probe refutes the second property above. Both `Throw` frames are installed by the one `runThrow` call in
+`catch`'s body, at the one specialisation `catch[String, Unit]`, one live inside the other; `F(b -> F(_ -> b))` does
+the same with a single definition whose block parameter calls it again. **No compile-time identity — a site, a
+specialisation, a mono-key component — can tell two live frames apart.** The identity has to exist at runtime, and
+the question is only where it travels.
+
+**Option 5 — a frame is a parameter too (proposed 2026-10-12, not decided).** D20 says an effect is a parameter you
+don't spell. Option 5 takes that literally for the half of an implementation that is a runtime fact. It is needed
+for items 14 and 15 whether or not Eliot ever stores an open computation, and it is what makes option 4 sound for a
+control effect.
+
+*The model.* An implementation has two halves: its **code**, a compile-time name exactly as today — the phantom
+binder, the write, the mono key and erasure are untouched — and its **environment**, a runtime value. The hidden
+parameter a `uses X` definition receives is the environment of the implementation bound to `X`. Whether there is
+one is decided per binding, which monomorphisation already specialises on, so nothing marks an effect, and the
+control/interpretation split stays the description §3.5 says it is: an effect needs a runtime handle because of
+how its implementation is written, not because of what the effect is.
+
+| binding | environment |
+| --- | --- |
+| the platform's `Console` | none — erased, nothing is passed, the same cost as today |
+| `Throw[E]`, `Abort` | the escape frame |
+| `State[S]`, `Writer[W]` | the cell |
+| `Dep[X]` | the value itself; no primitive at all |
+| `recordingConsole` | the `Writer` environment its clause row uses, captured at the `with` that binds it |
+
+*The surface.* An environment is declared as **implementation parameters**, and a `with` in body position supplies
+them; a `with` on a slot's type stays argument-free. Frames are created by the primitives only, and their types are
+private to the platform layer, so a user never sees one — they write `uses Throw[E]` as before.
+
+```eliot
+-- jvm layer; EscapeFrame and Cell are private types
+implement[E] throwing(frame: EscapeFrame[E]): Throw[E] {
+   def raise[A](err: E): A = exitInternal(frame, err)
+}
+
+def runThrow[E, A](obj uses Throw[E]: => A): Either[E, A] =
+   escapeInternal(frame -> obj with throwing(frame), err -> Left(err), a -> Right(a))
+
+implement[S] celled(cell: Cell[S]): State[S] {
+   def state: S = readCell(cell)
+   def putState(s: S): Unit = writeCell(cell, s)
+}
+
+implement[X] given(x: X): Dep[X] {
+   def dep: X = x
+}
+
+-- a test module
+implement scripted(lines: List[String]): Console uses State[List[String]] { … }
+```
+
+`raise` exits to the frame it was handed and never to the nearest of its type. On the JVM the exception carries the
+frame object and a handler rethrows any exception that is not its own; a cell is a box in the frame rather than a
+static field per instantiation. On a microcontroller a frame is a pointer to a jump buffer or a stack slot, which is
+C's `setjmp`/`longjmp`. On the compile track the evaluator's intrinsics carry the same identities.
+
+*The lowering.* A definition that declares an entry whose implementation has an environment takes it as a hidden
+parameter and passes it on to the declaring definitions it calls. A definition that does not declare it — `guarded`,
+`map`, `foreach`, every pure body — receives nothing: a block reaches its frame by ordinary closure capture, as it
+captures a local `val`. That is why `guarded`'s own `catch` cannot see the caller's `raise`: the block holds the
+caller's frame, and `guarded` was never handed it. The `unit` a suspended slot's thunk is applied to today (§3.1) is
+where the environment goes instead. The cost is one pointer per call between declaring definitions, and the
+per-instantiation static cells are gone.
+
+*Why it is sound.* Three properties, each structural:
+
+- **The right frame.** An operation reaches the frame it was handed, so it reaches the one its discharger
+  installed — the one D20 rule 1 names.
+- **A live frame.** An environment travels only as a hidden `uses` parameter or inside a block, a block cannot be
+  kept (D20 rule 3), and kept code gets its environments from the code running it (option 4). So no environment
+  outlives the discharger that created it.
+- **No interception.** A library sees only the frames it installed itself; an intervening discharger of the same
+  type is invisible to an operation it did not give.
+
+*What it settles.*
+
+- **§8 items 14 and 15**, by construction.
+- **D19.** An implementation with parameters cannot be a default — at `main` nobody holds its arguments — so the
+  platform's control implementations stop being anonymous, and an undischarged `Throw` at `main` is the ordinary
+  "nothing gives this" error. This is Route A with the names parameterised and written in the dischargers'
+  *bodies* rather than their slots. Route A's first cost, a user-written discharger spelling the implementation,
+  is expected not to arise: under D20 rule 5 such a discharger passes its block on to `catch` or `runThrow`, whose
+  body binds it. Not measured. Route A's second cost — a double whose clauses perform a control effect — is option
+  5's own first measurement below.
+- **Stateful doubles.** `greet with scripted(List("Bob"))` lifts "a named implementation takes no parameters and
+  closes over nothing".
+- **Fibers, later.** A frame is an ordinary value, so a scheduler can hold a fiber's environments and resume it under
+  them; a static cell could never be per fiber.
+
+*Why it is not §12's "implementation as a runtime value".* That stored *polymorphic* operations in a record, which
+the checker cannot represent (the step-6 measurement). Here the operations stay compile-time methods on named
+signatures — polymorphism lives where `Checker.appendTypeArgs` says it must — and only a monomorphic environment
+exists at runtime: the class's code versus an instance's fields. It is not "a runtime handler stack" either: it
+removes the one dynamic lookup that exists today, the nearest-frame search inside the primitive.
+
+*Three primitives remain, and the cell is the only storage.* With environments, everything that only *remembers*
+is a library over `State`, and a double that records calls asks for `State` in its clauses as `recordingConsole`
+asks for `Writer` today. Leaving early and running forever are not storage, so they stay primitives:
+
+| capability | primitive | built on it |
+| --- | --- | --- |
+| remember a value | cell | `State`, `Writer`, counters, recording doubles |
+| leave early | escape | `Throw`, `Abort`, `catch`, `else` |
+| run forever | loop | `Inf` |
+| read a value | none | `Dep` — an implementation parameter |
+
+`Throw` cannot be written over `State`: `raise` could set a flag, but control would return and the caller carry on,
+so every caller would have to test the flag after every call — a rewrite of every call site, which is the carrier
+again, not a library. Option 5 makes one cheaper variant available to a *backend*: only calls to definitions that
+declare the entry need the test, which a target without `longjmp` may use. That is code generation, not a fourth
+way for a library to leave early.
+
+**Option 4, corrected: specialise at the read, not at the constructor.** Option 4's user model stands, and it
+unifies more than its proposal says. *Kept code gets its effects only from whoever runs it* already describes a named
+implementation, whose clause rows are charged at the `with`, and it covers D20 rule 4 too: a lambda in a value
+position is kept code, and a plain function type declares nothing, so it may use nothing. An open field is the same
+rule with captured values. Its mechanism, though, has a hole: in `hookFor`, `Hook(remove(path))` under `dryRun`
+calls a clause that `uses Console`, and that `Console` is bound at the `with dryRun` in `main`. The constructor
+cannot build the `dryRun` component from the pool's implementation *declarations*; it would need every chain of
+clause bindings, which multiplies with depth and is unbounded if an implementation may use its own effect. The read
+is the only place the ground binding exists, which is the use-site verification cornerstone. So the specialisations
+are the ones the field is *read* under: a stored value is one closure with one entry point per binding the program
+reads it at — one in production, one more in a test build. That set decides what code is **generated**, the way
+`used` does, and never decides a binding; whether standing rule 3's "sum over a monomorphized sub-graph" reaches it
+is a reading for Robert to confirm. With option 5, the control half of an open field (`Task[E](step uses Throw[E]:
+=> String)`) is simply a closure taking an environment, and only interpretation effects need specialising.
+
+**Landin's knot comes back with open fields, and positivity is what must stop it.**
+
+```eliot
+data Knot(run uses State[Knot]: => Unit)
+
+runStateToValue(Knot(state.run), state.run)   -- reads itself and runs itself, forever, with no recursion
+```
+
+The stored body references `state` and an accessor, never itself, so the recursion gate sees no cycle. After
+lowering, the field takes the `State[Knot]` environment as an argument, which puts `Knot` in a negative position.
+So **`StrictPositivityChecker` must count a field's `uses` entries as negative positions**; without it, option 4 makes
+"no recursion" false. This binds option 4 whether or not option 5 is taken — today's static cell would loop the same
+way.
+
+*What option 5 reverses, named so it is signed off rather than amended in place (standing rule 1).*
+
+- **§3.4's** "the frame an operation reaches is the nearest enclosing one of its instantiation" and its jvm column's
+  "a static field per instantiation".
+- **§2's** "a named implementation … takes no parameters and closes over nothing"; with it, §12's record entry stops
+  listing "a parameterised `implement name(params)`" among the things lost.
+- **§3.5's** control effects keep one implementation per platform, but it is named, parameterised and never a
+  default; the anonymous `implement[E] Throw[E]` and its four siblings go.
+- **New surface:** `with` takes runtime arguments in body position.
+- **The second property above**, refuted.
+
+*Where to measure first.* Building `recordingConsole`'s environment at the `with` that binds it: a definition
+specialised at that binding needs the `Writer` frame at runtime though its signature names only `Console`, so the
+runtime parameter list depends on the specialisation. That is the step Route A's second cost also hit. Everything
+else is the existing thunk-and-apply with the frame in place of `unit`. The §10 gate cannot approve this change:
+the jars move by design. Its witnesses are §8 items 14 and 15 as regression tests, and the 45 examples' stdout and
+exit transcripts (`scripts/example-sweep.sh`) staying identical.
 
 **What is open.** Whether Eliot stores open computations at all. If it does, the choice is between option 1 with
 regions (a new kind of binder, unmeasured), option 2 (reverses the 2026-09-06 decision and runs into the step-6
 limit), option 3 (blocked on recursive data), and option 4 (a reversal of D20 rule 6, with the two measurements
-above outstanding). Until it is decided, D20's answer is option 3's partial form, or a hand-written `data` and
-interpreter.
+above outstanding, read-site specialisation in place of the constructor product, and the positivity rule).
+Separately and regardless of storage: **whether option 5 replaces the nearest-frame primitives**, since §8 items 14
+and 15 are open without it. Until it is decided, D20's answer is option 3's partial form, or a hand-written `data`
+and interpreter.
 
 #### Reversals this records
 
