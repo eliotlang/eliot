@@ -423,10 +423,9 @@ object EnvironmentThreading {
 
     /** The frames a block at `slot` of `callee` is given, and the parts the block now takes as its parameters: one frame
       * per entry the slot lists, held by fresh parameters. An entry the slot **supplies** (one the callee's own row
-      * lacks) is held at its default, or at the implementation the slot names with `with`, whose clauses perform on
-      * frames the slot supplies for them and, for a clause the callee rides, on the caller's frame in scope — captured,
-      * not passed. An entry the slot **rides** is held at the caller's binding, which is the block's code for it: the
-      * code rides, the frame is given where the block runs (`docs/effects.md` D20c, decided (b)).
+      * lacks) is held at its default, or at the implementation the slot names with `with`, whose clauses' frames are
+      * held the same way ([[clauseBinding]]). An entry the slot **rides** is held at the caller's binding, which is the
+      * block's code for it: the code rides, the frame is given where the block runs (`docs/effects.md` D20c, (b)).
       */
     private def givenFrames(
         callee: MonomorphicValue,
@@ -450,12 +449,11 @@ object EnvironmentThreading {
             namedClauses(marker).flatMap { clauses =>
               clauses
                 .traverse { clauseEntry =>
-                  if (rides(callee, clauseEntry)) lookupAny(context.frames, clauseEntry, arg).map(_ -> Seq.empty[Part])
-                  else
-                    shapeOf(clauseEntry, defaultBinding).map { shape =>
-                      val frame = held(clauseEntry, defaultBinding, shape)
-                      (frame, frame.parts)
-                    }
+                  val binding = clauseBinding(callee, clauseEntry)
+                  shapeOf(clauseEntry, binding).map { shape =>
+                    val frame = held(clauseEntry, binding, shape)
+                    (frame, frame.parts)
+                  }
                 }
                 .map(clauseFrames =>
                   (Frame(entry, namedBinding(marker), clauseFrames.map(_._1), Seq.empty), clauseFrames.flatMap(_._2))
@@ -481,7 +479,7 @@ object EnvironmentThreading {
                     case Listed.Supplied(entry, None)         => lookup(context.frames, entry, defaultBinding, name)
                     case Listed.Supplied(entry, Some(marker)) =>
                       namedClauses(marker).flatMap(
-                        _.filterNot(rides(mv, _)).traverse(clause => lookup(context.frames, clause, defaultBinding, name))
+                        _.traverse(clause => lookup(context.frames, clause, clauseBinding(mv, clause), name))
                       ).map(clauseFrames => Frame(entry, namedBinding(marker), clauseFrames, Seq.empty))
                   })
         parts   = frames.flatMap(_.parts)
@@ -514,8 +512,16 @@ object EnvironmentThreading {
                  }
       } yield listing
 
-    private def rides(value: MonomorphicValue, entry: Entry): Boolean =
-      value.effects.received.exists(_.entry == entry)
+    /** The binding a slot's named implementation performs `clause` on: the definition's own, where its row has the
+      * entry — the caller writes its binding there, which it also hands the definition — and the default otherwise,
+      * which is what the caller writes for a clause the slot supplies. Either way the frame is given where the block runs
+      * (`docs/effects.md` D20c, decided (b)).
+      */
+    private def clauseBinding(value: MonomorphicValue, clause: Entry): GroundValue =
+      value.effects.received
+        .find(_.entry == clause)
+        .flatMap(received => value.typeArguments.lift(received.binderIndex))
+        .getOrElse(defaultBinding)
 
     /** Whether each entry of `slot` **rides** the definition's own row rather than being supplied by the slot (§2.2) —
       * decided as the declaration spells it, never at ground arguments: `raising[E](…, body: {Throw[E]} Unit):
@@ -580,7 +586,7 @@ object EnvironmentThreading {
         case Listed.Supplied(entry, None)         => shapeOf(entry, defaultBinding).map(_.types)
         case Listed.Supplied(entry, Some(marker)) =>
           namedClauses(marker).flatMap(
-            _.filterNot(rides(value, _)).flatTraverse(clause => shapeOf(clause, defaultBinding).map(_.types))
+            _.flatTraverse(clause => shapeOf(clause, clauseBinding(value, clause)).map(_.types))
           )
       })
 
@@ -632,13 +638,6 @@ object EnvironmentThreading {
             )
           )
         case _                                                         => built(frames, entry, binding, at)
-      }
-
-    /** The frame in scope for `entry` whatever binding it holds: a slot implementation's clause the callee rides. */
-    private def lookupAny(frames: Seq[Frame], entry: Entry, at: Sourced[?]): CompilerIO[Frame] =
-      nearest(frames, entry, at).flatMap {
-        case Some(frame) => frame.pure[CompilerIO]
-        case None        => built(frames, entry, defaultBinding, at)
       }
 
     /** The nearest frame for `entry`. Two at the same distance — a definition receiving `{Throw[E1], Throw[E2]}` at an

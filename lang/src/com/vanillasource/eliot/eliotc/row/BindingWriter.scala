@@ -189,7 +189,7 @@ object BindingWriter {
       functions = functionParameters(orv, thunks, universe),
       checksBlocks = !atBoundary,
       promises = if (atBoundary) Map.empty else promisedBindings(orv, universe),
-      ridden = riddenEntries(orv)
+      ridden = riddenEntries(orv, universe)
     )
     val view       = SignatureView.of(orv.signature)
     val body       = Option
@@ -359,16 +359,27 @@ object BindingWriter {
   private def clauseAbilities(marker: ValueFQN, universe: RowChecker.Universe): Seq[AbilityFQN] =
     universe.lookup(marker).toSeq.flatMap(orv => phantoms(orv).map(_._2))
 
-  /** The entries each row-typed parameter's slot **rides** — those this definition's own row also has. The block's
-    * code for them is the caller's binding, but its frame is given where it runs (`docs/effects.md` D20c, decided (b)),
-    * so running it consumes this definition's received binding: `describedAs` declares `Throw[AssertionError]` in
-    * order to run its body inside a `catch` of it.
+  /** The effects each row-typed parameter's block **rides** — entries of this definition's own row that its slot
+    * lists, or that the implementation its slot names with `with` performs. The block's code for them is the caller's
+    * binding, but its frame is given where it runs (`docs/effects.md` D20c, decided (b)), so running it consumes this
+    * definition's received binding: `describedAs` declares `Throw[AssertionError]` in order to run its body inside a
+    * `catch` of it. An entry is compared whole — `Throw[E]` on a slot is not `Throw[AssertionError]` in the row — as the
+    * environment threading compares it.
     */
-  private def riddenEntries(orv: OperatorResolvedValue): Map[String, Set[AbilityFQN]] = {
-    val names = valueParameterNames(orv)
-    val rides = orv.effectRow.returnEffects.map(_.abilityFQN).toSet
+  private def riddenEntries(orv: OperatorResolvedValue, universe: RowChecker.Universe): Map[String, Set[AbilityFQN]] = {
+    def spelled(entry: AbilityConstraint[OperatorResolvedExpression]) = (entry.abilityFQN, entry.typeArgs.map(_.render))
+    val names      = valueParameterNames(orv)
+    val parameters = SignatureView.of(orv.signature).parameters
+    val row        = orv.effectRow.returnEffects.map(spelled).toSet
     orv.effectRow.parameterEffects.flatMap { slot =>
-      names.lift(slot.parameterIndex).map(_ -> slot.effects.map(_.abilityFQN).filter(rides).toSet)
+      names.lift(slot.parameterIndex).map { name =>
+        val clauses = parameters
+          .lift(slot.parameterIndex)
+          .toSeq
+          .flatMap(tpe => slotBindings(tpe.value))
+          .flatMap(marker => universe.lookup(marker.value).toSeq.flatMap(_.effectRow.returnEffects))
+        name -> (slot.effects ++ clauses).map(spelled).filter(row.contains).map(_._1).toSet
+      }
     }.toMap
   }
 

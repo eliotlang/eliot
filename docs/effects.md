@@ -2103,7 +2103,12 @@ Both are Robert's; nothing past the check below is built.
    gives it", naming the double. A clause ability the callee **rides** is written from the caller's scope, like any
    entry a slot does not supply, so the block captures it and the run site needs nothing. The callee then performs
    nothing by declaring it, and §4 says so, which is right: `transcriptOf: {Writer[String]} Unit = program` declares
-   `Writer` for nothing, and the double writes into the caller's log. Under option 5 the double's environment is
+   `Writer` for nothing, and the double writes into the caller's log. **Reversed 2026-10-12 by decided (b)**, extended
+   to a slot's named implementation: the double's ridden clause effect keeps the caller's code but takes its frame
+   where the block runs, so `transcriptOf: {Writer[String]} Unit = program` runs the double on `transcriptOf`'s own
+   frame and performs `Writer` by running it. Declaring it and then running the block under one's own discharge of it
+   is still a declaration for nothing — the received frame is never used — and the undeclared form, supplied by that
+   discharge, is the one to write. Under option 5 the double's environment is
    exactly these bindings' environments — the supplied ones arrive as the block's parameter where it runs, the
    riding ones were captured where it was written — so building it needs no further reading. The gate held: all 45
    example jars byte-identical, the suite green, eliot-test green. The probes are three cases of

@@ -103,7 +103,7 @@ class BlockGivingIntegrationTest extends FullIntegrationTest {
     ).asserting(_ should include("(its implementation 'recordingConsole' performs it), but nothing here gives it"))
   }
 
-  it should "perform it on the caller's binding when this definition's own row has it" in {
+  it should "be given this definition's own frame when its row has the effect" in {
     compileAndRun(
       s"""import eliot.effect.Console
          |$recordingConsole
@@ -113,5 +113,14 @@ class BlockGivingIntegrationTest extends FullIntegrationTest {
          |}
          |def main: {Console} Unit = printLine(runWriterToLog(transcriptOf(printLine("Bob"))))""".stripMargin
     ).asserting(_ shouldBe "before;Bob;")
+  }
+
+  it should "not count as performing an effect this definition declares but runs it under its own discharge of" in {
+    compileForErrors(
+      s"""import eliot.effect.Console
+         |$recordingConsole
+         |def transcriptOf(program: {Console} Unit with recordingConsole): {Writer[String]} String = runWriterToLog(program)
+         |def main: {Console} Unit = printLine(runWriterToLog(tell(transcriptOf(printLine("Bob")))))""".stripMargin
+    ).asserting(_ should include("declares the effect 'Writer' but does not perform it"))
   }
 }
