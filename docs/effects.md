@@ -900,6 +900,12 @@ Each is fail-safe and reversible; none was a question the decisions above answer
 
 ### Open decisions
 
+- **D21d** — how a signature tells a block's *handler* from a *pass-through*. Under D21's closed slots, (b) makes a
+  helper's private discharge of an effect intercept every block it runs that lists it, which is §8 item 14 again, now
+  by specification. Found by the review below (R1), with a proposal. Blocks D21.
+- **D21e** — entry-level keying in the walk (§8 item 17) as a prerequisite of D21: a row variable beside a supplied
+  entry of the same effect cannot be written while the walk keys by ability. Found by the review below (R2). Blocks
+  D21.
 - **D21a** — writing a row variable from the call's own arguments under standing rule 3. Recommendation: allow it, as a
   new resolution-order step beside A6, with the union rule spelled out.
 - **D21b** — reversing D20's "a block closes over effects like a closure" (and §1 rule 4's predicate, §2.2's "the walk
@@ -916,7 +922,8 @@ Each is fail-safe and reversible; none was a question the decisions above answer
 ### Known gaps, all loud or harmless
 
 - §8 items 1 (an unused `with` is a silent no-op), 4 (`runThrow("no failure")` accepted when spelled) and 6 (a row alias
-  in return position only) are open as before; item 17 is settled for frames and open for the walk.
+  in return position only) are open as before; item 17 is settled for frames and open for the walk — harmless today,
+  and a prerequisite of D21 (D21e, review R2).
 - The compile track still finds a frame by its type: items 14 and 15 are closed on the runtime track only, and a guarded
   return still cannot carry its author's message (§7 item 4).
 - Named implementations take no parameters, `with` takes no arguments, and ability implementations take no
@@ -930,7 +937,8 @@ Each is fail-safe and reversible; none was a question the decisions above answer
 
 ### The plan, in order
 
-1. **D21a–c** — Robert's.
+1. **D21d and D21e, then D21a–c** — Robert's. D21d and D21e change what D21 *is*; the review below recommends
+   deciding them first, and rewriting Part I to the tree as built meanwhile, which depends on no open decision.
 2. **D21, in today's syntax** (assuming D21c as recommended):
    1. *The row variable.* A generic binder used inside a row (`{E}`, `{Abort, E}`), marked `E: Row` by the desugar and
       erased with the other marks; the parser and the desugar accept it beside ordinary entries.
@@ -957,6 +965,154 @@ Each is fail-safe and reversible; none was a question the decisions above answer
 every example's compile status, exit code and stdout identical and states its size difference; each closes its
 probes as tests; eliot-test stays green and eliot-build's error list unchanged. The pre-option-5 baseline is
 `ba9fad1b`; sweeps are `scripts/example-sweep.sh`.
+
+## Review of the plan (2026-10-12, at `335dbe88`)
+
+A whole-document review, asked for because this is the design's seventh or eighth iteration and consequential parts
+of it are already built: is what is written consistent with itself, implementable, logical, and easy for a developer
+to follow? It was checked against `monomorphize/channel/EnvironmentThreading`, `row/BindingWriter` and eliot-test's
+`describedAs`. **Nothing below is a decision**; R1 and R2 are entered as D21d and D21e above, and the rest are
+defects in this document.
+
+**Verdict.** The built mechanism is coherent, and the code does what the decision records say was built. The plan
+forward is not yet coherent: D21 as written collides with the (b) rule just built, and it depends on a gap the index
+lists as harmless. Separately, the document violates its own standing rule 1 at scale — Part I teaches several retired
+rules, and the only worked example of option 5 shows code that was not built.
+
+### R — design problems in the unbuilt plan
+
+**R1. D21 and (b) together reinstate §8 item 14, as specified behaviour.** (b) gives a ridden entry's frame at the
+run site, and the threading picks it as the innermost frame of that entry at ground arguments
+(`EnvironmentThreading.runBlock` → `lookup` → `nearest`). (b)'s claim that it "is not item 14 again" (§11, D20c,
+"Decided … (b)") rests on a `{}` slot listing nothing, so that a block reaches its writer's frames by capture. D21
+closes every slot: a helper that runs a raising block must now list the `Throw`, explicitly or through a row variable,
+and from then on its own private `catch` of the same ground type intercepts the block's `raise`.
+
+- D21's own example, `guarded(body: {Throw[String]} Unit): {Throw[String], Console} Unit`, is item 14's program, and
+  under (b) it intercepts.
+- With a row variable it is worse: `guarded[E](body: {E} Unit): {E, Console} Unit` intercepts at `E = {Throw[String]}`
+  and not at any other instantiation. Behaviour depending on the instantiation is the classic accidental-handling
+  failure, and it breaks parametricity.
+- `describedAs(body: {Throw[AssertionError]} Unit, …): {Throw[AssertionError]} Unit`, which intends to intercept, and
+  `guarded`, which intends to pass through, now have the same signature shape. Only their bodies tell them apart.
+
+The language needs a way to say which one a signature means. One clean rule, Effekt's in substance: **an entry listed
+explicitly on a slot is supplied** — the callee handles it, as `describedAs` does — **and an entry arriving through a
+row variable passes through on the frame the definition received**, never a nearer one. It would also retire the
+"cannot supply an entry you already declare" limitation, since `describedAs`'s slot entry and its own return entry
+would then be two different things. Entered as **D21d**.
+
+**R2. §8 item 17 is a prerequisite of D21, not a harmless gap.** Writing `R` in D21's
+`catch[E, A, R](computation: {Throw[E], R} A, onError: E => {R} A): {R} A` means taking the effects the computation's
+lambda performs and subtracting those the slot supplies, entry by entry. The walk keys by ability (item 17), and an
+operation's type arguments are inferred only by the checker, after the walk (the `transcriptOf` spike's finding 2:
+`raise(err)` learns `E` from `err`). So inside `catch[GitError, …]` the walk cannot tell whether a `Throw[IoError]`
+belongs to the slot or to `R`. eliot-build's `Git` alias (`Throw[IoError]`, `Throw[GitError]`) is exactly this shape.
+"Known gaps" lists item 17 as harmless and the plan omits it. Entered as **D21e**.
+
+**R3. D21a is a reversal of standing rule 3, not a reading of it.** Rule 3 (§5) and §12's first entry name "a join" as
+prohibited ("never joined"). D21's "several `E` positions give the union", computed from a lambda's *body*, is a join.
+It may well be the right call; standing rule 1 then asks for it to be recorded as a reversal with sign-off, where
+D21a's recommendation presents it as falling "within" rule 3.
+
+**R4. A row variable's value needs a canonical order.** D21 says the value is "the bindings in order", and it becomes
+part of the mono key and of the frame-parameter order. Without a canonical order, `{Console, Log}` and
+`{Log, Console}` are different specialisations, and positional frame parameters can disagree between a declaration
+and a union written at a call.
+
+**R5. Erased generic natives under D21 and (b) are unaddressed.** A ridden entry's frames are passed as the block's
+parameters at the run site. `foldLeftInternal(…, combine: A => B => {} B)` and `foreverInternal(step: {} Unit)` are
+native leaves, and a generic native is emitted once, erased. Once their slots become `{E}`, one erased native would have
+to call a thunk with a number of frame arguments that changes per instantiation. D21 must say how a native reaches an
+`E` slot's frames — by capture rather than by passing, for instance.
+
+**R6. A function-typed `data` field under D21 is unspecified.** D20 rule 6 rejects only a *top-level* row on a field.
+Once a row means "what this performs", a codomain row on a field (`f: String => {E} Unit`) is §12's rejected "effects
+on function types" coming back through D21. It should be stated as rejected.
+
+**R7. The developer model D20 states is no longer true, and D21b's reversal list is short.** D20's "model, as a
+developer is told it" says an operation uses the implementation in scope "*where it is written* — never where it
+runs", and that a block "sees everything where it was written". (b) already breaks the first sentence for the case a
+user cares most about — which handler catches — and D21b breaks the second. So the document currently holds no
+correct short model. D21b names one sentence to reverse; the same decision also reverses:
+
+- D20's lowering table, where `x uses E: => A` is "a block the callee gives `E`", whereas under D21 a slot's list is
+  everything the block may perform, given or ridden;
+- "`pick` declares nothing for the reason it does not declare `flag`", and "`if` loses its `{Abort}` on `value`";
+- "What it buys"'s "block parameters and no `uses`: adds no effect of its own";
+- D20 work-list step 4 and plan step 4's "D21's row variables in that spelling", when that spelling means something
+  else.
+
+**R8. "A frame is passed, never searched for" overstates what was built.** Option 5 says it "removes the one dynamic
+lookup that exists today". What exists is a lexical, innermost-wins search over the frames in scope (decided in code,
+item 6), and together with (b) the frame a ridden entry reaches is chosen by the callee's body: dynamic binding of
+handlers for ridden entries. That is a legitimate design — it is Koka's — but §3.4, §12's "a runtime handler stack /
+dynamic scoping at runtime" and the CLAUDE.md cornerstone should say so plainly. It is the root of R1.
+
+### S — internal contradictions
+
+Stale text sitting beside the closure that superseded it:
+
+- **Which section wins: three rules.** The opening says Part I wins over everything; standing rule 1 says a changed
+  decision must change Part I; the index says a later dated section beats the index. In practice Part I is knowingly
+  stale and is fixed only at D20 step 7, which waits on D21 and D20b and may be far off. This is the main reason the
+  document is hard to read.
+- **Part I's list of what is stale is incomplete.** All of §2.3, and §4's "a stored read is charged, never bound",
+  describe a deleted feature; §3.1's resolution-order step 3 ("or by `Default`") ignores D20 rule 5; §9.4 still lists
+  "bound at construction in a field".
+- **Struck-through items whose text still says open**: §7 item 7 ("until it is paid the runtime failure stands"); §8
+  item 5 ("one cost has to be chosen before it lands"); D19 ("that is the open half of this entry", "What is needed.
+  The choice."); D20's "Interactions" (D19 "independent"); §8 item 17 ("the first thing option 5 breaks … Open",
+  directly below its own "settled for frames").
+- **D18** is superseded by D20a (§11), yet §2.4, §7 item 5, §8 item 6, §9.5 ("Decision needed") and §9's opening still
+  present it as the route — and §9's opening still lists "another file" as a limit, which §9.3 step 8 lifted.
+- **§9's opening** says "all seven steps"; §9.3 has eight.
+- **Who gives a default with parameters.** D20 rule 5 as restated, and D20c decision 2, say the discharger holding the
+  frame gives it. What was built (decided in code, item 2; option 5 built, item 4) is that the body-less *primitive*
+  gives it.
+- **`Dep`.** Option 5's binding table and its capability table say `Dep[X]` is "the value itself; no primitive at all".
+  Built is `implement[X] Dep[X](cell: DepCell[X])` over a `withCellInternal` copy. The departure is not recorded under
+  "Option 5 built".
+- **The worked example is not the built code.** Option 5's `State` example — the only worked example of the mechanism —
+  differs from the tree in three ways: a named `celled` instead of the anonymous default; private `Cell` types instead
+  of public frame types; and `runStateToPair`'s body supplying the cell, where the primitive does. The example in
+  `EnvironmentThreading`'s scaladoc is accurate and shorter.
+- **§8 item 9** is neither struck nor listed in "Known gaps". Its status flips twice: D20 rule 2 made it the rule, and
+  D21 makes it an error again.
+- **§12**: "an implementation as a runtime value" still lists "a parameterised `implement name(params)`" as lost, which
+  option 5 reversed; "a handler as a marker type" says §9 lets the binder stand "as a dead argument of a row alias",
+  which §9.6 says never happened; "a runtime handler stack" describes the machine-stack discipline option 5 removed on
+  the runtime track.
+- **Minor**: the opening's three status blocks contradict each other (2026-09-11's says §9 is "not yet built"); Part
+  II's opening status is 2026-09-12's; the examples are "45" in gates and "47" in measurements; option 5's "a live
+  frame" soundness argument leans on option 4, which is undecided; D19 Route A cites §2.5 for a rule that is in §2.
+
+### T — structure and readability
+
+1. **Option 5 is filed under the wrong heading.** It is a built, central mechanism — how frames reach operations — but
+   it lives inside "D20c — an open block: a stored computation …", interleaved over some 750 lines with options 1–4, a
+   refuted property, the original proposal, its amendment, the decision, a spike, findings, a second decision, the
+   build notes and the (b) question. Nobody looking for "how is a frame passed" looks there. The built mechanism belongs
+   in Part I §3.4; D20c should keep only the open-computation question.
+2. **Reversal in place does not scale.** "**Wrong — see 'Option 5, amended' below**", "*Amended above*" and a struck
+   heading followed by stale prose all retract text the reader has already absorbed. Standing rule 1 exists so that a
+   decision is never silently amended; it does not need the superseded text on the main reading path. A reversal log,
+   with git as the archive, satisfies it.
+3. **Too many overlapping terms.** *frame / environment / cell / parts*; *rides / supplied / listed / gives /
+   promised*; *block / thunk / suspended argument / row-typed slot*. A short glossary would help, and will be needed
+   once `uses` arrives.
+4. **D21's gating is wrong as listed.** Plan step 2.3, closing slots, breaks every unannotated higher-order call, so it
+   cannot pass "every example's transcript identical" on its own. It has to land together with the step 2.5 migration,
+   or behind a flag.
+
+### Recommended order
+
+1. Decide **D21d** (R1) and **D21e** (R2) before D21a–c; both change what D21 is.
+2. Rewrite Part I now to the tree as built — D20 rules 3–6, option 5, (b) — rather than at D20 step 7. Fold §8's and
+   §11's closed items into it, fix the S list, and cut D20c down to the open question. None of it depends on an open
+   decision.
+3. Write one correct developer-model paragraph for the post-D21 language, and reconcile D20's surface table with it
+   (R7).
 
 ## 8. Where the tree diverges from Part I
 
