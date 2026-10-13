@@ -31,8 +31,12 @@ lives now.
 4. ~~**The loud usability gaps**~~ — §8 items 21 and 15 closed 2026-10-13 (15 by option (a), the checker's hole).
    Building 15 found §8 items 24 (silent) and 25 (a runtime crash), both closed the same day.
 5. ~~**Compile-track frames**~~ — built 2026-10-13 (§3.4, "The compile track is threaded too"). It closed §7 item 4
-   and §8 items 26 and 28; measuring first found and closed §8 item 27.
-6. **Named implementations with parameters**, the next of §11's "Decided, not built".
+   and §8 items 26 and 28; measuring first found and closed §8 item 27. The dependents were run against it: eliot-test
+   (193) and eliot-build (368) pass unchanged and eliot-build's launcher builds, so no dependent needs a change.
+6. **Release the next `v0` tag** (`v0.12`), carrying steps 5's two commits — a guarded return's fallback and its
+   author's message are user-visible. No dependent has to move with it.
+7. **Named implementations with parameters**, the next of §11's "Decided, not built", then user defaults with
+   parameters and parameterised ability implementations, in that order.
 
 D20a, D20c and D3 stay open until decided; none blocks the steps above.
 
@@ -41,16 +45,20 @@ D20a, D20c and D3 stay open until decided; none blocks the steps above.
 - **Silent:** none known (§8 items 14, 24 and 26 closed 2026-10-13).
 - **Loud, at compile time:** a
   `catch` over a parameter spells its arguments (§7 item 2); a function-typed code parameter's own entries are never
-  supplied (§7 item 1).
+  supplied (§7 item 1); `runThrow("no failure")` with its argument spelled is accepted (§8 item 4).
 - **Decided, not built:** parameterised named and ability implementations, user defaults with parameters (§11,
   "Decided, not built").
 - **Undecided:** naming a set of effects in a clause (D20a), storing an effectful computation (D20c), `~`/`&` in user
   space (D3).
 - **Outside this document:** `v0.9` is the first release carrying `uses` (`v0.8` is tagged before it, and its release
-  workflow failed, so it publishes no assets), and eliot-test `v0.4`, eliot-build and the docs site's install page
-  depend on `v0.10`; the site's generated `apidoc/`
-  pages predate effects v6; eliot-test's own notes still say a row cannot be closed and list `runThrow` spellings that
-  are now redundant.
+  workflow failed, so it publishes no assets); `v0.11` is the latest, and eliot-test `v0.5`, eliot-build and the docs
+  site's install page depend on it. The site's generated `apidoc/` pages predate effects v6; eliot-test's own notes
+  still say a row cannot be closed and list `runThrow` spellings that are now redundant. Two defects found while
+  building step 5, neither an effect one: the jvm backend names a specialisation's method after its type arguments
+  with a `Bool` value collapsed to `Any`, so `pick[false]` and `pick[true]` of one `def pick[C: Bool]` are emitted as one
+  `pick$Any` and one silently replaces the other (**silent**, a runtime miscompile); and a failing `where`
+  precondition exits 1 but leaves a runnable jar behind, against the build-artifact rule that a failed build leaves
+  none.
 
 ---
 
