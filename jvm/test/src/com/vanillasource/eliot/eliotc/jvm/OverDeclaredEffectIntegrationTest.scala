@@ -18,6 +18,22 @@ class OverDeclaredEffectIntegrationTest extends FullIntegrationTest {
     ).asserting(_ should include("declares the effect 'Abort' but does not perform it"))
   }
 
+  // docs/effects.md §8 item 21: the caller used to read "Name not defined." at a name that plainly is defined.
+  it should "be named as rejected at its callers" in {
+    compileForErrors(
+      """import eliot.effect.Console
+        |import eliot.effect.Abort
+        |
+        |def greet uses Console, Abort: Unit = printLine("hi")
+        |
+        |def main uses Console: Unit = greet else unit
+        |""".stripMargin
+    ).asserting(
+      _ should (include(":6:31:Cannot use 'greet' here: its own definition was rejected.") and
+        not include "Name not defined.")
+    )
+  }
+
   // A slot whose entry the definition also declares rides the caller's binding for its code, but its frame is given
   // where it runs (docs/effects.md D20c, decided (b)): running it consumes this definition's received entry. A `{}` slot
   // lists nothing and passes nothing, which is the case above.

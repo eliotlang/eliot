@@ -419,8 +419,18 @@ class Checker(
                         SemExpression(discharged, SemExpression.ValueReference(vfqn, explicitTypeArgs)),
                         discharged
                       )
+                    // A resolved name with no saturated value is a definition an earlier phase rejected, which reported
+                    // why. Its name was resolved, so "not defined" would point at a name that plainly is; this names
+                    // the definition instead (`docs/effects.md` §8 item 21).
                     case None     =>
-                      liftF(compilerError(tm.as("Name not defined.")) >> abort)
+                      liftF(
+                        compilerError(
+                          tm.as(
+                            s"Cannot use '${vfqn.value.name.name}' here: its own definition was rejected."
+                          ),
+                          Seq(s"Fix the errors reported at '${vfqn.value.name.name}'.")
+                        ) >> abort
+                      )
                   }
       } yield result
 

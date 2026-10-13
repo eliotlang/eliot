@@ -27,8 +27,8 @@ lives now.
    passes (368) under this compiler with eliot-test's pushed master, which passes too (183).
 3. **Release the next `v0` tag**, the first carrying `uses`, then move eliot-test's and eliot-build's `dep` lines and
    the docs site's install page to it.
-4. **The loud usability gaps**: §8 item 21 (a rejected definition is "Name not defined." at its callers) and item 15
-   (an effectful ability method needs its type arguments spelled).
+4. **The loud usability gaps**: ~~§8 item 21~~ (closed 2026-10-13) and item 15 (an effectful ability method needs its
+   type arguments spelled) — traced, and waiting on a choice between its two fixes (§8 item 15).
 5. **Compile-track frames**, the first of §11's "Decided, not built"; it also closes §7 items 4 and 7.
 
 D20a, D20c and D3 stay open until decided; none blocks the steps above.
@@ -965,12 +965,18 @@ items keep one line, and their full record is in git history (§13).
 15. **An effectful ability method needs its ability's type arguments spelled.** With `ability Greeter[A] { def
     greetAs(a: A) uses Console: Unit }`, `greetAs(Bob(…))` is *"Cannot pass the implementation of 'Console' … behind a
     type parameter this call does not determine"*, although the argument determines `A`; `greetAs[Bob](…)` compiles.
-    Loud; a usability gap. The cause is not yet traced.
-21. **A definition the effect check rejects is "Name not defined." at every caller.** Found 2026-10-13 probing D22: a
-    `guarded` rejected for over-declaring makes `catch[String, Unit](guarded(raise("boom")), …)` in `main` report
-    *"Name not defined."* at the call, beside the real error. Loud, and the real error is reported, but the second one
-    points at a name that is plainly defined. The cause is not traced; a caller should say nothing, or name the failed
-    definition.
+    Loud; a usability gap. **Traced 2026-10-13:** the member's binders are `[Impl: Implementation[Greeter], A,
+    Impl0: Implementation[Console]]` — its own binding is minted past the ability-level run (`EffectSugarDesugarer.mintAt`),
+    because a reference's ability-level arguments are matched against the marker's parameters from index 0. A
+    type-argument list applies positionally and nothing in the row phase determines `A` (only the checker does, from
+    the argument), so the write stops at `A` and `Impl0` is out of reach (`BindingWriter.unreachableBinding`). The two
+    fixes both need a decision: **(a)** a *hole* in a type-argument list — a sentinel the write puts at an undetermined
+    unmarked binder and the checker's `inferValueReference` replaces with a fresh meta, which keeps the binding written
+    and leaves `A` to the checker as a trailing binder is today, but adds a construct every consumer of a written
+    reference must tolerate (bodies only: a signature's references are evaluated, not checked); **(b)** mint a member's
+    own bindings *before* the ability-level run and read that run by its `abilityLevel` mark instead of from index 0,
+    which touches ability resolution (`ImplementationBinding`, `AbilityResolver.abilityArity`). Determining `A` in the
+    row phase from the argument's type would be inference and is out (§5 rule 3).
 
 **Closed.**
 
@@ -994,6 +1000,7 @@ items keep one line, and their full record is in git history (§13).
 | 18 | a slot's named implementation performed its clause effects into whatever frame enclosed the run | 2026-10-12: its clause effects are promised to the block (§2.2) |
 | 19 | two entries of one effect were one binding in the walk | 2026-10-12: entry-level keying (§3.1) and frames chosen by entry (§3.4) |
 | 20 | a slot `with` on an entry the definition also declares was silently dropped, and the code ran its caller's implementation | 2026-10-13 by D23: a slot `with` always handles its entry |
+| 21 | a definition the effect check rejected was "Name not defined." at every caller | 2026-10-13: the checker names it — *"Cannot use 'X' here: its own definition was rejected."* |
 | 22 | a body `with`'s implementation was rejected below a nearer discharge of the same effect at *other* arguments (eliot-build's `CacheTests`: `offline`'s `Throw[NotFetched]` read as intercepting `tableGit`'s `Throw[GitError]`; its `Writer[List[TestResult]]` error was a knock-on) | 2026-10-13: the clause check keys by entry, as frames are chosen |
 
 Items 9–13 were found 2026-10-05 while designing D20 and share one cause: a row on a slot both *marked a block* and
