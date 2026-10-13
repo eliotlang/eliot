@@ -184,4 +184,69 @@ class CodeAndValueIntegrationTest extends FullIntegrationTest {
         |""".stripMargin
     ).asserting(_ should include("This uses the effect 'Console' inside a function written where a value is expected"))
   }
+
+  // §8 item 14: an unapplied reference to a `uses` definition passed as a value, and printed from a pure signature.
+  "an unapplied effect operation stored in a field" should "be rejected at the reference" in {
+    compileForErrors(
+      """import eliot.effect.Console
+        |
+        |data Holder(action: String => Unit)
+        |
+        |def built uses Console: Holder = Holder(printLine)
+        |
+        |def runIt(h: Holder): Unit = action(h)("hi")
+        |
+        |def main uses Console: Unit = runIt(built)
+        |""".stripMargin
+    ).asserting(
+      _ should include(
+        ":5:41:'printLine' performs the effect 'Console' when it is called, so unapplied it is not a value"
+      )
+    )
+  }
+
+  "an unapplied effectful definition bound by a val" should "be rejected at the reference" in {
+    compileForErrors(
+      """import eliot.effect.Console
+        |
+        |def shout(s: String) uses Console: Unit = printLine(s ++ "!")
+        |
+        |def main uses Console: Unit = {
+        |   val loud = shout
+        |   loud("hi")
+        |}
+        |""".stripMargin
+    ).asserting(_ should include(":6:15:'shout' performs the effect 'Console' when it is called"))
+  }
+
+  "an unapplied effectful definition at a function parameter whose codomain carries a row" should "run as code" in {
+    compileAndRun(
+      """import eliot.effect.Console
+        |
+        |def applyTwice(f uses *: String => Unit): Unit = {
+        |   f("a")
+        |   f("b")
+        |}
+        |
+        |def main uses Console: Unit = applyTwice(printLine)
+        |""".stripMargin
+    ).asserting(_ shouldBe "a\nb")
+  }
+
+  "an effectful definition returning a function" should "be called by a bare reference" in {
+    compileAndRun(
+      """import eliot.effect.Console
+        |
+        |def greeter uses Console: String => String = {
+        |   printLine("made")
+        |   s -> "hello " ++ s
+        |}
+        |
+        |def main uses Console: Unit = {
+        |   val greet = greeter
+        |   printLine(greet("x"))
+        |}
+        |""".stripMargin
+    ).asserting(_ shouldBe "made\nhello x")
+  }
 }

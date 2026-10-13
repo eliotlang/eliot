@@ -542,7 +542,16 @@ object BindingWriter {
       if (markedAbility(paramType.value).isDefined) paramType.as(ValueReference(paramType.as(WellKnownTypes.typeFQN)))
       else paramType
 
-    def walk(expr: Sourced[OperatorResolvedExpression], scope: Scope): Sourced[OperatorResolvedExpression] =
+    /** @param applied
+      *   How many arguments the position `expr` stands in applies it to, beyond those written in it: the arity of the
+      *   code parameter it is the argument of, and zero in a value position. What a reference is given in total decides
+      *   whether it is called there or stands unapplied ([[unappliedEffectful]]).
+      */
+    def walk(
+        expr: Sourced[OperatorResolvedExpression],
+        scope: Scope,
+        applied: Int = 0
+    ): Sourced[OperatorResolvedExpression] =
       expr.value match {
         // A `with` puts its implementation in scope for its subject, innermost first, and disappears.
         case WithBinding(subject, implementation) =>
@@ -553,13 +562,13 @@ object BindingWriter {
               )
               val binding =
                 Binding(ability, boundImplementation(implementation, scope), byWith = true, clauses = clauses.toMap)
-              val written = walk(subject, scope.bind(binding))
+              val written = walk(subject, scope.bind(binding), applied)
               if (!scope.uncoveredDefaults && !used.contains(binding.serial))
                 violations += unusedWith(subject, implementation, ability, scope)
               written
             case None          =>
               violations += Violation(implementation.as("This name is not an implementation."))
-              walk(subject, scope)
+              walk(subject, scope, applied)
           }
 
         case ParameterReference(name) if scope.captured.contains(name.value) =>
@@ -588,6 +597,7 @@ object BindingWriter {
           head match {
             case ValueReference(callee, existing)                                   =>
               val written      = writeBindings(expr.as(head), callee.value, existing, scope, args)
+              unappliedEffectful(callee, args.size + applied, scope).foreach(violations += _)
               val substitution =
                 universe.lookup(callee.value).fold(Map.empty)(orv => callSubstitution(orv, existing, args))
               val adjusted     = args.zipWithIndex.map { case (arg, index) =>
@@ -653,8 +663,38 @@ object BindingWriter {
         case FunctionLiteral(paramName, paramType, body) if arity > 0          =>
           expr.as(FunctionLiteral(paramName, paramType, walkCode(body, scope.shadow(paramName.value), arity - 1)))
         case ParameterReference(name) if scope.callbacks.contains(name.value) => expr
-        case _                                                                => walk(expr, scope)
+        case _                                                                => walk(expr, scope, residual(arity))
       }
+
+    /** The arguments code is still called with once its written lambdas are peeled. A `match` arm's count is not known
+      * here ([[isMatchMachinery]]), and its lambdas are the constructor's fields, so what stands past them is the arm's
+      * result: a value.
+      */
+    private def residual(arity: Int): Int = if (arity === Int.MaxValue) 0 else arity
+
+    /** A reference to a definition that `uses` an effect, given fewer arguments than it declares before its return
+      * position: it performs nothing where it stands, and whatever receives it performs its effects later, wherever it
+      * calls it. In a value position that is a value which is not pure (`docs/effects.md` §1 rule 2's second half) —
+      * exactly the η-expanded `s -> printLine(s)` there, which [[Scope.enterValue]] rejects at the effect. At a code
+      * parameter it is the caller's code, and `applied` counts the arguments the callee gives it.
+      */
+    private def unappliedEffectful(callee: Sourced[ValueFQN], arguments: Int, scope: Scope): Option[Violation] =
+      universe
+        .lookup(callee.value)
+        .filter(orv => !scope.uncoveredDefaults && arguments < orv.effectRow.returnArity)
+        .flatMap(_.effectRow.returnEffects.headOption)
+        .map { effect =>
+          Violation(
+            callee.as(
+              s"'${callee.value.name.name}' performs the effect '${effect.abilityFQN.abilityName}' when it is called, " +
+                "so unapplied it is not a value and cannot stand where one is expected."
+            ),
+            Seq(
+              s"Call '${callee.value.name.name}' here with all its arguments, or pass it to a parameter that takes " +
+                "code (`f uses *: A => B`)."
+            )
+          )
+        }
 
     private def keptCode(name: Sourced[String]): Violation =
       Violation(

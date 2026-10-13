@@ -81,9 +81,11 @@ class UnifiedModuleValueProcessor extends SingleFactProcessor[UnifiedModuleValue
       values: Seq[ModuleValue],
       chosen: ModuleValue
   ): com.vanillasource.eliot.eliotc.ast.fact.EffectRow[UnresolvedAbilityConstraint[Expression]] = {
-    val rows = chosen.namedValue.effectRow +: values.map(_.namedValue.effectRow)
+    val rows   = chosen.namedValue.effectRow +: values.map(_.namedValue.effectRow)
+    val ownRow = rows.find(_.returnEffects.nonEmpty)
     chosen.namedValue.effectRow.copy(
-      returnEffects = rows.map(_.returnEffects).find(_.nonEmpty).getOrElse(Seq.empty),
+      returnEffects = ownRow.map(_.returnEffects).getOrElse(Seq.empty),
+      returnArity = ownRow.fold(chosen.namedValue.effectRow.returnArity)(_.returnArity),
       parameterEffects = rows.map(_.parameterEffects).find(_.nonEmpty).getOrElse(Seq.empty),
       callbackEffects = rows.map(_.callbackEffects).find(_.nonEmpty).getOrElse(Seq.empty)
     )

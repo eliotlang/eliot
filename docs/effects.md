@@ -21,8 +21,8 @@ lives now.
 
 **Next, in order** (2026-10-13). The open items below say *what* is open; this says what to do first.
 
-1. **§8 item 14** — an unapplied reference to a `uses` definition passes as a value. The one silent defect left, which
-   standing rule 8 ranks first; the fix sits beside `Scope.enterValue`.
+1. ~~**§8 item 14**~~ — closed 2026-10-13: an unapplied reference to a `uses` definition in a value position is the
+   rule-2 error.
 2. **Make eliot-build's suite compile again.** Its `CacheTests` use seven `with`s below a nearer `catch` of `Throw`
    (likely its test code to change, in eliot-build); the `Writer[List[TestResult]]` resolution failure in eliot-test's
    `Test.els`, which appears only together with eliot-build, is untraced and may be the compiler's.
@@ -36,7 +36,7 @@ D20a, D20c and D3 stay open until decided; none blocks the steps above.
 
 **Open, in order of severity.**
 
-- **Silent:** an unapplied reference to a `uses` definition passes as a value (§8 item 14).
+- **Silent:** none known (§8 item 14 closed 2026-10-13).
 - **Loud, at compile time:** an effectful ability method needs its ability's type arguments spelled (§8 item 15); a
   `catch` over a parameter spells its arguments (§7 item 2); a function-typed code parameter's own entries are never
   supplied (§7 item 1); the compile track still finds a frame by its type (§7 item 7).
@@ -89,7 +89,9 @@ D20a, D20c and D3 stay open until decided; none blocks the steps above.
    discharge locally (`x -> runAbort(lookup(x))`), and it reaches no enclosing binding, so an effect taken from
    outside is *"This uses the effect 'X' inside a function written where a value is expected"* at that use. An
    ordinary ability (a `~` constraint) is not an effect and stays reachable. An unapplied reference to a `uses`
-   definition is not a value either (not yet enforced: §8 item 14).
+   definition is not a value either: given fewer arguments than it declares, it is *"'printLine' performs the
+   effect 'Console' when it is called, so unapplied it is not a value …"* in a value position, exactly as
+   `s -> printLine(s)` there is, while at a code parameter it is the caller's code (`applyTwice(printLine)`).
 
 3. **Code is used, never kept.** A reference to a code parameter is the head of an application, or the direct
    argument of another code parameter (or stands inside a lambda so placed), and nothing else; anywhere else it is
@@ -795,6 +797,10 @@ write's own walk (§3.1), so this is a spec of `row/BindingWriter` rather than o
   `with`, else `Default`) iff parameter *i* has a clause, and in the closed cut iff that clause has no `*`. A
   lambda at a parameter with no clause — or in any other value position — is entered in the value cut: bindings
   from outside are marked, and an effect taken from one is the error at that use.
+- **an unapplied reference to a definition with a clause** — one given fewer arguments than it declares before its
+  return position (`EffectRow.returnArity`), counting those a code parameter it is the argument of calls it with —
+  performs nothing where it stands, so in a value position it is the rule-2 error at the reference. A function-typed
+  return is a value: `def greeter uses Console: String => String` is called by a bare `greeter`.
 - **a code parameter is used, never kept**: a reference to one stands as the head of a call or as the argument of a
   code parameter; anywhere else is the error at the reference, and so is a reference inside a value lambda or a
   closed argument.
@@ -959,12 +965,6 @@ items keep one line, and their full record is in git history (§13).
 
 4. **`runThrow("no failure")` is accepted** when the call spells the argument, although §2.2 lists an actual that
    raises nothing among the shapes rejected. Loud by construction (the argument is written by hand), so last.
-14. **An unapplied reference to a `uses` definition passes as a value** (rule 2's second half, unbuilt). `data
-    Holder(action: String => Unit)`, `def built uses Console: Holder = Holder(printLine)` and `def runIt(h: Holder):
-    Unit = action(h)("…")` compile, and `main uses Console: Unit = runIt(built)` prints from a definition whose
-    signature is pure — item 11 through a name instead of a lambda, and the silent family (standing rule 8). The fix
-    belongs beside `Scope.enterValue`: a reference whose callee declares a clause, standing at a value position, is
-    the rule-2 error, exactly as an η-expanded `s -> printLine(s)` there already is.
 15. **An effectful ability method needs its ability's type arguments spelled.** With `ability Greeter[A] { def
     greetAs(a: A) uses Console: Unit }`, `greetAs(Bob(…))` is *"Cannot pass the implementation of 'Console' … behind a
     type parameter this call does not determine"*, although the argument determines `A`; `greetAs[Bob](…)` compiles.
@@ -991,6 +991,7 @@ items keep one line, and their full record is in git history (§13).
 | 11 | a lambda in a value position captured the enclosing bindings | 2026-10-09 by D21 step 1 (rule 2) |
 | 12 | a data constructor supplied a field's row by `Default` | 2026-10-09 by D20 step 3 (rule 6) |
 | 13 | a slot laundered an interpretation effect into a pure signature | 2026-10-09 by D20 step 2 (rule 5) |
+| 14 | an unapplied reference to a `uses` definition passed as a value (`Holder(printLine)` printed from a pure signature) | 2026-10-13: the rule-2 error at the reference, beside `Scope.enterValue` |
 | 16 | a helper's own `catch` swallowed its caller's `raise` | 2026-10-12 by option 5, runtime track (§3.4, §7 item 7) |
 | 17 | a helper's own `State` received its caller's `putState` | 2026-10-12 by option 5, runtime track |
 | 18 | a slot's named implementation performed its clause effects into whatever frame enclosed the run | 2026-10-12: its clause effects are promised to the block (§2.2) |

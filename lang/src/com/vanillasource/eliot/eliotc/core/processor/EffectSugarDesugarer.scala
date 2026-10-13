@@ -171,7 +171,8 @@ object EffectSugarDesugarer {
             codomainRow(arg.typeExpression).map { case (arity, entries) =>
               EffectRow.CallbackEffects(index, arity, entries, arg.closedRow)
             }
-          }
+          },
+      returnArity = function.args.size
     )
 
   /** The row in a function type's **final codomain** — `A => {} B`, `A => B => {Log} C` — with the number of arrows

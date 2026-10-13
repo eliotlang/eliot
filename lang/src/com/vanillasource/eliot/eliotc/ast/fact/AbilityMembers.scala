@@ -49,10 +49,12 @@ object AbilityMembers {
       abilityLevel = true
     )
     val abilityParams = (bindingBinder +: commonGenericParameters).map(_.copy(abilityLevel = true))
-    val ownRow        =
+    def ownRow(member: FunctionDefinition) =
       if (performsItself)
-        EffectRow(returnEffects =
-          Seq(UnresolvedAbilityConstraint(name, commonGenericParameters.map(gp => gp.name.as(typeExpr(gp.name)))))
+        EffectRow(
+          returnEffects =
+            Seq(UnresolvedAbilityConstraint(name, commonGenericParameters.map(gp => gp.name.as(typeExpr(gp.name))))),
+          returnArity = member.args.size
         )
       else EffectRow.empty[UnresolvedAbilityConstraint[Sourced[Expression]]]
 
@@ -63,7 +65,7 @@ object AbilityMembers {
         name = f.name.map(n => QualifiedName(n.name, qualifier)),
         genericParameters = abilityParams ++ f.genericParameters,
         visibility = Visibility.Public,
-        effectRow = ownRow
+        effectRow = ownRow(f)
       )
     ) :+
       // The marker: the value named after the block, in the block's own namespace, whose leading generic binders *are*

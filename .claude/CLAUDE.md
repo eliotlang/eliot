@@ -571,8 +571,9 @@ signature, an example or a test conflicts with them, the rule wins and the artef
    `choose(readLine, readLine)` runs both reads, `Box(shout)` runs `shout` and stores its value.
 2. **A value is pure.** A lambda in any value position — an unmarked function parameter, a field, a generic slot, a
    result, a `val` — may use no effect it does not discharge itself ("This uses the effect 'X' inside a function
-   written where a value is expected"). The rule's other half — an unapplied reference to a `uses` definition is not
-   a value — is **not enforced yet** and fails silently (`docs/effects.md` §8 item 14).
+   written where a value is expected"). So may an unapplied reference to a `uses` definition not stand there
+   (`Holder(printLine)`): fewer arguments than it declares (`EffectRow.returnArity`) is not a value, while at a code
+   parameter it is the caller's code (`applyTwice(printLine)`).
 3. **Code is used, never kept.** A `uses` parameter can be called or passed on; anywhere else it is "code its caller
    wrote", and a value lambda cannot capture it. A pure function value may stand where code is expected.
 4. **A closed clause lists and closes.** The argument at `body uses Throw[E]: A` may use what the slot lists and

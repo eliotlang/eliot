@@ -39,6 +39,12 @@ import cats.syntax.all.*
   *   function parameter with no row is a **value**, and a value is pure (`docs/effects.md` D21, rules 2 and 3 — the
   *   later `f uses *: A => B`). Unlike [[parameterEffects]] the type is not thunked: the codomain row lowers to its
   *   payload, so nothing but this record tells the two spellings apart.
+  * @param returnArity
+  *   How many value parameters the definition declares before its return position — where [[returnEffects]] are
+  *   performed. A function-typed return is a value, so `def printer uses Console: String => Unit` performs `Console`
+  *   with no argument, while `def printLine(line: String) uses Console: Unit` needs one: a reference given fewer is
+  *   unapplied, and is code rather than a value (`docs/effects.md` §1 rule 2). The signature's arrow chain cannot
+  *   tell the two apart once the row is desugared away.
   * @tparam C
   *   The phase's ability-constraint representation: [[UnresolvedAbilityConstraint]] over the ast's and then the core's
   *   expression type, and from resolution onwards
@@ -47,7 +53,8 @@ import cats.syntax.all.*
 case class EffectRow[C](
     returnEffects: Seq[C] = Seq.empty[C],
     parameterEffects: Seq[EffectRow.ParameterEffects[C]] = Seq.empty[EffectRow.ParameterEffects[C]],
-    callbackEffects: Seq[EffectRow.CallbackEffects[C]] = Seq.empty[EffectRow.CallbackEffects[C]]
+    callbackEffects: Seq[EffectRow.CallbackEffects[C]] = Seq.empty[EffectRow.CallbackEffects[C]],
+    returnArity: Int = 0
 ) {
 
   /** Convert every entry with a pure function, preserving positions — the pure fact-chain hops (ast→core,
@@ -57,7 +64,8 @@ case class EffectRow[C](
     EffectRow(
       returnEffects.map(f),
       parameterEffects.map(_.map(f)),
-      callbackEffects.map(_.map(f))
+      callbackEffects.map(_.map(f)),
+      returnArity
     )
 
   /** Convert every entry with an effectful function, preserving positions — the resolving fact-chain hops
@@ -68,7 +76,7 @@ case class EffectRow[C](
       returnEffects.traverse(f),
       parameterEffects.traverse(_.traverse(f)),
       callbackEffects.traverse(_.traverse(f))
-    ).mapN(EffectRow.apply)
+    ).mapN(EffectRow(_, _, _, returnArity))
 }
 
 object EffectRow {
