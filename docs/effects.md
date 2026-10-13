@@ -318,7 +318,10 @@ the run, with the help naming both fixes; where a slot binds another implementat
 wrote, it is *"'body' was promised the default 'Console', but runs where a slot binds another implementation for
 it"*. So a slot cannot launder an interpretation effect into a pure signature. The same applies to the effects a
 slot's **named implementation** performs in its own clauses: `transcriptOf`'s body must run `program` where the
-`Writer[String]` that `recordingConsole` performs is handled, or declare it.
+`Writer[String]` that `recordingConsole` performs is handled, or declare it. "Lacks" and "declares" compare whole
+**entries**, the slot's and the clauses' alike: eliot-test's `mocked` declares `Throw[AssertionError]`, so the
+`Throw[IoError]` that its slot's `mockFileSystem` performs is supplied, and `mocked`'s own `catch[IoError, Unit]`
+gives it.
 
 A supplied entry's own **type arguments** are written at the call from the actual's declaration, matched
 entry-by-entry against the slot's clause (an actual `bad` declared `uses Throw[String]` against `Throw[E]` gives
@@ -1003,6 +1006,7 @@ items keep one line, and their full record is in git history (§13).
 | 20 | a slot `with` on an entry the definition also declares was silently dropped, and the code ran its caller's implementation | 2026-10-13 by D23: a slot `with` always handles its entry |
 | 21 | a definition the effect check rejected was "Name not defined." at every caller | 2026-10-13: the checker names it — *"Cannot use 'X' here: its own definition was rejected."* |
 | 22 | a body `with`'s implementation was rejected below a nearer discharge of the same effect at *other* arguments (eliot-build's `CacheTests`: `offline`'s `Throw[NotFetched]` read as intercepting `tableGit`'s `Throw[GitError]`; its `Writer[List[TestResult]]` error was a knock-on) | 2026-10-13: the clause check keys by entry, as frames are chosen |
+| 23 | a slot's named implementation's clause entry rode the caller whenever the definition declared the same *ability* at other arguments (eliot-test's `mocked`: `mockFileSystem`'s `Throw[IoError]` against `mocked`'s `Throw[AssertionError]`), and the definition was not held to giving it | 2026-10-13: supplied-versus-rides and the given-check compare by entry |
 
 Items 9–13 were found 2026-10-05 while designing D20 and share one cause: a row on a slot both *marked a block* and
 *minted bindings*, and nothing kept the block inside the call or checked that the callee had the binding it handed

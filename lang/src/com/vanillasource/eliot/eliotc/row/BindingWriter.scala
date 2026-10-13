@@ -142,7 +142,7 @@ object BindingWriter {
       uncoveredDefaults: Boolean = false,
       callbacks: Set[String] = Set.empty,
       captured: Set[String] = Set.empty,
-      thunkNeeds: Map[String, Seq[AbilityFQN]] = Map.empty,
+      thunkNeeds: Map[String, Seq[(AbilityFQN, Option[Seq[String]])]] = Map.empty,
       closed: Boolean = false,
       ridden: Map[String, Set[AbilityFQN]] = Map.empty
   ) {
@@ -180,11 +180,13 @@ object BindingWriter {
           closed = true
         )
 
-    /** This scope with `abilities` bound to `Default` — what a slot's `with` resolves its own bindings against, since
-      * the scope that covers them is the callee's and not this one.
+    /** This scope with `entries` bound to `Default`, each at its known arguments — what a slot's `with` resolves its
+      * own bindings against, since the scope that covers them is the callee's and not this one.
       */
-    def defaulting(abilities: Seq[AbilityFQN], at: Sourced[?]): Scope =
-      abilities.foldLeft(this)((acc, ability) => acc.bind(Binding(ability, defaultBinding(at))))
+    def defaulting(entries: Seq[(AbilityFQN, Option[Seq[String]])], at: Sourced[?]): Scope =
+      entries.foldLeft(this) { case (acc, (ability, arguments)) =>
+        acc.bind(Binding(ability, defaultBinding(at), arguments = arguments))
+      }
 
     /** The nearest binding for `ability` that answers an entry with these `arguments` — every binding for it, but one
       * known to bind the same ability at other arguments. A reference whose own arguments are unknown takes the
@@ -329,23 +331,41 @@ object BindingWriter {
     * written as a promise that a frame for it is entered before the actual runs. So is every effect a slot's named
     * implementation performs in its own clauses, which the caller also wrote as `Default`
     * ([[Writer.slotImplementation]]). An entry the definition's own row has — the slot's, or one its named
-    * implementation's clauses perform — rides the caller's binding and needs nothing here.
+    * implementation's clauses perform — rides the caller's binding and needs nothing here. Entries are compared at
+    * their known arguments ([[ridesOwn]]), as the caller's write compared them.
     */
   private def thunkRequirements(
       orv: OperatorResolvedValue,
       universe: RowChecker.Universe
-  ): Map[String, Seq[AbilityFQN]] = {
-    val own        = orv.effectRow.returnEffects.map(_.abilityFQN).toSet
+  ): Map[String, Seq[(AbilityFQN, Option[Seq[String]])]] = {
+    val own        = ownEntries(orv, Map.empty)
     val parameters = SignatureView.of(orv.signature).parameters
     orv.effectRow.parameterEffects.flatMap { pe =>
       valueParameterNames(orv).lift(pe.parameterIndex).map { name =>
         val markers   = parameters.lift(pe.parameterIndex).toSeq.flatMap(p => slotBindings(p.value))
         val withBound = markers.flatMap(marker => abilityOf(marker.value, universe)).toSet
-        val clauses   = markers.flatMap(marker => bindingAbilities(marker.value, universe)).filterNot(own)
-        name -> (pe.effects.map(_.abilityFQN).filterNot(own).filterNot(withBound) ++ clauses).distinct
+        val listed    = pe.effects
+          .map(entry => entry.abilityFQN -> knownArguments(entry.typeArgs, Map.empty))
+          .filterNot(entry => withBound.contains(entry._1))
+        val clauses   = markers.flatMap(marker => bindingEntries(marker.value, universe))
+        name -> (listed ++ clauses).filterNot(ridesOwn(own)).distinct
       }
     }.toMap
   }
+
+  /** A definition's own declared entries, each at the arguments `substitution` makes known. */
+  private def ownEntries(
+      orv: OperatorResolvedValue,
+      substitution: Map[String, OperatorResolvedExpression]
+  ): Seq[(AbilityFQN, Option[Seq[String]])] =
+    orv.effectRow.returnEffects.map(entry => entry.abilityFQN -> knownArguments(entry.typeArgs, substitution))
+
+  /** Whether `entry` is one of the definition's `own` entries — the same ability, at arguments not known to differ — and
+    * so rides the caller's binding rather than being supplied. `Throw[AssertionError]` in the row does not make a
+    * `Throw[IoError]` ride.
+    */
+  private def ridesOwn(own: Seq[(AbilityFQN, Option[Seq[String]])])(entry: (AbilityFQN, Option[Seq[String]])): Boolean =
+    own.exists((ability, known) => ability == entry._1 && !differ(known, entry._2))
 
   /** The effects each row-typed parameter's block **rides** — entries of this definition's own row that its slot
     * lists without naming an implementation for them, or that the implementation its slot names with `with` performs.
@@ -388,10 +408,6 @@ object BindingWriter {
         ability -> entries.get(index).flatMap(knownArguments(_, Map.empty))
       }
     }
-
-  /** Every ability the implementation `marker` is parameterised by — its phantom binders' abilities. */
-  private def bindingAbilities(marker: ValueFQN, universe: RowChecker.Universe): Seq[AbilityFQN] =
-    universe.lookup(marker).toSeq.flatMap(orv => phantoms(orv).map(_._2))
 
   /** The names of this definition's **callback** parameters — function-typed, with a row in the codomain: code, which
     * may be called or passed on and never kept.
@@ -641,9 +657,9 @@ object BindingWriter {
       */
     private def checkGiven(name: Sourced[String], scope: Scope): Unit =
       if (!scope.uncoveredDefaults)
-        scope.thunkNeeds.getOrElse(name.value, Seq.empty).foreach { ability =>
-          scope.binding(ability).foreach(binding => used += binding.serial)
-          scope.binding(ability) match {
+        scope.thunkNeeds.getOrElse(name.value, Seq.empty).foreach { (ability, arguments) =>
+          scope.binding(ability, arguments).foreach(binding => used += binding.serial)
+          scope.binding(ability, arguments) match {
             case Some(binding) if binding.bySlot && !binding.byWith => ()
             case Some(binding) if binding.bySlot                    =>
               violations += Violation(
@@ -794,13 +810,9 @@ object BindingWriter {
         anchor: Sourced[?],
         substitution: Map[String, OperatorResolvedExpression]
     ): Scope = {
-      val own      = calleeOrv.effectRow.returnEffects
-        .map(entry => entry.abilityFQN -> knownArguments(entry.typeArgs, substitution))
-      val rides    = (entry: AbilityConstraint[OperatorResolvedExpression]) => {
-        val arguments = knownArguments(entry.typeArgs, substitution)
-        own.exists((ability, known) => ability == entry.abilityFQN && !differ(known, arguments))
-      }
-      val clauseRides = own.map(_._1).toSet
+      val own      = ownEntries(calleeOrv, substitution)
+      val rides    = (entry: AbilityConstraint[OperatorResolvedExpression]) =>
+        ridesOwn(own)(entry.abilityFQN -> knownArguments(entry.typeArgs, substitution))
       val declared    = slotBindings(SignatureView.of(calleeOrv.signature).parameters(index).value)
         .flatMap(marker => abilityOf(marker.value, universe).map(_ -> marker))
         .toMap
@@ -815,7 +827,7 @@ object BindingWriter {
             .fold(Binding(ability, defaultBinding(anchor), bySlot = true, arguments = arguments))(marker =>
               Binding(
                 ability,
-                slotImplementation(marker, acc, clauseRides),
+                slotImplementation(marker, acc, ridesOwn(own)),
                 byWith = true,
                 bySlot = true,
                 arguments = arguments
@@ -848,7 +860,8 @@ object BindingWriter {
       * bindings are resolved by §2.2's supplied-versus-rides rule, as a slot's own entries are. One the callee
       * **supplies** — an ability its own declared row lacks — is performed inside the *callee*, which is the whole point
       * of a slot `with`: `transcriptOf`'s `runWriterToLog` gives the double its `Writer[String]`, and the caller writing
-      * the actual can neither see nor name it. So it is written `Default`, "search at the ground arguments", and the
+      * the actual can neither see nor name it. "Lacks" is by entry: `mocked`'s own `Throw[AssertionError]` does not make
+      * `mockFileSystem`'s `Throw[IoError]` ride. So it is written `Default`, "search at the ground arguments", and the
       * callee's body is held to giving it where it runs the block ([[thunkRequirements]]). One the callee **rides** is
       * the caller's own binding, handed on as the callee's received one, so it is written from this scope like any
       * other reference.
@@ -856,11 +869,11 @@ object BindingWriter {
     private def slotImplementation(
         implementation: Sourced[ValueFQN],
         scope: Scope,
-        rides: Set[AbilityFQN]
+        rides: ((AbilityFQN, Option[Seq[String]])) => Boolean
     ): OperatorResolvedExpression =
       boundImplementation(
         implementation,
-        scope.defaulting(bindingAbilities(implementation.value, universe).filterNot(rides), implementation)
+        scope.defaulting(bindingEntries(implementation.value, universe).filterNot(rides), implementation)
       )
 
     /** How many arguments a callee calls its parameter `index` with, when that parameter is a **callback** — code of
