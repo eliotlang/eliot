@@ -33,8 +33,8 @@ lives now.
 5. ~~**Compile-track frames**~~ — built 2026-10-13 (§3.4, "The compile track is threaded too"). It closed §7 item 4
    and §8 items 26 and 28; measuring first found and closed §8 item 27. The dependents were run against it: eliot-test
    (193) and eliot-build (368) pass unchanged and eliot-build's launcher builds, so no dependent needs a change.
-6. **Release the next `v0` tag** (`v0.12`), carrying steps 5's two commits — a guarded return's fallback and its
-   author's message are user-visible. No dependent has to move with it.
+6. ~~**Release the next `v0` tag**~~ — done 2026-10-13: `v0.12` carries step 5's two commits and the two non-effect
+   fixes below. eliot-test (193) and eliot-build (368, and its launcher) were run against it; no dependent moved.
 7. **Named implementations with parameters**, the next of §11's "Decided, not built", then user defaults with
    parameters and parameterised ability implementations, in that order.
 
@@ -51,9 +51,9 @@ D20a, D20c and D3 stay open until decided; none blocks the steps above.
 - **Undecided:** naming a set of effects in a clause (D20a), storing an effectful computation (D20c), `~`/`&` in user
   space (D3).
 - **Outside this document:** `v0.9` is the first release carrying `uses` (`v0.8` is tagged before it, and its release
-  workflow failed, so it publishes no assets); `v0.11` is the latest, and eliot-test `v0.5`, eliot-build and the docs
-  site's install page depend on it. The site's generated `apidoc/` pages predate effects v6; eliot-test's own notes
-  still say a row cannot be closed and list `runThrow` spellings that are now redundant. Two defects found while
+  workflow failed, so it publishes no assets); `v0.12` is the latest; eliot-test `v0.5`, eliot-build and the docs site's
+  install page depend on `v0.11`, which they need not leave. The site's generated `apidoc/` pages predate effects v6;
+  eliot-test's own notes still say a row cannot be closed and list `runThrow` spellings that are now redundant. Two defects found while
   building step 5, neither an effect one, were fixed on 2026-10-13: the jvm backend named a specialisation's method
   with a value-level type argument collapsed to `Any`, so `pick[false]` and `pick[true]` of one `def pick[C: Bool]` were
   one `pick$Any` (a silent miscompile; the constant is now part of the name), and a failing `where` precondition left a
