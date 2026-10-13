@@ -1,13 +1,13 @@
 # Effects in Eliot — the design, and what is left to do
 
 **Status (2026-10-13).** This is the effect system's single document. What the tree builds is effects v6 (2026-09-09)
-in D20/D21's `uses` surface (2026-10-09/10) with D20c option 5's environments and (b) (2026-10-12). An effect is an
-ability declared with the `effect` keyword. A definition's `uses` clause says what its caller hands it. An
-implementation has two halves: its **code**, a compile-time name written at every reference by a syntax-directed pass
-that reads declarations only, and its **environment** (an escape frame, a cell, its own parameters), a runtime value
-threaded after monomorphization and never searched for across calls. There is no carrier, no monad, no `Id`, and
-nothing to infer. Effects verify as a **channel** beside the type, the same architectural move as the `Int` refinement
-channel, and the NbE checker holds no effect rule at all.
+in D20/D21's `uses` surface (2026-10-09/10) with D20c option 5's environments and (b) (2026-10-12), and D22's reading
+of a listed effect (2026-10-13). An effect is an ability declared with the `effect` keyword. A definition's `uses`
+clause says what its caller hands it. An implementation has two halves: its **code**, a compile-time name written at
+every reference by a syntax-directed pass that reads declarations only, and its **environment** (an escape frame, a
+cell, its own parameters), a runtime value threaded after monomorphization and never searched for across calls. There
+is no carrier, no monad, no `Id`, and nothing to infer. Effects verify as a **channel** beside the type, the same
+architectural move as the `Int` refinement channel, and the NbE checker holds no effect rule at all.
 
 **How to read it.** Part I is the design as built and is the authority for the tree: where code, a stdlib signature,
 an example or a test disagrees with it, the disagreement is either a defect in the artefact or an entry in §8, never
@@ -22,8 +22,6 @@ lives now.
 
 - **Silent:** an unapplied reference to a `uses` definition passes as a value (§8 item 14); an unused `with` binds
   nothing without complaint (§8 item 1).
-- **Undecided, and it changes which handler runs:** a slot listing an entry its definition also declares is a
-  pass-through by code but a handler by frame, so a helper's private discharge of that effect intercepts (**D22**).
 - **Loud, at compile time:** an effectful ability method needs its ability's type arguments spelled (§8 item 15); a
   `catch` over a parameter spells its arguments (§7 item 2); a function-typed code parameter's own entries are never
   supplied (§7 item 1); the compile track still finds a frame by its type (§7 item 7).
@@ -49,16 +47,19 @@ lives now.
 > among them, which is pure and may be kept. With a `uses` clause it is code the caller wrote, run by the callee,
 > which may call it or pass it on to another `uses` slot and never keep it: `uses *` says it may use whatever is in
 > scope where it is written, and `uses *, Throw[E]` that the callee gives it `Throw[E]` as well.
+>
+> **A listed effect is the callee's to handle or to declare.** An effect a code parameter's clause lists, the callee
+> may catch around the code; if it does not, it causes that effect itself and must declare it. An effect the code uses
+> without the clause listing it is invisible to the callee, which can neither catch it nor needs to declare it.
 
 1. **Effects run, and resolve, where they are written.** An effectful expression in a value position performs its
    effects there: strict call-by-value in **every** value position, a bare generic slot included, so
    `choose(readLine, readLine)` runs both reads and `Box(shout)` runs `shout` and stores its value. An operation, or
    a call to a definition that `uses` an effect, takes the nearest binding *in the text* — an enclosing `with`, the
    enclosing definition's own clause, or what an enclosing code parameter's clause supplies — which is §3.1's
-   resolution order stated as scope. The one argument not run where it stands is code (rule 2). *The one refinement:*
-   for an entry a code slot lists that its definition also declares, the block keeps its writer's implementation but
-   runs on the frame where the callee runs it ((b), §3.4) — which is what makes `describedAs` work, and what D22 is
-   about.
+   resolution order stated as scope. The one argument not run where it stands is code (rule 2). *The one refinement* is
+   rule 5's: an effect a code slot lists keeps its writer's implementation but runs on the frame the callee has for it
+   where it runs the code ((b), §3.4), which is what lets the callee catch it.
 
 2. **A parameter is code iff it has a `uses` clause, and a value is pure.** `whenTrue uses *: A` receives the
    caller's text unrun; after desugaring a nullary code slot is a **thunk** (`Unit => A`), but the thunk is the
@@ -81,17 +82,21 @@ lives now.
    inline-function parameters draw the same line.
 
 4. **A closed clause supplies and closes.** A clause without `*` — `body uses Throw[E]: A` — admits the argument's
-   text to what the slot supplies, what it rides (§2.2), and what it discharges itself, and to nothing from around
+   text to what the slot lists (§2.2) and what it discharges itself, and to nothing from around
    it: *"This uses the effect 'X' inside an argument whose `uses` clause is closed"*, and the caller's own code
    passed there *"… cannot run it"*.
 
-5. **A definition gives its code only what it has.** Running a code parameter is checked like a call to a
-   definition with that signature: each entry its clause supplies must be bound there — by the implementation the
-   slot names with `with`, or by passing the code on to a slot that supplies it (`catch` hands `computation` to
-   `runThrow`). An entry the definition's own clause has rides instead, and is its caller's to give. **Only a
-   body-less declaration gives an effect from nothing**, because that is where a frame comes from: the platform's
-   primitives state what they give (§3.4), and the run boundary binds `main`'s entries. So **an effect's default is
-   handed out at `main`, and by platform primitives, nowhere else.**
+5. **An effect a code parameter lists is the definition's to handle or to declare** (D22). Running a code
+   parameter is checked like a call to a definition with that signature. Each entry its clause lists the definition
+   either **handles** where the code runs — passing the code on to a slot that discharges it (`catch` hands
+   `computation` to `runThrow`), or naming an implementation on the slot with `with` — or **declares** in its own
+   clause, which passes it on to its caller; doing neither is *"'body' may perform the effect 'X' here, which this
+   definition neither handles nor declares"*. Declaring does not prevent handling: `describedAs` declares
+   `Throw[AssertionError]` and still catches its body's failure, to raise a better one. An effect the code uses
+   through `*` without the clause listing it is invisible to the definition: bound where the code was written, it can
+   be neither caught nor declared there (§2.2). **Only a body-less declaration gives an effect from nothing**, because
+   that is where a frame comes from: the platform's primitives state what they give (§3.4), and the run boundary binds
+   `main`'s entries. So **an effect's default is handed out at `main`, and by platform primitives, nowhere else.**
 
 6. **A field holds a value.** A `data` field takes no clause and no row, and there is no stored computation: store
    data describing the work, and perform it where the effects are in scope (§2.3).
@@ -246,42 +251,43 @@ caller's code, so `names.map(n -> setting(n))` inside a `uses Abort` definition 
 function parameter pure would need a `map` and a `mapM`, a `foldLeft` and a `foldLeftM`; making every one code would
 leave purity unsayable.
 
-### 2.2 A slot's entries are *supplied* — what makes a discharger
+### 2.2 A slot's listed entries — handle or declare (D22)
 
-A **named entry** in a parameter's clause says *"I will run this code, and this binding comes from me"*. Which
-entries those are is read one level up, at the declaration:
+**An effect a code parameter's clause lists is the definition's to handle or to declare** (rule 5). Listing it says
+*"I run this code with this effect in hand"*, and the definition then does one of two things with it, read one level
+up, at the declaration:
 
-- an entry the definition's own clause already has is **not** supplied — it **rides**: `if`'s
-  `value uses *, Abort: T` takes the caller's `Abort`, because `if` declares `uses Abort` itself and the walk
-  continues outward;
-- an entry it lacks is **supplied**, bound by the entry's own `with` or, with none, by `Default` — which rule 5
-  then holds the callee to giving, by a frame of its own or by passing the code on to a slot that gives it.
+- **declares it** in its own clause, which passes it on to its caller: `if`'s `value uses *, Abort: T` under `if`'s
+  own `uses Abort`, whose body discharges nothing, so an `abort` in `value` reaches `if`'s caller. The walk calls such
+  an entry **ridden**: its implementation is the caller's, and the walk continues outward;
+- **handles it** where the code runs — it lacks the entry, so the slot **supplies** it, bound by the entry's own
+  `with` or, with none, by `Default`, and rule 5 holds the definition to running the code inside a discharger of it.
 
 Which one an entry is, is decided as the declaration spells it, never at ground arguments:
 `raising[E](…, body uses *, Throw[E]: Unit) uses Throw[AssertionError]: Unit` supplies `Throw[E]` even at
 `E = AssertionError`.
 
 ```eliot
-def if[T](condition: Bool, value uses *, Abort: T) uses Abort: T                   -- performs Abort
-def else[A](computation uses *, Abort: A, fallback uses *: A): A                   -- supplies Abort: discharged here
-def catch[E, A](computation uses *, Throw[E]: A, onError uses *: E => A): A        -- supplies Throw[E]
-def runStateToPair[S, A](initial: S, p uses *, State[S]: A): Pair[A, S]            -- supplies State[S]
+def if[T](condition: Bool, value uses *, Abort: T) uses Abort: T                   -- declares Abort: passed on
+def else[A](computation uses *, Abort: A, fallback uses *: A): A                   -- handles Abort here
+def catch[E, A](computation uses *, Throw[E]: A, onError uses *: E => A): A        -- handles Throw[E]
+def runStateToPair[S, A](initial: S, p uses *, State[S]: A): Pair[A, S]            -- handles State[S]
 ```
 
 Read as English they are already right, and that is the whole of what a discharger is: no tail, no base, no second
-concept. Only the clause of a **nullary** code parameter supplies; a function-typed code parameter's clause is the
-callback's own scope (`onError uses *: E => A`), bound where the callback is written, and a named entry there is not
-supplied by the callee (§7 item 1).
+concept. Only the clause of a **nullary** code parameter is handled this way; a function-typed code parameter's
+clause is the callback's own scope (`onError uses *: E => A`), bound where the callback is written, and a named entry
+there is not supplied by the callee (§7 item 1).
 
-**Who gives a supplied entry** is rule 5. A definition with a body gives only what it has: `else` hands
-`computation` to `runAbort`, `catch` to `runThrow`, and a `with` on a slot's entry is a given implementation. A
-body-less declaration gives from nothing, and each platform primitive says what in its own clause (§3.4). A run that
-breaks the promise is *"'body' is given the effect 'Console' here, which this definition has no implementation of to
-give"*, or, where a slot binds another implementation than the default the caller wrote, *"'body' was promised the
-default 'Console', but runs where a slot binds another implementation for it"*. So a slot cannot launder an
-interpretation effect into a pure signature. The same promise covers the effects a slot's **named implementation**
-performs in its own clauses: `transcriptOf`'s body must run `program` where a slot gives the `Writer[String]` that
-`recordingConsole` performs, or it is the same error naming the double.
+**How a listed entry is handled** is rule 5. A definition with a body handles only with what it has: `else` hands
+`computation` to `runAbort`, `catch` to `runThrow`, and a `with` on a slot's entry is a chosen implementation. A
+body-less declaration gives from nothing, and each platform primitive says what in its own clause (§3.4). Doing
+neither is *"'body' may perform the effect 'Console' here, which this definition neither handles nor declares"*, at
+the run, with the help naming both fixes; where a slot binds another implementation than the default the caller
+wrote, it is *"'body' was promised the default 'Console', but runs where a slot binds another implementation for
+it"*. So a slot cannot launder an interpretation effect into a pure signature. The same applies to the effects a
+slot's **named implementation** performs in its own clauses: `transcriptOf`'s body must run `program` where the
+`Writer[String]` that `recordingConsole` performs is handled, or declare it.
 
 A supplied entry's own **type arguments** are written at the call from the actual's declaration, matched
 entry-by-entry against the slot's clause (an actual `bad` declared `uses Throw[String]` against `Throw[E]` gives
@@ -297,11 +303,16 @@ against a frame it will not meet at runtime. Three shapes reach that rejection h
 - the slot's clause names the **same ability twice** (`uses *, Throw[IoError], Throw[AssertionError]`), where only the
   call can say which one is being discharged.
 
-**A definition may discharge the very effect it declares.** A slot entry the definition also declares rides by code
-but is given its frame where the block runs ((b), §3.4), so
-`describedAs(body uses *, Throw[AssertionError]: Unit, newMessage: String) uses Throw[AssertionError]: Unit` catches
-its body's failure and re-raises a better one. That every such slot is therefore a handler — including one meant as
-a pass-through — is D22.
+**Handling and declaring combine, and an unlisted effect is out of reach.** A definition that declares a listed entry
+may still discharge it around the code: the code runs on the innermost frame of that entry where the definition runs
+it ((b), §3.4). So `describedAs(body uses *, Throw[AssertionError]: Unit, newMessage: String) uses
+Throw[AssertionError]: Unit` catches its body's failure and re-raises a better one, declaring the effect because it
+raises it; and a `guarded(body uses Throw[String]: Unit) uses Throw[String], Console: Unit` that runs `body` inside a
+private `catch[String, …]` catches its caller's `raise` — which its signature, by listing `Throw[String]`, says it
+may. An effect the code uses through `*` and the slot does not list is **invisible** to the definition: it was bound
+where the code was written, so `guarded(body uses *: Unit)` can neither catch a `Throw` its caller's code performs nor
+needs to declare it, and its private `catch` intercepts nothing. A pass-through the definition cannot touch is
+therefore spelled by not listing, and a closed clause, which lists everything, has none.
 
 ### 2.3 A field holds a value
 
@@ -614,10 +625,11 @@ main                           = …(runStateToFinalState(5, cell -> { increment
   (`MonomorphicEffects`), and a definition receives one frame per entry of its declared row and per `~` constraint,
   ahead of its own parameters; a reference to it passes the frame in scope for each.
 - **A block takes what its slot lists.** A row-typed slot's thunk takes the frames of the entries its slot lists in
-  place of `unit`, and running the block passes the frames in scope where it runs. For a **supplied** entry the frame
-  is at the slot's default or `with`; for a **ridden** entry the block's *code* is the caller's binding but its
-  *frame* is still the run site's — **(b), "ride by code, give by frame"** — which is what lets `describedAs`
-  discharge the very effect it declares (§2.2). Running such a block therefore consumes the entry it rides (§4).
+  place of `unit`, and running the block passes the frames in scope where it runs. For a **supplied** entry (one the
+  definition handles) the frame is at the slot's default or `with`; for a **ridden** entry (one it declares) the
+  block's *code* is the caller's binding but its *frame* is still the run site's — **(b), "ride by code, give by
+  frame"** — which is what lets a definition catch an effect it also declares (§2.2). Running such a block therefore
+  consumes the entry it rides (§4).
 - **A dispatched operation gets its frame's parts.** A reference the checker dispatched to an implementation's clause
   (`MonomorphicValueReference.dispatchedFrom`) passes the frame of the entry it was dispatched from: the frames its
   clauses perform on, then the implementation's own parameters, which the clause receives as leading value
@@ -637,9 +649,9 @@ built at the reference from the frames there, which the walk's check in §3.1 gu
 **What that does and does not remove.** There is no search across calls: a frame reaches a definition only as a value
 passed to it, so a helper's own `catch` or `State` cannot intercept the effects of a block its caller wrote with
 `uses *` — the block captured its writer's frames (§8 items 16–17). The one choice left is the lexical one above, made
-inside the body that runs a block: under (b), the frame a ridden entry runs on is whichever frame of that entry the
-callee's body has in scope at the run — a handler chosen by the callee, as in Koka. That is by design for
-`describedAs`, and it is also why a closed slot meant as a pass-through intercepts (D22).
+inside the body that runs a block, and it is only ever over an effect the slot **lists**: the frame a ridden entry
+runs on is whichever frame of that entry the callee's body has in scope at the run — a handler chosen by the callee,
+as in Koka. That is the decided meaning of listing (D22): a listed effect is the callee's to handle or to declare.
 
 **Decided in the code while building, recorded for sign-off** (§11):
 
@@ -744,9 +756,9 @@ write's own walk (§3.1), so this is a spec of `row/BindingWriter` rather than o
 - **a code parameter is used, never kept**: a reference to one stands as the head of a call or as the argument of a
   code parameter; anywhere else is the error at the reference, and so is a reference inside a value lambda or a
   closed argument.
-- **a run of a code parameter is given only what the definition has**: each entry the parameter's slot supplies is
-  bound at that run by a slot that supplies it, as the caller's write promised; otherwise the error names the
-  parameter and the effect.
+- **a listed effect is handled or declared**: each entry the parameter's slot lists and the definition does not
+  declare is bound at every run of the parameter by a slot that supplies it, as the caller's write promised; otherwise
+  it is *"'body' may perform the effect 'X' here, which this definition neither handles nor declares"*.
 - **a `with`** binds its ability for its subject's text, and crosses a def boundary only through a
   declaration. A `with` whose subject contains no covered use and no call to a declaring def is a hard error
   naming the fix, never a silent no-op (not yet enforced: §8 item 1).
@@ -1024,23 +1036,6 @@ value it names. And a test stub that diverges from the real declaration (`fold`'
 
 Only rule decisions are listed; conveniences are in §12 under "not now". Every decision is Robert's.
 
-### D22 — a slot listing an entry its definition also declares: handler or pass-through?
-
-Found by a review of the plan on the option-5 line (`1034c8db`, R1, entered there as D21d). Under (b) a ridden entry's
-frame is the run site's, and the threading picks the innermost frame of that entry there (§3.4). A pass-through is
-spelled today by *not* listing: `guarded(body uses *: Unit) uses Console: Unit` reaches the caller's `Throw` through
-`*`, and its own private `catch` intercepts nothing (§8 item 16's witness, `EnvironmentIntegrationTest`). But a
-**closed** slot has to list what its block performs: `guarded(body uses Throw[String]: Unit) uses Throw[String],
-Console: Unit` rides that entry, and a private `catch[String, …]` in `guarded`'s body then intercepts the caller's
-`raise` — the same signature shape as `describedAs`, which *means* to intercept. Only the bodies tell them apart, which
-is the accidental-handling failure option 5 set out to remove.
-
-The review's proposal, Effekt's rule in substance: **an entry listed explicitly on a slot is supplied** — the callee
-handles it, as `describedAs` does — **and an entry reached through `*` passes through on the frame the definition
-received**, never a nearer one. It would retire the "cannot supply an entry you already declare" special case, since
-`describedAs`'s slot entry and its own clause entry become two different things, and it would make a closed slot a
-handler for everything it lists, so a closed pass-through has no spelling. Undecided.
-
 ### D20a — naming a set of effects
 
 `type Git[A] = {Process, FileSystem, Throw[IoError], Throw[GitError]} A` is a row alias, return position only (§2.4).
@@ -1140,6 +1135,18 @@ Numbers are kept so citations resolve; the record of each is in git history (§1
   is closed, and purity is the absence of `uses`.
 - **D20c option 5 and (b)** (2026-10-12, built): an implementation's environment threaded after monomorphization;
   ride by code, give by frame (§3.4). D20c's open question remains, above.
+- **D22** (2026-10-13): *a slot listing an entry its definition also declares — handler or pass-through?* Found by a
+  review of the plan on the option-5 line (`1034c8db`, R1, there D21d): under (b) a `guarded(body uses Throw[String]:
+  Unit) uses Throw[String], Console: Unit` that runs `body` inside a private `catch[String, …]` catches its caller's
+  `raise`, with the same signature shape as `describedAs`, which means to. **Decided: both are handlers, and that is
+  what listing means.** A listed effect is the callee's to handle or to declare; one it does not handle it causes
+  itself and must declare; one the code uses through `*` without the clause listing it is invisible to the callee,
+  which can neither catch nor declare it (§1 rule 5, §2.2). No behaviour changed — the tree already did this since
+  (b) — so the decision is the rule and its vocabulary, plus the rule-5 diagnostic's wording ("… neither handles nor
+  declares"). Given up: a closed clause cannot promise that a listed effect reaches the caller untouched; nothing
+  needs that today, and eliot-test's `pure { … }`, if reinstated, catches and re-raises explicitly. Rejected: always
+  the caller's frame (makes `describedAs` unwritable — the "(a)" of 2026-10-12) and a new handler marker (a second
+  spelling beside `uses`).
 
 ---
 
@@ -1185,7 +1192,7 @@ Numbers are kept so citations resolve; the record of each is in git history (§1
 - **A runtime handler stack searched by type, as the language's mechanism.** Kills erasure and makes accidental
   handling the default. Since option 5 even the primitives search nothing on the runtime track: a frame reaches a
   definition only as a value passed to it. The one choice left — the innermost frame of an entry within one woven
-  body (§3.4) — is lexical, and what it means for a ridden entry is D22.
+  body (§3.4) — is lexical, and is only ever over an effect the slot lists, which is the callee's to handle (D22).
 - **"No call site is ever dynamically nested inside itself"** (proposed 2026-10-11 to give each frame a compile-time
   identity). Refuted 2026-10-12: a higher-order argument nests a site inside itself with no cycle in the reference
   graph — `catch`'s one `runThrow` installs two live `Throw` frames when a block run under it calls `catch` again. No
@@ -1283,7 +1290,8 @@ each lives:
 | D20 rule 6 | §1 rule 6, §2.3 |
 | D20/D21 step 1 (code and value), step 2 (rule 5), step 3 (fields), step 4 (the parser), steps 5–6 (migration, the old surface refused), step 7 (documents) | §3.1; §3.1; §2.3; §3.1 and §2; §2; Part I |
 | D20c option 5, "the `transcriptOf` spike", (iii) and 2(c), "Option 5 built" | §3.4 |
-| D20c (b), "decided (b)" | §3.4 and §2.2; its open consequence is D22 |
+| D20c (b), "decided (b)" | §3.4 and §2.2; what it means for a listed effect is D22 (§1 rule 5) |
+| D22 | §1 rule 5, §2.2; the record in §11's closed decisions |
 | D20c (the open question), option 4 | §11 D20c |
 | §8 items 14–17 in comments and tests written on the option-5 line | §8 items 16–19 |
 | §7 item 7 before 2026-10-13 (undischarged control effect at `main`) | closed, §8 item 5 |

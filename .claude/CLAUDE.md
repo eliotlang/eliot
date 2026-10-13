@@ -535,9 +535,9 @@ what makes effects free of special cases. Authoritative design: `docs/effects.md
 design (§1 the user rules, §2 the surface, §3 the mechanism, §4 the scope check, §5 the standing rules, §6 testing,
 §7 the live limitations; §3.4 is the primitives and the environment threading); Part II is what is left (§8 where
 the tree diverges from Part I, §9 the binding binder marked by its declared type `Implementation[A]`, §10 the gate and
-method, §11 the open and decided-but-unbuilt decisions — **D22** handler or pass-through, **D20a** naming a set of
-effects, **D20c** storing an open computation); Part III holds §12's **do-not-re-propose** list and §13, which maps
-every citation of a condensed record (**D20**/**D21** rules and steps, **D20c option 5**, **(b)**) to Part I.
+method, §11 the open and decided-but-unbuilt decisions — **D20a** naming a set of effects, **D20c** storing an open
+computation); Part III holds §12's **do-not-re-propose** list and §13, which maps
+every citation of a condensed record (**D20**/**D21** rules and steps, **D20c option 5**, **(b)**, **D22**) to Part I.
 **There is no carrier, no monad, no `Id`, and nothing to infer** — if you are reading code or a comment that mentions
 one, it is history.
 
@@ -574,11 +574,14 @@ signature, an example or a test conflicts with them, the rule wins and the artef
    a value — is **not enforced yet** and fails silently (`docs/effects.md` §8 item 14).
 3. **Code is used, never kept.** A `uses` parameter can be called or passed on; anywhere else it is "code its caller
    wrote", and a value lambda cannot capture it. A pure function value may stand where code is expected.
-4. **A closed clause supplies and closes.** The argument at `body uses Throw[E]: A` may use what the slot supplies,
-   what it rides, and what it discharges itself (`BindingWriter.Scope.enterClosed`).
-5. **A definition gives its code only what it has.** A slot entry its own clause lacks is supplied by a `with` on the
-   slot or by passing the code on to a primitive that gives it; an effect's default is handed out at `main` (the run
-   boundary) and by the platform primitives, which state what they give.
+4. **A closed clause supplies and closes.** The argument at `body uses Throw[E]: A` may use what the slot lists and
+   what it discharges itself (`BindingWriter.Scope.enterClosed`).
+5. **A listed effect is the callee's to handle or to declare** (D22). An effect a code parameter's clause lists, the
+   definition either handles where the code runs (a `with` on the slot, or passing the code on to a discharger) or
+   declares in its own clause, passing it on; neither is "'body' may perform the effect 'X' here, which this
+   definition neither handles nor declares". An effect the code uses through `*` unlisted is invisible to it — it can
+   neither catch it nor declare it. An effect's default is handed out at `main` (the run boundary) and by the platform
+   primitives, which state what they give.
 6. **A field holds a value.** A `data` field takes no clause and no row; store data describing the work and perform
    it where the effects are in scope.
 
@@ -628,9 +631,8 @@ order at the run site decides interaction** — `runStateToPair(s, runThrow(c))`
 c))` is the difference between state surviving a `raise` and not — and there is no canonical form for the compiler
 to choose. A definition may discharge the **very effect it declares**, which is what lets `describedAs` rewrite its
 body's failure message: a slot entry the definition also declares **rides by code and is given by frame** — the
-block's binding is the caller's, its frame the one where it runs (D20c's decided (b)); whether a slot listing such an entry
-is therefore always a handler is the open **D22** — so running the block performs
-that entry.
+block's binding is the caller's, its frame the one where it runs (D20c's decided (b)) — so running the block performs
+that entry, and a listed effect is always the callee's to catch if it chooses (D22).
 
 **An implementation is code plus an environment, passed and never searched for** (`docs/effects.md` §3.4; D20c option 5,
 built on the runtime track). The code is the binding, as above. The environment — an escape frame, a cell, an anonymous implementation's

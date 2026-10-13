@@ -19,7 +19,7 @@ class GivenEffectIntegrationTest extends FullIntegrationTest {
       |""".stripMargin
 
   // §8 item 13: the slot supplied the platform console by `Default`, so a pure signature performed real I/O.
-  "a definition running a computation whose effect it has nothing to give" should "be rejected" in {
+  "a definition running code whose listed effect it neither handles nor declares" should "be rejected" in {
     compileForErrors(
       """import eliot.effect.Console
         |
@@ -29,7 +29,7 @@ class GivenEffectIntegrationTest extends FullIntegrationTest {
         |""".stripMargin
     ).asserting(
       _ should include(
-        ":3:49:'body' is given the effect 'Console' here, which this definition has no implementation of to give."
+        ":3:49:'body' may perform the effect 'Console' here, which this definition neither handles nor declares."
       )
     )
   }
@@ -54,7 +54,7 @@ class GivenEffectIntegrationTest extends FullIntegrationTest {
           |
           |def main uses Console: Unit = printLine(launder(printLine("hi")))
           |""".stripMargin
-    ).asserting(_ should include("'body' is given the effect 'Console' here"))
+    ).asserting(_ should include("'body' may perform the effect 'Console' here"))
   }
 
   "a slot's named implementation" should "be given the effects its clauses perform" in {
@@ -76,7 +76,7 @@ class GivenEffectIntegrationTest extends FullIntegrationTest {
           |
           |def main uses Console: Unit = silently(printLine("hi"))
           |""".stripMargin
-    ).asserting(_ should include("'program' is given the effect 'Writer' here"))
+    ).asserting(_ should include("'program' may perform the effect 'Writer' here"))
   }
 
   // docs/effects.md D20c, decided (b): an effect the named implementation performs that the definition also declares

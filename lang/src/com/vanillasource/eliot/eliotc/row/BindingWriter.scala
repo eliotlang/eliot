@@ -591,13 +591,14 @@ object BindingWriter {
           }
       }
 
-    /** A definition gives a computation it was handed **only what it has** (`docs/effects.md` D20 rule 5): every entry
-      * its caller was promised ([[thunkRequirements]]) must be bound here by a callee's slot that supplies it — the
-      * frame of a discharger the computation is passed on to — and supplied the way it was promised, by `Default`.
-      * Nothing else is a frame: no row of this definition's (that entry would ride, not be supplied), and no `with` in
-      * the body, which cannot rebind bindings the caller already wrote. Only a body-less declaration — a platform
-      * primitive — gives an effect from nothing, and it has no body to check, so an effect's default is handed out at
-      * `main` and by the primitives, nowhere else.
+    /** An effect a code parameter's clause lists is this definition's **to handle or to declare**
+      * (`docs/effects.md` §1 rule 5, D22): every listed entry it does not declare ([[thunkRequirements]]) must be
+      * handled where the code runs — bound by a callee's slot that supplies it, the frame of a discharger the code is
+      * passed on to — and handled the way the caller was promised, by `Default`. Nothing else handles it: no `with` in
+      * the body, which cannot rebind bindings the caller already wrote. An entry the definition declares is passed on
+      * to its caller instead, and needs nothing here. Only a body-less declaration — a platform primitive — gives an
+      * effect from nothing, and it has no body to check, so an effect's default is handed out at `main` and by the
+      * primitives, nowhere else.
       */
     private def checkGiven(name: Sourced[String], scope: Scope): Unit =
       if (!scope.uncoveredDefaults)
@@ -615,13 +616,13 @@ object BindingWriter {
             case _                                                  =>
               violations += Violation(
                 name.as(
-                  s"'${name.value}' is given the effect '${ability.abilityName}' here, which this definition has " +
-                    "no implementation of to give."
+                  s"'${name.value}' may perform the effect '${ability.abilityName}' here, which this definition " +
+                    "neither handles nor declares."
                 ),
                 Seq(
-                  s"Declare '${ability.abilityName}' in this definition's own `uses` clause so its caller " +
-                    s"supplies it, pass '${name.value}' to a parameter that supplies it, or name an implementation " +
-                    "on the slot with `with`."
+                  s"Handle it by passing '${name.value}' to a parameter that discharges it (such as `catch` or " +
+                    "`runThrow`) or by naming an implementation on its slot with `with`, or add " +
+                    s"'${ability.abilityName}' to this definition's `uses` clause to pass it on to its caller."
                 )
               )
           }
