@@ -42,4 +42,4 @@ def prepend[A](list: List[A], element: A): List[A]
  * The fold is **effect-transparent**: `combine` may perform effects, and they run once per element in order, on
  * the caller's own effects. A fold whose `combine` is pure performs none, and costs nothing for the possibility.
  */
-def foldLeft[A, B](initial: B, combine uses *: A => B => B, list: List[A]): B
+def foldLeft[A, B](initial: B, combine uses *: A => B => B, list: List[A]) uses *: B

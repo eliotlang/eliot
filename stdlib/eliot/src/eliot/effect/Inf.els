@@ -23,5 +23,5 @@ effect Inf {
     * `step` is a suspended slot supplying nothing, so it performs exactly what the enclosing definition
     * declares, on the bindings it was written under.
     */
-   def forever(step uses *: Unit): Unit
+   def forever(step uses *: Unit) uses *: Unit
 }

@@ -17,7 +17,7 @@ implement[X] Dep[X](cell: DepCell[X]) {
  * result — nothing writes this cell, so its final content is `x` again. The platform body of the base's body-less
  * signature.
  */
-def provide[X, A](x: X, computation uses *, Dep[X]: A): A = withCellInternal(x, computation, a -> _ -> a)
+def provide[X, A](x: X, computation uses *, Dep[X]: A) uses *: A = withCellInternal(x, computation, a -> _ -> a)
 
 /**
  * The cell `dependency` reads: made by `withCellInternal`. It has no constructor, so nothing else
@@ -30,7 +30,7 @@ type DepCell[S]
  * `eliot.effect.State`'s leaf of the same shape and purpose; per-module `private` means each module declares its own.
  * Implemented by the backend. `body` is given `Dep[S]` and the cell, as `State`'s copy gives `State[S]` (D20 rule 5).
  */
-private def withCellInternal[S, A, R](initial: S, body uses *, Dep[S]: A, combine uses *: A => S => R): R
+private def withCellInternal[S, A, R](initial: S, body uses *, Dep[S]: A, combine uses *: A => S => R) uses *: R
 
 /**
  * The content of `cell`. Implemented by the backend.

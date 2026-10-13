@@ -101,7 +101,7 @@ class EffectSyntaxParserTest extends ProcessorTest(new Tokenizer(), new ASTParse
   }
 
   "with in type position" should "bind a parameter's type, after its clause's entry" in {
-    argumentType("def mocked(body uses *, Console with mockConsole: Unit): Unit")
+    argumentType("def mocked(body uses *, Console with mockConsole: Unit) uses *: Unit")
       .asserting(_ shouldBe Seq("{Console} Unit with mockConsole"))
   }
 

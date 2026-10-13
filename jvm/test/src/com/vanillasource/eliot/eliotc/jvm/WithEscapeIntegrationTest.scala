@@ -26,7 +26,7 @@ class WithEscapeIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       recording +
         """
-          |def capture(body uses *, Console: Unit): String = runWriterToLog(body with rec)
+          |def capture(body uses *, Console: Unit) uses *: String = runWriterToLog(body with rec)
           |
           |def main uses Console: Unit = printLine("log=" ++ capture(printLine("hi")))
           |""".stripMargin
@@ -37,7 +37,7 @@ class WithEscapeIntegrationTest extends FullIntegrationTest {
     compileForErrors(
       recording +
         """
-          |def capture(body uses *: Unit): String = runWriterToLog(body with rec)
+          |def capture(body uses *: Unit) uses *: String = runWriterToLog(body with rec)
           |
           |def main uses Console: Unit = printLine(capture(printLine("hi")))
           |""".stripMargin
@@ -53,7 +53,7 @@ class WithEscapeIntegrationTest extends FullIntegrationTest {
     compileForErrors(
       recording +
         """
-          |def capture(body uses *, Console: Unit): String = runWriterToLog({
+          |def capture(body uses *, Console: Unit) uses *: String = runWriterToLog({
           |   body with rec
           |   body
           |})
@@ -67,7 +67,7 @@ class WithEscapeIntegrationTest extends FullIntegrationTest {
     compileForErrors(
       recording +
         """
-          |def capture(body uses *, Console with loud: Unit): String = runWriterToLog(body with rec)
+          |def capture(body uses *, Console with loud: Unit) uses *: String = runWriterToLog(body with rec)
           |
           |def main uses Console: Unit = printLine(capture(printLine("hi")))
           |""".stripMargin
@@ -80,7 +80,7 @@ class WithEscapeIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       recording +
         """
-          |def capture(body uses *, Console with rec: Unit) uses Console: String = {
+          |def capture(body uses *, Console with rec: Unit) uses *, Console: String = {
           |   printLine("own")
           |   runWriterToLog(body)
           |}
@@ -94,7 +94,7 @@ class WithEscapeIntegrationTest extends FullIntegrationTest {
     compileForErrors(
       recording +
         """
-          |def capture(body uses *, Console with rec: Unit) uses Console: String = runWriterToLog(body)
+          |def capture(body uses *, Console with rec: Unit) uses *, Console: String = runWriterToLog(body)
           |
           |def main uses Console: Unit = printLine(capture(printLine("hi")))
           |""".stripMargin

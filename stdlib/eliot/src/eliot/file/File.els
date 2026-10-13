@@ -125,7 +125,7 @@ effect FileSystem {
  * def echoFile(p: Path) uses Console, FileSystem, Throw[IoError]: Unit = foreachLine(printLine, p)
  * ```
  */
-def foreachLine(action uses *: String => Unit, path: Path) uses FileSystem, Throw[IoError]: Unit = {
+def foreachLine(action uses *: String => Unit, path: Path) uses *, FileSystem, Throw[IoError]: Unit = {
    val lines = readLines(path)
    lines.foreach(action)
 }

@@ -1,7 +1,7 @@
 // Merge copy of the base declaration so the implementation below can resolve it (name resolution is per-file). The
 // merge verifies this copy agrees with the abstract declaration in the stdlib layer, which carries the documentation.
 effect Inf {
-   def forever(step uses *: Unit): Unit
+   def forever(step uses *: Unit) uses *: Unit
 }
 
 /**
@@ -10,11 +10,11 @@ effect Inf {
  * suspended, so each iteration re-runs it and its effects repeat.
  */
 implement Inf {
-   def forever(step uses *: Unit): Unit = foreverInternal(step)
+   def forever(step uses *: Unit) uses *: Unit = foreverInternal(step)
 }
 
 /**
  * The single non-terminating operation: invokes a suspended computation endlessly. `private` so divergence is
  * reachable only through `forever`, which uses `Inf`. Implemented by the backend as an unbounded loop.
  */
-private def foreverInternal(step uses *: Unit): Unit
+private def foreverInternal(step uses *: Unit) uses *: Unit

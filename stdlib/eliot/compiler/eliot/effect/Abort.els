@@ -24,7 +24,7 @@ implement Abort {
  * Discharge `Abort` on the compile track: `Some(a)` if the computation finished, `None` if it left. The platform body
  * of the base's body-less signature — and, through the base's `else`, what discharges every `if..else`.
  */
-def runAbort[A](obj uses *, Abort: A): Option[A] = foldEither(_ -> None, a -> Some(a), escape(Aborted[], obj))
+def runAbort[A](obj uses *, Abort: A) uses *: Option[A] = foldEither(_ -> None, a -> Some(a), escape(Aborted[], obj))
 
 /**
  * The frame key of this module's escape, and nothing else: an abstract type with no representation, whose only role is

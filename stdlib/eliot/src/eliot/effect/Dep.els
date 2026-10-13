@@ -45,4 +45,4 @@ effect Dep[X] {
  *
  * Body-less here and bodied per platform, over that platform's private cell primitive.
  */
-def provide[X, A](x: X, computation uses *, Dep[X]: A): A
+def provide[X, A](x: X, computation uses *, Dep[X]: A) uses *: A

@@ -30,7 +30,7 @@ class CodeAndValueIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       """import eliot.effect.Console
         |
-        |def applyTwice(f uses *: String => Unit): Unit = {
+        |def applyTwice(f uses *: String => Unit) uses *: Unit = {
         |   f("a")
         |   f("b")
         |}
@@ -58,18 +58,18 @@ class CodeAndValueIntegrationTest extends FullIntegrationTest {
         |
         |data Holder(run: String => Unit)
         |
-        |def capture(f uses *: String => Unit): Holder = Holder(f)
+        |def capture(f uses *: String => Unit) uses *: Holder = Holder(f)
         |
         |def main uses Console: Unit = run(capture(s -> printLine(s)))("hi")
         |""".stripMargin
-    ).asserting(_ should include(":5:56:'f' is code its caller wrote: it can be called or passed on, not kept."))
+    ).asserting(_ should include(":5:63:'f' is code its caller wrote: it can be called or passed on, not kept."))
   }
 
   "a callback returned as a result" should "be rejected as kept" in {
     compileForErrors(
       """import eliot.effect.Console
         |
-        |def keep(f uses *: String => Unit): String => Unit = f
+        |def keep(f uses *: String => Unit) uses *: String => Unit = f
         |
         |def main uses Console: Unit = keep(s -> printLine(s))("hi")
         |""".stripMargin
@@ -80,11 +80,11 @@ class CodeAndValueIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       """import eliot.effect.Console
         |
-        |def each(action uses *: String => Unit): Unit = {
+        |def each(action uses *: String => Unit) uses *: Unit = {
         |   action("a")
         |   action("b")
         |}
-        |def relay(action uses *: String => Unit): Unit = each(action)
+        |def relay(action uses *: String => Unit) uses *: Unit = each(action)
         |
         |def main uses Console: Unit = relay(s -> printLine(s))
         |""".stripMargin
@@ -97,11 +97,11 @@ class CodeAndValueIntegrationTest extends FullIntegrationTest {
         |
         |data Holder(run: String => String)
         |
-        |def defer(body uses *: String): Holder = Holder(s -> body)
+        |def defer(body uses *: String) uses *: Holder = Holder(s -> body)
         |
         |def main uses Console: Unit = printLine(run(defer("x"))("y"))
         |""".stripMargin
-    ).asserting(_ should include(":5:54:'body' is code its caller wrote, and a function value cannot capture it."))
+    ).asserting(_ should include(":5:61:'body' is code its caller wrote, and a function value cannot capture it."))
   }
 
   // §8 item 11: a lambda written in a value position captured the enclosing bindings.
@@ -178,7 +178,7 @@ class CodeAndValueIntegrationTest extends FullIntegrationTest {
     compileForErrors(
       """import eliot.effect.Console
         |
-        |def produce(f uses *: String => (String => Unit)): String => Unit = f("x")
+        |def produce(f uses *: String => (String => Unit)) uses *: String => Unit = f("x")
         |
         |def main uses Console: Unit = produce(s -> t -> printLine(t))("y")
         |""".stripMargin
@@ -223,7 +223,7 @@ class CodeAndValueIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       """import eliot.effect.Console
         |
-        |def applyTwice(f uses *: String => Unit): Unit = {
+        |def applyTwice(f uses *: String => Unit) uses *: Unit = {
         |   f("a")
         |   f("b")
         |}

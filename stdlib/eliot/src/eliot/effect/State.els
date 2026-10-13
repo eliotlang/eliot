@@ -46,16 +46,16 @@ def updateState[S](f: S => S) uses State[S]: Unit = putState(f(state))
  * Body-less here and bodied per platform: threading a value through calls that never mention it is the cell
  * primitive, and a public cell is Landin's knot (`docs/effects.md` §9.6).
  */
-def runStateToPair[S, A](initial: S, p uses *, State[S]: A): Pair[A, S]
+def runStateToPair[S, A](initial: S, p uses *, State[S]: A) uses *: Pair[A, S]
 
 /**
  * Discharge the `State[S]` effect keeping only the result, discarding the final state. Threads `initial` through the
  * computation and yields its value.
  */
-def runStateToValue[S, A](initial: S, p uses *, State[S]: A): A = first(runStateToPair(initial, p))
+def runStateToValue[S, A](initial: S, p uses *, State[S]: A) uses *: A = first(runStateToPair(initial, p))
 
 /**
  * Discharge the `State[S]` effect keeping only the final state, discarding the result. Threads `initial` through the
  * computation and yields the state left behind.
  */
-def runStateToFinalState[S, A](initial: S, p uses *, State[S]: A): S = second(runStateToPair(initial, p))
+def runStateToFinalState[S, A](initial: S, p uses *, State[S]: A) uses *: S = second(runStateToPair(initial, p))

@@ -321,7 +321,7 @@ class OperatorResolverProcessorTest
   "effect-set sugar" should "mark the minted binder with the ability it binds, thunk a row parameter, and leave the return bare" in {
     val source =
       "data Str\ndata Unt\nability Suspend[F[_]] { def delay(value: Str): F[Str] }\n" +
-        "def sugar(x uses *, Suspend: Str) uses Suspend: Unt"
+        "def sugar(x uses *, Suspend: Str) uses *, Suspend: Unt"
     runEngineForResolvedValue(source, "sugar").asserting { sugar =>
       (signatureShow(sugar), constraintShow(sugar)) shouldBe (
         "(eliot.lang.Implementation::Implementation^Type(Test::Suspend^Suspend) :: Impl) -> " +
@@ -372,7 +372,7 @@ class OperatorResolverProcessorTest
   "the effect channel metadata" should "record open rows by position, resolved to ability FQNs" in {
     val source =
       "data Str\ndata Unt\nability Suspend[F[_]] { def delay(value: Str): F[Str] }\n" +
-        "def sugar(x uses *, Suspend: Str) uses Suspend: Unt"
+        "def sugar(x uses *, Suspend: Str) uses *, Suspend: Unt"
     runEngineForResolvedValue(source, "sugar").asserting { sugar =>
       (effectRowReturn(sugar), effectRowParameters(sugar)) shouldBe (Seq("Suspend"), Seq((0, Seq("Suspend"))))
     }

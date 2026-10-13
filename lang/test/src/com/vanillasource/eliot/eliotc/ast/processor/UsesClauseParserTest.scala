@@ -20,11 +20,44 @@ class UsesClauseParserTest extends ProcessorTest(new Tokenizer(), new ASTParser(
   }
 
   it should "follow the generic parameters and the parameter list" in {
-    returnType("def if[T](condition: Bool, value uses *: T) uses Abort: T").asserting(_ shouldBe Seq("{Abort} T"))
+    returnType("def if[T](condition: Bool, value uses *: T) uses *, Abort: T").asserting(_ shouldBe Seq("{Abort} T"))
   }
 
-  it should "reject `*`, which only a parameter's clause may write" in {
-    errors("def f uses *: Unit").asserting(_ shouldBe Seq("Expected ability name, but encountered symbol '*'."))
+  it should "reject `*` when no parameter has one" in {
+    errors("def f uses *: Unit").asserting(_ shouldBe Seq(strayStar))
+  }
+
+  it should "reject `*` when the only clause on a parameter is closed" in {
+    errors("def f[E, A](body uses Throw[E]: A) uses *: A").asserting(_ shouldBe Seq(strayStar))
+  }
+
+  "a definition with a `uses *` parameter" should "write `*` alone, which adds no entry" in {
+    returnType("def map[A, B](f uses *: A => B, list: List[A]) uses *: List[B]").asserting(_ shouldBe Seq("List[B]"))
+  }
+
+  it should "write `*` first, before its entries" in {
+    returnType("def if[T](condition: Bool, value uses *, Abort: T) uses *, Abort: T")
+      .asserting(_ shouldBe Seq("{Abort} T"))
+  }
+
+  it should "be refused without a clause" in {
+    errors("def when(condition: Bool, action uses *: Unit): Unit")
+      .asserting(_ shouldBe Seq(s"Expected $openClause, but encountered symbol ':'."))
+  }
+
+  it should "be refused with a clause not starting with `*`" in {
+    errors("def f(body uses *: Unit) uses Console: Unit")
+      .asserting(_ shouldBe Seq(s"Expected $openClause, but encountered identifier 'Console'."))
+  }
+
+  it should "be refused with `*` after an entry" in {
+    errors("def f(body uses *: Unit) uses Console, *: Unit")
+      .asserting(_ shouldBe Seq(s"Expected $openClause, but encountered identifier 'Console'."))
+  }
+
+  it should "count a function-typed code parameter" in {
+    errors("def catch[E, A](computation uses Throw[E]: A, onError uses *: E => A): A")
+      .asserting(_ shouldBe Seq(s"Expected $openClause, but encountered symbol ':'."))
   }
 
   it should "reject a `with`, as on a definition's own row" in {
@@ -32,29 +65,30 @@ class UsesClauseParserTest extends ProcessorTest(new Tokenizer(), new ASTParser(
   }
 
   "a parameter's `uses *`" should "be the empty row on a nullary type" in {
-    argument("def f(value uses *: T): T").asserting(_ shouldBe Seq(("{} T", false)))
+    argument("def f(value uses *: T) uses *: T").asserting(_ shouldBe Seq(("{} T", false)))
   }
 
   it should "be the row on the codomain of a function type" in {
-    argument("def f[A](action uses *: A => Unit, list: List[A]): Unit")
+    argument("def f[A](action uses *: A => Unit, list: List[A]) uses *: Unit")
       .asserting(_ shouldBe Seq(("A => {} Unit", false), ("List[A]", false)))
   }
 
   it should "reach the final codomain of a curried function type" in {
-    argument("def f[A, B](combine uses *: A => B => B): B").asserting(_ shouldBe Seq(("A => B => {} B", false)))
+    argument("def f[A, B](combine uses *: A => B => B) uses *: B").asserting(_ shouldBe Seq(("A => B => {} B", false)))
   }
 
   it should "stop at a parenthesized codomain, which is the function the code hands back" in {
-    argument("def f(make uses *: String => (String => Unit)): Unit")
+    argument("def f(make uses *: String => (String => Unit)) uses *: Unit")
       .asserting(_ shouldBe Seq(("String => {} String => Unit", false)))
   }
 
   it should "add the entries the callee gives" in {
-    argument("def runThrow[E, A](body uses *, Throw[E]: A): A").asserting(_ shouldBe Seq(("{Throw[E]} A", false)))
+    argument("def runThrow[E, A](body uses *, Throw[E]: A) uses *: A")
+      .asserting(_ shouldBe Seq(("{Throw[E]} A", false)))
   }
 
   it should "put each entry's implementation after the slot's type, in the order written" in {
-    argument("def mocked(body uses *, Mocking with recording, Calls with journal: Unit): Unit")
+    argument("def mocked(body uses *, Mocking with recording, Calls with journal: Unit) uses *: Unit")
       .asserting(_ shouldBe Seq(("{Mocking, Calls} Unit with recording with journal", false)))
   }
 
@@ -70,7 +104,7 @@ class UsesClauseParserTest extends ProcessorTest(new Tokenizer(), new ASTParser(
   }
 
   it should "reject a trailing `with`, which belongs to the entry" in {
-    errors("def f(body uses *, Console: Unit with mock): Unit").asserting(_ should not be empty)
+    errors("def f(body uses *, Console: Unit with mock) uses *: Unit").asserting(_ should not be empty)
   }
 
   "a parameter's clause without `*`" should "be the same row, closed" in {
@@ -112,7 +146,7 @@ class UsesClauseParserTest extends ProcessorTest(new Tokenizer(), new ASTParser(
   }
 
   it should "be refused after a uses clause" in {
-    errors("def f(body uses *: {Console} Unit): Unit = body").asserting(_ shouldBe Seq(rowInType))
+    errors("def f(body uses *: {Console} Unit) uses *: Unit = body").asserting(_ shouldBe Seq(rowInType))
   }
 
   it should "be refused with a pinned base, which no longer parses as a row at all" in {
@@ -127,6 +161,14 @@ class UsesClauseParserTest extends ProcessorTest(new Tokenizer(), new ASTParser(
   it should "not admit a row anywhere but its whole body" in {
     errors("type Handler = String => {Console} Unit").asserting(_ shouldBe Seq(rowInType))
   }
+
+  private val openClause: String =
+    "`uses *` before the colon, since a parameter runs code its caller wrote and the call performs what that code " +
+      "does (`def map[A, B](f uses *: A => B, list: List[A]) uses *: List[B]`)"
+
+  private val strayStar: String =
+    "Expected ability name, since only a definition with a `uses *` parameter writes `*` in its own clause, " +
+      "but encountered symbol '*'."
 
   private val rowInType: String =
     "Expected a type, with its effects in a `uses` clause before the colon (`def f uses Console: Unit`, " +

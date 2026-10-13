@@ -44,7 +44,7 @@ prefix def !(a: Bool): Bool
  *    fold(ok, printLine("all good"), printLine("check failed"))
  * ```
  */
-def fold[A](condition: Bool, whenTrue uses *: A, whenFalse uses *: A): A { join(whenTrue, whenFalse) }
+def fold[A](condition: Bool, whenTrue uses *: A, whenFalse uses *: A) uses *: A { join(whenTrue, whenFalse) }
 
 /**
  * Conditional execution — the `if` of `if..else`: yields `value` when `condition` holds, otherwise short-circuits
@@ -75,7 +75,7 @@ def fold[A](condition: Bool, whenTrue uses *: A, whenFalse uses *: A): A { join(
  * def requirePositive(n: Int) uses Abort: Int = if(n > 0) n
  * ```
  */
-def if[T](condition: Bool, value uses *, Abort: T) uses Abort: T = fold(condition, value, abort)
+def if[T](condition: Bool, value uses *, Abort: T) uses *, Abort: T = fold(condition, value, abort)
 
 /**
  * Run `action` when `condition` holds, and do nothing otherwise — a one-armed `if` for a statement, with no `Abort`
@@ -88,7 +88,7 @@ def if[T](condition: Bool, value uses *, Abort: T) uses Abort: T = fold(conditio
  * def refuseEmpty(lines: List[String]) uses Throw[String]: Unit = when(lines.isEmpty) raise("nothing to run")
  * ```
  */
-def when(condition: Bool, action uses *: Unit): Unit = fold(condition, action, unit)
+def when(condition: Bool, action uses *: Unit) uses *: Unit = fold(condition, action, unit)
 
 /**
  * Run `action` unless `condition` holds — `when` with the condition negated, which is how a check reads: state what
@@ -101,4 +101,4 @@ def when(condition: Bool, action uses *: Unit): Unit = fold(condition, action, u
  * }
  * ```
  */
-def unless(condition: Bool, action uses *: Unit): Unit = fold(condition, unit, action)
+def unless(condition: Bool, action uses *: Unit) uses *: Unit = fold(condition, unit, action)

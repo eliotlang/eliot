@@ -346,7 +346,7 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
     compileAndRun(
       """import eliot.effect.Console
         |
-        |def echo[A](value uses *: A): A = value
+        |def echo[A](value uses *: A) uses *: A = value
         |
         |def main uses Console: Unit = {
         |   printLine(echo("hello"))

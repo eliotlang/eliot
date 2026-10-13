@@ -18,7 +18,7 @@
  * and name, so `eliot.effect.Throw` and `eliot.effect.Abort` both import them from here. They are compile-track only —
  * nothing on the runtime track declares them — so no user program can reach them.
  */
-def escape[E, A](key: Type, body uses *: A): Either[E, A]
+def escape[E, A](key: Type, body uses *: A) uses *: Either[E, A]
 
 /**
  * Leave through the nearest enclosing `escape` frame whose key equals `key`, carrying `e`. Control does not return, so

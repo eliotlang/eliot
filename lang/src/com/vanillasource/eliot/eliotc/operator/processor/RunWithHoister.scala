@@ -9,10 +9,10 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
 
 /** A `with` around a **run of a code parameter** is that parameter's slot `with` (`docs/effects.md` §2, D23).
   *
-  * `def h(body uses *, Console: Unit): String = runWriterToLog(body with rec)` says that the `Console` escaping from
-  * `body` — a listed effect, which `h` must handle or declare — is handled by `rec`. But `body` is compiled where its
-  * caller wrote it, and its caller reads only `h`'s declaration, so the implementation has to be *in* the declaration:
-  * this rewrite moves it there, making `h` the definition its author could have written as
+  * `def h(body uses *, Console: Unit) uses *: String = runWriterToLog(body with rec)` says that the `Console`
+  * escaping from `body` — a listed effect, which `h` must handle or declare — is handled by `rec`. But `body` is
+  * compiled where its caller wrote it, and its caller reads only `h`'s declaration, so the implementation has to be
+  * *in* the declaration: this rewrite moves it there, making `h` the definition its author could have written as
   * `def h(body uses *, Console with rec: Unit)`. It reads the definition's own text and nothing else, so the binding is
   * still written from declarations, never inferred from a callee's body.
   *

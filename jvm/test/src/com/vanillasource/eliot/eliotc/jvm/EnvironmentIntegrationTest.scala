@@ -42,7 +42,7 @@ class EnvironmentIntegrationTest extends FullIntegrationTest {
         |   def readLine: Option[String] = None
         |}
         |
-        |def counted(body uses *, Throw[Bool]: Unit): String = catch[Bool, String]({
+        |def counted(body uses *, Throw[Bool]: Unit) uses *: String = catch[Bool, String]({
         |   body
         |   "finished"
         |}, b -> "bool")
@@ -82,7 +82,7 @@ class EnvironmentIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       """import eliot.effect.Console
         |
-        |def guarded(body uses *: Unit) uses Console: Unit =
+        |def guarded(body uses *: Unit) uses *, Console: Unit =
         |   catch[String, Unit]({
         |      body
         |      printLine("helper: body finished")
@@ -100,7 +100,7 @@ class EnvironmentIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       """import eliot.effect.Console
         |
-        |def counted(body uses *: Unit) uses Console: Unit =
+        |def counted(body uses *: Unit) uses *, Console: Unit =
         |   printLine("helper's state: " ++ runStateToFinalState("helper", body))
         |
         |def main uses Console: Unit =
@@ -141,7 +141,7 @@ class EnvironmentIntegrationTest extends FullIntegrationTest {
       compileAndRun(
         """import eliot.effect.Console
           |
-          |def describedAs(body uses *, Throw[String]: Unit, message: String) uses Throw[String]: Unit =
+          |def describedAs(body uses *, Throw[String]: Unit, message: String) uses *, Throw[String]: Unit =
           |   catch[String, Unit](body, cause -> raise(message ++ " (" ++ cause ++ ")"))
           |def main uses Console: Unit = catch[String, Unit](describedAs(raise("boom"), "described"), e -> printLine(e))""".stripMargin
       ).asserting(_ shouldBe "described (boom)")
@@ -151,7 +151,7 @@ class EnvironmentIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       """import eliot.effect.Console
         |
-        |def twice(body uses *, Throw[String]: Unit) uses Throw[String]: Unit = {
+        |def twice(body uses *, Throw[String]: Unit) uses *, Throw[String]: Unit = {
         |   body
         |   body
         |}
@@ -172,7 +172,7 @@ class EnvironmentIntegrationTest extends FullIntegrationTest {
           |   def readLine: Option[String] = None
           |}
           |
-          |def guarded(body uses *, Console with refusingConsole, Throw[String]: Unit) uses Throw[Bool]: String = {
+          |def guarded(body uses *, Console with refusingConsole, Throw[String]: Unit) uses *, Throw[Bool]: String = {
           |   val outcome = catch[String, String]({
           |      body
           |      "finished"

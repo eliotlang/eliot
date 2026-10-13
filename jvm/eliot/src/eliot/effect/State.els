@@ -22,7 +22,7 @@ implement[S] State[S](cell: StateCell[S]) {
  * Nesting is the user's: `runStateToPair(s, runThrow(c))` keeps the state across a `raise`, `runThrow(runStateToPair(s, c))`
  * does not, because the cell is gone when the frame it sat inside is exited.
  */
-def runStateToPair[S, A](initial: S, p uses *, State[S]: A): Pair[A, S] =
+def runStateToPair[S, A](initial: S, p uses *, State[S]: A) uses *: Pair[A, S] =
    withCellInternal(initial, p, a -> s -> Pair(a, s))
 
 /**
@@ -44,7 +44,7 @@ type StateCell[S]
  * nothing, so the platform's default reaches a discharger's block here and nowhere else (`docs/effects.md` §11, D20
  * rule 5).
  */
-private def withCellInternal[S, A, R](initial: S, body uses *, State[S]: A, combine uses *: A => S => R): R
+private def withCellInternal[S, A, R](initial: S, body uses *, State[S]: A, combine uses *: A => S => R) uses *: R
 
 /**
  * The content of `cell`. Implemented by the backend.

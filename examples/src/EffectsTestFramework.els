@@ -44,7 +44,7 @@ implement recordingConsole: Console {
 // What a program using `Console` wrote, with no console involved. The `with` on the *slot's clause entry* binds the
 // code the caller writes there — the only way a callee binds calls it cannot see — and the `Writer[String]` the
 // double's clauses perform is supplied and discharged by `runWriterToLog`.
-def transcriptOf(program uses *, Console with recordingConsole: Unit): String = runWriterToLog(program)
+def transcriptOf(program uses *, Console with recordingConsole: Unit) uses *: String = runWriterToLog(program)
 
 data TestResult(name: String, failure: Option[String])
 

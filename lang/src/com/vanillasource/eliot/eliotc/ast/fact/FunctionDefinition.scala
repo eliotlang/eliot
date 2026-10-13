@@ -127,6 +127,17 @@ object FunctionDefinition {
     } yield (vis, fixity, prec)).atomic()
   }
 
+  /** What a definition running its caller's code is refused with when its own clause does not start with `*` (D24). */
+  private val openClauseExpected: String =
+    "`uses *` before the colon, since a parameter runs code its caller wrote and the call performs what that code " +
+      "does (`def map[A, B](f uses *: A => B, list: List[A]) uses *: List[B]`)"
+
+  /** What a `*` on a definition with no `uses *` parameter is refused with: there is no caller's code it could stand
+    * for (D24).
+    */
+  private val strayStarExpected: String =
+    "ability name, since only a definition with a `uses *` parameter writes `*` in its own clause"
+
   given ASTComponent[FunctionDefinition] = new ASTComponent[FunctionDefinition] {
     private val functionBody =
       (symbol("=") *> sourced(component[Expression])).optional()
@@ -135,21 +146,41 @@ object FunctionDefinition {
       acceptIfAll(isIdentifier, isLowerCase)("function name") or acceptIf(isUserOperator, "function name")
 
     /** A definition's own `uses` clause (`def greet(name: String) uses Console: Unit`, `docs/effects.md` D21): the
-      * effects its caller hands it. Entries only — `*` is a parameter's, since a body has no caller's text to be open
-      * to, and a `with` here would bind the definition's own row, which is rejected in either spelling.
+      * effects its caller hands it. A `with` here would bind the definition's own row, which is rejected in either
+      * spelling.
+      *
+      * `*` comes first exactly when a parameter's clause has one (D24): such a definition runs code its caller wrote,
+      * and the call performs whatever that code does, so the definition's own clause says so and its signature's result
+      * side is complete without reading the parameters:
+      *
+      * {{{
+      * def map[A, B](f uses *: A => B, list: List[A]) uses *: List[B]
+      * def if[T](condition: Bool, value uses *, Abort: T) uses *, Abort: T
+      * }}}
+      *
+      * The `*` is a marker only — checked here and dropped, it mints no binder and adds no entry, so no phase past this
+      * one learns it.
       */
-    private val usesClause: Parser[Sourced[Token], Seq[UnresolvedAbilityConstraint[Sourced[Expression]]]] =
-      (keyword("uses") *>
-        component[UnresolvedAbilityConstraint[Sourced[Expression]]].atLeastOnceSeparatedBy(symbol(",")))
-        .optional()
-        .map(_.getOrElse(Seq.empty))
+    private def usesClause(
+        runsCallersCode: Boolean
+    ): Parser[Sourced[Token], Seq[UnresolvedAbilityConstraint[Sourced[Expression]]]] =
+      if (runsCallersCode)
+        acceptIfAll(isKeyword, hasContent("uses"))(openClauseExpected) *>
+          acceptIfAll(isSymbol, hasContent("*"))(openClauseExpected) *>
+          (symbol(",") *> component[UnresolvedAbilityConstraint[Sourced[Expression]]]).anyTimes()
+      else
+        (keyword("uses") *>
+          (symbol("*").refusedAs(strayStarExpected) or
+            component[UnresolvedAbilityConstraint[Sourced[Expression]]].atLeastOnceSeparatedBy(symbol(","))))
+          .optional()
+          .map(_.getOrElse(Seq.empty))
 
     override val parser: Parser[Sourced[Token], FunctionDefinition] = for {
       (vis, fixity, prec) <- modifierPrefix("def")
       name                <- functionName
       genericParameters   <- component[Seq[GenericParameter]]
       args                <- optionalArgumentListOf(ArgumentDefinition.parameter)
-      uses                <- usesClause
+      uses                <- usesClause(args.exists(_.openRow))
       _                   <- symbol(":")
       returnType          <- sourced(Expression.typeRunParser)
       // The clause's entries are the row on the return type, `{Console} Unit`, so no phase past this one learns the

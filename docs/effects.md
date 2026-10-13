@@ -2,7 +2,7 @@
 
 **Status (2026-10-13).** This is the effect system's single document. What the tree builds is effects v6 (2026-09-09)
 in D20/D21's `uses` surface (2026-10-09/10) with D20c option 5's environments and (b) (2026-10-12), and D22's reading
-of a listed effect and D23's reading of `with` (2026-10-13). An effect is an ability declared with the `effect`
+of a listed effect, D23's reading of `with` and D24's `uses *` on a definition (2026-10-13). An effect is an ability declared with the `effect`
 keyword. A definition's `uses` clause says what its caller hands it. An implementation has two halves: its **code**, a
 compile-time name written at every reference by a syntax-directed pass that reads declarations only, and its
 **environment** (an escape frame, a cell, its own parameters), a runtime value threaded after monomorphization and
@@ -66,7 +66,8 @@ D20a, D20c and D3 stay open until decided; none blocks the steps above.
 >
 > **A listed effect is the callee's to handle or to declare.** An effect a code parameter's clause lists, the callee
 > may catch around the code; if it does not, it causes that effect itself and must declare it. An effect the code uses
-> without the clause listing it is invisible to the callee, which can neither catch it nor needs to declare it.
+> without the clause listing it is invisible to the callee, which can neither catch it nor needs to declare it. A
+> definition taking such code says so in its own clause too, `uses *` first: a call to it performs what that code does.
 
 1. **Effects run, and resolve, where they are written.** An effectful expression in a value position performs its
    effects there: strict call-by-value in **every** value position, a bare generic slot included, so
@@ -121,10 +122,11 @@ D20a, D20c and D3 stay open until decided; none blocks the steps above.
 6. **A field holds a value.** A `data` field takes no clause and no row, and there is no stored computation: store
    data describing the work, and perform it where the effects are in scope (§2.3).
 
-**Consequences the user sees.** **Purity reads off the signature as the absence of one word.** No `uses` anywhere:
-pure, and total, since `Inf` is an entry like any other. Code parameters and no clause of its own: the definition
-adds no effect, and a call performs exactly what its caller wrote in the code — `foreach`, `catch`, `orElse`, `.`.
-A clause on the definition: it performs those, received from its caller. So `xs.foreach(x -> printLine(x))` inside
+**Consequences the user sees.** **Purity reads off the definition's own clause as the absence of one word.** No
+`uses` before the result type: a call is pure, and total, since `Inf` is an entry like any other — whatever its
+arguments are, since a parameter with a clause forces one there (D24). `uses *` alone: the definition adds no effect,
+and a call performs exactly what its caller wrote in the code — `foreach`, `catch`, `orElse`, `.`. Entries in the
+clause: it performs those, received from its caller. So `xs.foreach(x -> printLine(x))` inside
 a `uses Console` definition needs no declaration on `foreach`: the lambda is the caller's code, the `Console` is the
 caller's, and the collections library stays effect-oblivious. Every diagnostic speaks the clause's vocabulary ("add
 it to its `uses` clause").
@@ -157,30 +159,34 @@ def greet(name: String) uses Console: Unit = printLine("Hello, " ++ name ++ "!")
 def main uses Console: Unit = greet("Bob")
 
 def updateState[S](f: S => S) uses State[S]: Unit = putState(f(state))           -- f is a pure value
-def when(condition: Bool, action uses *: Unit): Unit = fold(condition, action, unit)
-def foreach[A](action uses *: A => Unit, list: List[A]): Unit
-def runThrow[E, A](obj uses *, Throw[E]: A): Either[E, A]
-def catch[E, A](computation uses *, Throw[E]: A, onError uses *: E => A): A
+def when(condition: Bool, action uses *: Unit) uses *: Unit = fold(condition, action, unit)
+def foreach[A](action uses *: A => Unit, list: List[A]) uses *: Unit
+def runThrow[E, A](obj uses *, Throw[E]: A) uses *: Either[E, A]
+def catch[E, A](computation uses *, Throw[E]: A, onError uses *: E => A) uses *: A
 ```
 
 | clause | where | what it says | lowers to |
 | --- | --- | --- | --- |
 | none | a parameter | a value, computed before the call; pure, keepable | its type |
 | `uses E, F` | a definition | what its caller hands it | one phantom binder per entry (§3.1) |
+| `uses *, E` | a definition | the same, and it runs code a parameter's `uses *` takes, so a call performs what that code does (D24) | nothing for `*`: a marker the parser checks and drops |
 | `uses *` | a parameter | the caller's code, open to the effects in scope where it is written | `Unit => A`, or its function type |
 | `uses *, E` | a parameter | the same, plus `E`, which the callee handles or declares — a handler's slot | the same |
 | `uses E` | a parameter | code that may use `E` and nothing from around it — a **closed** clause | the same |
 
-`*` comes first and at most once, and only on a parameter, since only an argument has a caller's text to be open
-to. It is not "any effects" and not a row variable: it names *the effects in scope where the argument is written*,
+`*` comes first and at most once. On a parameter it opens the argument to the caller's text, since only an argument
+has a caller's text to be open to; on a definition it is written **exactly when** some parameter's clause has one, and
+says that a call performs what the caller's code there does — so the result side of a signature is complete without
+reading the parameters (D24). It is not "any effects" and not a row variable: it names *the effects in scope where the argument is written*,
 which is rule 1's lexical capture, so nothing is unified. A code parameter's type is read as the function the callee
 calls it at: one with no arrow takes nothing and runs when mentioned, and for one with an arrow the clause belongs
 to its final codomain as written — `f uses *: String => (String => Unit)` is code of one argument handing back a
 function value. Code that should *produce* a function is `g uses *: Unit => F`, applied by the callee.
 
-The parser refuses the rest: `uses *` on a definition (a body has no caller's text to be open to, and the parameter
-list already says which code it runs), `*` anywhere but first, an entry-less clause, `uses` on a `data` field, and
-`with` after a definition's clause. **The brace spelling is gone**: a row written in any type — a return type, a
+The parser refuses the rest: a definition with a `uses *` parameter whose own clause does not start with `*` (*"Expected
+`uses *` before the colon, since a parameter runs code its caller wrote and the call performs what that code does"*),
+`*` on a definition with no such parameter (a closed clause is not one), `*` anywhere but first, an entry-less clause,
+`uses` on a `data` field, and `with` after a definition's clause. **The brace spelling is gone**: a row written in any type — a return type, a
 parameter, an arrow codomain, the empty `{}` — is *"Expected a type, with its effects in a `uses` clause before the
 colon (`def f uses Console: Unit`, `body uses *, Throw[E]: A`), but encountered symbol '{'"*, and the pinned form
 `{E | G} A` does not parse at all. The one place a row is still written in braces is a row alias's body (§2.4).
@@ -239,8 +245,8 @@ both application under the types-are-values cornerstone.
 def greetTranscript: String = runWriterToLog(greet with session)
 def sorted: List[Int] = sort(xs) with reverseOrd
 
-def transcriptOf(program uses *, Console with recordingConsole: Unit): String = runWriterToLog(program)
-def mocked(body uses *, Console with mockConsole, …, Mocking with recording, Calls with journal, …: Unit) uses …
+def transcriptOf(program uses *, Console with recordingConsole: Unit) uses *: String = runWriterToLog(program)
+def mocked(body uses *, Console with mockConsole, …, Mocking with recording, Calls with journal, …: Unit) uses *, …
 ```
 
 The clause form reads *"this argument, run with `recordingConsole` for its `Console`"*: the actual delivered there
@@ -264,15 +270,15 @@ A clause on a **definition** is what it performs and does not discharge, receive
 **parameter** is what makes the argument code, and it is the declaration that lets the walk cross into the argument
 (rule 2).
 
-`uses *` alone says *"the caller's code, and I add nothing to it"*. It is the spelling of every
-effect-transparent code slot — `fold`'s arms, `orElse`'s fallback, `catch`'s handler, `.`'s `f`, `foldLeft`'s
+`uses *` alone says *"the caller's code, and I add nothing to it"*, and the definition repeats it in its own clause
+(D24), where it adds no entry. It is the spelling of every effect-transparent code slot — `fold`'s arms, `orElse`'s fallback, `catch`'s handler, `.`'s `f`, `foldLeft`'s
 `combine`, `forever`'s `step`. It supplies no entry, so an operation inside such an argument is bound by whatever the
 *caller* has in scope, and the argument is not run until the callee runs it.
 
 ```eliot
-def fold[A](condition: Bool, whenTrue uses *: A, whenFalse uses *: A): A { join(whenTrue, whenFalse) }
-def foldLeft[A, B](initial: B, combine uses *: A => B => B, list: List[A]): B
-infix left below apply def .[A, B](a: A, f uses *: A => B): B = f(a)
+def fold[A](condition: Bool, whenTrue uses *: A, whenFalse uses *: A) uses *: A { join(whenTrue, whenFalse) }
+def foldLeft[A, B](initial: B, combine uses *: A => B => B, list: List[A]) uses *: B
+infix left below apply def .[A, B](a: A, f uses *: A => B) uses *: B = f(a)
 ```
 
 **Which a function parameter is, is the base's decision, made per signature.** `updateState`'s `f: S => S` and
@@ -300,10 +306,10 @@ Which one an entry is, is decided as the declaration spells it, never at ground 
 `E = AssertionError`.
 
 ```eliot
-def if[T](condition: Bool, value uses *, Abort: T) uses Abort: T                   -- declares Abort: passed on
-def else[A](computation uses *, Abort: A, fallback uses *: A): A                   -- handles Abort here
-def catch[E, A](computation uses *, Throw[E]: A, onError uses *: E => A): A        -- handles Throw[E]
-def runStateToPair[S, A](initial: S, p uses *, State[S]: A): Pair[A, S]            -- handles State[S]
+def if[T](condition: Bool, value uses *, Abort: T) uses *, Abort: T                  -- declares Abort: passed on
+def else[A](computation uses *, Abort: A, fallback uses *: A) uses *: A              -- handles Abort here
+def catch[E, A](computation uses *, Throw[E]: A, onError uses *: E => A) uses *: A   -- handles Throw[E]
+def runStateToPair[S, A](initial: S, p uses *, State[S]: A) uses *: Pair[A, S]       -- handles State[S]
 ```
 
 Read as English they are already right, and that is the whole of what a discharger is: no tail, no base, no second
@@ -440,8 +446,8 @@ as the same `UnresolvedAbilityConstraint`, which is why an entry and a `~` const
 ### 2.6 What deliberately has no spelling
 
 - **A stored effectful computation** (§2.3), and **a native that keeps a callback** — the platform's to declare.
-- **`uses *` on a definition**, and **`with` after a definition's own clause**: each would be a second spelling of
-  something the signature already states.
+- **`with` after a definition's own clause**: a second spelling of something the signature already states. (`uses *`
+  on a definition was listed here too until D24 made it required, as a marker, where a parameter has one.)
 - **An effect variable** (`f uses E: A => B` with `uses E` on the callee, Koka's spelling) and **effects on a function
   type** (`A => B uses Console`). The first needs row unification, the closed inference class; it is also
   unnecessary, since code is resolved lexically and never kept, so every code argument of one call is written in
@@ -646,7 +652,7 @@ implement[E] Throw[E](frame: ThrowFrame[E]) {           -- jvm layer
    def raise[A](err: E): A = exitInternal(frame, err)
 }
 
-def runThrow[E, A](obj uses *, Throw[E]: A): Either[E, A] =
+def runThrow[E, A](obj uses *, Throw[E]: A) uses *: Either[E, A] =
    escapeInternal(obj, (err: E) -> Left(err), a -> Right(a))
 ```
 
@@ -830,8 +836,8 @@ write's own walk (§3.1), so this is a spec of `row/BindingWriter` rather than o
   here uses asks every caller to declare an effect on no evidence, all the way to `main`. Consumed means written from
   at least once — by an operation, a declaring callee, or a `with`'s clause bindings — on any path, so `if(ok, v)`
   consumes `Abort` whatever `ok` is. Running a code parameter consumes exactly the entries its slot **rides**, since
-  the block runs on the definition's received frame ((b), §3.4): `def passThrough[A](v uses *, Console: A) uses
-  Console: A = v` is accepted, while its `uses *` twin lists nothing, consumes nothing and is the error. Exempt: a
+  the block runs on the definition's received frame ((b), §3.4): `def passThrough[A](v uses *, Console: A) uses *,
+  Console: A = v` is accepted, while its twin over `v uses *: A` lists nothing, consumes nothing and is the error. Exempt: a
   body-less value (its clause is a contract a later layer bodies), a run boundary, and a signature's own references.
   An `implement` clause declares the union of its block's clause entries (`ImplementationRows`), so it is held only to
   the entries it wrote. The error waits for the definition's callees: a callee performing the effect *undeclared* is
@@ -1158,7 +1164,7 @@ From D20c option 5's decisions of 2026-10-12, in the order they would be built:
   keeping state without a `Writer`. One construct chooses code and supplies arguments; no keyword marks such an
   implementation (it would mark a property nothing reads, and reinstate the family bit §3.5 keeps out).
 - **User defaults with parameters**: `implement Config(s: Settings) { … }`, given by
-  `def withConfig[A](s: Settings, body uses *, Config: A): A = body with Config(s)` — `with Ability(args)` names the
+  `def withConfig[A](s: Settings, body uses *, Config: A) uses *: A = body with Config(s)` — `with Ability(args)` names the
   default by its ability and supplies its arguments, choosing nothing the declaration had not already chosen. This
   **amends §1 rule 5** when built: *a body gives a default only by supplying its parameters*, judged on the merged
   body, so an environment-free default (the platform's `Console`) is still given only at `main`.
@@ -1207,6 +1213,17 @@ Numbers are kept so citations resolve; the record of each is in git history (§1
   needs that today, and eliot-test's `pure { … }`, if reinstated, catches and re-raises explicitly. Rejected: always
   the caller's frame (makes `describedAs` unwritable — the "(a)" of 2026-10-12) and a new handler marker (a second
   spelling beside `uses`).
+- **D24** (2026-10-13): *should a definition's own clause say that a call performs what its code parameters do?*
+  Raised as a readability problem with D22: a reader of `map(f uses *: A => B, list: List[A]): List[B]` sees a pure
+  result and must read the parameters to learn otherwise. **Decided: `uses *` on a definition, written exactly when
+  some parameter's clause has `*`** — first, as on a parameter — so the result side of a signature is complete:
+  `map(…) uses *: List[B]`, `if[T](…, value uses *, Abort: T) uses *, Abort: T`, and no `uses` there means a pure
+  call. It is a **marker**, checked by the parser in both directions and dropped: it mints no binder, adds no entry,
+  and changes no semantics — an effect the code uses through `*` is still bound where the code was written and still
+  invisible to the callee (D22), so the body may not perform an unlisted effect because of it. Reverses §2.6's
+  "`uses *` on a definition has no spelling" (there because it repeats what the parameters state; the repetition is
+  now the point, where the reader looks). Optional was rejected, since then its absence would say nothing; Koka's
+  spelling — a named effect variable in both places — remains closed (§2.6), since nothing here is unified.
 
 ---
 
@@ -1353,6 +1370,7 @@ each lives:
 | D20c (b), "decided (b)" | §3.4 and §2.2; what it means for a listed effect is D22 (§1 rule 5) |
 | D22 | §1 rule 5, §2.2; the record in §11's closed decisions |
 | D23 | §2's `with`, §3.1, §4; the record in §11's closed decisions |
+| D24 | §2's table and the parser's refusals, §2.1; the record in §11's closed decisions |
 | D20c (the open question), option 4 | §11 D20c |
 | §8 items 14–17 in comments and tests written on the option-5 line | §8 items 16–19 |
 | §7 item 7 before 2026-10-13 (undischarged control effect at `main`) | closed, §8 item 5 |

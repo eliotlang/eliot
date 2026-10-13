@@ -41,7 +41,7 @@ effect Abort {
  * private (`docs/effects.md` §9.6). Consume the result with `foldOption`, or reach for `else` to supply a
  * fallback in one step without ever naming `Option`.
  */
-def runAbort[A](obj uses *, Abort: A): Option[A]
+def runAbort[A](obj uses *, Abort: A) uses *: Option[A]
 
 /**
  * Reflect an `Option` into the `Abort` effect: yield the present value, or `abort` on absence. The bridge from an
@@ -76,4 +76,4 @@ def orAbort[A](o: Option[A]) uses Abort: A = foldOption(abort, a -> a, o)
  * ```
  */
 infix right below (++, ||)
-def else[A](computation uses *, Abort: A, fallback uses *: A): A = foldOption(fallback, a -> a, runAbort(computation))
+def else[A](computation uses *, Abort: A, fallback uses *: A) uses *: A = foldOption(fallback, a -> a, runAbort(computation))

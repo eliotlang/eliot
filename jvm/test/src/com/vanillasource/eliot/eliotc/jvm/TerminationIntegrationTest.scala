@@ -160,7 +160,7 @@ class TerminationIntegrationTest extends FullIntegrationTest {
   "a higher-order combinator over a terminating step" should "itself terminate" in {
     compileAndRun(
       """import eliot.effect.Console
-        |def runStep(step uses *: Unit): Unit = step
+        |def runStep(step uses *: Unit) uses *: Unit = step
         |
         |def main uses Console: Unit = runStep(printLine("done"))""".stripMargin
     ).asserting(_ shouldBe "done")
@@ -174,7 +174,7 @@ class TerminationIntegrationTest extends FullIntegrationTest {
       """import eliot.effect.Console
         |import eliot.effect.Inf
         |
-        |def runStep(step uses *: Unit): Unit = step
+        |def runStep(step uses *: Unit) uses *: Unit = step
         |
         |def main uses Inf, Console: Unit = runStep(forever(printLine("loop")))""".stripMargin,
       timeoutMillis = 400
@@ -189,7 +189,7 @@ class TerminationIntegrationTest extends FullIntegrationTest {
       """import eliot.effect.Console
         |import eliot.effect.Inf
         |
-        |def driver(step uses *: Unit) uses Inf: Unit = forever(step)
+        |def driver(step uses *: Unit) uses *, Inf: Unit = forever(step)
         |
         |def main uses Inf, Console: Unit = driver(printLine("tick"))""".stripMargin,
       timeoutMillis = 400
@@ -203,7 +203,7 @@ class TerminationIntegrationTest extends FullIntegrationTest {
       """import eliot.effect.Console
         |import eliot.effect.Inf
         |
-        |def driver(step uses *: Unit) uses Console: Unit = forever(step)
+        |def driver(step uses *: Unit) uses *, Console: Unit = forever(step)
         |
         |def main uses Console: Unit = driver(printLine("tick"))""".stripMargin
     ).asserting(_ should include("performs the effect 'Inf'"))

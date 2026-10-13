@@ -13,7 +13,7 @@
  * The cell is scoped to the one `withCell` call: it is gone when that call returns *or is exited through*, so nothing
  * can dangle and nothing survives a frame it sat inside.
  */
-def withCell[S, A](key: Type, initial: S, body uses *: A): Pair[A, S]
+def withCell[S, A](key: Type, initial: S, body uses *: A) uses *: Pair[A, S]
 
 /**
  * The content of the nearest enclosing `withCell` cell whose key equals `key`. No such cell leaves the call stuck.

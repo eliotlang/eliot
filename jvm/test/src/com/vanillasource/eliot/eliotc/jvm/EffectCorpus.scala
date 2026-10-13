@@ -110,7 +110,7 @@ object EffectCorpus {
   val effectfulLambdaProgram: String =
     """import eliot.effect.Abort
       |
-      |def applyTo[A, B](a: A, f uses *: A => B): B = f(a)
+      |def applyTo[A, B](a: A, f uses *: A => B) uses *: B = f(a)
       |
       |def labelOf(s: String) uses Abort: String = applyTo(s, x -> take(indexOf("=", s), x))
       |
@@ -138,7 +138,7 @@ object EffectCorpus {
   val rowPolymorphicCallbackProgram: String =
     """import eliot.collection.List
       |
-      |def eachInto[A, B](f uses *: A => B, list: List[A]): List[B] =
+      |def eachInto[A, B](f uses *: A => B, list: List[A]) uses *: List[B] =
       |   list.foldLeft(empty, e -> acc -> append(acc, f(e)))
       |
       |def three: List[String] = append(append(append(empty, "a"), "b"), "c")

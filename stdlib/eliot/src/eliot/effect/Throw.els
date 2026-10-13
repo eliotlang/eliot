@@ -39,7 +39,7 @@ effect Throw[E] {
  * over is private to a platform layer (a public one would be Landin's knot, `docs/effects.md` §9.6). Consume
  * the result with `foldEither`, or reach for `catch` to recover in one step without ever naming `Either`.
  */
-def runThrow[E, A](obj uses *, Throw[E]: A): Either[E, A]
+def runThrow[E, A](obj uses *, Throw[E]: A) uses *: Either[E, A]
 
 /**
  * Reflect an `Either` into the `Throw[E]` effect: yield the `Right`'s value, or `raise` the `Left`'s error. The bridge
@@ -72,5 +72,5 @@ def orRaise[E, A](e: Either[E, A]) uses Throw[E]: A = foldEither(err -> raise(er
  * is the same computation on every target.
  */
 infix left below (++, ||)
-def catch[E, A](computation uses *, Throw[E]: A, onError uses *: E => A): A =
+def catch[E, A](computation uses *, Throw[E]: A, onError uses *: E => A) uses *: A =
    foldEither(onError, a -> a, runThrow(computation))

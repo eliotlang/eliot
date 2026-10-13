@@ -33,11 +33,11 @@ class EffectIntrinsicsIntegrationTest extends AsyncFlatSpec with AsyncIOSpec wit
 
   private val primitives = Map(
     "eliot/compiler/Escape" ->
-      """def escape[E, A](key: Type, body uses *: A): Either[E, A]
+      """def escape[E, A](key: Type, body uses *: A) uses *: Either[E, A]
         |def exit[E, A](key: Type, e: E): A
         |""".stripMargin,
     "eliot/compiler/Cell"   ->
-      """def withCell[S, A](key: Type, initial: S, body uses *: A): Pair[A, S]
+      """def withCell[S, A](key: Type, initial: S, body uses *: A) uses *: Pair[A, S]
         |def read[S](key: Type): S
         |def write[S](key: Type, s: S): Unit
         |""".stripMargin

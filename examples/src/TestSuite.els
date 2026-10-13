@@ -17,7 +17,7 @@ import eliot.compiler.Reflect
  * java -jar target/TestSuite.jar
  * ```
  */
-def runTest(name: String, test uses *, Throw[String]: Unit, rest uses *: Unit) uses Console: Unit = {
+def runTest(name: String, test uses *, Throw[String]: Unit, rest uses *: Unit) uses *, Console: Unit = {
    printLine("- " ++ name)
    test catch (reason -> printLine("  FAILED: " ++ reason))
    rest

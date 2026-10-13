@@ -112,7 +112,7 @@ class NamedValuesIntegrationTest extends AsyncFlatSpec with AsyncIOSpec with Mat
     ) ++ extra
 
   private val runningStep =
-    """def step(name: String, test uses *, Throw[String]: Unit, rest uses *: Unit) uses Console: Unit = {
+    """def step(name: String, test uses *, Throw[String]: Unit, rest uses *: Unit) uses *, Console: Unit = {
       |   printLine(name)
       |   test catch (e -> printLine("FAILED " ++ e))
       |   rest

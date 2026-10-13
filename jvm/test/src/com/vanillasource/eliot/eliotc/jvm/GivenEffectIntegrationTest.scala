@@ -23,13 +23,13 @@ class GivenEffectIntegrationTest extends FullIntegrationTest {
     compileForErrors(
       """import eliot.effect.Console
         |
-        |def launder(body uses *, Console: Unit): Unit = body
+        |def launder(body uses *, Console: Unit) uses *: Unit = body
         |
         |def main uses Console: Unit = launder(printLine("hi"))
         |""".stripMargin
     ).asserting(
       _ should include(
-        ":3:49:'body' may perform the effect 'Console' here, which this definition neither handles nor declares."
+        ":3:56:'body' may perform the effect 'Console' here, which this definition neither handles nor declares."
       )
     )
   }
@@ -39,7 +39,7 @@ class GivenEffectIntegrationTest extends FullIntegrationTest {
       """import eliot.effect.Console
         |import eliot.effect.Abort
         |
-        |def attempt(body uses *, Abort: String): String = body else "none"
+        |def attempt(body uses *, Abort: String) uses *: String = body else "none"
         |
         |def main uses Console: Unit = printLine(attempt(if(false, "some")))
         |""".stripMargin
@@ -50,7 +50,8 @@ class GivenEffectIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       recording +
         """
-          |def transcriptOf(program uses *, Console with recordingConsole: Unit): String = runWriterToLog(program)
+          |def transcriptOf(program uses *, Console with recordingConsole: Unit) uses *: String =
+          |   runWriterToLog(program)
           |
           |def main uses Console: Unit = printLine(transcriptOf(printLine("hi")))
           |""".stripMargin
@@ -61,7 +62,7 @@ class GivenEffectIntegrationTest extends FullIntegrationTest {
     compileForErrors(
       recording +
         """
-          |def silently(program uses *, Console with recordingConsole: Unit): Unit = program
+          |def silently(program uses *, Console with recordingConsole: Unit) uses *: Unit = program
           |
           |def main uses Console: Unit = silently(printLine("hi"))
           |""".stripMargin
@@ -74,7 +75,7 @@ class GivenEffectIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       recording +
         """
-          |def transcriptOf(program uses *, Console with recordingConsole: Unit) uses Writer[String]: Unit = {
+          |def transcriptOf(program uses *, Console with recordingConsole: Unit) uses *, Writer[String]: Unit = {
           |   tell("before;")
           |   program
           |}
@@ -88,7 +89,7 @@ class GivenEffectIntegrationTest extends FullIntegrationTest {
     compileForErrors(
       recording +
         """
-          |def transcriptOf(program uses *, Console with recordingConsole: Unit) uses Writer[String]: String =
+          |def transcriptOf(program uses *, Console with recordingConsole: Unit) uses *, Writer[String]: String =
           |   runWriterToLog(program)
           |
           |def main uses Console: Unit = printLine(runWriterToLog(tell(transcriptOf(printLine("Bob")))))
@@ -100,8 +101,9 @@ class GivenEffectIntegrationTest extends FullIntegrationTest {
     compileForErrors(
       recording +
         """
-          |def transcriptOf(program uses *, Console with recordingConsole: Unit): String = runWriterToLog(program)
-          |def relay(program uses *, Console: Unit): String = transcriptOf(program)
+          |def transcriptOf(program uses *, Console with recordingConsole: Unit) uses *: String =
+          |   runWriterToLog(program)
+          |def relay(program uses *, Console: Unit) uses *: String = transcriptOf(program)
           |
           |def main uses Console: Unit = printLine(relay(printLine("hi")))
           |""".stripMargin

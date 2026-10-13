@@ -345,7 +345,7 @@ def main uses Console: Unit = printLine("Hello World!")""")
         """
           |data TestResult(label: String, failure: Option[String])
           |
-          |def transcriptOf(program uses *, Terminal with session: Unit): String = runWriterToLog(program)
+          |def transcriptOf(program uses *, Terminal with session: Unit) uses *: String = runWriterToLog(program)
           |
           |def expect(label: String, expected: String, actual: String): TestResult =
           |   if(expected == actual, TestResult(label, None))
@@ -376,7 +376,7 @@ def main uses Console: Unit = printLine("Hello World!")""")
       |
       |def greetTranscript: String = runWriterToLog(greet with session)
       |
-      |def runCase(name: String, assertion uses *, Throw[AssertionError]: Unit): String =
+      |def runCase(name: String, assertion uses *, Throw[AssertionError]: Unit) uses *: String =
       |   foldEither(e -> "FAIL " ++ name ++ ": " ++ reason(e), u -> "PASS " ++ name, runThrow(assertion))
       |
       |""".stripMargin

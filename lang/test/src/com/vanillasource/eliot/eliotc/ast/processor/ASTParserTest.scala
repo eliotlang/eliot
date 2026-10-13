@@ -734,7 +734,7 @@ class ASTParserTest extends ProcessorTest(new Tokenizer(), new ASTParser()) {
   }
 
   it should "become a row nested in an arrow codomain as the run's last atom" in {
-    runEngineForFunctionArgTypes("def f(action uses *, Console: A => Unit): Unit = a").asserting(
+    runEngineForFunctionArgTypes("def f(action uses *, Console: A => Unit) uses *: Unit = a").asserting(
       _.collect { case ("f", Expression.FlatExpression(parts)) => parts.last.value.getClass.getSimpleName } shouldBe Seq("EffectfulType")
     )
   }

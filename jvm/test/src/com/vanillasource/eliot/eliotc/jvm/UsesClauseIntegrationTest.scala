@@ -32,7 +32,7 @@ class UsesClauseIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       """import eliot.effect.Console
         |
-        |def twice(action uses *: Unit): Unit = {
+        |def twice(action uses *: Unit) uses *: Unit = {
         |   action
         |   action
         |}
@@ -46,7 +46,7 @@ class UsesClauseIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       """import eliot.effect.Console
         |
-        |def both(action uses *: String => Unit, a: String, b: String): Unit = {
+        |def both(action uses *: String => Unit, a: String, b: String) uses *: Unit = {
         |   action(a)
         |   action(b)
         |}
@@ -61,7 +61,7 @@ class UsesClauseIntegrationTest extends FullIntegrationTest {
       """import eliot.effect.Console
         |import eliot.effect.Throw
         |
-        |def attempt(body uses *, Throw[String]: String): String =
+        |def attempt(body uses *, Throw[String]: String) uses *: String =
         |   foldEither(e -> "caught " ++ e, v -> v, runThrow[String, String](body))
         |
         |def main uses Console: Unit = printLine(attempt({
@@ -105,7 +105,7 @@ class UsesClauseIntegrationTest extends FullIntegrationTest {
   it should "reject code of the caller's passed on to it" in {
     compileForErrors(
       closedPrelude +
-        """def leak(code uses *: String): String = runPure(code)
+        """def leak(code uses *: String) uses *: String = runPure(code)
           |def main uses Console: Unit = printLine(leak("v"))""".stripMargin
     ).asserting(_ should include("'code' is code its caller wrote, and an argument whose `uses` clause is closed cannot run it."))
   }
@@ -140,7 +140,7 @@ class UsesClauseIntegrationTest extends FullIntegrationTest {
     compileForErrors(
       """import eliot.effect.Console
         |
-        |def run(body uses *: {Console} Unit): Unit = body
+        |def run(body uses *: {Console} Unit) uses *: Unit = body
         |
         |def main uses Console: Unit = run(printLine("x"))
         |""".stripMargin

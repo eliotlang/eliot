@@ -17,11 +17,16 @@ import Parser.*
   *   the argument's text may use what the slot supplies and nothing from around it (`docs/effects.md` D21 rule 4).
   *   The row itself is written into [[typeExpression]] in today's spelling; this is the one bit that spelling cannot
   *   carry.
+  * @param openRow
+  *   Whether the parameter's `uses` clause is **open** — it starts with `*` (`f uses *: A => B`), so the argument's
+  *   text may use whatever is in scope where it is written. Read only by the definition's own parser, which then
+  *   requires `uses *` on the definition too (`docs/effects.md` D24); nothing past the parser reads it.
   */
 case class ArgumentDefinition(
     name: Sourced[String],
     typeExpression: Sourced[Expression],
-    closedRow: Boolean = false
+    closedRow: Boolean = false,
+    openRow: Boolean = false
 )
 
 object ArgumentDefinition {
@@ -71,7 +76,7 @@ object ArgumentDefinition {
     clause <- usesClause
     _      <- symbol(":")
     typed  <- sourced(Expression.typeRunParser)
-  } yield ArgumentDefinition(name, clause.applyTo(typed), closedRow = !clause.open)
+  } yield ArgumentDefinition(name, clause.applyTo(typed), closedRow = !clause.open, openRow = clause.open)
 
   private def plainRest(
       name: Sourced[String],

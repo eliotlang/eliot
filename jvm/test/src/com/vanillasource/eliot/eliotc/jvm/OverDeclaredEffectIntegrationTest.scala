@@ -41,7 +41,7 @@ class OverDeclaredEffectIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       """import eliot.effect.Console
         |
-        |def passThrough[A](v uses *, Console: A) uses Console: A = v
+        |def passThrough[A](v uses *, Console: A) uses *, Console: A = v
         |
         |def main uses Console: Unit = passThrough(printLine("hi"))
         |""".stripMargin

@@ -547,17 +547,20 @@ hands it. On a **parameter**, a clause makes the argument **code** the caller wr
 on to another `uses` slot and **never keep**; without one, a parameter is a **value**, computed before the call:
 
 ```eliot
-def compose[A, B, C](f: B => C, g: A => B): A => C = a -> f(g(a))   // pure: f and g are values, keepable
-def map[A, B](f uses *: A => B, list: List[A]): List[B]             // the caller's code, on the caller's effects
-def if[T](condition: Bool, value uses *, Abort: T) uses Abort: T    // nullary code: mentioning `value` runs it
-def runThrow[E, A](body uses *, Throw[E]: A): Either[E, A]          // the caller's effects plus Throw[E], supplied
-def runPure[E, A](body uses Throw[E]: A): Either[E, A]              // closed (D21's sample, not in the base)
-def mocked(body uses *, Mocking with recording, Calls with journal: Unit): Unit  // a `with` per entry
+def compose[A, B, C](f: B => C, g: A => B): A => C = a -> f(g(a))                        // pure: f and g are values, keepable
+def map[A, B](f uses *: A => B, list: List[A]) uses *: List[B]                           // the caller's code, on the caller's effects
+def if[T](condition: Bool, value uses *, Abort: T) uses *, Abort: T                      // nullary code: mentioning `value` runs it
+def runThrow[E, A](body uses *, Throw[E]: A) uses *: Either[E, A]                        // the caller's effects plus Throw[E], supplied
+def runPure[E, A](body uses Throw[E]: A): Either[E, A]                                   // closed (D21's sample, not in the base)
+def mocked(body uses *, Mocking with recording, Calls with journal: Unit) uses *: Unit   // a `with` per entry
 ```
 
-`*` is first and at most once, and only on a parameter: it names the effects in scope **where the argument is
-written** (lexical capture, not a row variable — nothing is unified). **Purity is the absence of one word**: a
-signature with no `uses` anywhere is pure and, since `Inf` is an effect, total. The parser writes a clause onto the
+`*` is first and at most once. On a parameter it names the effects in scope **where the argument is written**
+(lexical capture, not a row variable — nothing is unified). On a definition it is a **marker**, required exactly when
+some parameter's clause has `*` (D24): a call performs what that code does, so the result side of a signature is
+complete on its own. The parser checks it in both directions and drops it — no binder, no entry, no semantics.
+**Purity is the absence of one word**: a definition with no `uses` before its result type is pure at every call and,
+since `Inf` is an effect, total. The parser writes a clause onto the
 same row node (`EffectfulType`) the rest of the compiler always read — a definition's onto its return type, a
 parameter's onto the slot or its arrow codomain — so no phase past `ast` learned the clause except one bit,
 **closed** (`ArgumentDefinition.closedRow`). **The brace spelling `{Console} Unit` is a parse error** naming the
@@ -582,7 +585,7 @@ signature, an example or a test conflicts with them, the rule wins and the artef
    definition either handles where the code runs (a `with` on the slot or around its runs, or passing the code on to a
    discharger) or declares in its own clause, passing it on; neither is "'body' may perform the effect 'X' here, which
    this definition neither handles nor declares". An effect the code uses through `*` unlisted is invisible to it — it
-   can neither catch it nor declare it. An effect's default is handed out at `main` (the run boundary) and by the
+   can neither catch it nor declare it — what the definition's own `uses *` (D24) marks instead. An effect's default is handed out at `main` (the run boundary) and by the
    platform primitives, which state what they give.
 6. **A field holds a value.** A `data` field takes no clause and no row; store data describing the work and perform
    it where the effects are in scope.
@@ -719,10 +722,9 @@ and an ambient name colliding with a local declaration or explicit import is sil
 the prelude can grow without breaking code), while explicit imports keep the strict shadowing errors.
 
 **What has no spelling, on purpose.** A stored effectful computation (a field holds a value; store data and interpret
-it — `docs/effects.md` §2.3, and D20c for one handled where it runs), a native that keeps a callback (the platform's axiom), and `uses *` on a
-definition (a body has no caller's text to be open to). One gap is carried, fail-safe: a function-typed code
-parameter's own entries (`f uses *, E: A => B`) land on the codomain the callee never supplies, so code using `E`
-there is rejected.
+it — `docs/effects.md` §2.3, and D20c for one handled where it runs) and a native that keeps a callback (the
+platform's axiom). One gap is carried, fail-safe: a function-typed code parameter's own entries
+(`f uses *, E: A => B`) land on the codomain the callee never supplies, so code using `E` there is rejected.
 
 **Cornerstone fidelity**: this is *more* types-are-values-faithful than the carrier was, not less — a phantom binder
 is an ordinary generic binder, an implementation is an ordinary ground value in `typeArguments`, specialisation is the
@@ -749,7 +751,7 @@ negative-recursive `data`), and **purity** (no mutable cells — Landin's knot; 
 (System T, not PCF) — modulo the already-accepted `Type:Type`/Girard residual.
 
 The one opt-out is **`Inf`**, modelled as an ordinary **effect**
-(`effect Inf { def forever(step uses *: Unit): Unit }`, ambient like all of `eliot.effect`) rather than a bespoke
+(`effect Inf { def forever(step uses *: Unit) uses *: Unit }`, ambient like all of `eliot.effect`) rather than a bespoke
 termination lattice — there is **no `Terminating` token**; termination is simply `Inf`'s *absence* from the `uses`
 clauses. Because a recursion-free core cannot itself diverge, `Inf` can **only originate on a native** (the loop
 primitive, `foreverInternal`), and it propagates to callers for free through the ordinary scope check — a

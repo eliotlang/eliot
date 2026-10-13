@@ -14,4 +14,4 @@ type Either[E, A]
  * def message(e: Either[String, Int]): String = e.foldEither(err -> err, n -> show(n))
  * ```
  */
-def foldEither[E, A, B](ifLeft uses *: E => B, ifRight uses *: A => B, e: Either[E, A]): B
+def foldEither[E, A, B](ifLeft uses *: E => B, ifRight uses *: A => B, e: Either[E, A]) uses *: B
