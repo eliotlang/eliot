@@ -37,7 +37,7 @@ import java.nio.file.{Files, Path}
   */
 class WarmBuildLeafOnlyTest extends AsyncFlatSpec with AsyncIOSpec with Matchers {
 
-  private val program = """def main: {Console} Unit = printLine("warm")"""
+  private val program = """def main uses Console: Unit = printLine("warm")"""
 
   "a warm build over an unchanged tree" should "regenerate only world leaves" in {
     withSession(program) { session =>

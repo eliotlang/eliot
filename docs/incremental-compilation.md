@@ -1623,42 +1623,46 @@ because the run that moved it was, by this rule, unable to prove it unchanged an
   each step; before the fix every one of them started the alternation.
 - `./mill __.test` green.
 
-## 28. A key built anew has moved too (2026-10-12)
+## 28. A key the run created, or pushed, can move too (2026-10-08)
 
-§26 drops the *direct* dependents of a moved key and leans on validation for the rest: "a retained entry pointing at
-one of those now finds no prior entry, which validation already reads as changed". That holds only while the entry
-stays missing. A later run that builds it anew gave it a fresh entry and did not count it as moved, because §26's
-`movedKeys` asked only about keys that *had* a prior entry, so the dependent recorded against the dropped one was
-retained a second time, now beside a value it never consumed.
+The `v0.8` release workflow failed its suite on three `StoredComputationIntegrationTest` cases, each a correct
+program reported as `Test.els:1: Could not find 'url'.` with no jar — a name the program does not contain. It was
+§26's failure shape again, once in roughly three full `jvm.test` runs, and only when the suites in one worker happened
+to run in a particular order.
 
 ### The mechanism
 
-```
-run 1: demand w        leaf=10 → m1=10 → m2=10 → w=100     cache: leaf, m1, m2, w
-run 2: demand m1 only  leaf=20 → m1=20                     m1 moved: m2 dropped; w retained (m2 only dropped)
-run 3: demand m2 only  m2 has no entry → built anew, 20    m2 new, not "moved": w retained again at 100
-run 4: demand w        w's dep m2 validates "unchanged" (it is run 3's entry) → w served as 100
-```
+Recording every program one worker's shared session compiled (212 of them) and replaying them into one fresh session
+reproduced it at program 139 about half the time. Three runs carry it, far apart:
 
-In the compiler this was a shared test session serving a previous program's field accessor. A program with
-`data Holder(run: String => Unit)` cached `BodyValueReferences(Test::run)`; later programs dropped and then rebuilt
-`SaturatedValue(Test::run)` for an unrelated `data Job(run: …)` without demanding the references; and the next compile
-accepted the Holder-era references, so the checker went looking for `handleCases^PatternMatch#Holder` in a program
-that had no `Holder`. As with §26, whether a suite met it depended on which suites ran before it in the worker.
+- **Program 69** defines `def run … = … dependency.url …`. Its `SaturatedValue(Test::run)` and
+  `BodyValueReferences(Test::run)` — the references its body names, `Test::url` among them — enter the cache.
+- **Program 70** moves `OperatorResolvedValue(Test::run)`, so §26 drops its direct dependent
+  `RowElaboratedValue(Test::run)`. `SaturatedValue(Test::run)`, recorded against that one, is retained: an input with
+  no entry reads as changed, so §26 rightly needs only direct dependents.
+- **Program 137** declares `data Job(run: …)`, and a failing compile creates `RowElaboratedValue(Test::run)` afresh
+  for the accessor without ever reaching `SaturatedValue`. A key with no prior entry was never counted as moved, so the
+  old `SaturatedValue` stayed — now pointing at an input that has an entry again, one generation newer than what it
+  consumed.
+
+Program 139 validates `BodyValueReferences(Test::run)` through that intact-looking chain, accepts program 69's
+references, and monomorphizing `main` demands `Test::url`. Whether it gets there depends on which of the drill's
+paths is taken first (the `forallM` over a `Set` of §25), which is why the replay was itself only half reproducible.
+
+The same review found a sibling hole: `movedKeys` only looked at keys this run *resolved*. A key a generation
+**pushed** (one file parse registering a `ModuleValue` for every name it declares) advances its entry without ever
+being resolved, so a failing compile that re-pushed a name with a new definition left that name's dependents retained
+against an entry they never consumed.
 
 ### The fix
 
-`movedKeys` counts a key the run resolved **with no prior entry** as moved. Whatever a retained entry recorded
-against such a key, it consumed some earlier generation's value, so it is dropped and regenerates on its next demand.
-A warm build over an unchanged tree resolves no new keys, so `WarmBuildLeafOnlyTest`'s invariant is untouched, and
-§27's value-less rule is unaffected: a value-less entry is carried forward, so it always has a prior entry to be judged
-by.
+`movedKeys` considers every key the run materialised, pushed ones included, and counts a key with **no prior entry**
+as moved: whatever is still recorded against it was recorded against an older generation. Both are §26's rule
+applied where it had not reached, and both are fail-safe in the same way — the only effect is a recomputation.
 
 ### Verification
 
-- `IncrementalFactGeneratorTest` — the four-run scenario above, asserting run 4 answers 200. It fails on the pre-fix
-  engine with 100.
-- The original failure — `BlockKeepingIntegrationTest` (with its field named `run`) followed by
-  `StoredComputationIntegrationTest` in one session, on `68cffe36` — failed 3 of 36 cases on every run before and
-  passes 36 of 36 after.
-- `./mill __.test` green, `WarmBuildLeafOnlyTest` included.
+- `IncrementalFactGeneratorTest` — a dependency dropped and then recreated without its dependent (four runs), and a
+  pushed dependency that moved without its dependent (three runs). Both served the stale value before the fix.
+- The recorded 142-program replay: about one run in two failed before, six of six passed after.
+- `./mill __.test` green across repeated runs, `WarmBuildLeafOnlyTest` included.

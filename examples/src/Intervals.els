@@ -21,7 +21,7 @@ def showBound(unboundedAs: String, bound: Bound[Int]): String = bound.foldBound(
 def showInterval(i: Interval[Int]): String =
   "[" ++ showBound("-inf", i.start) ++ ", " ++ showBound("+inf", i.end) ++ "]"
 
-def main: {Console} Unit = {
+def main uses Console: Unit = {
   printLine(showInterval(sum))
   printLine(showInterval(diff))
   printLine(showInterval(prod))

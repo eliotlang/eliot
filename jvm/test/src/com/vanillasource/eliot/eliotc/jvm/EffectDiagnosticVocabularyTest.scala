@@ -36,19 +36,19 @@ class EffectDiagnosticVocabularyTest extends AsyncFlatSpec with AsyncIOSpec with
       |
       |def helper: String = printLine(orEmpty(readLine))
       |
-      |def main: {Console} Unit = printLine(helper)
+      |def main uses Console: Unit = printLine(helper)
       |""".stripMargin
 
   /** Two control effects, discharged at one run site. Written without dot-chaining on purpose, so what is exercised is
     * the nesting itself.
     */
   private val stackedControlEffects =
-    """def counted: {State[String], Throw[String]} String = {
+    """def counted uses State[String], Throw[String]: String = {
       |   putState("seen")
       |   raise("boom")
       |}
       |
-      |def main: {Console} Unit =
+      |def main uses Console: Unit =
       |   printLine(foldEither(e -> e, s -> s, runStateToValue("i", runThrow(counted))))
       |""".stripMargin
 

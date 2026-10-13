@@ -1,6 +1,6 @@
 data Either[E, A] = Left(error: E) | Right(value: A)
 
-def foldEither[E, A, B](ifLeft: E => {} B, ifRight: A => {} B, e: Either[E, A]): B = e match {
+def foldEither[E, A, B](ifLeft uses *: E => B, ifRight uses *: A => B, e: Either[E, A]): B = e match {
    case Left(err) -> ifLeft(err)
    case Right(v) -> ifRight(v)
 }

@@ -7,7 +7,7 @@ effect Console {
 
 /**
  * The JVM `Console` implementation: each operation calls a `private` impure leaf native. It is anonymous and lives in
- * the effect's own module, so it is the **default** — the implementation a `{Console}` declaration binds when no `with`
+ * the effect's own module, so it is the **default** — the implementation a `uses Console` declaration binds when no `with`
  * names another one, and what the synthesized entry point binds at the run boundary.
  *
  * A test does not have to replace it in place: it declares its own named `implement` anywhere it likes and binds it
@@ -29,7 +29,7 @@ private def lineOrNone(line: String): Option[String] = if(isNull(line), None) el
 
 /**
  * The single impure operation behind `printLine`: writes a line to standard output. `private` so user code
- * reaches output only through the `{Console}`-typed `printLine`. Implemented by the backend.
+ * reaches output only through `printLine`, which uses `Console`. Implemented by the backend.
  */
 private def printLineInternal(s: String): Unit
 

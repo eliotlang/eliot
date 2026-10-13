@@ -2,19 +2,19 @@
  * The typed-error effect: a computation that may fail with an error value of type `E`.
  *
  * The typed sibling of `Abort`, which discards the reason. A function that may fail declares
- * `{Throw[E]}` and calls `raise` to stop with an `E`. `raise` returns a value of any type, so it
- * drops straight into ordinary code, and the effect floats up to the caller. The success-or-error
+ * `uses Throw[E]` and calls `raise` to stop with an `E`. `raise` returns a value of any type, so it
+ * drops straight into ordinary code, and the effect floats up to the caller's clause. The success-or-error
  * outcome is materialised only when the effect is discharged by `runThrow`, as an `Either[E, A]`.
  *
  * Programs can use `String` as `E` to just indicate an issue without being able to recover
  * from distinguished error cases.
  *
  * If recovering from different errors is expected, then programs should create their own error
- * union type and raise that. Different error types compose in the effect set freely so using
+ * union type and raise that. Different error types compose in a `uses` clause freely so using
  * different error hierarchies comes at no cost to the user.
  *
  * ```eliot
- * def parse(s: String): {Throw[String]} Tree = raise("not a tree")
+ * def parse(s: String) uses Throw[String]: Tree = raise("not a tree")
  * ```
  *
  * `Throw` is a **control effect**: it has exactly one implementation per platform, over that platform's
@@ -39,31 +39,31 @@ effect Throw[E] {
  * over is private to a platform layer (a public one would be Landin's knot, `docs/effects.md` §9.6). Consume
  * the result with `foldEither`, or reach for `catch` to recover in one step without ever naming `Either`.
  */
-def runThrow[E, A](obj: {Throw[E]} A): Either[E, A]
+def runThrow[E, A](obj uses *, Throw[E]: A): Either[E, A]
 
 /**
  * Reflect an `Either` into the `Throw[E]` effect: yield the `Right`'s value, or `raise` the `Left`'s error. The bridge
  * from an error-as-value result (as a native leaf produces) into the effect, and the inverse of `runThrow`.
  *
  * ```eliot
- * def parsed(input: String): {Throw[String]} Tree = orRaise(tryParse(input))
+ * def parsed(input: String) uses Throw[String]: Tree = orRaise(tryParse(input))
  * ```
  */
-def orRaise[E, A](e: Either[E, A]): {Throw[E]} A = foldEither(err -> raise(err), a -> a, e)
+def orRaise[E, A](e: Either[E, A]) uses Throw[E]: A = foldEither(err -> raise(err), a -> a, e)
 
 /**
- * Run a `{Throw[E]}` computation, recovering any raised error with `onError`. The everyday way to discharge `Throw` —
+ * Run a computation that uses `Throw[E]`, recovering any raised error with `onError`. The everyday way to discharge `Throw` —
  * reads like an exception handler and never exposes `Either`:
  *
  * ```eliot
  * // Parse the configuration from a string
- * def parseConfiguration(config: String): {Throw[String]} Configuration = raise("Input not a valid configuration.")
+ * def parseConfiguration(config: String) uses Throw[String]: Configuration = raise("Input not a valid configuration.")
  *
  * // Recover with an empty configuration
  * def configOrDefault(config: String): Configuration = parseConfiguration(config) catch (_ -> emptyConfiguration)
  * ```
  *
- * The handler is an ordinary parameter applied after the escape returns, outside the frame, so it may itself
+ * The handler is the caller's code, applied after the escape returns, outside the frame, so it may itself
  * perform whatever the enclosing definition declares — e.g. log and recover:
  * `readConfig catch (err -> printLine(err))`. On success it yields the computed value; on `raise(err)` it yields
  * `onError(err)`.
@@ -72,5 +72,5 @@ def orRaise[E, A](e: Either[E, A]): {Throw[E]} A = foldEither(err -> raise(err),
  * is the same computation on every target.
  */
 infix left below (++, ||)
-def catch[E, A](computation: {Throw[E]} A, onError: E => {} A): A =
+def catch[E, A](computation uses *, Throw[E]: A, onError uses *: E => A): A =
    foldEither(onError, a -> a, runThrow(computation))

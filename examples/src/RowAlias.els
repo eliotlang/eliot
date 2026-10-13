@@ -5,13 +5,13 @@ import Talking
 /**
  * Naming a row instead of writing it out, across a module boundary.
  *
- * `greet` declares no row of its own: it names [[Talking]]'s, and receives exactly what
- * `def greet(name: String): {Console} Unit` would — the same binding binder, the same declared row, the same
+ * `greet` declares no `uses` clause of its own: it names [[Talking]]'s row, and receives exactly what
+ * `def greet(name: String) uses Console: Unit` would — the same binding binder, the same declared entries, the same
  * "performs but does not declare" check. Its *return type* stays `Talking[Unit]`, the name that was written, for the
  * evaluator to reduce.
  *
- * `announce` shows that a named row and a written-out one compose: `{Log} Talking[Unit]` declares both, because the
- * alias contributes to the return *position*, which is what a written-out row lowers to.
+ * `announce` shows that a named row and a `uses` clause compose: `uses Log: Talking[Unit]` declares both, because the
+ * alias contributes to the return *position*, which is what a definition's clause lowers to.
  *
  * ```sh
  * ./mill examples.run jvm exe-jar examples/src/ -m RowAlias
@@ -20,9 +20,9 @@ import Talking
  */
 def greet(name: String): Talking[Unit] = printLine("Hello, " ++ name ++ "!")
 
-def announce(name: String): {Log} Talking[Unit] = {
+def announce(name: String) uses Log: Talking[Unit] = {
    log("announcing " ++ name)
    greet(name)
 }
 
-def main: {Console, Log} Unit = announce("world")
+def main uses Console, Log: Unit = announce("world")

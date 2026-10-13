@@ -84,7 +84,7 @@ class AbilityGuardDischargeTest
         // applies the arm it selects, so a stub with plain arms hands it a value where it expects a thunk and the
         // guard silently stops reducing. The `{}` row synthesises a constraint at `eliot.carrier.Effect`, which is
         // why that module is in the base set below.
-        "import eliot.lang.Function\ntype Bool\ndef true: Bool\ndef false: Bool\ndef fold[A](cond: Bool, whenTrue: {} A, whenFalse: {} A): A"
+        "import eliot.lang.Function\ntype Bool\ndef true: Bool\ndef false: Bool\ndef fold[A](cond: Bool, whenTrue uses *: A, whenFalse uses *: A): A"
       ) ++
       compilerScan(
         Seq("eliot", "lang"),

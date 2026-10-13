@@ -1,1 +1,1 @@
-def main: {Console} Unit = printLine("Hello World!")
+def main uses Console: Unit = printLine("Hello World!")

@@ -32,8 +32,8 @@ import scala.jdk.CollectionConverters.*
   */
 class TypeHintIndexCompileTest extends AsyncFlatSpec with AsyncIOSpec with Matchers {
   private val imports     = "import eliot.effect.Console\nimport eliot.effect.Throw"
-  private val line1       = """def greeting: {Console} Unit = printLine("Hello World!")"""
-  private val guardedLine = """def guarded: {Throw[String]} String = raise("nope")"""
+  private val line1       = """def greeting uses Console: Unit = printLine("Hello World!")"""
+  private val guardedLine = """def guarded uses Throw[String]: String = raise("nope")"""
   private val mainLine    = """   greeting"""
   private val catchLine   = """   printLine(guarded catch (e -> e))"""
   private val pureLine    = """   printLine(parsed)"""
@@ -43,7 +43,7 @@ class TypeHintIndexCompileTest extends AsyncFlatSpec with AsyncIOSpec with Match
   private val signLine    = """def sign(f: Bool): String = if(f, "+") else "-""""
   private val signUseLine = """   printLine(sign(true))"""
   private val source      =
-    s"$imports\n$line1\n$guardedLine\ndef main: {Console} Unit = {\n$mainLine\n$catchLine\n$pureLine\n$signUseLine\n}\n$parsedLine\n$signLine"
+    s"$imports\n$line1\n$guardedLine\ndef main uses Console: Unit = {\n$mainLine\n$catchLine\n$pureLine\n$signUseLine\n}\n$parsedLine\n$signLine"
 
   // `printLine`/`raise` are import-required (`Console`/`Throw` live in `eliot.effect`, not auto-imported), so the two
   // import lines push `greeting` to line 3, `guarded` to line 4 and `main`'s block body to lines 6–7.

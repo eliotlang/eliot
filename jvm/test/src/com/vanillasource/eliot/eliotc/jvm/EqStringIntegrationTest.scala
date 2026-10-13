@@ -16,9 +16,9 @@ class EqStringIntegrationTest extends FullIntegrationTest {
         |import eliot.effect.Console
         |import eliot.effect.Abort
         |
-        |def line: {Console} String = readLine.orAbort else ""
+        |def line uses Console: String = readLine.orAbort else ""
         |
-        |def main: {Console} Unit = printLine(if(line == "yes", "matched") else "unmatched")""".stripMargin,
+        |def main uses Console: Unit = printLine(if(line == "yes", "matched") else "unmatched")""".stripMargin,
       stdin = "yes\n"
     ).asserting(_ shouldBe "matched")
   }
@@ -29,9 +29,9 @@ class EqStringIntegrationTest extends FullIntegrationTest {
         |import eliot.effect.Console
         |import eliot.effect.Abort
         |
-        |def line: {Console} String = readLine.orAbort else ""
+        |def line uses Console: String = readLine.orAbort else ""
         |
-        |def main: {Console} Unit = printLine(if(line == "yes", "matched") else "unmatched")""".stripMargin,
+        |def main uses Console: Unit = printLine(if(line == "yes", "matched") else "unmatched")""".stripMargin,
       stdin = "no\n"
     ).asserting(_ shouldBe "unmatched")
   }
@@ -42,9 +42,9 @@ class EqStringIntegrationTest extends FullIntegrationTest {
         |import eliot.effect.Console
         |import eliot.effect.Abort
         |
-        |def label(s: String): {Abort} String = if(s == "A", "first") else if(s == "B", "second")
+        |def label(s: String) uses Abort: String = if(s == "A", "first") else if(s == "B", "second")
         |
-        |def main: {Console} Unit = printLine(label("B") else "?")""".stripMargin
+        |def main uses Console: Unit = printLine(label("B") else "?")""".stripMargin
     ).asserting(_ shouldBe "second")
   }
 }

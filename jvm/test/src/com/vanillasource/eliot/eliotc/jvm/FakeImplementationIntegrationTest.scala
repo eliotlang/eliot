@@ -21,7 +21,7 @@ class FakeImplementationIntegrationTest extends FullIntegrationTest {
     * edited for the test — the whole claim of the strategy.
     */
   private val production =
-    """def greeting(name: String): {Console} Unit = printLine("Hello, " ++ name ++ "!")
+    """def greeting(name: String) uses Console: Unit = printLine("Hello, " ++ name ++ "!")
       |""".stripMargin
 
   /** The test double. It needs no type of its own and no colocation with `Console`. Its clauses declare what the
@@ -31,7 +31,7 @@ class FakeImplementationIntegrationTest extends FullIntegrationTest {
     */
   private val recordingConsole =
     """implement recordingConsole: Console {
-      |   def printLine(s: String): {Writer[String]} Unit = tell(s ++ ";")
+      |   def printLine(s: String) uses Writer[String]: Unit = tell(s ++ ";")
       |
       |   def readLine: Option[String] = None
       |}
@@ -44,7 +44,7 @@ class FakeImplementationIntegrationTest extends FullIntegrationTest {
          |$production
          |def transcript: String = runWriterToLog(greeting("Bob") with recordingConsole)
          |
-         |def main: {Console} Unit = printLine(transcript)
+         |def main uses Console: Unit = printLine(transcript)
          |""".stripMargin
     ).asserting(_ shouldBe "Hello, Bob!;")
   }
@@ -56,7 +56,7 @@ class FakeImplementationIntegrationTest extends FullIntegrationTest {
          |$production
          |def transcript: String = runWriterToLog(greeting("Bob") with recordingConsole)
          |
-         |def main: {Console} Unit = printLine(transcript)
+         |def main uses Console: Unit = printLine(transcript)
          |""".stripMargin
     ).asserting(_ should not include "performs the effect 'Console'")
   }
@@ -69,7 +69,7 @@ class FakeImplementationIntegrationTest extends FullIntegrationTest {
       s"""import eliot.effect.Console
          |$recordingConsole
          |$production
-         |def main: {Console} Unit = greeting("World")
+         |def main uses Console: Unit = greeting("World")
          |""".stripMargin
     ).asserting(_ shouldBe "Hello, World!")
   }
@@ -82,7 +82,7 @@ class FakeImplementationIntegrationTest extends FullIntegrationTest {
       s"""import eliot.effect.Console
          |$recordingConsole
          |$production
-         |def main: {Console} Unit = printLine(runWriterToLog({
+         |def main uses Console: Unit = printLine(runWriterToLog({
          |   greeting("Ann")
          |   greeting("Bob")
          |} with recordingConsole))
@@ -100,7 +100,7 @@ class FakeImplementationIntegrationTest extends FullIntegrationTest {
          |$production
          |def transcript: String = greeting("Bob") with recordingConsole
          |
-         |def main: {Console} Unit = printLine(transcript)
+         |def main uses Console: Unit = printLine(transcript)
          |""".stripMargin
     ).asserting(_ should include("performs the effect 'Writer'"))
   }
@@ -115,9 +115,9 @@ class FakeImplementationIntegrationTest extends FullIntegrationTest {
         |   def write(line: String): Unit
         |}
         |
-        |def greet: {Terminal} Unit = write("hi")
+        |def greet uses Terminal: Unit = write("hi")
         |
-        |def main: {Terminal} Unit = greet
+        |def main uses Terminal: Unit = greet
         |""".stripMargin
     ).asserting(_ should include("No ability implementation found for ability 'Terminal'"))
   }
@@ -132,9 +132,9 @@ class FakeImplementationIntegrationTest extends FullIntegrationTest {
         |   def write(line: String): Unit
         |}
         |
-        |def greet: {Terminal} Unit = write("hi")
+        |def greet uses Terminal: Unit = write("hi")
         |
-        |def main: {Console} Unit = greet
+        |def main uses Console: Unit = greet
         |""".stripMargin
     ).asserting(_ should include("performs the effect 'Terminal' but does not declare it"))
   }
@@ -152,17 +152,17 @@ class FakeImplementationIntegrationTest extends FullIntegrationTest {
       |}
       |
       |implement recordingTerminal: Terminal {
-      |   def write(line: String): {Writer[String]} Unit = tell(line ++ ";")
+      |   def write(line: String) uses Writer[String]: Unit = tell(line ++ ";")
       |}
       |
-      |def greet: {Terminal} Unit = write("hi")
+      |def greet uses Terminal: Unit = write("hi")
       |""".stripMargin
 
   it should "not answer the default search, even colocated with its own ability" in {
     compileForErrors(
       s"""import eliot.effect.Console
          |$colocatedDouble
-         |def main: {Terminal} Unit = greet
+         |def main uses Terminal: Unit = greet
          |""".stripMargin
     ).asserting(_ should include("No ability implementation found for ability 'Terminal'"))
   }
@@ -171,7 +171,7 @@ class FakeImplementationIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       s"""import eliot.effect.Console
          |$colocatedDouble
-         |def main: {Console} Unit = printLine(runWriterToLog(greet with recordingTerminal))
+         |def main uses Console: Unit = printLine(runWriterToLog(greet with recordingTerminal))
          |""".stripMargin
     ).asserting(_ shouldBe "hi;")
   }

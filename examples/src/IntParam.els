@@ -4,4 +4,4 @@
  */
 def describe(x: Int): String = show(x)
 
-def main: {Console} Unit = printLine(describe(42))
+def main uses Console: Unit = printLine(describe(42))

@@ -21,7 +21,7 @@ class PackageSessionCompileTest extends AsyncFlatSpec with AsyncIOSpec with Matc
   private def layer(name: String): Path = repoRoot.resolve(name).resolve("eliot").resolve("src")
 
   private val program = """import eliot.effect.Console
-                          |def main: {Console} Unit = printLine("Hello World!")""".stripMargin
+                          |def main uses Console: Unit = printLine("Hello World!")""".stripMargin
 
   private val broken = """def broken: String = nosuch"""
 

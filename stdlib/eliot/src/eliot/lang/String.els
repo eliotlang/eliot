@@ -31,7 +31,7 @@ def isEmpty(s: String): Bool
  *
  * ```eliot
  * // Read a name, falling back to a placeholder when the user just pressed enter (or ran out of input).
- * def askName: {Console} String = {
+ * def askName uses Console: String = {
  *   val answer = readLine orElse ""
  *   fold(answer.isBlank, "anonymous", answer.trim)
  * }
@@ -93,7 +93,7 @@ def contains(part: String, s: String): Bool
  * ```eliot
  * // The label of a "key=value" setting: everything before the first '='.
  * // Aborts on a line carrying no '=', since `indexOf` finds no position.
- * def labelOf(setting: String): {Abort} String = setting.substring(0, setting.indexOf("="))
+ * def labelOf(setting: String) uses Abort: String = setting.substring(0, setting.indexOf("="))
  *
  * // Always a String: a line without a value is its own label.
  * def label(setting: String): String = labelOf(setting) else setting
@@ -126,13 +126,13 @@ def drop(count: Int, s: String): String = s.substring(count, s.length)
  * ```eliot
  * // The extension of a file name — everything after its first dot. Aborts on a
  * // name that has no dot at all.
- * def extensionOf(fileName: String): {Abort} String = fileName.drop(fileName.indexOf(".") + 1)
+ * def extensionOf(fileName: String) uses Abort: String = fileName.drop(fileName.indexOf(".") + 1)
  *
  * // Always a String: a name without a dot simply has no extension.
  * def extension(fileName: String): String = extensionOf(fileName) else ""
  * ```
  */
-def indexOf(part: String, s: String): {Abort} Int = if(s.contains(part), indexOfInternal(part, s))
+def indexOf(part: String, s: String) uses Abort: Int = if(s.contains(part), indexOfInternal(part, s))
 
 /**
  * The characters of `s` ahead of the first occurrence of `separator`, or all of `s` when it does not occur.
@@ -169,10 +169,10 @@ def isInteger(s: String): Bool
  *
  * ```eliot
  * // A port typed by the user, falling back on anything that is not a number.
- * def port: {Console} Int = parseInt(readLine orElse "") else 8080
+ * def port uses Console: Int = parseInt(readLine orElse "") else 8080
  * ```
  */
-def parseInt(s: String): {Abort} Int = if(s.isInteger, parseIntInternal(s))
+def parseInt(s: String) uses Abort: Int = if(s.isInteger, parseIntInternal(s))
 
 /**
  * `s` without leading and trailing whitespace.
@@ -323,7 +323,7 @@ private def indexOfInternal(part: String, s: String): Int {interval(Bounded(0 - 
 
 /**
  * The number `s` spells, or `0` when it spells none — the raw leaf behind `parseInt`, which turns that case into an
- * `{Abort}`. `private` so the zero can never escape into user code as if it were a parsed value.
+ * `Abort`. `private` so the zero can never escape into user code as if it were a parsed value.
  *
  * Total on purpose: an `if` *builds* both of its arms even though it runs only one, so a leaf that failed on a
  * malformed numeral would fail before `parseInt`'s guard could choose. Implemented by the backend.

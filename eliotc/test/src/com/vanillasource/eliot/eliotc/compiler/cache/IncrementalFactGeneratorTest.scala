@@ -293,33 +293,6 @@ class IncrementalFactGeneratorTest extends AsyncFlatSpec with AsyncIOSpec with M
     test.asserting(_ shouldBe (Some(NumberFact("w", 100)), Some(NumberFact("m", 20)), Some(NumberFact("w", 200))))
   }
 
-  it should "not accept a fact against a dependency that was dropped and then built anew" in {
-    // The same hazard one step removed. Run 2 moves 'm1', which drops its direct dependent 'm2' — but 'w', which reads
-    // 'm2', is retained, because 'm2' was only dropped, not moved; validation would read the missing entry as changed.
-    // Run 3 then builds 'm2' afresh without demanding 'w'. A key with no prior entry used not to count as moved, so 'w'
-    // was retained again, now beside an 'm2' entry it never consumed, and run 4 accepted the stale 'w'. Found as a
-    // shared test session serving a previous program's field accessor after a data type was replaced.
-    val test = for {
-      src    <- Ref.of[IO, Int](10)
-      counts <- counters("leaf", "m1", "m2", "w")
-      proc    = graph(
-                  Map(
-                    "leaf" -> Leaf(src),
-                    "m1"   -> Derived("leaf", identity),
-                    "m2"   -> Derived("m1", identity),
-                    "w"    -> Derived("m2", _ * 10)
-                  ),
-                  counts
-                )
-      run1   <- runBuild(proc, None)(_.getFact(NumberKey("w")))
-      _      <- src.set(20)
-      run2   <- runBuild(proc, Some(run1._2))(_.getFact(NumberKey("m1"))) // 'm1' moves; 'm2' is dropped
-      run3   <- runBuild(proc, Some(run2._2))(_.getFact(NumberKey("m2"))) // 'm2' is built anew; 'w' not demanded
-      run4   <- runBuild(proc, Some(run3._2))(_.getFact(NumberKey("w")))
-    } yield run4._1
-    test.asserting(_ shouldBe Some(NumberFact("w", 200)))
-  }
-
   it should "keep the dependents of a value-less fact the drill proved unchanged, even when it is regenerated" in {
     // 'mid' is value-less (a SemValue fact), so a run that needs its value regenerates it. Here 'outer' is validated
     // through 'top' and 'mid' by the drill, which proves 'mid' unchanged; then 'user', new this run, demands 'mid'
@@ -516,6 +489,51 @@ class IncrementalFactGeneratorTest extends AsyncFlatSpec with AsyncIOSpec with M
       siblingN <- counts("sibling").get
     } yield (run2._1, siblingN)
     test.asserting(_ shouldBe (Some(NumberFact("sibling", 20)), 0))
+  }
+
+  it should "not accept a fact against a dependency that was dropped and then recreated without it" in {
+    // Run 2 moves 'a', which drops its direct dependent 'm' — but not 'w', which was recorded against 'm' and is only
+    // safe while 'm' has no entry. Run 3 recreates 'm' from nothing and never reaches 'w'. Run 4 then finds 'm''s new
+    // entry intact and must not serve run 1's 'w' for an 'm' it never consumed.
+    val test = for {
+      src    <- Ref.of[IO, Int](10)
+      counts <- counters("leaf", "a", "m", "w")
+      proc    = graph(
+                  Map("leaf" -> Leaf(src), "a" -> Derived("leaf", _ + 1), "m" -> Derived("a", _ * 2), "w" -> Derived("m", _ * 10)),
+                  counts
+                )
+      run1   <- runBuild(proc, None)(_.getFact(NumberKey("w")))
+      _      <- src.set(20)
+      run2   <- runBuild(proc, Some(run1._2))(_.getFact(NumberKey("a"))) // 'a' moves; 'm' is dropped, 'w' is kept
+      run3   <- runBuild(proc, Some(run2._2))(_.getFact(NumberKey("m"))) // 'm' is recreated; 'w' is never demanded
+      run4   <- runBuild(proc, Some(run3._2))(_.getFact(NumberKey("w")))
+    } yield (run1._1, run4._1)
+    test.asserting(_ shouldBe (Some(NumberFact("w", 220)), Some(NumberFact("w", 420))))
+  }
+
+  it should "not accept a fact against a pushed dependency that moved while it was not looking" in {
+    // The pushed twin of the three-run trap above. Run 2 changes the leaf and demands only 'pusher', which *pushes*
+    // 'sibling' — so 'sibling' advances without ever being resolved, and 'w', recorded against it in run 1, is never
+    // reached. Run 3 validates 'w' through 'sibling''s new entry, whose inherited dependencies hold, and must not serve
+    // run 1's 'w' for a 'sibling' it never consumed.
+    val test = for {
+      src    <- Ref.of[IO, Int](10)
+      counts <- counters("leaf", "pusher", "sibling", "w")
+      proc    = graph(
+                  Map(
+                    "leaf"    -> Leaf(src),
+                    "pusher"  -> Pushing("leaf", "sibling", _ * 2),
+                    "sibling" -> Derived("leaf", _ * 2),
+                    "w"       -> Derived("sibling", _ * 10)
+                  ),
+                  counts
+                )
+      run1   <- runBuild(proc, None)(g => g.getFact(NumberKey("pusher")) >> g.getFact(NumberKey("w")))
+      _      <- src.set(15)
+      run2   <- runBuild(proc, Some(run1._2))(_.getFact(NumberKey("pusher"))) // pushes 'sibling'; 'w' never demanded
+      run3   <- runBuild(proc, Some(run2._2))(_.getFact(NumberKey("w")))
+    } yield (run1._1, run3._1)
+    test.asserting(_ shouldBe (Some(NumberFact("w", 200)), Some(NumberFact("w", 300))))
   }
 
   it should "persist a directly registered out-of-generation fact as a leaf entry" in {

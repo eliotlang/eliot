@@ -22,7 +22,7 @@ def apply[A, B](f: Function[A, B], a: A): B
  * //     as("World", map(_ -> "Earth", Box("Hello")))
  * ```
  */
-infix left below apply def .[A, B](a: A, f: A => {} B): B = f(a)
+infix left below apply def .[A, B](a: A, f uses *: A => B): B = f(a)
 
 /**
  * The infix spelling of the function type: `A => B` is `Function[A, B]`.

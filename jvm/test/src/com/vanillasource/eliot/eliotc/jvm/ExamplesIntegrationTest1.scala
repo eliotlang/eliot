@@ -8,7 +8,7 @@ class ExamplesIntegrationTest1 extends FullIntegrationTest {
 
   "hello world" should "print a string" in {
     compileAndRun("""import eliot.effect.Console
-def main: {Console} Unit = printLine("Hello World!")""")
+def main uses Console: Unit = printLine("Hello World!")""")
       .asserting(_ shouldBe "Hello World!")
   }
 
@@ -24,9 +24,9 @@ def main: {Console} Unit = printLine("Hello World!")""")
         |
         |def orEmpty(o: Option[String]): String = o.orAbort else ""
         |
-        |def echo: {Console} Unit = printLine(orEmpty(readLine))
+        |def echo uses Console: Unit = printLine(orEmpty(readLine))
         |
-        |def main: {Console} Unit = echo""".stripMargin,
+        |def main uses Console: Unit = echo""".stripMargin,
       stdin = "echoed line\n"
     ).asserting(_ shouldBe "echoed line")
   }
@@ -35,7 +35,7 @@ def main: {Console} Unit = printLine("Hello World!")""")
   // working unchanged.
   it should "still print a literal via the Console effect" in {
     compileAndRun("""import eliot.effect.Console
-def main: {Console} Unit = printLine("Hello World!")""")
+def main uses Console: Unit = printLine("Hello World!")""")
       .asserting(_ shouldBe "Hello World!")
   }
 
@@ -44,19 +44,19 @@ def main: {Console} Unit = printLine("Hello World!")""")
     compileAndRun(
       """import eliot.effect.Console
         |
-        |def greet: {Console} Unit = {
+        |def greet uses Console: Unit = {
         |   printLine("a")
         |   printLine("b")
         |}
         |
-        |def main: {Console} Unit = greet""".stripMargin
+        |def main uses Console: Unit = greet""".stripMargin
     ).asserting(_ shouldBe "a\nb")
   }
 
   // The `private` leaf native behind `printLine` is unreachable from application code: naming it across the module
   // boundary is refused by the resolver (the fail-safe that keeps untracked I/O impossible).
   "the private I/O leaf" should "be unreachable from application code" in {
-    compileForErrors("""def main: {Console} Unit = eliot.effect.Console::printLineInternal("x")""")
+    compileForErrors("""def main uses Console: Unit = eliot.effect.Console::printLineInternal("x")""")
       .asserting(_ should include("Name is private."))
   }
 
@@ -72,7 +72,7 @@ def main: {Console} Unit = printLine("Hello World!")""")
       """import eliot.effect.Console
         |def orEmpty(o: Option[String]): String = o.orAbort else ""
         |
-        |def main: {Console} Unit = printLine(orEmpty(readLine))""".stripMargin,
+        |def main uses Console: Unit = printLine(orEmpty(readLine))""".stripMargin,
       stdin = "echoed line\n"
     ).asserting(_ shouldBe "echoed line")
   }
@@ -83,9 +83,9 @@ def main: {Console} Unit = printLine("Hello World!")""")
       """import eliot.effect.Console
         |def orEmpty(o: Option[String]): String = o.orAbort else ""
         |
-        |def echo: {Console} Unit = printLine(orEmpty(readLine))
+        |def echo uses Console: Unit = printLine(orEmpty(readLine))
         |
-        |def main: {Console} Unit = echo""".stripMargin,
+        |def main uses Console: Unit = echo""".stripMargin,
       stdin = "carrier line\n"
     ).asserting(_ shouldBe "carrier line")
   }
@@ -104,9 +104,9 @@ def main: {Console} Unit = printLine("Hello World!")""")
         |
         |def shout(s: Option[String]): String = s.orAbort else ""
         |
-        |def echo: {Console} Unit = printLine(readLine.shout)
+        |def echo uses Console: Unit = printLine(readLine.shout)
         |
-        |def main: {Console} Unit = echo""".stripMargin,
+        |def main uses Console: Unit = echo""".stripMargin,
       stdin = "loud\n"
     ).asserting(_ shouldBe "loud")
   }
@@ -127,9 +127,9 @@ def main: {Console} Unit = printLine("Hello World!")""")
         |
         |def orEmpty(o: Option[String]): String = o.orAbort else ""
         |
-        |def call(f: Option[String] => String): {Console} Unit = printLine(readLine.f)
+        |def call(f: Option[String] => String) uses Console: Unit = printLine(readLine.f)
         |
-        |def main: {Console} Unit = call(s -> orEmpty(s))""".stripMargin,
+        |def main uses Console: Unit = call(s -> orEmpty(s))""".stripMargin,
       stdin = "through f\n"
     ).asserting(_ shouldBe "through f")
   }
@@ -150,9 +150,9 @@ def main: {Console} Unit = printLine("Hello World!")""")
         |
         |def shout(s: Option[String]): String = s.orAbort else ""
         |
-        |def echo: {Console} Unit = printLine(readLine |> shout)
+        |def echo uses Console: Unit = printLine(readLine |> shout)
         |
-        |def main: {Console} Unit = echo""".stripMargin,
+        |def main uses Console: Unit = echo""".stripMargin,
       stdin = "piped loud\n"
     ).asserting(_ shouldBe "piped loud")
   }
@@ -184,7 +184,7 @@ def main: {Console} Unit = printLine("Hello World!")""")
         |
         |def unboxed(b: Bx[String]): String = unwrap(b)
         |
-        |def main: {Console} Unit = printLine(unboxed(rebox(Bx("boxed"))))""".stripMargin
+        |def main uses Console: Unit = printLine(unboxed(rebox(Bx("boxed"))))""".stripMargin
     ).asserting(_ shouldBe "boxed")
   }
 
@@ -197,7 +197,7 @@ def main: {Console} Unit = printLine("Hello World!")""")
         |
         |def helper: String = printLine(orEmpty(readLine))
         |
-        |def main: {Console} Unit = printLine(helper)""".stripMargin
+        |def main uses Console: Unit = printLine(helper)""".stripMargin
     ).asserting(_ should include("performs the effect 'Console' but does not declare it"))
   }
 
@@ -208,9 +208,9 @@ def main: {Console} Unit = printLine("Hello World!")""")
   "log effect" should "emit a tagged diagnostic line" in {
     compileAndRun(
       """import eliot.effect.Log
-        |def announce: {Log} Unit = log("starting up")
+        |def announce uses Log: Unit = log("starting up")
         |
-        |def main: {Log} Unit = announce""".stripMargin
+        |def main uses Log: Unit = announce""".stripMargin
     ).asserting(_ shouldBe "[LOG] starting up")
   }
 
@@ -222,9 +222,9 @@ def main: {Console} Unit = printLine("Hello World!")""")
         |import eliot.effect.Log
         |def orEmpty(o: Option[String]): String = o.orAbort else ""
         |
-        |def echoLog: {Log, Console} Unit = log(orEmpty(readLine))
+        |def echoLog uses Log, Console: Unit = log(orEmpty(readLine))
         |
-        |def main: {Log, Console} Unit = echoLog""".stripMargin,
+        |def main uses Log, Console: Unit = echoLog""".stripMargin,
       stdin = "from stdin\n"
     ).asserting(_ shouldBe "[LOG] from stdin")
   }
@@ -235,11 +235,11 @@ def main: {Console} Unit = printLine("Hello World!")""")
     compileForErrors(
       """import eliot.effect.Console
         |import eliot.effect.Log
-        |def doLog: {Log} Unit = log("hi")
+        |def doLog uses Log: Unit = log("hi")
         |
-        |def caller: {Console} Unit = doLog
+        |def caller uses Console: Unit = doLog
         |
-        |def main: {Console} Unit = caller""".stripMargin
+        |def main uses Console: Unit = caller""".stripMargin
     ).asserting(_ should include("performs the effect 'Log' but does not declare it"))
   }
 
@@ -255,11 +255,11 @@ def main: {Console} Unit = printLine("Hello World!")""")
         |
         |def orEmpty(o: Option[String]): String = o.orAbort else ""
         |
-        |def run: {Dep[Database], Log, Console} Unit = andThen(log(dependency.url), printLine(orEmpty(readLine)))
+        |def run uses Dep[Database], Log, Console: Unit = andThen(log(dependency.url), printLine(orEmpty(readLine)))
         |
         |def andThen(first: Unit, second: Unit): Unit = second
         |
-        |def main: {Log, Console} Unit = provide(Database("jdbc://app-db"), run)""".stripMargin,
+        |def main uses Log, Console: Unit = provide(Database("jdbc://app-db"), run)""".stripMargin,
       stdin = "echoed\n"
     ).asserting(_ shouldBe "[LOG] jdbc://app-db\nechoed")
   }
@@ -275,9 +275,9 @@ def main: {Console} Unit = printLine("Hello World!")""")
         |data Database(url: String)
         |data Logger(name: String)
         |
-        |def firstDep: {Dep[Database], Dep[Logger]} String = pick(url(dependency), name(dependency))
+        |def firstDep uses Dep[Database], Dep[Logger]: String = pick(url(dependency), name(dependency))
         |
-        |def main: {Console} Unit = printLine(provide(Logger("the-logger"), provide(Database("the-db"), firstDep)))""".stripMargin
+        |def main uses Console: Unit = printLine(provide(Logger("the-logger"), provide(Database("the-db"), firstDep)))""".stripMargin
     compileAndRun(program + "\n\ndef pick(a: String, b: String): String = a")
       .asserting(_ shouldBe "the-db")
   }
@@ -290,11 +290,11 @@ def main: {Console} Unit = printLine("Hello World!")""")
         |data Database(url: String)
         |data Logger(name: String)
         |
-        |def secondDep: {Dep[Database], Dep[Logger]} String = pick(url(dependency), name(dependency))
+        |def secondDep uses Dep[Database], Dep[Logger]: String = pick(url(dependency), name(dependency))
         |
         |def pick(a: String, b: String): String = b
         |
-        |def main: {Console} Unit = printLine(provide(Logger("the-logger"), provide(Database("the-db"), secondDep)))""".stripMargin
+        |def main uses Console: Unit = printLine(provide(Logger("the-logger"), provide(Database("the-db"), secondDep)))""".stripMargin
     ).asserting(_ shouldBe "the-logger")
   }
 
@@ -314,13 +314,13 @@ def main: {Console} Unit = printLine("Hello World!")""")
       |   def read: String
       |}
       |
-      |def greet: {Terminal} Unit = {
+      |def greet uses Terminal: Unit = {
       |   val name = read
       |   write("Hello, " ++ name ++ "!")
       |}
       |
       |implement session: Terminal {
-      |   def write(line: String): {Writer[String]} Unit = tell(line ++ ";")
+      |   def write(line: String) uses Writer[String]: Unit = tell(line ++ ";")
       |
       |   def read: String = "Bob"
       |}
@@ -332,7 +332,7 @@ def main: {Console} Unit = printLine("Hello World!")""")
         """
           |def greetTranscript: String = runWriterToLog(greet with session)
           |
-          |def main: {Console} Unit = printLine(greetTranscript)""".stripMargin
+          |def main uses Console: Unit = printLine(greetTranscript)""".stripMargin
     ).asserting(_ shouldBe "Hello, Bob!;")
   }
 
@@ -345,7 +345,7 @@ def main: {Console} Unit = printLine("Hello World!")""")
         """
           |data TestResult(label: String, failure: Option[String])
           |
-          |def transcriptOf(program: {Terminal} Unit with session): String = runWriterToLog(program)
+          |def transcriptOf(program uses *, Terminal with session: Unit): String = runWriterToLog(program)
           |
           |def expect(label: String, expected: String, actual: String): TestResult =
           |   if(expected == actual, TestResult(label, None))
@@ -353,7 +353,7 @@ def main: {Console} Unit = printLine("Hello World!")""")
           |
           |def greetTest: TestResult = expect("greet", "Hello, Bob!;", transcriptOf(greet))
           |
-          |def main: {Console} Unit =
+          |def main uses Console: Unit =
           |   printLine(failure(greetTest).foldOption("PASS " ++ label(greetTest), f -> "FAIL " ++ f))""".stripMargin
     ).asserting(_ shouldBe "PASS greet")
   }
@@ -362,11 +362,8 @@ def main: {Console} Unit = printLine("Hello World!")""")
   // field** and the framework ran it later; v6's `eliot.test` carries no body at all (D13) — `in` runs the case in
   // place and discharges what it declares — so the framework shape here is the assertion run where it is written and
   // its `Throw` discharged around it.
-  //
-  // Storing a computation in a `data` field is *not* what replaced it, and deliberately is not tested here: a field
-  // row thunks in the type but the constructor's slot is not recorded as a row, so the actual is neither thunked nor
-  // charged to the right definition, and a field read back at a rowed slot is wrapped a second time. That is a real
-  // gap in the write (`docs/effects.md` A7), not a shape to pin.
+  // Storing a computation in a `data` field is not what replaced it: a field holds a value (`docs/effects.md` D20
+  // rule 6), so a row on one is rejected.
   private val namedImplementationFramework =
     """import eliot.effect.Throw
       |
@@ -374,12 +371,12 @@ def main: {Console} Unit = printLine("Hello World!")""")
       """
       |data AssertionError(reason: String)
       |
-      |def assertEquals(expected: String, actual: String): {Throw[AssertionError]} Unit =
+      |def assertEquals(expected: String, actual: String) uses Throw[AssertionError]: Unit =
       |   if(expected == actual, unit) else raise(AssertionError("expected '" ++ expected ++ "' but was '" ++ actual ++ "'"))
       |
       |def greetTranscript: String = runWriterToLog(greet with session)
       |
-      |def runCase(name: String, assertion: {Throw[AssertionError]} Unit): String =
+      |def runCase(name: String, assertion uses *, Throw[AssertionError]: Unit): String =
       |   foldEither(e -> "FAIL " ++ name ++ ": " ++ reason(e), u -> "PASS " ++ name, runThrow(assertion))
       |
       |""".stripMargin
@@ -387,7 +384,7 @@ def main: {Console} Unit = printLine("Hello World!")""")
   it should "carry the double's transcript into a test-framework assertion" in {
     compileAndRun(
       namedImplementationFramework +
-        """def main: {Console} Unit =
+        """def main uses Console: Unit =
           |   printLine(runCase("greet", assertEquals("Hello, Bob!;", greetTranscript)))""".stripMargin
     ).asserting(_ shouldBe "PASS greet")
   }
@@ -395,7 +392,7 @@ def main: {Console} Unit = printLine("Hello World!")""")
   it should "report a failed assertion against the double's transcript" in {
     compileAndRun(
       namedImplementationFramework +
-        """def main: {Console} Unit =
+        """def main uses Console: Unit =
           |   printLine(runCase("greet", assertEquals("Hello, Alice!;", greetTranscript)))""".stripMargin
     ).asserting(_ shouldBe "FAIL greet: expected 'Hello, Alice!;' but was 'Hello, Bob!;'")
   }

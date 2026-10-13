@@ -9,7 +9,7 @@
  * `Pair[A, W]` (or `runWriterToValue` / `runWriterToLog` to keep only one side).
  *
  * ```eliot
- * def note(line: String): {Writer[String]} Unit = tell(line)
+ * def note(line: String) uses Writer[String]: Unit = tell(line)
  * ```
  *
  * A **control effect**: one implementation per platform, appending to that platform's private cell.
@@ -29,15 +29,15 @@ effect Writer[W] {
  *
  * Body-less here and bodied per platform, over that platform's private cell primitive.
  */
-def runWriterToPair[W ~ Combine[W], A](p: {Writer[W]} A): Pair[A, W]
+def runWriterToPair[W ~ Combine[W], A](p uses *, Writer[W]: A): Pair[A, W]
 
 /**
  * Discharge the `Writer[W]` effect keeping only the result, discarding the accumulated log.
  */
-def runWriterToValue[W ~ Combine[W], A](p: {Writer[W]} A): A = first(runWriterToPair(p))
+def runWriterToValue[W ~ Combine[W], A](p uses *, Writer[W]: A): A = first(runWriterToPair(p))
 
 /**
  * Discharge the `Writer[W]` effect keeping only the accumulated log, discarding the result. This is the usual way to
  * collect a writer's output.
  */
-def runWriterToLog[W ~ Combine[W], A](p: {Writer[W]} A): W = second(runWriterToPair(p))
+def runWriterToLog[W ~ Combine[W], A](p uses *, Writer[W]: A): W = second(runWriterToPair(p))

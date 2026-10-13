@@ -38,13 +38,13 @@ def standardError(result: ProcessResult): String
  * never as a string to be re-split — quoting rules are the one part of process spawning that is
  * different on every platform and wrong in every hand-rolled implementation.
  *
- * A target with no process model simply ships no default `implement Process`, so a `{Process}`
+ * A target with no process model simply ships no default `implement Process`, so a `uses Process`
  * program fails at the run boundary there — the layer system is the capability, exactly as it is
  * for `Environment` and `FileSystem`. That is also why an exit code may be named here at all: a
  * platform that has no notion of one is a platform on which none of this effect exists.
  *
  * ```eliot
- * def tags(repository: Path): {Process, Throw[IoError]} String = {
+ * def tags(repository: Path) uses Process, Throw[IoError]: String = {
  *    val listed = run(command("git").withArgument("ls-remote").withArgument("--tags"), repository)
  *    listed.standardOutput
  * }
@@ -71,7 +71,7 @@ effect Process {
     * it is not a path; the rest are its arguments, passed through untouched. An empty `command`
     * raises.
     */
-   def run(command: List[String], workingDirectory: Path): {Throw[IoError]} ProcessResult
+   def run(command: List[String], workingDirectory: Path) uses Throw[IoError]: ProcessResult
 
    /**
     * Run `command` in `workingDirectory` with the standard streams **inherited** — the child writes
@@ -81,7 +81,7 @@ effect Process {
     * diagnostics, a test run's report. Nothing is captured, so `standardOutput` of a `run` result
     * would have nowhere to come from; that is why this yields the code alone.
     */
-   def runInheritingIo(command: List[String], workingDirectory: Path): {Throw[IoError]} Int
+   def runInheritingIo(command: List[String], workingDirectory: Path) uses Throw[IoError]: Int
 
    /**
     * Register the code this program reports to whoever started it, zero conventionally meaning
@@ -103,11 +103,11 @@ effect Process {
     *
     * ```eliot
     * // Compile one module, answering whether it succeeded.
-    * def compile(module: Module): {Console, Process} Bool
+    * def compile(module: Module) uses Console, Process: Bool
     *
     * // Build every module, and tell the shell that invoked us if any of them failed. The
     * // registration sits where the decision is made; the summary below it still runs.
-    * def build(modules: List[Module]): {Console, Process} Unit = {
+    * def build(modules: List[Module]) uses Console, Process: Unit = {
     *    val succeeded = modules.all(compile)
     *
     *    if(succeeded, unit) else registerExitCode(1)

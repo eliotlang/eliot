@@ -32,8 +32,9 @@ object TypeAliasDefinition {
       // `left`/`right`/… fixity identifiers as an application chain, silently dropping its fixity; `typeRunParser` stops
       // cleanly at the next definition because every definition-introducing token (`infix`/`prefix`/`postfix`/`def`/
       // `type`/…) is a hard keyword and so is not a type-atom start. This lets an alias body carry a bare type operator,
-      // e.g. `type Pred = A => Bool`.
-      body                <- (symbol("=") *> sourced(Expression.typeRunParser)).optional()
+      // e.g. `type Pred = A => Bool`. It is also the one place an effect row is still written: a row alias,
+      // `type Test = {Writer[List[TestResult]]} Unit` (see `Expression.rowAliasBodyParser`).
+      body                <- (symbol("=") *> sourced(Expression.rowAliasBodyParser)).optional()
     } yield {
       val args      = genericParameters.map(gp => ArgumentDefinition(gp.name, gp.typeRestriction))
       val typeExpr  = name.as(Expression.FunctionApplication(None, name.map(_ => "Type"), None, Seq.empty))

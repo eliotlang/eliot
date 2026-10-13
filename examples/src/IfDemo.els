@@ -3,9 +3,9 @@
 // infix `else` (from `eliot.effect.Abort`) discharges with the alternative. Because the branch is a suspended slot, it
 // may be pure OR effectful, and only the selected branch is ever run — so this reads like an imperative `if`.
 
-// Every form of if..else, all driven by the single `flag` parameter. `demo` declares only `{Console}`: every `if`'s
-// `{Abort}` is fully discharged by its matching `else`, so a discharged effect never joins the declared row.
-def demo(flag: Bool): {Console} Unit = {
+// Every form of if..else, all driven by the single `flag` parameter. `demo` declares only `uses Console`: every
+// `if`'s `Abort` is fully discharged by its matching `else`, so a discharged effect never joins the clause.
+def demo(flag: Bool) uses Console: Unit = {
    // 1. A pure value chosen by an if..else, then printed.
    printLine(if(flag, "1. pure value: ON") else "1. pure value: OFF")
 
@@ -28,7 +28,7 @@ def demo(flag: Bool): {Console} Unit = {
    } else printLine("6. plain else")
 }
 
-// `if..else` needs no effect row at all: in a PURE function the `else` discharges the `{Abort}` the `if` introduced,
+// `if..else` needs no `uses` clause at all: in a PURE function the `else` discharges the `Abort` the `if` introduced,
 // and nothing is left over — so branching code looks exactly like it would in any other language, a plain `String` in
 // and a plain `String` out.
 def sign(flag: Bool): String = if(flag, "+") else "-"
@@ -40,23 +40,23 @@ def describe(a: Bool, b: Bool): String = {
 }
 
 // `fold` is the raw two-armed eliminator that `if` is built on: `if(cond, v)` is exactly `fold(cond, v, abort)`, and
-// `else` discharges that abort. The difference is that `fold` takes BOTH arms explicitly and adds no `{Abort}` to the
-// effect row. Both arms are suspended (`{} A`), so only the selected one ever runs and a pure arm sits happily beside
+// `else` discharges that abort. The difference is that `fold` takes BOTH arms explicitly and adds no `Abort` to the
+// caller's clause. Both arms are suspended (`uses *`), so only the selected one ever runs and a pure arm sits happily beside
 // an effectful one — they need only agree on the value type they yield.
-def foldForms(flag: Bool): {Console} Unit = {
-   // 1. Two pure arms of one type: `fold` selects a value and adds nothing to the effect row (result is `String`).
+def foldForms(flag: Bool) uses Console: Unit = {
+   // 1. Two pure arms of one type: `fold` selects a value and uses no effect (result is `String`).
    printLine(fold(flag, "1. fold pure: then", "1. fold pure: else"))
 
-   // 2. Two effectful arms: `A` unifies to `{Console} Unit`, and only the chosen branch's `printLine` runs.
+   // 2. Two effectful arms: `A` is `Unit`, each arm uses the caller's `Console`, and only the chosen one runs.
    fold(flag, printLine("2. fold effectful: then"), printLine("2. fold effectful: else"))
 
    // 3. The arms agree on their value type; what one of them performs on the way is not part of that agreement.
    printLine(fold(flag, "3. fold same-type arms: A", "3. fold same-type arms: B"))
 }
 
-def main: {Console} Unit = {
+def main uses Console: Unit = {
    // With a compile-time constant: `demo(true)` / `foldForms(true)` may be reduced by the compiler. No `else` is
-   // needed — both perform only `{Console}`, so they drop straight into the `IO` of `main`.
+   // needed — both use only `Console`, which `main` declares and the entry point binds.
    printLine("========== constant: true ==========")
    demo(true)
    foldForms(true)

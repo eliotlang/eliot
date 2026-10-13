@@ -23,9 +23,9 @@ class SuppliedRowArgumentsWiringTest extends AsyncFlatSpec with AsyncIOSpec with
   // A valid effectful program: `catch` discharges `{Throw[String]}` at its own slot, and the write takes `E := String`
   // from `parseOk`/`parseBad`'s own declared row, so every supplied entry is determined. The check must accept it.
   private val validSource =
-    """def parseOk: {Throw[String]} String = fold(true, "ok", raise("bad"))
-      |def parseBad: {Throw[String]} String = raise("bad")
-      |def main: {Console} Unit = {
+    """def parseOk uses Throw[String]: String = fold(true, "ok", raise("bad"))
+      |def parseBad uses Throw[String]: String = raise("bad")
+      |def main uses Console: Unit = {
       |   printLine(parseOk catch (err -> err))
       |   printLine(parseBad catch (err -> err))
       |}
@@ -35,8 +35,8 @@ class SuppliedRowArgumentsWiringTest extends AsyncFlatSpec with AsyncIOSpec with
   // no row at all — and its handler ignores the error, so nothing else determines what it supplies either. Rejected
   // at the call rather than compiled into a frame keyed on the universe.
   private val overDischargedSource =
-    """def parseBad: {Throw[String]} String = raise("bad")
-      |def main: {Console} Unit = printLine((parseBad catch (err -> "inner")) catch (err -> "outer"))
+    """def parseBad uses Throw[String]: String = raise("bad")
+      |def main uses Console: Unit = printLine((parseBad catch (err -> "inner")) catch (err -> "outer"))
       |""".stripMargin
 
   "the wired supplied-row-arguments check" should "not block a valid effectful program (parity)" in {

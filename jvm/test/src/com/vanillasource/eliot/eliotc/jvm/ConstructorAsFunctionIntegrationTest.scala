@@ -9,7 +9,7 @@ class ConstructorAsFunctionIntegrationTest extends FullIntegrationTest {
         |
         |def make: String => Box = Box
         |
-        |def main: {Console} Unit = printLine(make("hi").value)""".stripMargin
+        |def main uses Console: Unit = printLine(make("hi").value)""".stripMargin
     ).asserting(_ shouldBe "hi")
   }
 
@@ -19,7 +19,7 @@ class ConstructorAsFunctionIntegrationTest extends FullIntegrationTest {
         |
         |def make: String => String => Pair2 = Pair2
         |
-        |def main: {Console} Unit = printLine(make("x")("y").b)""".stripMargin
+        |def main uses Console: Unit = printLine(make("x")("y").b)""".stripMargin
     ).asserting(_ shouldBe "y")
   }
 
@@ -29,7 +29,7 @@ class ConstructorAsFunctionIntegrationTest extends FullIntegrationTest {
         |
         |def make: String => Pair2 = Pair2("x")
         |
-        |def main: {Console} Unit = printLine(make("y").b)""".stripMargin
+        |def main uses Console: Unit = printLine(make("y").b)""".stripMargin
     ).asserting(_ shouldBe "y")
   }
 
@@ -39,7 +39,7 @@ class ConstructorAsFunctionIntegrationTest extends FullIntegrationTest {
         |
         |data Box(value: String)
         |
-        |def main: {Console} Unit = printLine(singleton("a").map(Box).map(b -> b.value).joined(","))""".stripMargin
+        |def main uses Console: Unit = printLine(singleton("a").map(Box).map(b -> b.value).joined(","))""".stripMargin
     ).asserting(_ shouldBe "a")
   }
 }

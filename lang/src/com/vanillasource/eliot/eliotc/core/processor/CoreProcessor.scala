@@ -71,12 +71,6 @@ class CoreProcessor
     // contravariant position of a constructor field (the negative-recursive-datatype route to `Y`). See
     // StrictPositivityChecker. Errors are reported here but the CoreAST is still produced so other checks proceed.
     val positivityErrors = sourceAstData.typeDefinitions.flatMap(StrictPositivityChecker.check)
-    // Ill-formed effect rows: a row on a `data` field, which would store a computation (D20 rule 6), and a pinned row
-    // anywhere, which names a carrier stack v6 does not have. Reported here, with the definitions still lowered (see
-    // EffectSugarDesugarer) so other checks proceed.
-    val rowErrors        =
-      sourceAstData.typeDefinitions.flatMap(EffectSugarDesugarer.rowErrors) ++
-        sourceAstData.functionDefinitions.flatMap(EffectSugarDesugarer.rowErrors)
     // Visibility-order check: a file's public API must be a prefix of its declarations, so no public declaration may
     // follow a private one. Runs on the desugared named values (not the source AST) so `def`/`type`/`data`/`ability`/
     // `implement` all answer to one rule with no per-construct arms. See VisibilityOrderChecker.
@@ -85,7 +79,7 @@ class CoreProcessor
     // reach match desugaring un-lowered and crash the compiler. See SignatureBlockChecker for why it is reported
     // rather than lowered.
     val signatureErrors  = coreAstData.namedValues.flatMap(SignatureBlockChecker.check)
-    (positivityErrors ++ rowErrors ++ visibilityErrors ++ signatureErrors)
+    (positivityErrors ++ visibilityErrors ++ signatureErrors)
       .traverse_(message => Sourced.compilerError(message)) >>
       debug[CompilerIO](
         s"Core functions in ${key.uri}: ${coreAstData.namedValues.map(_.render).mkString(", ")}"

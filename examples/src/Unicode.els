@@ -11,7 +11,7 @@
  * java -jar target/Unicode.jar
  * ```
  */
-def main: {Console} Unit = {
+def main uses Console: Unit = {
    val greeting = <===>
    printLine(greeting)
    printLine(show(greeting.length)) // 13, not the 14 UTF-16 units the JVM stores it in

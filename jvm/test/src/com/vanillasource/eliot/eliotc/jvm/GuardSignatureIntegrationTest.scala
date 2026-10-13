@@ -39,7 +39,7 @@ class GuardSignatureIntegrationTest extends FullIntegrationTest {
         |
         |def greeting[COND: Bool]: if(COND, String[]) else raise("greeting unavailable") = "hello"
         |
-        |def main: {Console} Unit = printLine(greeting[true])""".stripMargin
+        |def main uses Console: Unit = printLine(greeting[true])""".stripMargin
     ).asserting(_ shouldBe "hello")
   }
 
@@ -51,7 +51,7 @@ class GuardSignatureIntegrationTest extends FullIntegrationTest {
         |
         |def greeting[COND: Bool]: if(COND, String[]) else raise("greeting unavailable") = "hello"
         |
-        |def main: {Console} Unit = printLine(greeting[false])""".stripMargin
+        |def main uses Console: Unit = printLine(greeting[false])""".stripMargin
     ).asserting(rejects)
   }
 
@@ -62,7 +62,7 @@ class GuardSignatureIntegrationTest extends FullIntegrationTest {
         |
         |def unavailable: raise("not available") = "x"
         |
-        |def main: {Console} Unit = printLine(unavailable)""".stripMargin
+        |def main uses Console: Unit = printLine(unavailable)""".stripMargin
     ).asserting(rejects)
   }
 
@@ -77,18 +77,18 @@ class GuardSignatureIntegrationTest extends FullIntegrationTest {
       |
       |infix left below apply def |>[A, B](a: A, f: A => B): B = f(a)
       |
-      |def guardOr[A](cond: Bool, value: A): {Throw[String]} A = if(cond, value) else raise("greeting unavailable")
+      |def guardOr[A](cond: Bool, value: A) uses Throw[String]: A = if(cond, value) else raise("greeting unavailable")
       |
       |def greeting[COND: Bool]: String[] |> guardOr(COND) = "hello"
       |""".stripMargin
 
   "a satisfied guard written through a user pipe" should "type as its payload and run as the bare type" in {
-    compileAndRun(pipedGuard + "\ndef main: {Console} Unit = printLine(greeting[true])")
+    compileAndRun(pipedGuard + "\ndef main uses Console: Unit = printLine(greeting[true])")
       .asserting(_ shouldBe "hello")
   }
 
   "an unsatisfied guard written through a user pipe" should "fail the build" in {
-    compileForErrors(pipedGuard + "\ndef main: {Console} Unit = printLine(greeting[false])")
+    compileForErrors(pipedGuard + "\ndef main uses Console: Unit = printLine(greeting[false])")
       .asserting(rejects)
   }
 
@@ -108,7 +108,7 @@ class GuardSignatureIntegrationTest extends FullIntegrationTest {
         |
         |def positive[MIN: BigInteger]: if(MIN > 0, String[]) else raise("must be positive") = "ok"
         |
-        |def main: {Console} Unit = printLine(positive[5])""".stripMargin
+        |def main uses Console: Unit = printLine(positive[5])""".stripMargin
     ).asserting(_ shouldBe "ok")
   }
 
@@ -120,7 +120,7 @@ class GuardSignatureIntegrationTest extends FullIntegrationTest {
         |
         |def positive[MIN: BigInteger]: if(MIN > 0, String[]) else raise("must be positive") = "ok"
         |
-        |def main: {Console} Unit = printLine(positive[0])""".stripMargin
+        |def main uses Console: Unit = printLine(positive[0])""".stripMargin
     ).asserting(rejects)
   }
 
@@ -132,7 +132,7 @@ class GuardSignatureIntegrationTest extends FullIntegrationTest {
         |
         |def small[N: BigInteger]: if(N < 10, String[]) else raise("too big") = "ok"
         |
-        |def main: {Console} Unit = printLine(small[3])""".stripMargin
+        |def main uses Console: Unit = printLine(small[3])""".stripMargin
     ).asserting(_ shouldBe "ok")
   }
 }

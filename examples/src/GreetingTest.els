@@ -5,4 +5,4 @@ import TestSuite
  */
 def greeting(name: String): String = "Hello, " ++ name ++ "!"
 
-def test: {Throw[String]} Unit = assertEquals("Hello, Bob!", greeting("Bob"))
+def test uses Throw[String]: Unit = assertEquals("Hello, Bob!", greeting("Bob"))

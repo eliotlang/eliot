@@ -29,11 +29,11 @@ class DerivedMetaTransferIntegrationTest extends FullIntegrationTest {
        |""".stripMargin
 
   private def accepts(definitions: String, expression: String, output: String) =
-    compileAndRun(useByte + definitions + s"def main: {Console} Unit = printLine(show(useByte($expression)))")
+    compileAndRun(useByte + definitions + s"def main uses Console: Unit = printLine(show(useByte($expression)))")
       .asserting(_ shouldBe output)
 
   private def rejects(definitions: String, expression: String) =
-    compileForErrors(useByte + definitions + s"def main: {Console} Unit = printLine(show(useByte($expression)))")
+    compileForErrors(useByte + definitions + s"def main uses Console: Unit = printLine(show(useByte($expression)))")
       .asserting(_ should include("precondition of 'Test::useByte' is not satisfied"))
 
   private val double = "def double(x: Int): Int = add(x, x)\n"
@@ -97,14 +97,14 @@ class DerivedMetaTransferIntegrationTest extends FullIntegrationTest {
   "a bodied def over strings" should "derive its argument's size through the call" in {
     compileAndRun(
       "import eliot.effect.Console\n" + display +
-        """def main: {Console} Unit = printLine(display(label("abcd")))"""
+        """def main uses Console: Unit = printLine(display(label("abcd")))"""
     ).asserting(_ shouldBe "abcd")
   }
 
   it should "reject a derived size that is too large" in {
     compileForErrors(
       "import eliot.effect.Console\n" + display +
-        """def main: {Console} Unit = printLine(display(label("abcde")))"""
+        """def main uses Console: Unit = printLine(display(label("abcde")))"""
     ).asserting(_ should include("precondition of 'Test::display' is not satisfied"))
   }
 
@@ -114,7 +114,7 @@ class DerivedMetaTransferIntegrationTest extends FullIntegrationTest {
   "a higher-order call" should "stay ⊤ rather than derive through a lambda argument" in {
     compileForErrors(
       useByte + "def applyTo(f: Function[Int, Int], x: Int): Int = f(x)\n" +
-        "def main: {Console} Unit = printLine(show(useByte(applyTo(y -> add(y, 1), 10))))"
+        "def main uses Console: Unit = printLine(show(useByte(applyTo(y -> add(y, 1), 10))))"
     ).asserting(_ should include("Cannot prove the precondition of 'Test::useByte'"))
   }
 
@@ -124,7 +124,7 @@ class DerivedMetaTransferIntegrationTest extends FullIntegrationTest {
   "a where precondition inside a bodied def" should "still be demanded at the definition over ⊤ parameters" in {
     compileForErrors(
       useByte + "def relay(y: Int): Int = useByte(y)\n" +
-        "def main: {Console} Unit = printLine(show(relay(10)))"
+        "def main uses Console: Unit = printLine(show(relay(10)))"
     ).asserting(_ should include("Cannot prove the precondition of 'Test::useByte'"))
   }
 }

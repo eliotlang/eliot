@@ -32,9 +32,9 @@ class CatchShapeMatrixTest extends FullIntegrationTest {
     """import eliot.effect.Console
       |import eliot.effect.Throw
       |
-      |def ok: {Throw[String]} String = "ok-value"
-      |def bad: {Throw[String]} String = raise("boom")
-      |def badUnit: {Throw[String]} Unit = raise("boom")
+      |def ok uses Throw[String]: String = "ok-value"
+      |def bad uses Throw[String]: String = raise("boom")
+      |def badUnit uses Throw[String]: Unit = raise("boom")
       |
       |""".stripMargin
 
@@ -45,9 +45,9 @@ class CatchShapeMatrixTest extends FullIntegrationTest {
       |data NetError(netReason: String)
       |data ParseError(parseReason: String)
       |
-      |def fetch(url: String): {Throw[NetError]} String = raise(NetError("net-down"))
-      |def parse(raw: String): {Throw[ParseError]} String = raise(ParseError("parse-bad"))
-      |def loadConfig(url: String): {Throw[NetError], Throw[ParseError]} String = parse(fetch(url))
+      |def fetch(url: String) uses Throw[NetError]: String = raise(NetError("net-down"))
+      |def parse(raw: String) uses Throw[ParseError]: String = raise(ParseError("parse-bad"))
+      |def loadConfig(url: String) uses Throw[NetError], Throw[ParseError]: String = parse(fetch(url))
       |
       |""".stripMargin
 
@@ -58,18 +58,18 @@ class CatchShapeMatrixTest extends FullIntegrationTest {
   "identity handler, single statement, pure Id carrier" should "recover the raised value" in {
     compileAndRun(throwPrelude + """
       |def r: String = bad catch (err -> err)
-      |def main: {Console} Unit = printLine(r)""".stripMargin).asserting(_ shouldBe "boom")
+      |def main uses Console: Unit = printLine(r)""".stripMargin).asserting(_ shouldBe "boom")
   }
 
   "identity handler, single statement, ambient Console carrier" should "recover the raised value" in {
     compileAndRun(throwPrelude + """
-      |def show: {Console} Unit = printLine(bad catch (err -> err))
-      |def main: {Console} Unit = show""".stripMargin).asserting(_ shouldBe "boom")
+      |def show uses Console: Unit = printLine(bad catch (err -> err))
+      |def main uses Console: Unit = show""".stripMargin).asserting(_ shouldBe "boom")
   }
 
   "identity handler, single statement, concrete IO carrier" should "recover the raised value" in {
     compileAndRun(throwPrelude + """
-      |def main: {Console} Unit = printLine(bad catch (err -> err))""".stripMargin).asserting(_ shouldBe "boom")
+      |def main uses Console: Unit = printLine(bad catch (err -> err))""".stripMargin).asserting(_ shouldBe "boom")
   }
 
   "identity handler, block, pure Id carrier" should "recover the raised value" in {
@@ -78,21 +78,21 @@ class CatchShapeMatrixTest extends FullIntegrationTest {
       |   val note = "unused"
       |   bad catch (err -> err)
       |}
-      |def main: {Console} Unit = printLine(r)""".stripMargin).asserting(_ shouldBe "boom")
+      |def main uses Console: Unit = printLine(r)""".stripMargin).asserting(_ shouldBe "boom")
   }
 
   "identity handler, block, ambient Console carrier" should "sequence then recover" in {
     compileAndRun(throwPrelude + """
-      |def show: {Console} Unit = {
+      |def show uses Console: Unit = {
       |   printLine("pre")
       |   printLine(bad catch (err -> err))
       |}
-      |def main: {Console} Unit = show""".stripMargin).asserting(_ shouldBe "pre\nboom")
+      |def main uses Console: Unit = show""".stripMargin).asserting(_ shouldBe "pre\nboom")
   }
 
   "identity handler, block, concrete IO carrier" should "sequence then recover" in {
     compileAndRun(throwPrelude + """
-      |def main: {Console} Unit = {
+      |def main uses Console: Unit = {
       |   printLine("pre")
       |   printLine(bad catch (err -> err))
       |}""".stripMargin).asserting(_ shouldBe "pre\nboom")
@@ -110,18 +110,18 @@ class CatchShapeMatrixTest extends FullIntegrationTest {
   "non-identity handler, single statement, pure Id carrier" should "recover to the fallback" in {
     compileAndRun(throwPrelude + """
       |def r: String = bad catch (err -> "fallback")
-      |def main: {Console} Unit = printLine(r)""".stripMargin).asserting(_ shouldBe "fallback")
+      |def main uses Console: Unit = printLine(r)""".stripMargin).asserting(_ shouldBe "fallback")
   }
 
   "non-identity handler, single statement, ambient Console carrier" should "recover to the fallback" in {
     compileAndRun(throwPrelude + """
-      |def show: {Console} Unit = printLine(bad catch (err -> "fallback"))
-      |def main: {Console} Unit = show""".stripMargin).asserting(_ shouldBe "fallback")
+      |def show uses Console: Unit = printLine(bad catch (err -> "fallback"))
+      |def main uses Console: Unit = show""".stripMargin).asserting(_ shouldBe "fallback")
   }
 
   "non-identity handler, single statement, concrete IO carrier" should "recover to the fallback" in {
     compileAndRun(throwPrelude + """
-      |def main: {Console} Unit = printLine(bad catch (err -> "fallback"))""".stripMargin).asserting(_ shouldBe "fallback")
+      |def main uses Console: Unit = printLine(bad catch (err -> "fallback"))""".stripMargin).asserting(_ shouldBe "fallback")
   }
 
   "non-identity handler, block, pure Id carrier" should "recover to the fallback" in {
@@ -130,21 +130,21 @@ class CatchShapeMatrixTest extends FullIntegrationTest {
       |   val note = "unused"
       |   bad catch (err -> "fallback")
       |}
-      |def main: {Console} Unit = printLine(r)""".stripMargin).asserting(_ shouldBe "fallback")
+      |def main uses Console: Unit = printLine(r)""".stripMargin).asserting(_ shouldBe "fallback")
   }
 
   "non-identity handler, block, ambient Console carrier" should "sequence then recover to the fallback" in {
     compileAndRun(throwPrelude + """
-      |def show: {Console} Unit = {
+      |def show uses Console: Unit = {
       |   printLine("pre")
       |   printLine(bad catch (err -> "fallback"))
       |}
-      |def main: {Console} Unit = show""".stripMargin).asserting(_ shouldBe "pre\nfallback")
+      |def main uses Console: Unit = show""".stripMargin).asserting(_ shouldBe "pre\nfallback")
   }
 
   "non-identity handler, block, concrete IO carrier" should "sequence then recover to the fallback" in {
     compileAndRun(throwPrelude + """
-      |def main: {Console} Unit = {
+      |def main uses Console: Unit = {
       |   printLine("pre")
       |   printLine(bad catch (err -> "fallback"))
       |}""".stripMargin).asserting(_ shouldBe "pre\nfallback")
@@ -157,17 +157,17 @@ class CatchShapeMatrixTest extends FullIntegrationTest {
 
   "effectful handler, single statement, ambient Console carrier" should "run the handler's effect" in {
     compileAndRun(throwPrelude + """
-      |def main: {Console} Unit = badUnit catch (err -> printLine(err))""".stripMargin).asserting(_ shouldBe "boom")
+      |def main uses Console: Unit = badUnit catch (err -> printLine(err))""".stripMargin).asserting(_ shouldBe "boom")
   }
 
   "effectful handler, single statement, concrete IO carrier" should "run the handler's effect" in {
     compileAndRun(throwPrelude + """
-      |def main: {Console} Unit = badUnit catch (err -> printLine(err))""".stripMargin).asserting(_ shouldBe "boom")
+      |def main uses Console: Unit = badUnit catch (err -> printLine(err))""".stripMargin).asserting(_ shouldBe "boom")
   }
 
   "effectful handler, block, ambient Console carrier" should "sequence then run the handler's effect" in {
     compileAndRun(throwPrelude + """
-      |def main: {Console} Unit = {
+      |def main uses Console: Unit = {
       |   printLine("pre")
       |   badUnit catch (err -> printLine(err))
       |}""".stripMargin).asserting(_ shouldBe "pre\nboom")
@@ -175,7 +175,7 @@ class CatchShapeMatrixTest extends FullIntegrationTest {
 
   "effectful handler, block, concrete IO carrier" should "sequence then run the handler's effect" in {
     compileAndRun(throwPrelude + """
-      |def main: {Console} Unit = {
+      |def main uses Console: Unit = {
       |   printLine("pre")
       |   badUnit catch (err -> printLine(err))
       |}""".stripMargin).asserting(_ shouldBe "pre\nboom")
@@ -188,7 +188,7 @@ class CatchShapeMatrixTest extends FullIntegrationTest {
 
   "two dischargers, single statement, concrete IO carrier" should "catch each error by its type" in {
     compileAndRun(twoThrowPrelude + """
-      |def main: {Console} Unit =
+      |def main uses Console: Unit =
       |   printLine(loadConfig("u") catch ((n: NetError) -> n.netReason) catch ((p: ParseError) -> p.parseReason))""".stripMargin)
       .asserting(_ shouldBe "net-down")
   }
@@ -196,19 +196,19 @@ class CatchShapeMatrixTest extends FullIntegrationTest {
   "two dischargers, single statement, pure Id carrier" should "catch each error by its type" in {
     compileAndRun(twoThrowPrelude + """
       |def r: String = loadConfig("u") catch ((n: NetError) -> n.netReason) catch ((p: ParseError) -> p.parseReason)
-      |def main: {Console} Unit = printLine(r)""".stripMargin).asserting(_ shouldBe "net-down")
+      |def main uses Console: Unit = printLine(r)""".stripMargin).asserting(_ shouldBe "net-down")
   }
 
   "two dischargers, single statement, ambient Console carrier" should "catch each error by its type" in {
     compileAndRun(twoThrowPrelude + """
-      |def show: {Console} Unit =
+      |def show uses Console: Unit =
       |   printLine(loadConfig("u") catch ((n: NetError) -> n.netReason) catch ((p: ParseError) -> p.parseReason))
-      |def main: {Console} Unit = show""".stripMargin).asserting(_ shouldBe "net-down")
+      |def main uses Console: Unit = show""".stripMargin).asserting(_ shouldBe "net-down")
   }
 
   "two dischargers, block, concrete IO carrier" should "sequence then catch each error by its type" in {
     compileAndRun(twoThrowPrelude + """
-      |def main: {Console} Unit = {
+      |def main uses Console: Unit = {
       |   printLine("pre")
       |   printLine(loadConfig("u") catch ((n: NetError) -> n.netReason) catch ((p: ParseError) -> p.parseReason))
       |}""".stripMargin).asserting(_ shouldBe "pre\nnet-down")
@@ -226,17 +226,17 @@ class CatchShapeMatrixTest extends FullIntegrationTest {
 
   "a val-bound Throw computation" should "run where it is bound, its effect declared by the enclosing definition" in {
     compileAndRun(throwPrelude + """
-      |def show: {Throw[String]} String = {
+      |def show uses Throw[String]: String = {
       |   val outcome = bad
       |   outcome
       |}
-      |def main: {Console} Unit = printLine(show catch (err -> err))""".stripMargin).asserting(_ shouldBe "boom")
+      |def main uses Console: Unit = printLine(show catch (err -> err))""".stripMargin).asserting(_ shouldBe "boom")
   }
 
   "a val discharged in place" should "take the fallback when it aborts and its value when it does not" in {
-    compileAndRun("""def setting(key: String): {Abort} String = if(key == "host", "example.org") else abort
+    compileAndRun("""def setting(key: String) uses Abort: String = if(key == "host", "example.org") else abort
       |
-      |def main: {Console} Unit = {
+      |def main uses Console: Unit = {
       |   val host = setting("host") else "localhost"
       |   val port = setting("port") else "8080"
       |   printLine(host)
@@ -258,9 +258,9 @@ class CatchShapeMatrixTest extends FullIntegrationTest {
     """import eliot.effect.Console
       |import eliot.effect.Throw
       |
-      |def raiseFirst: {Throw[String]} String = raise("first")
-      |def keepSecond(prev: String): {Throw[String]} String = fold(true, prev, raise("second"))
-      |def combined: {Throw[String]} String = keepSecond(raiseFirst)
+      |def raiseFirst uses Throw[String]: String = raise("first")
+      |def keepSecond(prev: String) uses Throw[String]: String = fold(true, prev, raise("second"))
+      |def combined uses Throw[String]: String = keepSecond(raiseFirst)
       |
       |""".stripMargin
 
@@ -268,7 +268,7 @@ class CatchShapeMatrixTest extends FullIntegrationTest {
     // Both handlers are identity; the second catch's free error slot pins `E := A` through the identity handler, so the
     // program compiles and the already-recovered "first" flows through. A quirk of the current typing, documented here.
     compileAndRun(sameTwoPrelude + """
-      |def main: {Console} Unit = printLine(combined catch (e1 -> e1) catch (e2 -> e2))""".stripMargin)
+      |def main uses Console: Unit = printLine(combined catch (e1 -> e1) catch (e2 -> e2))""".stripMargin)
       .asserting(_ shouldBe "first")
   }
 
@@ -278,7 +278,7 @@ class CatchShapeMatrixTest extends FullIntegrationTest {
     // carrier reference reaches codegen). Asserted only as "fails", not on the exact text, so it documents the
     // asymmetry without enshrining the current wording. §7 does not make this compile (it is genuinely over-discharge).
     compileForErrors(sameTwoPrelude + """
-      |def main: {Console} Unit = printLine(combined catch (e1 -> "fb1") catch (e2 -> "fb2"))""".stripMargin)
+      |def main uses Console: Unit = printLine(combined catch (e1 -> "fb1") catch (e2 -> "fb2"))""".stripMargin)
       .asserting(_ should not be empty)
   }
 }

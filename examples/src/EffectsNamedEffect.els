@@ -2,12 +2,12 @@
  * Substituting a fake implementation of an **application-owned effect** for a test, without the production code
  * knowing. (Was `EffectsFakeCarrier` before effects v6 — there is no carrier to fake any more.)
  *
- * The point: `greet` below is ordinary production code. It declares `{Terminal}` and nothing else — no injected
+ * The point: `greet` below is ordinary production code. It declares `uses Terminal` and nothing else — no injected
  * handler, no extra parameter, no test hook. What decides whether `Terminal` means a real terminal or a recorded
  * transcript is the **implementation name** bound to it, and that is written entirely at the test site.
  *
  * `Terminal` ships no default implementation at all, which is exactly the honest state of an effect a program has not
- * decided how to run: a `{Terminal}` reaching `main` would be an error at the run boundary naming the effect.
+ * decided how to run: a `Terminal` reaching `main` would be an error at the run boundary naming the effect.
  *
  * ```sh
  * ./mill examples.run jvm exe-jar examples/src/ -m EffectsNamedEffect
@@ -21,7 +21,7 @@ effect Terminal {
 }
 
 // Production code: direct style, with no knowledge that a test exists.
-def greet: {Terminal} Unit = {
+def greet uses Terminal: Unit = {
    val name = read
    write("Hello, " ++ name ++ "!")
 }
@@ -30,7 +30,7 @@ def greet: {Terminal} Unit = {
 // its clause declares and the binding site is charged for. Neither performs any I/O, and neither could: a user module
 // declares no natives.
 implement session: Terminal {
-   def write(line: String): {Writer[String]} Unit = tell(line ++ ";")
+   def write(line: String) uses Writer[String]: Unit = tell(line ++ ";")
 
    def read: String = "Bob"
 }
@@ -39,4 +39,4 @@ implement session: Terminal {
 // clauses perform. The result is a plain `String` a test framework can assert on.
 def greetTranscript: String = runWriterToLog(greet with session)
 
-def main: {Console} Unit = printLine(greetTranscript)
+def main uses Console: Unit = printLine(greetTranscript)

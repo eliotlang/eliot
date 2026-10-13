@@ -17,7 +17,7 @@ class NestedInstantiationIntegrationTest extends FullIntegrationTest {
         |
         |def plain(present: Bool): Option[String] = if(present) some("y") else none
         |
-        |def main: {Console} Unit = {
+        |def main uses Console: Unit = {
         |  printLine(foldOption("no name", found -> found.text, named(true)))
         |  printLine(plain(true) orElse "no text")
         |}""".stripMargin

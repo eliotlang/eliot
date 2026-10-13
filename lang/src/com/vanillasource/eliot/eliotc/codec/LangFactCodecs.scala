@@ -331,6 +331,9 @@ object LangFactCodecs {
       : FactCodec[com.vanillasource.eliot.eliotc.resolve.fact.AbilityConstraint[E]] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_ast_fact_EffectRow_ParameterEffects[C: FactCodec]
       : FactCodec[com.vanillasource.eliot.eliotc.ast.fact.EffectRow.ParameterEffects[C]] = FactCodec.derived
+
+  given codec_com_vanillasource_eliot_eliotc_ast_fact_EffectRow_CallbackEffects[C: FactCodec]
+      : FactCodec[com.vanillasource.eliot.eliotc.ast.fact.EffectRow.CallbackEffects[C]] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_ast_fact_Expression
       : FactCodec[com.vanillasource.eliot.eliotc.ast.fact.Expression] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_ast_fact_Expression_FunctionApplication

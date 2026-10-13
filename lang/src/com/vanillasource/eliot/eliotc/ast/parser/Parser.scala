@@ -103,6 +103,17 @@ object Parser {
         case other                    => other
     }
 
+    /** Recognise a match of this parser only to refuse it: where this parser matches, fail *after consuming*, at the
+      * position the match starts, with `expected` as the one thing expected there; where it does not match, fail without
+      * consuming, as [[atomic]] would. For a retired spelling that must be reported as itself rather than as whatever
+      * the alternatives after it happen to expect — `expected` names what to write instead.
+      */
+    def refusedAs[R](expected: String): Parser[I, R] = StateT { input =>
+      p.run(input) match
+        case ParserResult(_, _, Some(_)) => ParserResult(Consumed, ParserError(input.pos, Set(expected)), None)
+        case _                           => ParserResult(NotConsumed, ParserError.noError, None)
+    }
+
     /** Skip to this parser.
       */
     def skipTo(): Parser[I, O] =

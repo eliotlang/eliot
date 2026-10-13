@@ -2,7 +2,7 @@
  * The result of a computation that may fail: `Left(error)` for failure, `Right(value)` for success.
  *
  * By convention the error sits in `Left` and the successful result in `Right`. It is what the
- * `Throw[E]` effect discharges into via `runThrow`: running a `{Throw[E]}` computation yields a
+ * `Throw[E]` effect discharges into via `runThrow`: running a computation that uses `Throw[E]` yields a
  * `Right` holding its result or a `Left` holding the error that was raised. Consume one with `foldEither`.
  */
 type Either[E, A]
@@ -14,4 +14,4 @@ type Either[E, A]
  * def message(e: Either[String, Int]): String = e.foldEither(err -> err, n -> show(n))
  * ```
  */
-def foldEither[E, A, B](ifLeft: E => {} B, ifRight: A => {} B, e: Either[E, A]): B
+def foldEither[E, A, B](ifLeft uses *: E => B, ifRight uses *: A => B, e: Either[E, A]): B

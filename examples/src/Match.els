@@ -5,4 +5,4 @@ def describe(m: Maybe[String]): String = m match {
   case Just(v) -> v
 }
 
-def main: {Console} Unit = printLine(describe(Just("hello")))
+def main uses Console: Unit = printLine(describe(Just("hello")))

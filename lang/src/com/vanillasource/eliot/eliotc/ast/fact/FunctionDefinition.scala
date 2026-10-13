@@ -134,18 +134,33 @@ object FunctionDefinition {
     private val functionName: Parser[Sourced[Token], Sourced[Token]] =
       acceptIfAll(isIdentifier, isLowerCase)("function name") or acceptIf(isUserOperator, "function name")
 
+    /** A definition's own `uses` clause (`def greet(name: String) uses Console: Unit`, `docs/effects.md` D21): the
+      * effects its caller hands it. Entries only — `*` is a parameter's, since a body has no caller's text to be open
+      * to, and a `with` here would bind the definition's own row, which is rejected in either spelling.
+      */
+    private val usesClause: Parser[Sourced[Token], Seq[UnresolvedAbilityConstraint[Sourced[Expression]]]] =
+      (keyword("uses") *>
+        component[UnresolvedAbilityConstraint[Sourced[Expression]]].atLeastOnceSeparatedBy(symbol(",")))
+        .optional()
+        .map(_.getOrElse(Seq.empty))
+
     override val parser: Parser[Sourced[Token], FunctionDefinition] = for {
       (vis, fixity, prec) <- modifierPrefix("def")
       name                <- functionName
       genericParameters   <- component[Seq[GenericParameter]]
-      args                <- optionalArgumentListOf(component[ArgumentDefinition])
+      args                <- optionalArgumentListOf(ArgumentDefinition.parameter)
+      uses                <- usesClause
       _                   <- symbol(":")
-      typeExpression      <- sourced(Expression.typeRunParser)
+      returnType          <- sourced(Expression.typeRunParser)
+      // The clause's entries are the row on the return type, `{Console} Unit`, so no phase past this one learns the
+      // clause. A row cannot be written on the return type itself: `typeRunParser` refuses one.
+      typeExpression       =
+        if (uses.isEmpty) returnType else returnType.as(Expression.EffectfulType(uses, returnType))
       // The return-position transfer brace `: T {expr, …}` (bounds-as-refinements §4.2). `typeRunParser`'s type-atom
-      // run tries a `{` as the effect-set sugar but backtracks off a transfer brace (its entries are arbitrary
-      // expressions, not ability references, and no type atom follows the closing `}` — only `=`, `where`, or the next
-      // definition can), so the brace sits unconsumed here, between the return type and the optional `= body`. Absent
-      // for an ordinary def.
+      // run checks a `{` for the retired effect-row spelling but does not match a transfer brace (its entries are
+      // arbitrary expressions, not ability references, and no type atom follows the closing `}` — only `=`, `where`,
+      // or the next definition can), so the brace sits unconsumed here, between the return type and the optional
+      // `= body`. Absent for an ordinary def.
       returnMeta          <- optionalBracketedCommaSeparatedItems("{", sourced(component[Expression]), "}")
       // The `where <predicate>` refinement precondition (bounds-as-refinements §4.3). `where` is a hard keyword, so the
       // return-type run above stops cleanly at it (as it does at `infix`/`def`); the predicate is a `typeRunParser` run

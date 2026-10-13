@@ -70,7 +70,8 @@ class TokenParser(sourced: Sourced[?]) {
           "private",
           "where",
           "effect",
-          "with"
+          "with",
+          "uses"
         ),
         hardOperators = Set("(", ")", "[", "]", "->", "_", "::", ":"),
         caseSensitive = true
@@ -120,7 +121,8 @@ class TokenParser(sourced: Sourced[?]) {
         "private",
         "where",
         "effect",
-        "with"
+        "with",
+        "uses"
       )
       .map(Token.Keyword.apply)
   ).label("keyword")

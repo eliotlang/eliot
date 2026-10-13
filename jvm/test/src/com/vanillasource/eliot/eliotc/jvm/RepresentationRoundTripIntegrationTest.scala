@@ -26,7 +26,7 @@ class RepresentationRoundTripIntegrationTest extends FullIntegrationTest with Em
     """|import eliot.effect.Console
        |def count: Int = 7
        |def total: Int = count + count + count
-       |def main: {Console} Unit = printLine(show(total))
+       |def main uses Console: Unit = printLine(show(total))
        |""".stripMargin
 
   "a derived narrow result feeding a bignum slot" should "still print the sum" in {
@@ -61,7 +61,7 @@ class RepresentationRoundTripIntegrationTest extends FullIntegrationTest with Em
     """|import eliot.effect.Console
        |def double(x: Int): Int = x + x
        |def shown: String = show(double(21))
-       |def main: {Console} Unit = printLine(shown)
+       |def main uses Console: Unit = printLine(shown)
        |""".stripMargin
 
   "an intrinsic's operand arriving from a call boundary" should "still print the value" in {

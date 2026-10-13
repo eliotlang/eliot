@@ -39,7 +39,7 @@ def prepend[A](list: List[A], element: A): List[A]
  * `list` is the last parameter, so this dot-chains as `list.foldLeft(initial, combine)`. `combine` is curried: it
  * takes an element, then the accumulator, and yields the next accumulator.
  *
- * The fold is **effect-transparent**: `combine` may perform effects, and they run once per element in order, joining
- * the caller's effect row. A fold whose `combine` is pure performs none, and costs nothing for the possibility.
+ * The fold is **effect-transparent**: `combine` may perform effects, and they run once per element in order, on
+ * the caller's own effects. A fold whose `combine` is pure performs none, and costs nothing for the possibility.
  */
-def foldLeft[A, B](initial: B, combine: A => B => {} B, list: List[A]): B
+def foldLeft[A, B](initial: B, combine uses *: A => B => B, list: List[A]): B

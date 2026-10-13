@@ -6,6 +6,12 @@ notes.
 
 ## Type system & language
 
+- **A `match` over a `data` whose nullary constructor is not first dispatches to the wrong arm.** Found
+  2026-10-10. With `data Shape = Circle(radius: String) | Dot`, `describe(Dot)` (a `match` with `case Circle(r) -> r`
+  and `case Dot -> "dot"`) returns `null`, and `describe(Circle("c"))` throws `ClassCastException: String cannot be
+  cast to Void` in the arm's lambda; with an `Int` field, `Dot` reaches `Circle`'s arm and dereferences a null field.
+  Declaring `Dot` first works. The arms are paired with the wrong constructors somewhere between `matchdesugar`'s
+  `handleCases` and the synthesized `PatternMatch` implementation; not yet traced, and no test covers the order.
 - Add generics to function literals.
 - Introduce arrays (records / multi-field `data` are already done).
 - **Unify `Int` literal handling across the two tracks.** Managing the `BigInteger`/`Int` split

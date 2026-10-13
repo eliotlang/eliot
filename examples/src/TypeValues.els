@@ -7,4 +7,4 @@ def personName(t: Type): String = t match {
    case _            -> "Unknown"
 }
 
-def main: {Console} Unit = printLine(personName(Person["John"]))
+def main uses Console: Unit = printLine(personName(Person["John"]))

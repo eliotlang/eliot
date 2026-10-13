@@ -27,7 +27,7 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
         |
         |def useDb: String = display(Database("x"))
         |
-        |def main: {Console} Unit = printLine(useDb)""".stripMargin
+        |def main uses Console: Unit = printLine(useDb)""".stripMargin
     ).asserting(_ should include("Overlapping ability implementation"))
   }
 
@@ -41,9 +41,9 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
       """import eliot.effect.Console
         |import eliot.effect.Abort
         |
-        |def safe: {Abort} String = if(true, "config-value")
+        |def safe uses Abort: String = if(true, "config-value")
         |
-        |def main: {Console} Unit = printLine(foldOption("<absent>", s -> s, runAbort(safe)))""".stripMargin
+        |def main uses Console: Unit = printLine(foldOption("<absent>", s -> s, runAbort(safe)))""".stripMargin
     ).asserting(_ shouldBe "config-value")
   }
 
@@ -54,9 +54,9 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
       """import eliot.effect.Console
         |import eliot.effect.Abort
         |
-        |def giveUp: {Abort} String = abort
+        |def giveUp uses Abort: String = abort
         |
-        |def main: {Console} Unit = printLine(foldOption("gave up!", s -> s, runAbort(giveUp)))""".stripMargin
+        |def main uses Console: Unit = printLine(foldOption("gave up!", s -> s, runAbort(giveUp)))""".stripMargin
     ).asserting(_ shouldBe "gave up!")
   }
 
@@ -69,9 +69,9 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
         |
         |def andThen[A](first: Unit, second: A): A = second
         |
-        |def loud: {Console, Abort} String = andThen(printLine("trying"), abort)
+        |def loud uses Console, Abort: String = andThen(printLine("trying"), abort)
         |
-        |def main: {Console} Unit = printLine(foldOption("stopped", s -> s, runAbort(loud)))""".stripMargin
+        |def main uses Console: Unit = printLine(foldOption("stopped", s -> s, runAbort(loud)))""".stripMargin
     ).asserting(_ shouldBe "trying\nstopped")
   }
 
@@ -82,9 +82,9 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
       """import eliot.effect.Console
         |import eliot.effect.Throw
         |
-        |def parseOk: {Throw[String]} String = fold(true, "parsed-value", raise("unparseable"))
+        |def parseOk uses Throw[String]: String = fold(true, "parsed-value", raise("unparseable"))
         |
-        |def main: {Console} Unit = printLine(foldEither(err -> err, v -> v, runThrow(parseOk)))""".stripMargin
+        |def main uses Console: Unit = printLine(foldEither(err -> err, v -> v, runThrow(parseOk)))""".stripMargin
     ).asserting(_ shouldBe "parsed-value")
   }
 
@@ -93,9 +93,9 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
       """import eliot.effect.Console
         |import eliot.effect.Throw
         |
-        |def parseBad: {Throw[String]} String = raise("malformed input")
+        |def parseBad uses Throw[String]: String = raise("malformed input")
         |
-        |def main: {Console} Unit = printLine(foldEither(err -> err, v -> v, runThrow(parseBad)))""".stripMargin
+        |def main uses Console: Unit = printLine(foldEither(err -> err, v -> v, runThrow(parseBad)))""".stripMargin
     ).asserting(_ shouldBe "malformed input")
   }
 
@@ -108,10 +108,10 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
       """import eliot.effect.Console
         |import eliot.effect.Throw
         |
-        |def parseOk: {Throw[String]} String = fold(true, "parsed-value", raise("unparseable"))
-        |def parseBad: {Throw[String]} String = raise("malformed input")
+        |def parseOk uses Throw[String]: String = fold(true, "parsed-value", raise("unparseable"))
+        |def parseBad uses Throw[String]: String = raise("malformed input")
         |
-        |def main: {Console} Unit = {
+        |def main uses Console: Unit = {
         |   printLine(parseOk catch (err -> err))
         |   printLine(parseBad catch (err -> err))
         |}""".stripMargin
@@ -131,12 +131,12 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
       """import eliot.effect.Console
         |import eliot.effect.Throw
         |
-        |def parseOk: {Throw[String]} String = fold(true, "ok-value", raise("unparseable"))
-        |def parseBad: {Throw[String]} String = raise("boom")
+        |def parseOk uses Throw[String]: String = fold(true, "ok-value", raise("unparseable"))
+        |def parseBad uses Throw[String]: String = raise("boom")
         |
         |def recovered: String = parseBad catch (err -> "recovered-default")
         |
-        |def main: {Console} Unit = {
+        |def main uses Console: Unit = {
         |   printLine(recovered)
         |   printLine(parseOk catch (err -> "unused"))
         |   printLine(parseBad catch (err -> "ambient-default"))
@@ -157,10 +157,10 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
       """import eliot.effect.Console
         |import eliot.effect.Throw
         |
-        |def parseOk: {Throw[String]} String = fold(true, "parsed-value", raise("unparseable"))
-        |def failUnit: {Throw[String]} Unit = raise("boom")
+        |def parseOk uses Throw[String]: String = fold(true, "parsed-value", raise("unparseable"))
+        |def failUnit uses Throw[String]: Unit = raise("boom")
         |
-        |def main: {Console} Unit = {
+        |def main uses Console: Unit = {
         |   printLine(parseOk catch (err -> err))
         |   failUnit catch (err -> printLine(err))
         |}""".stripMargin
@@ -181,12 +181,12 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
         |data NetError(netReason: String)
         |data ParseError(parseReason: String)
         |
-        |def fetch(url: String): {Throw[NetError]} String = raise(NetError("http 503"))
-        |def parse(raw: String): {Throw[ParseError]} String = raise(ParseError("unexpected token"))
+        |def fetch(url: String) uses Throw[NetError]: String = raise(NetError("http 503"))
+        |def parse(raw: String) uses Throw[ParseError]: String = raise(ParseError("unexpected token"))
         |
-        |def loadConfig(url: String): {Throw[NetError], Throw[ParseError]} String = parse(fetch(url))
+        |def loadConfig(url: String) uses Throw[NetError], Throw[ParseError]: String = parse(fetch(url))
         |
-        |def main: {Console} Unit =
+        |def main uses Console: Unit =
         |   printLine(loadConfig("https://cfg") catch ((netErr: NetError) -> netErr.netReason) catch ((parseErr: ParseError) -> parseErr.parseReason))""".stripMargin
     ).asserting(_ shouldBe "http 503")
   }
@@ -202,12 +202,12 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
         |data NetError(netReason: String)
         |data ParseError(parseReason: String)
         |
-        |def fetch(url: String): {Throw[NetError]} String = fold(true, url, raise(NetError("unreachable")))
-        |def parse(raw: String): {Throw[ParseError]} String = raise(ParseError("unexpected token"))
+        |def fetch(url: String) uses Throw[NetError]: String = fold(true, url, raise(NetError("unreachable")))
+        |def parse(raw: String) uses Throw[ParseError]: String = raise(ParseError("unexpected token"))
         |
-        |def loadConfig(url: String): {Throw[NetError], Throw[ParseError]} String = parse(fetch(url))
+        |def loadConfig(url: String) uses Throw[NetError], Throw[ParseError]: String = parse(fetch(url))
         |
-        |def main: {Console} Unit =
+        |def main uses Console: Unit =
         |   printLine(loadConfig("https://cfg") catch ((netErr: NetError) -> netErr.netReason) catch ((parseErr: ParseError) -> parseErr.parseReason))""".stripMargin
     ).asserting(_ shouldBe "unexpected token")
   }
@@ -221,12 +221,12 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
       """import eliot.effect.Console
         |import eliot.effect.Throw
         |
-        |def raiseFirst: {Throw[String]} String = raise("first failed")
-        |def keepSecond(prev: String): {Throw[String]} String = fold(true, prev, raise("second failed"))
+        |def raiseFirst uses Throw[String]: String = raise("first failed")
+        |def keepSecond(prev: String) uses Throw[String]: String = fold(true, prev, raise("second failed"))
         |
-        |def combined: {Throw[String]} String = keepSecond(raiseFirst)
+        |def combined uses Throw[String]: String = keepSecond(raiseFirst)
         |
-        |def main: {Console} Unit = printLine(combined catch (err -> err))""".stripMargin
+        |def main uses Console: Unit = printLine(combined catch (err -> err))""".stripMargin
     ).asserting(_ shouldBe "first failed")
   }
 
@@ -237,10 +237,10 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
       """import eliot.effect.Console
         |import eliot.effect.Abort
         |
-        |def safe: {Abort} String = if(true, "config-value")
-        |def giveUp: {Abort} String = abort
+        |def safe uses Abort: String = if(true, "config-value")
+        |def giveUp uses Abort: String = abort
         |
-        |def main: {Console} Unit = {
+        |def main uses Console: Unit = {
         |   printLine(safe else "<fallback>")
         |   printLine(giveUp else "<fallback>")
         |}""".stripMargin
@@ -259,10 +259,10 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
         |import eliot.effect.Console
         |import eliot.effect.Abort
         |
-        |def grade(s: String): {Abort} String =
+        |def grade(s: String) uses Abort: String =
         |   if(s == "A", "excellent") else if(s == "B", "good")
         |
-        |def main: {Console} Unit = {
+        |def main uses Console: Unit = {
         |   printLine(grade("A") else "?")
         |   printLine(if(true, "taken") else "skipped")
         |}""".stripMargin
@@ -277,7 +277,7 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
         |import eliot.effect.Console
         |import eliot.effect.Abort
         |
-        |def main: {Console} Unit = {
+        |def main uses Console: Unit = {
         |   if(true, printLine("then")) else printLine("else")
         |   if(false, printLine("then")) else printLine("else")
         |}""".stripMargin
@@ -297,14 +297,14 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
         |
         |def chain(a: Bool, b: Bool): String = if(a, "first") else if(b, "second") else "third"
         |
-        |def line: {Console} String = readLine.orAbort else ""
+        |def line uses Console: String = readLine.orAbort else ""
         |
         |def viaBlock(flag: Bool): String = {
         |   val label = if(flag, "yes") else "no"
         |   label
         |}
         |
-        |def main: {Console} Unit = {
+        |def main uses Console: Unit = {
         |   printLine(sign(true))
         |   printLine(sign(false))
         |   printLine(chain(false, true))
@@ -326,13 +326,13 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
         |import eliot.effect.Throw
         |import eliot.effect.State
         |
-        |def parsed(raw: String): {Throw[String]} String = raise("unparseable")
+        |def parsed(raw: String) uses Throw[String]: String = raise("unparseable")
         |
         |def recovered: String = parsed("x") catch (err -> err)
         |
         |def counted: Pair[String, String] = runStateToPair("initial", state)
         |
-        |def main: {Console} Unit = {
+        |def main uses Console: Unit = {
         |   printLine(recovered)
         |   printLine(counted.first)
         |}""".stripMargin
@@ -346,9 +346,9 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
     compileAndRun(
       """import eliot.effect.Console
         |
-        |def echo[A](value: {} A): A = value
+        |def echo[A](value uses *: A): A = value
         |
-        |def main: {Console} Unit = {
+        |def main uses Console: Unit = {
         |   printLine(echo("hello"))
         |   printLine(echo(readLine.orAbort else ""))
         |}""".stripMargin,
@@ -364,13 +364,13 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
       """import eliot.effect.Console
         |import eliot.effect.Abort
         |
-        |def allowed: {Abort} String = if(true, "granted")
-        |def denied: {Abort} String = abort
+        |def allowed uses Abort: String = if(true, "granted")
+        |def denied uses Abort: String = abort
         |
         |def testAllowed: Option[String] = runAbort(allowed)
         |def testDenied: Option[String] = runAbort(denied)
         |
-        |def main: {Console} Unit = {
+        |def main uses Console: Unit = {
         |   printLine(foldOption("DENIED", s -> s, testAllowed))
         |   printLine(foldOption("DENIED", s -> s, testDenied))
         |}""".stripMargin
@@ -385,7 +385,7 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
       """import eliot.effect.Console
         |import eliot.effect.State
         |
-        |def swap(next: String): {State[String]} String = {
+        |def swap(next: String) uses State[String]: String = {
         |   val old = state
         |   putState(next)
         |   old
@@ -393,7 +393,7 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
         |
         |def prog: Pair[String, String] = runStateToPair("before", swap("after"))
         |
-        |def main: {Console} Unit = {
+        |def main uses Console: Unit = {
         |   printLine(first(prog))
         |   printLine(second(prog))
         |}""".stripMargin
@@ -408,7 +408,7 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
       """import eliot.effect.Console
         |import eliot.effect.State
         |
-        |def swap(next: String): {State[String]} String = {
+        |def swap(next: String) uses State[String]: String = {
         |   val old = state
         |   putState(next)
         |   old
@@ -417,7 +417,7 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
         |def onlyValue: String = runStateToValue("before", swap("after"))
         |def onlyState: String = runStateToFinalState("before", swap("after"))
         |
-        |def main: {Console} Unit = {
+        |def main uses Console: Unit = {
         |   printLine(onlyValue)
         |   printLine(onlyState)
         |}""".stripMargin
@@ -434,14 +434,14 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
       """import eliot.effect.Console
         |import eliot.effect.State
         |
-        |def counter: {State[String]} String = {
+        |def counter uses State[String]: String = {
         |  putState("done")
         |  state
         |}
         |
-        |def show: {Console} Unit = printLine(runStateToValue("init", counter))
+        |def show uses Console: Unit = printLine(runStateToValue("init", counter))
         |
-        |def main: {Console} Unit = show""".stripMargin
+        |def main uses Console: Unit = show""".stripMargin
     ).asserting(_ shouldBe "done")
   }
 
@@ -464,10 +464,10 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
         |   case On -> "on"
         |}
         |
-        |def switch: {State[Toggle]} Unit = updateState(t -> flip(t))
+        |def switch uses State[Toggle]: Unit = updateState(t -> flip(t))
         |def result: Toggle = runStateToFinalState(Off, switch)
         |
-        |def main: {Console} Unit = printLine(describe(result))""".stripMargin
+        |def main uses Console: Unit = printLine(describe(result))""".stripMargin
     ).asserting(_ shouldBe "on")
   }
 
@@ -481,15 +481,15 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
         |import eliot.effect.State
         |import eliot.collection.List
         |
-        |def pushName(n: String): {State[List[String]]} Unit =
+        |def pushName(n: String) uses State[List[String]]: Unit =
         |   updateState(names -> append(names, n))
         |
-        |def collectNames: {State[List[String]]} Unit = {
+        |def collectNames uses State[List[String]]: Unit = {
         |   pushName("ada")
         |   pushName("bob")
         |}
         |
-        |def main: {Console} Unit =
+        |def main uses Console: Unit =
         |   foreach(printLine, runStateToFinalState(empty, collectNames))""".stripMargin
     ).asserting(_ shouldBe "ada\nbob")
   }
@@ -504,23 +504,24 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
         |import eliot.effect.State
         |import eliot.collection.List
         |
-        |def pushName(n: String): {State[List[String]]} Unit =
+        |def pushName(n: String) uses State[List[String]]: Unit =
         |   updateState(names -> append(names, n))
         |
-        |def collectNames: {State[List[String]]} Unit = {
+        |def collectNames uses State[List[String]]: Unit = {
         |   pushName("ada")
         |   pushName("bob")
         |}
         |
-        |def main: {Console} Unit =
+        |def main uses Console: Unit =
         |   foreach(printLine, runStateToFinalState(empty, collectNames))""".stripMargin
     ).asserting(_ shouldBe "ada\nbob")
   }
 
   // A stored computation. Under v5 this was a *pinned row* (`{State[String] | Id} Unit`) — the one place a type could
   // contain a computation — and three cases pinned how one reached a `List` element, an alias body and a block
-  // statement. A pinned row has no v6 meaning and is rejected at core, and since D20 rule 6 a field holds a value, so a
-  // computation is not stored at all. Nothing here replaces those three.
+  // statement. A pinned row has no v6 meaning and is rejected at core: a computation is a **thunk**, an ordinary arrow
+  // type, so storing one needs no spelling of its own. Nothing here replaces those three: what a stored computation
+  // has to do is covered where it is actually used, by `eliot-test`'s `List[TestCase]`.
 
   // A `{State, Console}` program: both effects in one row, the print running while the state threads through and
   // discharges to a `Pair`. Two effects are two independent bindings under v6 — there is no stack for one to ride.
@@ -529,14 +530,14 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
       """import eliot.effect.Console
         |import eliot.effect.State
         |
-        |def step: {State[String], Console} String = {
+        |def step uses State[String], Console: String = {
         |   printLine("running step")
         |   val old = state
         |   putState("done")
         |   old
         |}
         |
-        |def main: {Console} Unit = {
+        |def main uses Console: Unit = {
         |   val p = runStateToPair("start", step)
         |   printLine(first(p))
         |   printLine(second(p))
@@ -553,9 +554,9 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
     """import eliot.effect.State
       |import eliot.effect.Abort
       |
-      |def reject(value: String): {Abort} String = abort
+      |def reject(value: String) uses Abort: String = abort
       |
-      |def modifyThenAbort: {State[String], Abort} String = {
+      |def modifyThenAbort uses State[String], Abort: String = {
       |   putState("modified")
       |   reject("modified")
       |}
@@ -569,7 +570,7 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
           |def stateSurvives: Pair[Option[String], String] =
           |   runStateToPair("initial", runAbort(modifyThenAbort))
           |
-          |def main: {Console} Unit = {
+          |def main uses Console: Unit = {
           |   printLine(foldOption("<no value>", s -> s, first(stateSurvives)))
           |   printLine(second(stateSurvives))
           |}""".stripMargin
@@ -583,7 +584,7 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
           |def stateDiscarded: Option[Pair[String, String]] =
           |   runAbort(runStateToPair("initial", modifyThenAbort))
           |
-          |def main: {Console} Unit = printLine(foldOption("<no state>", p -> second(p), stateDiscarded))""".stripMargin
+          |def main uses Console: Unit = printLine(foldOption("<no state>", p -> second(p), stateDiscarded))""".stripMargin
     ).asserting(_ shouldBe "<no state>")
   }
 
@@ -594,7 +595,7 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
   "a block of statements" should "sequence effectful steps in order" in {
     compileAndRun(
       """import eliot.effect.Console
-        |def main: {Console} Unit = {
+        |def main uses Console: Unit = {
         |  printLine("first")
         |  printLine("second")
         |  printLine("third")
@@ -607,12 +608,12 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
   "a val binding an effectful result" should "bind the carried value and use it" in {
     compileAndRun(
       """import eliot.effect.Console
-        |def echo: {Console} Unit = {
+        |def echo uses Console: Unit = {
         |  val line = readLine.orAbort else ""
         |  printLine(line)
         |}
         |
-        |def main: {Console} Unit = echo""".stripMargin,
+        |def main uses Console: Unit = echo""".stripMargin,
       stdin = "typed line\n"
     ).asserting(_ shouldBe "typed line")
   }
@@ -624,7 +625,7 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
       """import eliot.effect.Console
         |def greeting: String = "Hi"
         |
-        |def main: {Console} Unit = {
+        |def main uses Console: Unit = {
         |  val msg = greeting
         |  printLine(msg)
         |  printLine(msg)
@@ -637,7 +638,7 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
   it should "interleave a pure binding with an effectful one" in {
     compileAndRun(
       """import eliot.effect.Console
-        |def main: {Console} Unit = {
+        |def main uses Console: Unit = {
         |  val label = "echo:"
         |  val line = readLine.orAbort else ""
         |  printLine(label)
@@ -654,13 +655,13 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
       """import eliot.effect.Console
         |import eliot.effect.State
         |
-        |def swap(next: String): {State[String]} String = {
+        |def swap(next: String) uses State[String]: String = {
         |  val old = state
         |  putState(next)
         |  old
         |}
         |
-        |def main: {Console} Unit = {
+        |def main uses Console: Unit = {
         |   val p = runStateToPair("before", swap("after"))
         |   printLine(first(p))
         |   printLine(second(p))
@@ -680,9 +681,9 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
       """import eliot.effect.Console
         |import eliot.effect.Throw
         |
-        |def bad: {Throw[String]} String = raise("boom")
+        |def bad uses Throw[String]: String = raise("boom")
         |
-        |def main: {Console} Unit = printLine(foldEither(e -> e, s -> s, runThrow(bad)))""".stripMargin
+        |def main uses Console: Unit = printLine(foldEither(e -> e, s -> s, runThrow(bad)))""".stripMargin
     ).asserting(_ shouldBe "boom")
   }
 
@@ -691,10 +692,10 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
       """import eliot.effect.Console
         |import eliot.effect.Throw
         |
-        |def bad: {Throw[String]} String = raise("boom")
+        |def bad uses Throw[String]: String = raise("boom")
         |def outcome: Either[String, String] = runThrow(bad)
         |
-        |def main: {Console} Unit = {
+        |def main uses Console: Unit = {
         |   printLine(outcome.foldEither(e -> e, s -> s))
         |   printLine(foldEither(e -> e, s -> s, outcome))
         |}""".stripMargin
@@ -708,12 +709,12 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
       """import eliot.effect.Console
         |import eliot.effect.Throw
         |
-        |def noisy: {Console, Throw[String]} String = {
+        |def noisy uses Console, Throw[String]: String = {
         |   printLine("working")
         |   raise("boom")
         |}
         |
-        |def main: {Console} Unit = printLine(foldEither(e -> e, s -> s, runThrow(noisy)))""".stripMargin
+        |def main uses Console: Unit = printLine(foldEither(e -> e, s -> s, runThrow(noisy)))""".stripMargin
     ).asserting(_ shouldBe "working\nboom")
   }
 }

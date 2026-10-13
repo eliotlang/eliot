@@ -10,13 +10,13 @@ import eliot.collection.List
  * argument list and some working directory, even if the list is empty.
  *
  * ```eliot
- * def greet: {Console, Environment} Unit = {
+ * def greet uses Console, Environment: Unit = {
  *    val name = environmentVariable("USER")
  *    printLine("hello, " ++ (name orElse "stranger"))
  * }
  * ```
  *
- * A target with no process model simply ships no default `implement Environment`, so an `{Environment}` program
+ * A target with no process model simply ships no default `implement Environment`, so a `uses Environment` program
  * fails at the run boundary there — the layer system is the capability, exactly as it is for `FileSystem`. A test
  * binds a double with `with`.
  */

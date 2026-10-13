@@ -2,17 +2,17 @@
 data Database(url: String)
 data Topic(name: String)
 
-// ONE function pulls in BOTH dependencies. The row is their union — each `dependency` is dispatched by the
+// ONE function pulls in BOTH dependencies. The clause names both — each `dependency` is dispatched by the
 // type its use expects (.url -> Database, .name -> Topic). Nothing here says *which* Database or Topic; the
 // function just reads the environment.
-def describe: {Dep[Database], Dep[Topic], Console} Unit = {
+def describe uses Dep[Database], Dep[Topic], Console: Unit = {
    printLine(dependency.url)
    printLine(dependency.name)
 }
 
 // The "filling in" happens at the discharge site: each dependency is supplied by its own `provide`. Two
 // distinct types => two nested `provide`s, each installing its own frame (the reader counterpart of two chained
-// `catch`es). The inner `provide` supplies the Database, the outer the Topic; only `{Console}` remains.
-def main: {Console} Unit =
+// `catch`es). The inner `provide` supplies the Database, the outer the Topic; only `Console` remains.
+def main uses Console: Unit =
    provide(Topic("events"), provide(Database("jdbc://app-db"), describe))
 

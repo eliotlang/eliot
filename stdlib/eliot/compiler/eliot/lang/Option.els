@@ -1,6 +1,6 @@
 data Option[A] = None | Some(value: A)
 
-def foldOption[A, B](ifNone: {} B, ifSome: A => {} B, o: Option[A]): B = o match {
+def foldOption[A, B](ifNone uses *: B, ifSome uses *: A => B, o: Option[A]): B = o match {
    case None -> ifNone
    case Some(v) -> ifSome(v)
 }

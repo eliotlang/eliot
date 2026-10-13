@@ -12,9 +12,9 @@ import scala.jdk.CollectionConverters.*
   */
 class BuildArtifactTest extends FullIntegrationTest {
 
-  private val working = """def main: {Console} Unit = printLine("working")"""
-  private val other   = """def main: {Console} Unit = printLine("other")"""
-  private val broken  = """def main: {Console} Unit = printLine(nonExistentName)"""
+  private val working = """def main uses Console: Unit = printLine("working")"""
+  private val other   = """def main uses Console: Unit = printLine("other")"""
+  private val broken  = """def main uses Console: Unit = printLine(nonExistentName)"""
 
   "a failed compilation" should "leave no jar behind" in {
     (compileAndRun(working) >> compileForErrors(broken) >> exists(jarPath)).asserting(_ shouldBe false)

@@ -1,14 +1,14 @@
 /**
  * A **miniature test framework** for effectful code, built out of a named implementation and one `with` on a slot's
- * type. `EffectsFakeConsole` shows the mechanism on a single value; this is what it looks like once it is factored
+ * clause entry. `EffectsFakeConsole` shows the mechanism on a single value; this is what it looks like once it is factored
  * into the two pieces a suite actually needs:
  *
- *   - `transcriptOf` — one helper whose slot *is* the seam. Its parameter's type carries `with recordingConsole`, so
- *     the callee binds the computation the caller writes there, and the caller writes nothing;
+ *   - `transcriptOf` — one helper whose slot *is* the seam. Its parameter's clause carries `with recordingConsole`, so
+ *     the callee binds the code the caller writes there, and the caller writes nothing;
  *   - `TestResult` — ordinary `data` a test returns, so a suite is a list of plain values to report on.
  *
  * Note what the production code does *not* have: no injected handler, no extra parameter, no test hook, not even a
- * mention of `recordingConsole`. It declares `{Console}` and names no implementation, and that is the whole of its
+ * mention of `recordingConsole`. It declares `uses Console` and names no implementation, and that is the whole of its
  * testability.
  *
  * Neither shape v5 forced is here any more. A test is no longer **run-then-assert** — there is no carrier to
@@ -24,9 +24,9 @@
 
 // --- Production code: direct style, unaware that a test exists. -----------------------------------------------------
 
-def greet(name: String): {Console} Unit = printLine("Hello, " ++ name ++ "!")
+def greet(name: String) uses Console: Unit = printLine("Hello, " ++ name ++ "!")
 
-def farewell(name: String): {Console} Unit = {
+def farewell(name: String) uses Console: Unit = {
    printLine("Goodbye, " ++ name ++ ".")
    printLine("Come back soon!")
 }
@@ -34,17 +34,17 @@ def farewell(name: String): {Console} Unit = {
 // --- The test double: one declaration, no fixture. -------------------------------------------------------------------
 
 implement recordingConsole: Console {
-   def printLine(s: String): {Writer[String]} Unit = tell(s ++ ";")
+   def printLine(s: String) uses Writer[String]: Unit = tell(s ++ ";")
 
    def readLine: Option[String] = None
 }
 
 // --- The framework: three definitions, no compiler support of its own. ----------------------------------------------
 
-// What a `{Console}` program wrote, with no console involved. The `with` on the *slot's type* is what binds the
-// computation the caller writes there — the only way a callee binds calls it cannot see — and the `Writer[String]` the
+// What a program using `Console` wrote, with no console involved. The `with` on the *slot's clause entry* binds the
+// code the caller writes there — the only way a callee binds calls it cannot see — and the `Writer[String]` the
 // double's clauses perform is supplied and discharged by `runWriterToLog`.
-def transcriptOf(program: {Console} Unit with recordingConsole): String = runWriterToLog(program)
+def transcriptOf(program uses *, Console with recordingConsole: Unit): String = runWriterToLog(program)
 
 data TestResult(name: String, failure: Option[String])
 
@@ -52,7 +52,7 @@ def expect(name: String, expected: String, actual: String): TestResult =
    if(expected == actual, TestResult(name, None))
    else TestResult(name, Some("expected '" ++ expected ++ "' but was '" ++ actual ++ "'"))
 
-def report(result: TestResult): {Console} Unit =
+def report(result: TestResult) uses Console: Unit =
    printLine(failure(result).foldOption("PASS " ++ name(result), f -> "FAIL " ++ name(result) ++ ": " ++ f))
 
 // --- The tests. ------------------------------------------------------------------------------------------------------
@@ -62,7 +62,7 @@ def greetTest: TestResult = expect("greet", "Hello, Bob!;", transcriptOf(greet("
 def farewellTest: TestResult =
    expect("farewell", "Goodbye, Bob.;Come back soon!;", transcriptOf(farewell("Bob")))
 
-def main: {Console} Unit = {
+def main uses Console: Unit = {
    report(greetTest)
    report(farewellTest)
 }

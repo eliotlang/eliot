@@ -36,15 +36,15 @@ prefix def !(a: Bool): Bool
  * ranges.
  *
  * ```eliot
- * // Pure arms of one type: fold selects a value, adding nothing to the effect row.
+ * // Pure arms of one type: fold selects a value, using no effect at all.
  * def label(active: Bool): String = fold(active, "ON", "OFF")
  *
- * // Effectful arms: both are {Console} Unit, and only the selected one runs.
- * def report(ok: Bool): {Console} Unit =
+ * // Effectful arms: both are the caller's code using Console, and only the selected one runs.
+ * def report(ok: Bool) uses Console: Unit =
  *    fold(ok, printLine("all good"), printLine("check failed"))
  * ```
  */
-def fold[A](condition: Bool, whenTrue: {} A, whenFalse: {} A): A { join(whenTrue, whenFalse) }
+def fold[A](condition: Bool, whenTrue uses *: A, whenFalse uses *: A): A { join(whenTrue, whenFalse) }
 
 /**
  * Conditional execution — the `if` of `if..else`: yields `value` when `condition` holds, otherwise short-circuits
@@ -52,10 +52,10 @@ def fold[A](condition: Bool, whenTrue: {} A, whenFalse: {} A): A { join(whenTrue
  *
  * Pair it with the infix `else` (in `eliot.effect.Abort`), which discharges the `Abort` with an alternative;
  * `else` binds right-associatively, so chains spell naturally as `if(..) else if(..) else ..`. Without an `else`
- * the `{Abort}` floats up to the caller, making a bare `if` a guard inside an `{Abort}` function.
+ * the `Abort` floats up into the caller's `uses` clause, making a bare `if` a guard in a `uses Abort` function.
  *
- * `value` may be a pure value (`if(cond, "yes")`, auto-lifted) or an effectful computation
- * (`if(cond, printLine("hi"))`, whose own effects join the row). Both branches of an `if..else` are *built*, but
+ * `value` is the caller's code: a plain value (`if(cond, "yes")`) or an effectful computation
+ * (`if(cond, printLine("hi"))`, on the caller's own effects). Both branches of an `if..else` are *built*, but
  * only the selected one is ever *run*, so this reads like an imperative `if`.
  *
  * Since `if` curries just like all functions do, the second argument can appear after the first
@@ -67,15 +67,15 @@ def fold[A](condition: Bool, whenTrue: {} A, whenFalse: {} A): A { join(whenTrue
  * def sign(n: Int): String = if(n > 0) "+" else if(n < 0) "-" else "0"
  *
  * // Effectful branches: only the taken branch's printLine runs, and else discharges
- * // the {Abort}, so greet declares only {Console}.
- * def greet(known: Bool, name: String): {Console} Unit =
+ * // the Abort, so greet declares only `uses Console`.
+ * def greet(known: Bool, name: String) uses Console: Unit =
  *    if(known) printLine(name) else printLine("hello, stranger")
  *
- * // No else: a guard — the {Abort} floats up to the caller.
- * def requirePositive(n: Int): {Abort} Int = if(n > 0) n
+ * // No else: a guard — the Abort floats up into the caller's clause.
+ * def requirePositive(n: Int) uses Abort: Int = if(n > 0) n
  * ```
  */
-def if[T](condition: Bool, value: {Abort} T): {Abort} T = fold(condition, value, abort)
+def if[T](condition: Bool, value uses *, Abort: T) uses Abort: T = fold(condition, value, abort)
 
 /**
  * Run `action` when `condition` holds, and do nothing otherwise — a one-armed `if` for a statement, with no `Abort`
@@ -85,20 +85,20 @@ def if[T](condition: Bool, value: {Abort} T): {Abort} T = fold(condition, value,
  * and may perform whatever the enclosing definition declares.
  *
  * ```eliot
- * def refuseEmpty(lines: List[String]): {Throw[String]} Unit = when(lines.isEmpty) raise("nothing to run")
+ * def refuseEmpty(lines: List[String]) uses Throw[String]: Unit = when(lines.isEmpty) raise("nothing to run")
  * ```
  */
-def when(condition: Bool, action: {} Unit): Unit = fold(condition, action, unit)
+def when(condition: Bool, action uses *: Unit): Unit = fold(condition, action, unit)
 
 /**
  * Run `action` unless `condition` holds — `when` with the condition negated, which is how a check reads: state what
  * should be true, then what to do when it is not.
  *
  * ```eliot
- * def checked(result: ProcessResult): {Throw[Int]} String = {
+ * def checked(result: ProcessResult) uses Throw[Int]: String = {
  *    unless(result.exitCode == 0) raise(result.exitCode)
  *    result.standardOutput
  * }
  * ```
  */
-def unless(condition: Bool, action: {} Unit): Unit = fold(condition, unit, action)
+def unless(condition: Bool, action uses *: Unit): Unit = fold(condition, unit, action)

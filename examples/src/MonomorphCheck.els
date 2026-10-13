@@ -3,4 +3,4 @@ data Box[I: BigInteger](content: String)
 
 def someFunction[I: BigInteger](arg: String): Box[I + 1] = Box[3](arg)
 
-def main: {Console} Unit = printLine(someFunction[2]("Hello World!").content)
+def main uses Console: Unit = printLine(someFunction[2]("Hello World!").content)

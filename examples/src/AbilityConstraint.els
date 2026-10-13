@@ -10,4 +10,4 @@ implement Display[Hello] {
 
 def displayAnything[A ~ Display](thing: A): String = display(thing)
 
-def main: {Console} Unit = printLine(displayAnything(Hello("World")))
+def main uses Console: Unit = printLine(displayAnything(Hello("World")))

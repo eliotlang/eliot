@@ -17,7 +17,7 @@ import eliot.compiler.Reflect
  * java -jar target/TestSuite.jar
  * ```
  */
-def runTest(name: String, test: {Throw[String]} Unit, rest: {} Unit): {Console} Unit = {
+def runTest(name: String, test uses *, Throw[String]: Unit, rest uses *: Unit) uses Console: Unit = {
    printLine("- " ++ name)
    test catch (reason -> printLine("  FAILED: " ++ reason))
    rest
@@ -26,7 +26,7 @@ def runTest(name: String, test: {Throw[String]} Unit, rest: {} Unit): {Console} 
 /**
  * Fail the running test unless `actual` is exactly `expected`, reporting both.
  */
-def assertEquals(expected: String, actual: String): {Throw[String]} Unit =
+def assertEquals(expected: String, actual: String) uses Throw[String]: Unit =
    if(expected == actual, unit) else raise("expected '" ++ expected ++ "' but was '" ++ actual ++ "'")
 
-def main: {Console} Unit = foldNamedValues("test", printLine("suite done"), runTest)
+def main uses Console: Unit = foldNamedValues("test", printLine("suite done"), runTest)

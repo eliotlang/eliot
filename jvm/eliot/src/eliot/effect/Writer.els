@@ -17,7 +17,7 @@ implement[W ~ Combine[W]] Writer[W](cell: WriterCell[W]) {
  * Discharge `Writer[W]` by installing the cell `tell` appends to, starting from `empty`, and running the computation
  * inside it: the result paired with what was accumulated. The platform body of the base's body-less signature.
  */
-def runWriterToPair[W ~ Combine[W], A](p: {Writer[W]} A): Pair[A, W] =
+def runWriterToPair[W ~ Combine[W], A](p uses *, Writer[W]: A): Pair[A, W] =
    withCellInternal(empty, p, a -> w -> Pair(a, w))
 
 /**
@@ -31,7 +31,7 @@ type WriterCell[S]
  * `eliot.effect.State`'s leaf of the same shape and purpose; per-module `private` means each module declares its own.
  * Implemented by the backend. `body` is given `Writer[S]` and the cell, as `State`'s copy gives `State[S]` (D20 rule 5).
  */
-private def withCellInternal[S, A, R](initial: S, body: {Writer[S]} A, combine: A => S => {} R): R
+private def withCellInternal[S, A, R](initial: S, body uses *, Writer[S]: A, combine uses *: A => S => R): R
 
 /**
  * The content of `cell`. Implemented by the backend.

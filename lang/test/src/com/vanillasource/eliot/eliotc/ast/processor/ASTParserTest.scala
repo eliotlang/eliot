@@ -725,71 +725,28 @@ class ASTParserTest extends ProcessorTest(new Tokenizer(), new ASTParser()) {
     )
   }
 
-  // --- effect-set sugar as a type-run atom: head and nested occurrences, and the non-row `{` backtrack ---
+  // --- a `uses` clause written onto the row node, and the non-row `{` the type run leaves alone ---
 
-  "the effect-set sugar" should "parse at the head of a return type" in {
-    runEngineForFunctionReturnTypes("def f: {Console} Unit = a").asserting(
-      _.collect { case ("f", Expression.EffectfulType(effects, _, _)) => effects.size } shouldBe Seq(1)
+  "a uses clause" should "become a row at the head of a return type" in {
+    runEngineForFunctionReturnTypes("def f uses Console: Unit = a").asserting(
+      _.collect { case ("f", Expression.EffectfulType(effects, _)) => effects.size } shouldBe Seq(1)
     )
   }
 
-  it should "parse nested in an arrow codomain as the run's last atom" in {
-    runEngineForFunctionArgTypes("def f(action: A => {Console} Unit): Unit = a").asserting(
+  it should "become a row nested in an arrow codomain as the run's last atom" in {
+    runEngineForFunctionArgTypes("def f(action uses *, Console: A => Unit): Unit = a").asserting(
       _.collect { case ("f", Expression.FlatExpression(parts)) => parts.last.value.getClass.getSimpleName } shouldBe Seq("EffectfulType")
     )
   }
 
-  it should "parse a pinned row's base after the pipe" in {
-    runEngineForFunctionReturnTypes("def f: {Throw[Error] | Id} Unit = a").asserting(
-      _.collect { case ("f", Expression.EffectfulType(effects, _, tail)) =>
-        (effects.size, tail.map(_.value.render))
-      } shouldBe Seq((1, Some("Id")))
-    )
-  }
-
-  it should "parse an open row with no pipe as tail-less" in {
-    runEngineForFunctionReturnTypes("def f: {Console} Unit = a").asserting(
-      _.collect { case ("f", Expression.EffectfulType(_, _, tail)) => tail } shouldBe Seq(None)
-    )
-  }
-
-  it should "parse an applied pinned base like StateCarrier[S, Id]" in {
-    runEngineForFunctionReturnTypes("def f: {Throw[Error] | StateCarrier[S, Id]} Unit = a").asserting(
-      _.collect { case ("f", Expression.EffectfulType(_, _, tail)) => tail.map(_.value.render) } shouldBe
-        Seq(Some("StateCarrier[S, Id]"))
-    )
-  }
-
-  it should "backtrack off a return-position transfer brace, leaving it to returnMeta" in {
+  "a type run" should "leave a return-position transfer brace to returnMeta" in {
     runEngineForFunctionReturnMetaCounts("def add(a: Int, b: Int): Int {range(a) + range(b)} = a").asserting(
       _ shouldBe Seq(("add", 1))
     )
   }
 
-  it should "backtrack off an implement body's brace after a where guard" in {
+  it should "leave an implement body's brace after a where guard alone" in {
     runEngineForErrors("implement Show[A] where a { def show: String = a }").asserting(_ shouldBe Seq.empty)
-  }
-
-  // The **empty row** `{}` is the row that adds nothing — "on my own ambient carrier" (effects-v5 step 1). It is a row
-  // like any other, so it parses as one; what keeps it apart from a non-row brace is that a row is followed by the type
-  // atom it covers.
-  it should "parse an empty effect set as a tail-less row" in {
-    runEngineForFunctionReturnTypes("def f: {} Unit = a").asserting(
-      _.collect { case ("f", Expression.EffectfulType(effects, resultType, tail)) =>
-        (effects, resultType.value.render, tail)
-      } shouldBe Seq((Seq.empty, "Unit", None))
-    )
-  }
-
-  // The row at **zero entries over a base** (`{| Id} A`) was rejected until W3, on the reasoning that it is the plain
-  // `Id[A]` and needs no row spelling. True of the type; the row spelling is there for the *tag* — a pinned position
-  // declares that the slot hosts a computation on that carrier (docs/effects.md W3).
-  it should "parse an empty effect set with a pinned base" in {
-    runEngineForFunctionReturnTypes("def f: {| Id} Unit = a").asserting(
-      _.collect { case ("f", Expression.EffectfulType(effects, resultType, Some(tail))) =>
-        (effects, resultType.value.render, tail.value.render)
-      } shouldBe Seq((Seq.empty, "Unit", "Id"))
-    )
   }
 
   private def runEngine(source: String): IO[Map[CompilerFactKey[?], CompilerFact]] =

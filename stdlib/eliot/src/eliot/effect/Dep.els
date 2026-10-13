@@ -2,9 +2,9 @@
  * The dependency effect (a reader): read-only access to an environment value of type `X` that is
  * *supplied at the discharge site*, not fixed globally.
  *
- * A function that needs an `X` from the environment declares `{Dep[X]}` and calls `dependency` to read
+ * A function that needs an `X` from the environment declares `uses Dep[X]` and calls `dependency` to read
  * it; `dependency` is dispatched by the type expected at the call site, so distinct dependency types are
- * distinct effects (`{Dep[Database], Dep[Topic]}`). The effect floats up to the caller unchanged, exactly
+ * distinct effects (`uses Dep[Database], Dep[Topic]`). The effect floats up to the caller unchanged, exactly
  * like `State` or `Throw` — nothing about *which* `X` is provided is baked into the signature.
  *
  * The value is injected only when the effect is discharged, by `provide`: it hands `x` to
@@ -12,10 +12,10 @@
  *
  * ```eliot
  * // Lookup something from a database
- * def lookup(key: String): {Dep[Configuration], DBIO} Row = dependency.query("select ...")
+ * def lookup(key: String) uses Dep[Configuration], DBIO: Row = dependency.query("select ...")
  *
  * // Provide the dependency in main
- * def main: {Console} Unit = printLine(
+ * def main uses Console: Unit = printLine(
  *    provide(Database("jdbc://app-db"), lookup("42")).rowText
  * )
  * ```
@@ -36,13 +36,13 @@ effect Dep[X] {
  *
  * ```eliot
  * // Some logic using two distinct dependencies
- * def logic: {Dep[Database], Dep[Topic]} Unit = ...
+ * def logic uses Dep[Database], Dep[Topic]: Unit = ...
  *
  * // Main providing both dependencies to run logic; each provide peels one Dep from the row
- * def main: {Console} Unit =
+ * def main uses Console: Unit =
  *    provide(Topic("events"), provide(Database("jdbc://app-db"), logic))
  * ```
  *
  * Body-less here and bodied per platform, over that platform's private cell primitive.
  */
-def provide[X, A](x: X, computation: {Dep[X]} A): A
+def provide[X, A](x: X, computation uses *, Dep[X]: A): A

@@ -64,15 +64,13 @@ object ImplementationRows {
     if (row.isEmpty) expr
     else
       expr.value match {
-        case Expression.EffectfulType(_, resultType, tail) =>
-          expr.as(Expression.EffectfulType(row, resultType, tail))
-        case _                                             =>
-          expr.as(Expression.EffectfulType(row, expr, None))
+        case Expression.EffectfulType(_, resultType) => expr.as(Expression.EffectfulType(row, resultType))
+        case _                                       => expr.as(Expression.EffectfulType(row, expr))
       }
 
   private def entriesOf(expr: Sourced[Expression]): Seq[UnresolvedAbilityConstraint[Sourced[Expression]]] =
     expr.value match {
-      case Expression.EffectfulType(effects, _, None) => effects
-      case _                                          => Seq.empty
+      case Expression.EffectfulType(effects, _) => effects
+      case _                                    => Seq.empty
     }
 }

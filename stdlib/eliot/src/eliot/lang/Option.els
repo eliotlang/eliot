@@ -16,14 +16,14 @@ def some[A](value: A): Option[A]
  * def label(o: Option[String]): String = o.foldOption("absent", s -> s)
  * ```
  */
-def foldOption[A, B](ifNone: {} B, ifSome: A => {} B, o: Option[A]): B
+def foldOption[A, B](ifNone uses *: B, ifSome uses *: A => B, o: Option[A]): B
 
 /**
  * The value `o` holds, or `fallback` when it holds none — the everyday way to consume an `Option`, without
  * naming either case:
  *
  * ```eliot
- * def main: {Console} Unit = printLine(readLine orElse "(no input)")
+ * def main uses Console: Unit = printLine(readLine orElse "(no input)")
  * ```
  *
  * The fallback is only run when there is nothing to return, so it may be as expensive, or as effectful, as it
@@ -32,7 +32,7 @@ def foldOption[A, B](ifNone: {} B, ifSome: A => {} B, o: Option[A]): B
  * for `foldOption` when the two cases deserve different treatment.
  */
 infix right below (++, ||)
-def orElse[A](o: Option[A], fallback: {} A): A = foldOption(fallback, a -> a, o)
+def orElse[A](o: Option[A], fallback uses *: A): A = foldOption(fallback, a -> a, o)
 
 /**
  * `f` applied to the value `o` holds, leaving absence absent — the way to work on an optional value without naming
@@ -43,10 +43,10 @@ def orElse[A](o: Option[A], fallback: {} A): A = foldOption(fallback, a -> a, o)
  *
  * ```eliot
  * // The length of a line, when there was one to read.
- * def readLength: {Console} Option[Int] = readLine.mapOption(length)
+ * def readLength uses Console: Option[Int] = readLine.mapOption(length)
  * ```
  */
-def mapOption[A, B](f: A => {} B, o: Option[A]): Option[B] =
+def mapOption[A, B](f uses *: A => B, o: Option[A]): Option[B] =
    o.foldOption(none, a -> some(f(a)))
 
 /**
@@ -59,16 +59,16 @@ def mapOption[A, B](f: A => {} B, o: Option[A]): Option[B] =
  * def output(result: ProcessResult): Option[String] = someIf(result.exitCode == 0) result.standardOutput
  * ```
  */
-def someIf[A](condition: Bool, value: {} A): Option[A] = fold(condition, some(value), none)
+def someIf[A](condition: Bool, value uses *: A): Option[A] = fold(condition, some(value), none)
 
 /**
  * Run `action` on the value `o` holds, and do nothing when it holds none — the `Option` twin of a list's `foreach`.
  *
  * ```eliot
- * def refuseSecond(words: List[String]): {Throw[String]} Unit = words.at(1).foreachOption(word -> raise("unexpected " ++ word))
+ * def refuseSecond(words: List[String]) uses Throw[String]: Unit = words.at(1).foreachOption(word -> raise("unexpected " ++ word))
  * ```
  */
-def foreachOption[A](action: A => {} Unit, o: Option[A]): Unit = o.foldOption(unit, action)
+def foreachOption[A](action uses *: A => Unit, o: Option[A]): Unit = o.foldOption(unit, action)
 
 /**
  * `true` when `o` holds a value.
@@ -88,7 +88,7 @@ def isNone[A](o: Option[A]): Bool = o.foldOption(true, _ -> false)
  * def startsWithComment(lines: List[String]): Bool = lines.head.anyOption(line -> line.startsWith("--"))
  * ```
  */
-def anyOption[A](predicate: A => {} Bool, o: Option[A]): Bool = o.foldOption(false, predicate)
+def anyOption[A](predicate uses *: A => Bool, o: Option[A]): Bool = o.foldOption(false, predicate)
 
 /**
  * Two options are equal when both are absent, or both hold equal values — so `found == some(expected)` asks for a

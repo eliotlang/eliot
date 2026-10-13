@@ -5,18 +5,18 @@ import eliot.collection.List
 // Merge copy of the FileSystem effect so the implementation below can resolve it (name resolution is per-file). The
 // merge verifies this copy agrees with the abstract declaration in the base layer, which carries the documentation.
 effect FileSystem {
-   def readFile(path: Path): {Throw[IoError]} String
-   def writeFile(content: String, path: Path): {Throw[IoError]} Unit
-   def appendFile(content: String, path: Path): {Throw[IoError]} Unit
-   def foldLines[B](initial: B, step: B => String => B, path: Path): {Throw[IoError]} B
-   def foldCodePoints[B](initial: B, step: B => Int => B, path: Path): {Throw[IoError]} B
-   def readLines(path: Path): {Throw[IoError]} List[String]
-   def exists(path: Path): {Throw[IoError]} Bool
-   def isDirectory(path: Path): {Throw[IoError]} Bool
-   def listDirectory(path: Path): {Throw[IoError]} List[Path]
-   def walk(path: Path): {Throw[IoError]} List[Path]
-   def createDirectories(path: Path): {Throw[IoError]} Unit
-   def delete(path: Path): {Throw[IoError]} Unit
+   def readFile(path: Path) uses Throw[IoError]: String
+   def writeFile(content: String, path: Path) uses Throw[IoError]: Unit
+   def appendFile(content: String, path: Path) uses Throw[IoError]: Unit
+   def foldLines[B](initial: B, step: B => String => B, path: Path) uses Throw[IoError]: B
+   def foldCodePoints[B](initial: B, step: B => Int => B, path: Path) uses Throw[IoError]: B
+   def readLines(path: Path) uses Throw[IoError]: List[String]
+   def exists(path: Path) uses Throw[IoError]: Bool
+   def isDirectory(path: Path) uses Throw[IoError]: Bool
+   def listDirectory(path: Path) uses Throw[IoError]: List[Path]
+   def walk(path: Path) uses Throw[IoError]: List[Path]
+   def createDirectories(path: Path) uses Throw[IoError]: Unit
+   def delete(path: Path) uses Throw[IoError]: Unit
 }
 
 // The concrete IoError: a message. The abstract `message` in the base layer merges with this generated data-field
@@ -41,61 +41,61 @@ type IoResult
  * with `with`, so a faked filesystem needs no type of its own and no colocation.
  */
 implement FileSystem {
-   def readFile(path: Path): {Throw[IoError]} String = {
+   def readFile(path: Path) uses Throw[IoError]: String = {
       val r = readFileInternal(path)
       raiseError(r)
       resultValue(r)
    }
 
-   def writeFile(content: String, path: Path): {Throw[IoError]} Unit = raiseError(writeFileInternal(content, path))
+   def writeFile(content: String, path: Path) uses Throw[IoError]: Unit = raiseError(writeFileInternal(content, path))
 
-   def appendFile(content: String, path: Path): {Throw[IoError]} Unit = raiseError(appendFileInternal(content, path))
+   def appendFile(content: String, path: Path) uses Throw[IoError]: Unit = raiseError(appendFileInternal(content, path))
 
-   def foldLines[B](initial: B, step: B => String => B, path: Path): {Throw[IoError]} B = {
+   def foldLines[B](initial: B, step: B => String => B, path: Path) uses Throw[IoError]: B = {
       val r = foldLinesInternal(initial, step, path)
       raiseError(r)
       resultValue(r)
    }
 
-   def foldCodePoints[B](initial: B, step: B => Int => B, path: Path): {Throw[IoError]} B = {
+   def foldCodePoints[B](initial: B, step: B => Int => B, path: Path) uses Throw[IoError]: B = {
       val r = foldCodePointsInternal(initial, step, path)
       raiseError(r)
       resultValue(r)
    }
 
-   def readLines(path: Path): {Throw[IoError]} List[String] = {
+   def readLines(path: Path) uses Throw[IoError]: List[String] = {
       val r = readLinesInternal(path)
       raiseError(r)
       resultAsList(r)
    }
 
-   def exists(path: Path): {Throw[IoError]} Bool = {
+   def exists(path: Path) uses Throw[IoError]: Bool = {
       val r = existsInternal(path)
       raiseError(r)
       resultValue(r)
    }
 
-   def isDirectory(path: Path): {Throw[IoError]} Bool = {
+   def isDirectory(path: Path) uses Throw[IoError]: Bool = {
       val r = isDirectoryInternal(path)
       raiseError(r)
       resultValue(r)
    }
 
-   def listDirectory(path: Path): {Throw[IoError]} List[Path] = {
+   def listDirectory(path: Path) uses Throw[IoError]: List[Path] = {
       val r = listDirectoryInternal(path)
       raiseError(r)
       resultAsList(r)
    }
 
-   def walk(path: Path): {Throw[IoError]} List[Path] = {
+   def walk(path: Path) uses Throw[IoError]: List[Path] = {
       val r = walkInternal(path)
       raiseError(r)
       resultAsList(r)
    }
 
-   def createDirectories(path: Path): {Throw[IoError]} Unit = raiseError(createDirectoriesInternal(path))
+   def createDirectories(path: Path) uses Throw[IoError]: Unit = raiseError(createDirectoriesInternal(path))
 
-   def delete(path: Path): {Throw[IoError]} Unit = raiseError(deleteInternal(path))
+   def delete(path: Path) uses Throw[IoError]: Unit = raiseError(deleteInternal(path))
 }
 
 /**
@@ -103,7 +103,7 @@ implement FileSystem {
  * so an operation reads as "call the native, check it, read it" — three ordinary strict statements, which is all
  * sequencing is now.
  */
-private def raiseError(r: IoResult): {Throw[IoError]} Unit =
+private def raiseError(r: IoResult) uses Throw[IoError]: Unit =
    if(isNull(resultErrorMessage(r)), unit) else raise(IoError(resultErrorMessage(r)))
 
 /**

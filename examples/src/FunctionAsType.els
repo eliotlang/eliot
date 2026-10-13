@@ -4,5 +4,5 @@ def stringBox: Type = Box[String]
 
 def stringBoxWithContent: stringBox = Box("Hello World!")
 
-def main: {Console} Unit = printLine(stringBoxWithContent.content)
+def main uses Console: Unit = printLine(stringBoxWithContent.content)
 

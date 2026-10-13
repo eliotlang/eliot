@@ -729,7 +729,7 @@ class MonomorphicTypeCheckTest
       // the arms thunks so that only the selected one runs, and the compile-time reduction applies the arm it picks.
       // A stub declaring plain arms hands that reduction a value where it expects a thunk, and every bound formula
       // reached through `min`/`max` (which are `fold` over `lessThanOrEqual`) silently stops reducing.
-      "type Bool\ndef true: Bool\ndef false: Bool\ninfix def &&(a: Bool, b: Bool): Bool\ndef fold[A](condition: Bool, whenTrue: {} A, whenFalse: {} A): A",
+      "type Bool\ndef true: Bool\ndef false: Bool\ninfix def &&(a: Bool, b: Bool): Bool\ndef fold[A](condition: Bool, whenTrue uses *: A, whenFalse uses *: A): A",
     "Option"     -> "type Option[A]\ndef some[A](value: A): Option[A]\ndef none[A]: Option[A]",
     "Int"        ->
       """import eliot.lang.Bool
@@ -915,9 +915,9 @@ class MonomorphicTypeCheckTest
     ).map(result => toTestErrors(result._1))
       .asserting(
         _ shouldBe Seq(
-          "This value performs the effect 'Console' but does not declare it; add it to its { ... } effect set."
+          "This value performs the effect 'Console' but does not declare it; add it to its `uses` clause."
             at "printLine(readLine)",
-          "This value performs the effect 'Console' but does not declare it; add it to its { ... } effect set."
+          "This value performs the effect 'Console' but does not declare it; add it to its `uses` clause."
             at "readLine"
         )
       )

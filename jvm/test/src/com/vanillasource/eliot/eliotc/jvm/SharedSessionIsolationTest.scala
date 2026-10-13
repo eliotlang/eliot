@@ -40,24 +40,24 @@ class SharedSessionIsolationTest extends AsyncFlatSpec with AsyncIOSpec with Mat
   }
 
   private val corpus: Seq[(String, String)] = Seq(
-    "hello"   -> """def main: {Console} Unit = printLine("hello")""",
+    "hello"   -> """def main uses Console: Unit = printLine("hello")""",
     "arith"   -> """def total: Int = add(40, 2)
                    |
-                   |def main: {Console} Unit = printLine(show(total))""".stripMargin,
+                   |def main uses Console: Unit = printLine(show(total))""".stripMargin,
     "list"    -> """import eliot.collection.List
                    |
                    |def numbers: List[Int] = append(append(empty, 42), 8)
                    |
                    |def total(list: List[Int]): Int = list.foldLeft(0, e -> acc -> add(e, acc))
                    |
-                   |def main: {Console} Unit = printLine(show(total(numbers)))""".stripMargin,
-    "strings" -> """def main: {Console} Unit = printLine("abc".toUpperCase ++ show("abc".length))""",
+                   |def main uses Console: Unit = printLine(show(total(numbers)))""".stripMargin,
+    "strings" -> """def main uses Console: Unit = printLine("abc".toUpperCase ++ show("abc".length))""",
     "data"    -> """data Point(x: Int, y: Int)
                    |
                    |def sum(p: Point): Int = add(p.x, p.y)
                    |
-                   |def main: {Console} Unit = printLine(show(sum(Point(1, 2))))""".stripMargin,
-    "broken"  -> """def main: {Console} Unit = printLine(nonExistentName)""",
+                   |def main uses Console: Unit = printLine(show(sum(Point(1, 2))))""".stripMargin,
+    "broken"  -> """def main uses Console: Unit = printLine(nonExistentName)""",
     "overlap" -> """ability Display[A] {
                    |   def display(a: A): String
                    |}
@@ -69,54 +69,54 @@ class SharedSessionIsolationTest extends AsyncFlatSpec with AsyncIOSpec with Mat
                    |
                    |def useDb: String = display(Database("x"))
                    |
-                   |def main: {Console} Unit = printLine(useDb)""".stripMargin,
+                   |def main uses Console: Unit = printLine(useDb)""".stripMargin,
     "runAbort" -> """import eliot.effect.Abort
                    |
-                   |def safe: {Abort} String = "config-value"
+                   |def safe uses Abort: String = "config-value"
                    |
-                   |def main: {Console} Unit = flatMap(o -> printLine(foldOption("<absent>", s -> s, o)), runAbort(safe))""".stripMargin,
+                   |def main uses Console: Unit = flatMap(o -> printLine(foldOption("<absent>", s -> s, o)), runAbort(safe))""".stripMargin,
     "runThrow" -> """import eliot.effect.Throw
                    |
-                   |def parseBad: {Throw[String]} String = raise("malformed input")
+                   |def parseBad uses Throw[String]: String = raise("malformed input")
                    |
-                   |def main: {Console} Unit = flatMap(e -> printLine(foldEither(err -> err, v -> v, e)), runThrow(parseBad))""".stripMargin,
+                   |def main uses Console: Unit = flatMap(e -> printLine(foldEither(err -> err, v -> v, e)), runThrow(parseBad))""".stripMargin,
     "catch"    -> """import eliot.effect.Throw
                    |
-                   |def parseOk: {Throw[String]} String = "parsed-value"
-                   |def parseBad: {Throw[String]} String = raise("malformed input")
+                   |def parseOk uses Throw[String]: String = "parsed-value"
+                   |def parseBad uses Throw[String]: String = raise("malformed input")
                    |
-                   |def main: {Console} Unit = {
+                   |def main uses Console: Unit = {
                    |   printLine(parseOk catch (err -> err))
                    |   printLine(parseBad catch (err -> err))
                    |}""".stripMargin,
     "catchNonId" -> """import eliot.effect.Throw
                    |
-                   |def parseOk: {Throw[String]} String = "ok-value"
-                   |def parseBad: {Throw[String]} String = raise("boom")
+                   |def parseOk uses Throw[String]: String = "ok-value"
+                   |def parseBad uses Throw[String]: String = raise("boom")
                    |
                    |def recovered: String = parseBad catch (err -> "recovered-default")
                    |
-                   |def main: {Console} Unit = {
+                   |def main uses Console: Unit = {
                    |   printLine(recovered)
                    |   printLine(parseOk catch (err -> "unused"))
                    |   printLine(parseBad catch (err -> "ambient-default"))
                    |}""".stripMargin,
     "catchEff" -> """import eliot.effect.Throw
                    |
-                   |def parseOk: {Throw[String]} String = "parsed-value"
-                   |def failUnit: {Throw[String]} Unit = raise("boom")
+                   |def parseOk uses Throw[String]: String = "parsed-value"
+                   |def failUnit uses Throw[String]: Unit = raise("boom")
                    |
-                   |def caught: {Console} Unit = failUnit catch (err -> printLine(err))
+                   |def caught uses Console: Unit = failUnit catch (err -> printLine(err))
                    |
-                   |def main: {Console} Unit = {
+                   |def main uses Console: Unit = {
                    |   printLine(parseOk catch (err -> err))
                    |   caught
                    |}""".stripMargin,
     "effects" -> """import eliot.effect.Abort
                    |
-                   |def line: {Console} String = readLine.orAbort else "none"
+                   |def line uses Console: String = readLine.orAbort else "none"
                    |
-                   |def main: {Console} Unit = printLine(line)""".stripMargin
+                   |def main uses Console: Unit = printLine(line)""".stripMargin
   )
 
   "a program compiled in a shared session" should "have the outcome it has in a fresh one, whatever ran before it" in {

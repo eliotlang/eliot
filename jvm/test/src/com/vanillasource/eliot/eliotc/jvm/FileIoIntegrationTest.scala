@@ -22,7 +22,7 @@ class FileIoIntegrationTest extends FullIntegrationTest {
         |
         |def ext(p: Path): String = extension(p).foldOption("<none>", e -> e)
         |
-        |def main: {Console} Unit = {
+        |def main uses Console: Unit = {
         |   printLine(show(target))
         |   printLine(ext(path("Main.els")) ++ " " ++ ext(path("README")))
         |}""".stripMargin
@@ -89,7 +89,7 @@ class FileIoIntegrationTest extends FullIntegrationTest {
       .asserting(_ shouldBe "x\ny\nz")
   }
 
-  /** A `{Console, FileSystem, Throw[IoError]} Unit` report body (which prints its own result), wrapped in a program
+  /** A `uses Console, FileSystem, Throw[IoError]` report body (which prints its own result), wrapped in a program
     * whose `main` builds `scratch`, runs the report, and discharges the failure with `catch` — printing "failed" on an
     * `IoError`. The handler names `IoError` so the discharged error type is pinned; `catch` resolves to a direct call, so
     * the program needs no carrier machinery in scope at all.
@@ -102,8 +102,8 @@ class FileIoIntegrationTest extends FullIntegrationTest {
        |
        |def scratch: Path = path("$dir")
        |
-       |def report: {Console, FileSystem, Throw[IoError]} Unit = {$body
+       |def report uses Console, FileSystem, Throw[IoError]: Unit = {$body
        |}
        |
-       |def main: {Console, FileSystem} Unit = report catch ((err: IoError) -> printLine("failed"))""".stripMargin
+       |def main uses Console, FileSystem: Unit = report catch ((err: IoError) -> printLine("failed"))""".stripMargin
 }

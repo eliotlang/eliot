@@ -8,7 +8,7 @@
 import eliot.system.Process
 
 // Check one module name, saying what is wrong and answering whether it was acceptable.
-def check(module: String): {Console} Bool =
+def check(module: String) uses Console: Bool =
    if(module.isEmpty, {
       printLine("error: blank module name")
       false
@@ -19,7 +19,7 @@ def check(module: String): {Console} Bool =
 
 // Two checks, one of which fails. The failure is registered where it is discovered, and the program then reports
 // what it did and ends normally — the shell sees exit code 1, not a crash.
-def main: {Console, Process} Unit = {
+def main uses Console, Process: Unit = {
    val core = check("core")
    val blank = check("")
 

@@ -14,7 +14,7 @@ class EqTypeIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       """import eliot.effect.Console
         |
-        |def main: {Console} Unit = printLine("ok")""".stripMargin
+        |def main uses Console: Unit = printLine("ok")""".stripMargin
     ).asserting(_ shouldBe "ok")
   }
 }

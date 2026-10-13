@@ -11,9 +11,9 @@ class OverDeclaredEffectIntegrationTest extends FullIntegrationTest {
       """import eliot.effect.Console
         |import eliot.effect.Abort
         |
-        |def greet: {Console, Abort} Unit = printLine("hi")
+        |def greet uses Console, Abort: Unit = printLine("hi")
         |
-        |def main: {Console} Unit = greet else unit
+        |def main uses Console: Unit = greet else unit
         |""".stripMargin
     ).asserting(_ should include("declares the effect 'Abort' but does not perform it"))
   }
@@ -25,9 +25,9 @@ class OverDeclaredEffectIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       """import eliot.effect.Console
         |
-        |def passThrough[A](v: {Console} A): {Console} A = v
+        |def passThrough[A](v uses *, Console: A) uses Console: A = v
         |
-        |def main: {Console} Unit = passThrough(printLine("hi"))
+        |def main uses Console: Unit = passThrough(printLine("hi"))
         |""".stripMargin
     ).asserting(_ shouldBe "hi")
   }
@@ -36,10 +36,10 @@ class OverDeclaredEffectIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       """import eliot.effect.Console
         |
-        |def shout(s: String): {Console} Unit = printLine(s)
-        |def greet: {Console} Unit = shout("hi")
+        |def shout(s: String) uses Console: Unit = printLine(s)
+        |def greet uses Console: Unit = shout("hi")
         |
-        |def main: {Console} Unit = greet
+        |def main uses Console: Unit = greet
         |""".stripMargin
     ).asserting(_ shouldBe "hi")
   }
@@ -49,9 +49,9 @@ class OverDeclaredEffectIntegrationTest extends FullIntegrationTest {
       """import eliot.effect.Console
         |import eliot.effect.Abort
         |
-        |def safe: {Abort} String = if(true, "granted")
+        |def safe uses Abort: String = if(true, "granted")
         |
-        |def main: {Console} Unit = printLine(safe else "denied")
+        |def main uses Console: Unit = printLine(safe else "denied")
         |""".stripMargin
     ).asserting(_ shouldBe "granted")
   }
@@ -67,16 +67,16 @@ class OverDeclaredEffectIntegrationTest extends FullIntegrationTest {
       |}
       |
       |implement fake: Terminal {
-      |   def say(s: String): {Writer[String]} Unit = tell(s)
-      |   def ask: %s String = "nothing"
+      |   def say(s: String) uses Writer[String]: Unit = tell(s)
+      |   def ask%s: String = "nothing"
       |}
       |
-      |def main: {Console} Unit = printLine(runWriterToLog({ say(ask) } with fake))
+      |def main uses Console: Unit = printLine(runWriterToLog({ say(ask) } with fake))
       |""".stripMargin
 
   "an implement clause declaring an effect it never performs" should "be rejected at that clause" in {
-    compileForErrors(terminalDouble.format("{Writer[String]}"))
-      .asserting(_ should include(":11:14:This value declares the effect 'Writer' but does not perform it"))
+    compileForErrors(terminalDouble.format(" uses Writer[String]"))
+      .asserting(_ should include(":11:17:This value declares the effect 'Writer' but does not perform it"))
   }
 
   it should "not blame a clause for the effect a sibling clause declares" in {
@@ -91,8 +91,54 @@ class OverDeclaredEffectIntegrationTest extends FullIntegrationTest {
         |
         |def leak: Unit = printLine("hi")
         |
-        |def main: {Console} Unit = leak
+        |def main uses Console: Unit = leak
         |""".stripMargin
     ).asserting(_ should (include("performs the effect 'Console' but does not declare it") and not include "declares the effect 'Console' but does not perform it"))
+  }
+
+  // A slot supplying one `Throw` does not answer another: inside `catch[Refused, …]`'s slot, `checked`'s
+  // `Throw[Missing]` is still this definition's own, received from its caller, and so it is performed here.
+  private val twoErrors =
+    """import eliot.effect.Console
+      |
+      |data Refused(reason: String)
+      |data Missing(name: String)
+      |
+      |def lookup(name: String) uses Throw[Missing]: String = raise(Missing(name))
+      |def refuse uses Throw[Refused]: String = raise(Refused("refused"))
+      |def checked(found: Bool, name: String) uses Throw[Missing], Throw[Refused]: String = fold(found, refuse, lookup(name))
+      |
+      |def described(found: Bool, name: String) uses Throw[Missing]: String =
+      |   catch[Refused, String](checked(found, name), refused -> reason(refused))
+      |
+      |def shown(found: Bool): String = catch[Missing, String](described(found, "missing"), missing -> name(missing))
+      |""".stripMargin
+
+  "an entry received alongside a slot supplying the same effect at another argument" should "count as performed" in {
+    compileAndRun(
+      twoErrors +
+        """
+          |def main uses Console: Unit = {
+          |   printLine(shown(true))
+          |   printLine(shown(false))
+          |}
+          |""".stripMargin
+    ).asserting(_ shouldBe "refused\nmissing")
+  }
+
+  "a slot supplying the same effect at another argument" should "not cover an undeclared entry" in {
+    compileForErrors(
+      """import eliot.effect.Console
+        |
+        |data Refused(reason: String)
+        |data Missing(name: String)
+        |
+        |def lookup(name: String) uses Throw[Missing]: String = raise(Missing(name))
+        |
+        |def described(name: String): String = catch[Refused, String](lookup(name), refused -> reason(refused))
+        |
+        |def main uses Console: Unit = printLine(described("x"))
+        |""".stripMargin
+    ).asserting(_ should include("performs the effect 'Throw' but does not declare it"))
   }
 }

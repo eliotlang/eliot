@@ -634,7 +634,7 @@ class CoreProcessorTest extends ProcessorTest(Tokenizer(), ASTParser(), CoreProc
   // gains that binder as its **first** type argument, and a top-level row in a parameter or a `data` field thunks to
   // `Unit => A`.
   "effect-row sugar" should "mint one marked binder for the row and thunk a rowed parameter" in {
-    namedValue("def f(x: {Suspend} String): {Suspend} Unit").asserting { nv =>
+    namedValue("def f(x uses *, Suspend: String) uses Suspend: Unit").asserting { nv =>
       nv.signature.value.structure shouldBe Lambda(
         "Impl",
         App(QualRef("Implementation", "eliot.lang.Implementation"), Ref("Suspend", T)),
@@ -644,12 +644,12 @@ class CoreProcessorTest extends ProcessorTest(Tokenizer(), ASTParser(), CoreProc
   }
 
   it should "record the binder as a binding in its declared type, and nowhere else" in {
-    namedValue("def f(x: {Suspend} String): {Suspend} Unit")
+    namedValue("def f(x uses *, Suspend: String) uses Suspend: Unit")
       .asserting(binderMarks(_) shouldBe Seq("Impl" -> Some("Suspend")))
   }
 
   it should "constrain the binder by the row's ability, applied to itself" in {
-    namedValue("def f(x: String): {Suspend} Unit").asserting { nv =>
+    namedValue("def f(x: String) uses Suspend: Unit").asserting { nv =>
       constraintShapes(nv) shouldBe Map("Impl" -> Seq(("Suspend", Seq(Ref("Impl", T)))))
     }
   }
@@ -657,13 +657,13 @@ class CoreProcessorTest extends ProcessorTest(Tokenizer(), ASTParser(), CoreProc
   // The binding is the constraint's **first** type argument, where the ability's marker declares it — constraint and
   // marker must agree on the position, or every dispatch queries the wrong shape.
   it should "put the binding first among a parameterized effect's arguments" in {
-    namedValue("def f(x: String): {State[Account]} String").asserting { nv =>
+    namedValue("def f(x: String) uses State[Account]: String").asserting { nv =>
       constraintShapes(nv) shouldBe Map("Impl" -> Seq(("State", Seq(Ref("Impl", T), Ref("Account", T)))))
     }
   }
 
   it should "mint one binder per distinct entry of a multi-effect row" in {
-    namedValue("def f(x: String): {Suspend, Abort} String").asserting { nv =>
+    namedValue("def f(x: String) uses Suspend, Abort: String").asserting { nv =>
       constraintShapes(nv) shouldBe Map(
         "Impl"  -> Seq(("Suspend", Seq(Ref("Impl", T)))),
         "Impl0" -> Seq(("Abort", Seq(Ref("Impl0", T))))
@@ -672,7 +672,7 @@ class CoreProcessorTest extends ProcessorTest(Tokenizer(), ASTParser(), CoreProc
   }
 
   it should "avoid clashing a minted name with an existing generic parameter" in {
-    namedValue("def f[Impl](x: Impl): {Suspend} Impl").asserting { nv =>
+    namedValue("def f[Impl](x: Impl) uses Suspend: Impl").asserting { nv =>
       constraintShapes(nv).keySet shouldBe Set("Impl0")
     }
   }
@@ -693,13 +693,13 @@ class CoreProcessorTest extends ProcessorTest(Tokenizer(), ASTParser(), CoreProc
   // The **empty row** `{}` names no ability, so it mints nothing. What it still says is "a value or a computation":
   // a top-level parameter row thunks whether or not it has entries.
   "the empty effect row" should "mint no binder and add no constraint" in {
-    namedValue("def f[A](x: {} A): A").asserting { nv =>
+    namedValue("def f[A](x uses *: A): A").asserting { nv =>
       (binderMarks(nv), constraintShapes(nv)) shouldBe (Seq("A" -> None), Map.empty)
     }
   }
 
   it should "thunk its parameter all the same" in {
-    namedValue("def f[A](x: {} A): A").asserting { nv =>
+    namedValue("def f[A](x uses *: A): A").asserting { nv =>
       nv.signature.value.structure shouldBe
         Lambda("A", Ref("Type", T), App(App(Ref("Function", T), thunk(Ref("A", T))), Ref("A", T)))
     }
@@ -708,37 +708,14 @@ class CoreProcessorTest extends ProcessorTest(Tokenizer(), ASTParser(), CoreProc
   // Only a *top-level* row thunks. A row in an arrow codomain (`onError: E => {} A`) is the callback's own row and
   // lowers to the bare payload, exactly as a return row does.
   it should "leave a row in an arrow codomain alone" in {
-    (namedValue("def f[A](x: A => {} A): A"), namedValue("def f[A](x: A => A): A"))
+    (namedValue("def f[A](x uses *: A => A): A"), namedValue("def f[A](x: A => A): A"))
       .mapN { (rowed, plain) => rowed.signature.value.structure shouldBe plain.signature.value.structure }
   }
 
-  // A field holds a value (D20 rule 6): a row on a field would store a computation, so it is rejected at core.
-  "an effect row on a data field" should "be rejected" in {
-    coreErrors("data Box(body: {Throw[Error]} Unit)").asserting(_ should contain(storedRowError))
-  }
-
-  it should "be rejected when it is empty, too" in {
-    coreErrors("data Box(body: {} Unit)").asserting(_ should contain(storedRowError))
-  }
-
-  it should "leave a function-typed field alone" in {
-    coreErrors("data Box(body: Unit => Unit)").asserting(_ should not contain storedRowError)
-  }
-
-  "a data type with no effectful fields" should "be left untouched" in {
+  "a data type" should "keep its fields' types as written" in {
     namedValue("data Box(value: A)", QualifiedName("Box", Qualifier.Default)).asserting { nv =>
       nv.signature.value.structure shouldBe App(App(Ref("Function", T), Ref("A", T)), Ref("Box", Qualifier.Type))
     }
-  }
-
-  // A **pinned** row `{E | T} A` has no v6 meaning — there is no carrier stack to name — and is rejected rather than
-  // silently read as an open row, so a v5 signature that survives the flag day fails at the position needing rewriting.
-  "a pinned row" should "be rejected in a def signature" in {
-    coreErrors("def f(x: {Throw[Error] | G} Unit): Unit = y").asserting(_ should contain(pinnedRowError))
-  }
-
-  it should "be rejected in a data field" in {
-    coreErrors("data Box(body: {Throw[Error] | Id} Unit)").asserting(_ should contain(pinnedRowError))
   }
 
   "flat expressions" should "pass through as FlatExpression in core" in {
@@ -849,17 +826,6 @@ class CoreProcessorTest extends ProcessorTest(Tokenizer(), ASTParser(), CoreProc
   // What a top-level row lowers to: a thunk `Unit => A`, the shape a slot takes when it must not run its argument.
   private def thunk(payload: ExprStructure): ExprStructure =
     App(App(QualRef("Function", "eliot.lang.Function"), QualRef("Unit", "eliot.lang.Unit")), payload)
-
-  private val pinnedRowError =
-    "An effect row has no base: write `{Throw[Error]} String` rather than `{Throw[Error] | Id} String`. " +
-      "A computation is a thunk, and the implementation it runs on is bound by `with` or by the caller."
-
-  private val storedRowError =
-    "A field holds a value, so it cannot store a computation: run it where the value is built and store what it " +
-      "produces."
-
-  private def coreErrors(source: String): IO[Seq[String]] =
-    runGenerator(source, CoreAST.Key(file)).map(_._1.map(_.message))
 
   /** Each generic binder of a definition as `name -> the ability its mark names`, in order — `None` for an ordinary
     * binder. The mark (`Impl: Implementation[Suspend]`) is the one record that a binder is a **binding**, so this is

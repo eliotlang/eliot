@@ -28,20 +28,20 @@ class CarrierSlotCompileTest extends AsyncFlatSpec with AsyncIOSpec with Matcher
   private val conditionalSource =
     """def choose(c: Bool, x: Int): Option[Int] = if(c, None) else Some(x)
       |
-      |def main: {Console} Unit = printLine(foldOption("none", v -> "some", choose(true, 5)))
+      |def main uses Console: Unit = printLine(foldOption("none", v -> "some", choose(true, 5)))
       |""".stripMargin
 
   private val compoundStateSource =
     """import eliot.collection.List
       |
-      |def items: {Console} List[String] = {
+      |def items uses Console: List[String] = {
       |   printLine("loading...")
       |   empty
       |}
       |
-      |def summary: {Console} String = foldLeft("start", x -> acc -> acc, items)
+      |def summary uses Console: String = foldLeft("start", x -> acc -> acc, items)
       |
-      |def main: {Console} Unit = printLine(summary)
+      |def main uses Console: Unit = printLine(summary)
       |""".stripMargin
 
   // Effects-as-channel §6/§10 (U4-e prerequisite): a post-mono MonomorphicValue consumer must see through the uniform
@@ -54,7 +54,7 @@ class CarrierSlotCompileTest extends AsyncFlatSpec with AsyncIOSpec with Matcher
       |def withinByte(i: Interval[BigInteger]): Bool = rangeWithin[0, 127](i)
       |def useByte(x: Int): Int where withinByte(range(x)) = x
       |
-      |def main: {Console} Unit = printLine(show(useByte(1000)))
+      |def main uses Console: Unit = printLine(show(useByte(1000)))
       |""".stripMargin
 
   "a where-precondition over a uniform-carriered argument" should "see the argument's range through the Id wrapper" in {

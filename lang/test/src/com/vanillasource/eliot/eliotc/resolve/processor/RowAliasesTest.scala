@@ -28,14 +28,14 @@ class RowAliasesTest extends ProcessorTest(LangProcessors()*) {
   "a def naming a row alias" should "mint and declare exactly what the written-out row does" in {
     (
       rowLowering(console + "type Talk[A] = {Console} A\ndef greet(name: String): Talk[Unit] = printLine(name)"),
-      rowLowering(console + "def greet(name: String): {Console} Unit = printLine(name)")
+      rowLowering(console + "def greet(name: String) uses Console: Unit = printLine(name)")
     ).mapN(_ === _).asserting(_ shouldBe true)
   }
 
   "a def naming a parameterless row alias" should "mint and declare exactly what the written-out row does" in {
     (
       rowLowering(console + "type Talk = {Console} Unit\ndef greet(name: String): Talk = printLine(name)"),
-      rowLowering(console + "def greet(name: String): {Console} Unit = printLine(name)")
+      rowLowering(console + "def greet(name: String) uses Console: Unit = printLine(name)")
     ).mapN(_ === _).asserting(_ shouldBe true)
   }
 
@@ -45,7 +45,7 @@ class RowAliasesTest extends ProcessorTest(LangProcessors()*) {
         console + "import eliot.effect.Log\ntype Noisy[A] = {Console, Log} A\n" +
           "def greet(name: String): Noisy[Unit] = log(name)"
       ),
-      rowLowering(console + "import eliot.effect.Log\ndef greet(name: String): {Console, Log} Unit = log(name)")
+      rowLowering(console + "import eliot.effect.Log\ndef greet(name: String) uses Console, Log: Unit = log(name)")
     ).mapN(_ === _).asserting(_ shouldBe true)
   }
 
@@ -82,12 +82,12 @@ class RowAliasesTest extends ProcessorTest(LangProcessors()*) {
   "a row written out beside a named one" should "declare both" in {
     rowLowering(
       console + "import eliot.effect.Log\ntype Talk[A] = {Console} A\n" +
-        "def greet(name: String): {Log} Talk[Unit] = { log(name) printLine(name) }"
+        "def greet(name: String) uses Log: Talk[Unit] = { log(name) printLine(name) }"
     ).asserting(_ shouldBe (Seq("Log", "Console"), Seq("Log", "Console")))
   }
 
   it should "declare one entry, not two, when both name the same effect" in {
-    rowLowering(console + "type Talk[A] = {Console} A\ndef greet(name: String): {Console} Talk[Unit] = printLine(name)")
+    rowLowering(console + "type Talk[A] = {Console} A\ndef greet(name: String) uses Console: Talk[Unit] = printLine(name)")
       .asserting(_ shouldBe (Seq("Console"), Seq("Console")))
   }
 

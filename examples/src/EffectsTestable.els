@@ -1,15 +1,15 @@
-// {Abort} business logic — the same code that runs in production.
-def access(user: String): {Abort} String = if(user == "admin", "granted")
+// Business logic that uses `Abort` — the same code that runs in production.
+def access(user: String) uses Abort: String = if(user == "admin", "granted")
 
-def allowed: {Abort} String = access("admin")
-def denied: {Abort} String = access("guest")
+def allowed uses Abort: String = access("admin")
+def denied uses Abort: String = access("guest")
 
 // Discharged into a PURE function: `runAbort` installs the frame `abort` leaves through and answers a plain Option.
 // There is no test carrier to declare and no pure interpreter to write — discharging IS running purely.
 def testAllowed: Option[String] = runAbort(allowed)
 def testDenied: Option[String] = runAbort(denied)
 
-def main: {Console} Unit = {
+def main uses Console: Unit = {
    printLine(testAllowed.foldOption("DENIED", s -> s))
    printLine(testDenied.foldOption("DENIED", s -> s))
 }

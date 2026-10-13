@@ -31,7 +31,7 @@ class LambdaClassCollisionIntegrationTest extends FullIntegrationTest {
         |  def wrap(a: Bar): Function[Unit, String] = ignore -> barTag(a)
         |}
         |
-        |def main: {Console} Unit = {
+        |def main uses Console: Unit = {
         |  printLine(apply(wrap(Foo("foo")), unit))
         |  printLine(apply(wrap(Bar("bar")), unit))
         |}""".stripMargin

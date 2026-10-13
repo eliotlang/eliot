@@ -9,4 +9,4 @@ def choose(c: Choice): Int = c match {
   case Second -> 15
 }
 
-def main: {Console} Unit = printLine(show(choose(First)))
+def main uses Console: Unit = printLine(show(choose(First)))

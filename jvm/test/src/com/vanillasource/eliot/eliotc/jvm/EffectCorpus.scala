@@ -22,30 +22,30 @@ object EffectCorpus {
       |import eliot.effect.State
       |import eliot.effect.Abort
       |
-      |def shout(s: String): {Console} Unit = printLine(s)
+      |def shout(s: String) uses Console: Unit = printLine(s)
       |
-      |def greet: {Console} Unit = {
+      |def greet uses Console: Unit = {
       |   shout("a")
       |   printLine("b")
       |}
       |
-      |def parsed(raw: String): {Throw[String]} String = raise("unparseable")
+      |def parsed(raw: String) uses Throw[String]: String = raise("unparseable")
       |
       |def recovered: String = parsed("x") catch (err -> err)
       |
       |def counted: Pair[String, String] = runStateToPair("initial", state)
       |
-      |def failUnit: {Throw[String]} Unit = raise("boom")
+      |def failUnit uses Throw[String]: Unit = raise("boom")
       |
-      |def caught: {Console} Unit = failUnit catch (err -> printLine(err))
+      |def caught uses Console: Unit = failUnit catch (err -> printLine(err))
       |
-      |def allowed: {Abort} String = if(true, "granted")
-      |def denied: {Abort} String = abort
+      |def allowed uses Abort: String = if(true, "granted")
+      |def denied uses Abort: String = abort
       |
       |def testAllowed: Option[String] = runAbort(allowed)
       |def testDenied: Option[String] = runAbort(denied)
       |
-      |def swap(next: String): {State[String]} String = {
+      |def swap(next: String) uses State[String]: String = {
       |   val old = state
       |   putState(next)
       |   old
@@ -53,7 +53,7 @@ object EffectCorpus {
       |
       |def prog: Pair[String, String] = runStateToPair("before", swap("after"))
       |
-      |def main: {Console} Unit = {
+      |def main uses Console: Unit = {
       |   greet
       |   printLine(recovered)
       |   printLine(counted.first)
@@ -83,13 +83,13 @@ object EffectCorpus {
     """import eliot.effect.Abort
       |import eliot.collection.List
       |
-      |def labelOf(s: String): {Abort} String = s.take(s.indexOf("="))
+      |def labelOf(s: String) uses Abort: String = s.take(s.indexOf("="))
       |
       |def three: List[String] = append(append(append(empty, "a"), "b"), "c")
       |
-      |def tag(mark: String, item: String): {Console} Unit = printLine(mark ++ item)
+      |def tag(mark: String, item: String) uses Console: Unit = printLine(mark ++ item)
       |
-      |def main: {Console} Unit = {
+      |def main uses Console: Unit = {
       |   printLine(labelOf("host=1") else "none")
       |   printLine(labelOf("nokey") else "none")
       |   three.foreach(tag(readLine.orAbort else "eof:"))
@@ -110,11 +110,11 @@ object EffectCorpus {
   val effectfulLambdaProgram: String =
     """import eliot.effect.Abort
       |
-      |def applyTo[A, B](a: A, f: A => {} B): B = f(a)
+      |def applyTo[A, B](a: A, f uses *: A => B): B = f(a)
       |
-      |def labelOf(s: String): {Abort} String = applyTo(s, x -> take(indexOf("=", s), x))
+      |def labelOf(s: String) uses Abort: String = applyTo(s, x -> take(indexOf("=", s), x))
       |
-      |def main: {Console} Unit = {
+      |def main uses Console: Unit = {
       |   printLine(labelOf("host=1") else "none")
       |   printLine(labelOf("nokey") else "none")
       |}""".stripMargin
@@ -138,19 +138,19 @@ object EffectCorpus {
   val rowPolymorphicCallbackProgram: String =
     """import eliot.collection.List
       |
-      |def eachInto[A, B](f: A => {} B, list: List[A]): List[B] =
+      |def eachInto[A, B](f uses *: A => B, list: List[A]): List[B] =
       |   list.foldLeft(empty, e -> acc -> append(acc, f(e)))
       |
       |def three: List[String] = append(append(append(empty, "a"), "b"), "c")
       |
-      |def announce(s: String): {Console} String = {
+      |def announce(s: String) uses Console: String = {
       |   printLine("visiting " ++ s)
       |   s ++ "!"
       |}
       |
       |def joinAll(list: List[String]): String = list.foldLeft("", e -> acc -> acc ++ e)
       |
-      |def main: {Console} Unit = {
+      |def main uses Console: Unit = {
       |   val announced = eachInto(announce, three)
       |   announced.foreach(printLine)
       |   printLine(joinAll(eachInto(s -> s ++ "?", three)))
@@ -166,9 +166,9 @@ object EffectCorpus {
     * too early.
     */
   val stdinProgram: String =
-    """def line: {Console} String = readLine.orAbort else "<eof>"
+    """def line uses Console: String = readLine.orAbort else "<eof>"
       |
-      |def main: {Console} Unit = {
+      |def main uses Console: Unit = {
       |   printLine("start")
       |   printLine("1:" ++ line)
       |   printLine("2:" ++ line)
@@ -180,5 +180,5 @@ object EffectCorpus {
     """import eliot.effect.Console
       |import eliot.effect.Inf
       |
-      |def main: {Inf, Console} Unit = forever(printLine("tick"))""".stripMargin
+      |def main uses Inf, Console: Unit = forever(printLine("tick"))""".stripMargin
 }

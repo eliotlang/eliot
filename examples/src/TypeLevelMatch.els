@@ -8,4 +8,4 @@ def useIt: (Box[String] match {
    case _      -> String
 }) = "Hello World!"
 
-def main: {Console} Unit = printLine(useIt)
+def main uses Console: Unit = printLine(useIt)

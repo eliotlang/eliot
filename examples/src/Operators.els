@@ -1,4 +1,4 @@
-def main: {Console} Unit = printLine(content(Cell("Hello") | Cell("World") | Cell("!")))
+def main uses Console: Unit = printLine(content(Cell("Hello") | Cell("World") | Cell("!")))
 
 data Cell(content: String)
 

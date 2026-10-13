@@ -19,14 +19,14 @@ class StringOperationsIntegrationTest extends FullIntegrationTest {
       |
       |def yn(b: Bool): String = fold(b, "y", "n")
       |
-      |def line: {Console} String = readLine.orAbort else ""
+      |def line uses Console: String = readLine.orAbort else ""
       |""".stripMargin
 
   "the string predicates" should "run against a line read at runtime" in {
     compileAndRun(
       prelude +
         """
-          |def main: {Console} Unit = {
+          |def main uses Console: Unit = {
           |   val s = line
           |   printLine(show(s.length) ++ yn(s.isEmpty) ++ yn(s.isBlank) ++
           |             yn(startsWith("ab", s)) ++ yn(endsWith("yz", s)) ++ yn(contains("cd", s)))
@@ -39,7 +39,7 @@ class StringOperationsIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       prelude +
         """
-          |def main: {Console} Unit = {
+          |def main uses Console: Unit = {
           |   val s = line
           |   printLine(s.trim ++ "|" ++ s.toUpperCase ++ "|" ++ s.toLowerCase ++ "|" ++
           |             replace("b", "B", s) ++ "|" ++ repeat(2, s))
@@ -52,7 +52,7 @@ class StringOperationsIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       prelude +
         """
-          |def main: {Console} Unit = {
+          |def main uses Console: Unit = {
           |   val s = line
           |   printLine(substring(2, 5, s) ++ "|" ++ take(3, s) ++ "|" ++ drop(3, s))
           |}""".stripMargin,
@@ -64,7 +64,7 @@ class StringOperationsIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       prelude +
         """
-          |def main: {Console} Unit = {
+          |def main uses Console: Unit = {
           |   val s = line
           |   printLine(substring(0 - 5, 99, s) ++ "|" ++ substring(3, 1, s) ++ "." ++
           |             take(0 - 1, s) ++ "." ++ drop(99, s) ++ "." ++ repeat(0 - 2, s))
@@ -85,7 +85,7 @@ class StringOperationsIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       prelude +
         """
-          |def main: {Console} Unit = {
+          |def main uses Console: Unit = {
           |   val s = line ++ "😀b"
           |   printLine(show(s.length) ++ "|" ++ show(indexOf("b", s) else (0 - 1)) ++ "|" ++
           |             yn(s.substring(1, 2) == "😀") ++ yn(s.take(2) == "a😀") ++ yn(s.drop(1) == "😀b"))
@@ -119,7 +119,7 @@ class StringOperationsIntegrationTest extends FullIntegrationTest {
           |   def verdict: String = "counted"
           |}
           |
-          |def main: {Console} Unit = printLine(verdict["a😀b"])""".stripMargin
+          |def main uses Console: Unit = printLine(verdict["a😀b"])""".stripMargin
     ).asserting(_ shouldBe "counted")
   }
 
@@ -130,7 +130,7 @@ class StringOperationsIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       prelude +
         """
-          |def main: {Console} Unit = {
+          |def main uses Console: Unit = {
           |   val s = line ++ "😀b"
           |   printLine(yn(replace("", "-", s) == "-a-😀-b-") ++ yn(replace("😀", "x", s) == "axb"))
           |}""".stripMargin,
@@ -142,7 +142,7 @@ class StringOperationsIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       prelude +
         """
-          |def main: {Console} Unit = {
+          |def main uses Console: Unit = {
           |   val s = line
           |   printLine(show(indexOf("cd", s) else (0 - 1)) ++ "|" ++ show(indexOf("zz", s) else (0 - 1)))
           |}""".stripMargin,
@@ -154,7 +154,7 @@ class StringOperationsIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       prelude +
         """
-          |def main: {Console} Unit = {
+          |def main uses Console: Unit = {
           |   val s = line
           |   printLine(s.before("=") ++ "|" ++ s.after("=") ++ "|" ++ before("?", s) ++ "|" ++ after("?", s) ++ ".")
           |}""".stripMargin,
@@ -166,7 +166,7 @@ class StringOperationsIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       prelude +
         """
-          |def main: {Console} Unit = {
+          |def main uses Console: Unit = {
           |   val s = line
           |   printLine(show(parseInt(s) else (0 - 1)) ++ "|" ++ yn(s.isInteger) ++ yn(isInteger(s ++ "x")))
           |}""".stripMargin,
@@ -181,7 +181,7 @@ class StringOperationsIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       prelude +
         """
-          |def main: {Console} Unit = {
+          |def main uses Console: Unit = {
           |   val s = line
           |   printLine(show(parseInt(s) else (0 - 1)) ++ "|" ++ show(parseInt("0") else (0 - 1)))
           |}""".stripMargin,
@@ -193,7 +193,7 @@ class StringOperationsIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       prelude +
         """
-          |def main: {Console} Unit = {
+          |def main uses Console: Unit = {
           |   val s = line
           |   printLine(yn(s < "b") ++ yn(s < "a") ++ yn(s <= s))
           |}""".stripMargin,
@@ -217,7 +217,7 @@ class StringOperationsIntegrationTest extends FullIntegrationTest {
           |   def verdict: String = "reduced"
           |}
           |
-          |def main: {Console} Unit = printLine(verdict["abcdefyz"])""".stripMargin
+          |def main uses Console: Unit = printLine(verdict["abcdefyz"])""".stripMargin
     ).asserting(_ shouldBe "reduced")
   }
 
@@ -235,7 +235,7 @@ class StringOperationsIntegrationTest extends FullIntegrationTest {
           |   def verdict: String = "sliced"
           |}
           |
-          |def main: {Console} Unit = printLine(verdict["abcdefyz"])""".stripMargin
+          |def main uses Console: Unit = printLine(verdict["abcdefyz"])""".stripMargin
     ).asserting(_ shouldBe "sliced")
   }
 
@@ -258,7 +258,7 @@ class StringOperationsIntegrationTest extends FullIntegrationTest {
           |   def handler: String = "page"
           |}
           |
-          |def main: {Console} Unit = printLine(handler["/api/users"] ++ "/" ++ handler["/about"])""".stripMargin
+          |def main uses Console: Unit = printLine(handler["/api/users"] ++ "/" ++ handler["/about"])""".stripMargin
     ).asserting(_ shouldBe "api/page")
   }
 
@@ -278,7 +278,7 @@ class StringOperationsIntegrationTest extends FullIntegrationTest {
           |   def verdict: String = "text"
           |}
           |
-          |def main: {Console} Unit = printLine(verdict["42"] ++ "/" ++ verdict["v1"])""".stripMargin
+          |def main uses Console: Unit = printLine(verdict["42"] ++ "/" ++ verdict["v1"])""".stripMargin
     ).asserting(_ shouldBe "numeral/text")
   }
 
@@ -297,7 +297,7 @@ class StringOperationsIntegrationTest extends FullIntegrationTest {
           |   def shouted: String = toUpperCase(S)
           |}
           |
-          |def main: {Console} Unit = printLine(shouted["quiet"])""".stripMargin
+          |def main uses Console: Unit = printLine(shouted["quiet"])""".stripMargin
     ).asserting(_ shouldBe "QUIET")
   }
 }

@@ -1,7 +1,7 @@
 /**
  * The compiler's marker for "no implementation was named here".
  *
- * Effects v6 gives every effect row entry and every `~` constraint a compile-time parameter — a *binding* — whose
+ * Effects v6 gives every `uses` entry and every `~` constraint a compile-time parameter — a *binding* — whose
  * value is the implementation the calls under it run on (`docs/effects.md` §9.4). Where a `with` names one, that
  * name is the value. Where nothing does, the compiler writes `Default`, which means "find the implementation the
  * ordinary way": the unique `implement` block in the ability's module or in the type's.
@@ -12,7 +12,7 @@
 type Default
 
 /**
- * The **mark** on a binding binder: a binder the compiler mints for an effect row entry, a `~` constraint or an
+ * The **mark** on a binding binder: a binder the compiler mints for a `uses` entry, a `~` constraint or an
  * `ability` block's implementation slot is declared `Impl: Implementation[A]`, `A` being the ability it binds
  * (`docs/effects.md` §9).
  *

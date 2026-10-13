@@ -1,13 +1,13 @@
 /**
  * The state effect: a computation that threads a state of type `S`, reading and replacing it.
  *
- * A function that uses state declares `{State[S]}` and reads the current state as `state` or replaces it with
- * `putState`. Neither wraps the result — the effect floats up to the caller. The result paired with the final state is
+ * A function that uses state declares `uses State[S]` and reads the current state as `state` or replaces it with
+ * `putState`. Neither wraps the result — the effect floats up to the caller's clause. The result paired with the final state is
  * materialised only when the effect is discharged by `runStateToPair`, as a `Pair[A, S]` (or `runStateToValue` /
  * `runStateToFinalState` to keep only one side).
  *
  * ```eliot
- * def tick: {State[Int]} Unit = putState(state + 1)
+ * def tick uses State[Int]: Unit = putState(state + 1)
  * ```
  *
  * A **control effect**: one implementation per platform over that platform's private cell primitive, so there is
@@ -33,10 +33,10 @@ effect State[S] {
  * layers get it for free, without implementing a third `State` operation.
  *
  * ```eliot
- * def tick: {State[Int]} Unit = updateState(n -> n + 1)
+ * def tick uses State[Int]: Unit = updateState(n -> n + 1)
  * ```
  */
-def updateState[S](f: S => S): {State[S]} Unit = putState(f(state))
+def updateState[S](f: S => S) uses State[S]: Unit = putState(f(state))
 
 /**
  * Discharge the `State[S]` effect, materialising it as a `Pair[A, S]`: the result paired with the final state, threaded
@@ -46,16 +46,16 @@ def updateState[S](f: S => S): {State[S]} Unit = putState(f(state))
  * Body-less here and bodied per platform: threading a value through calls that never mention it is the cell
  * primitive, and a public cell is Landin's knot (`docs/effects.md` §9.6).
  */
-def runStateToPair[S, A](initial: S, p: {State[S]} A): Pair[A, S]
+def runStateToPair[S, A](initial: S, p uses *, State[S]: A): Pair[A, S]
 
 /**
  * Discharge the `State[S]` effect keeping only the result, discarding the final state. Threads `initial` through the
  * computation and yields its value.
  */
-def runStateToValue[S, A](initial: S, p: {State[S]} A): A = first(runStateToPair(initial, p))
+def runStateToValue[S, A](initial: S, p uses *, State[S]: A): A = first(runStateToPair(initial, p))
 
 /**
  * Discharge the `State[S]` effect keeping only the final state, discarding the result. Threads `initial` through the
  * computation and yields the state left behind.
  */
-def runStateToFinalState[S, A](initial: S, p: {State[S]} A): S = second(runStateToPair(initial, p))
+def runStateToFinalState[S, A](initial: S, p uses *, State[S]: A): S = second(runStateToPair(initial, p))

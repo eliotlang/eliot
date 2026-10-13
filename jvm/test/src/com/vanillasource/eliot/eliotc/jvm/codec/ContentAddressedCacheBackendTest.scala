@@ -26,7 +26,7 @@ class ContentAddressedCacheBackendTest extends AsyncFlatSpec with AsyncIOSpec wi
   private val program =
     """def greet(name: String): String = "hello " ++ name
       |
-      |def main: {Console} Unit = printLine(greet("world"))""".stripMargin
+      |def main uses Console: Unit = printLine(greet("world"))""".stripMargin
 
   "the content-addressed cache" should "read back every entry it wrote" in {
     withCache { (data, cacheDir) =>

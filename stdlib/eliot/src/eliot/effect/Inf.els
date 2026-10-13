@@ -2,14 +2,14 @@
  * The non-termination effect: a computation that may run forever.
  *
  * Eliot's core cannot express recursion or loops, so every program terminates by default; `Inf` is the
- * one opt-out. A computation that loops endlessly declares `{Inf}` and calls `forever`; the effect
- * propagates to callers like any other, so using `forever` without declaring `{Inf}` is a compile
- * error. Unlike an interpretation effect, `Inf` is never discharged — it is *run*. An `{Inf}` reaching
+ * one opt-out. A computation that loops endlessly declares `uses Inf` and calls `forever`; the effect
+ * propagates to callers like any other, so using `forever` without declaring `uses Inf` is a compile
+ * error. Unlike an interpretation effect, `Inf` is never discharged — it is *run*. An `Inf` reaching
  * `main` is therefore allowed: it denotes a deliberately non-terminating program, such as a server or
  * firmware super-loop, and the platform's own implementation is what the entry point binds.
  *
  * ```eliot
- * def processRequestsForever: {Dep[RequestSource], Inf} Unit =
+ * def processRequestsForever uses Dep[RequestSource], Inf: Unit =
  *   forever {
  *     dependency.readRequest.process
  *   }
@@ -23,5 +23,5 @@ effect Inf {
     * `step` is a suspended slot supplying nothing, so it performs exactly what the enclosing definition
     * declares, on the bindings it was written under.
     */
-   def forever(step: {} Unit): Unit
+   def forever(step uses *: Unit): Unit
 }

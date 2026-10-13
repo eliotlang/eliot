@@ -100,23 +100,23 @@ class EffectSyntaxParserTest extends ProcessorTest(new Tokenizer(), new ASTParse
     }
   }
 
-  "with in type position" should "bind a parameter's type" in {
-    argumentType("def mocked(body: {Console} Unit with mockConsole): Unit")
+  "with in type position" should "bind a parameter's type, after its clause's entry" in {
+    argumentType("def mocked(body uses *, Console with mockConsole: Unit): Unit")
       .asserting(_ shouldBe Seq("{Console} Unit with mockConsole"))
   }
 
   it should "bind a data field's type" in {
-    ast("data Suite(cases: {Console} Unit with recordingConsole)")
+    ast("data Suite(cases: Unit with recordingConsole)")
       .asserting(_.typeDefinitions.flatMap(_.constructors.toSeq.flatten.flatMap(_.fields.map(_.typeExpression.value.render)))
-        shouldBe Seq("{Console} Unit with recordingConsole"))
+        shouldBe Seq("Unit with recordingConsole"))
   }
 
   it should "be rejected on a def's own return type" in {
-    runEngineForErrors("def a: {Console} Unit with mock = b").asserting(_ should not be empty)
+    runEngineForErrors("def a: Unit with mock = b").asserting(_ should not be empty)
   }
 
-  it should "be rejected inside a row" in {
-    runEngineForErrors("def a(body: {Console with mock} Unit): Unit").asserting(_ should not be empty)
+  it should "be rejected inside a row alias" in {
+    runEngineForErrors("type Mocked = {Console with mock} Unit").asserting(_ should not be empty)
   }
 
   private def ast(source: String): IO[AST] =

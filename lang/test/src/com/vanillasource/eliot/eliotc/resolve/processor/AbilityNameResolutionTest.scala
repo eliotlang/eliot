@@ -19,12 +19,12 @@ import com.vanillasource.eliot.eliotc.resolve.fact.ResolvedValue
 class AbilityNameResolutionTest extends ProcessorTest(LangProcessors()*) {
 
   "an ability name" should "resolve to the local declaration that took an ambient ability's name" in {
-    abilityModules("effect Console {\ndef beep: Unit\n}\ndef f: {Console} String = \"\"")
+    abilityModules("effect Console {\ndef beep: Unit\n}\ndef f uses Console: String = \"\"")
       .asserting(_ shouldBe Seq(testModuleName))
   }
 
   it should "resolve to the ambient ability when nothing local takes its name" in {
-    abilityModules("def f: {Console} String = \"\"")
+    abilityModules("def f uses Console: String = \"\"")
       .asserting(_ shouldBe Seq(ModuleName(ModuleName.effectPackage, "Console")))
   }
 

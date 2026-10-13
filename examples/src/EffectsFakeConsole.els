@@ -16,17 +16,17 @@
  * ```
  */
 
-// Production code: direct style, and unaware that a test exists. It declares `{Console}` and names no implementation,
+// Production code: direct style, and unaware that a test exists. It declares `uses Console` and names no implementation,
 // so it commits to no interpretation of it.
-def greeting(name: String): {Console} Unit = printLine("Hello, " ++ name ++ "!")
+def greeting(name: String) uses Console: Unit = printLine("Hello, " ++ name ++ "!")
 
-// The test double: one declaration, no fixture. Its clauses declare what the double itself performs — `{Writer[String]}`
-// — and that is charged wherever the name is bound, which is what makes the transcript come out below.
+// The test double: one declaration, no fixture. Its clauses declare what the double itself performs — `uses
+// Writer[String]` — and that is charged wherever the name is bound, which is what makes the transcript come out below.
 //
 // It cannot cheat: a user module declares no natives, and the platform's are private to its layer, so a double reaches
 // the outside world only through effects its own clauses declare — and those are charged and bound like any other.
 implement recordingConsole: Console {
-   def printLine(s: String): {Writer[String]} Unit = tell(s ++ ";")
+   def printLine(s: String) uses Writer[String]: Unit = tell(s ++ ";")
 
    def readLine: Option[String] = None
 }
@@ -36,7 +36,7 @@ implement recordingConsole: Console {
 // to instantiate, it may be written anywhere, including inside an effectful body as `main` does below.
 def transcript: String = runWriterToLog(greeting("Bob") with recordingConsole)
 
-def main: {Console} Unit = {
+def main uses Console: Unit = {
    printLine(transcript)
    printLine(runWriterToLog({
       greeting("Ann")

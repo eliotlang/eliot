@@ -43,7 +43,7 @@ class FactCodecConformanceTest extends AsyncFlatSpec with AsyncIOSpec with Match
   private val program =
     """def greet(name: String): String = "hello " ++ name
       |
-      |def main: {Console} Unit = printLine(greet("world"))""".stripMargin
+      |def main uses Console: Unit = printLine(greet("world"))""".stripMargin
 
   private val expectedDeclines = Set("ContributedBinding", "NativeBinding")
 

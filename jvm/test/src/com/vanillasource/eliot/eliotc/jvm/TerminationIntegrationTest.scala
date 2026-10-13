@@ -25,7 +25,7 @@ class TerminationIntegrationTest extends FullIntegrationTest {
       """import eliot.effect.Console
         |data Loop(f: Function[Loop, String])
         |
-        |def main: {Console} Unit = printLine("unreachable")""".stripMargin
+        |def main uses Console: Unit = printLine("unreachable")""".stripMargin
     ).asserting(_ should include("contravariant position"))
   }
 
@@ -34,7 +34,7 @@ class TerminationIntegrationTest extends FullIntegrationTest {
       """import eliot.effect.Console
         |data Tree(left: Tree, right: Tree)
         |
-        |def main: {Console} Unit = printLine("ok")""".stripMargin
+        |def main uses Console: Unit = printLine("ok")""".stripMargin
     ).asserting(_ shouldBe "ok")
   }
 
@@ -43,7 +43,7 @@ class TerminationIntegrationTest extends FullIntegrationTest {
       """import eliot.effect.Console
         |def loop(x: String): String = loop(x)
         |
-        |def main: {Console} Unit = printLine(loop("unreachable"))""".stripMargin
+        |def main uses Console: Unit = printLine(loop("unreachable"))""".stripMargin
     ).asserting(_ should include("recursively"))
   }
 
@@ -53,7 +53,7 @@ class TerminationIntegrationTest extends FullIntegrationTest {
         |def ping(x: String): String = pong(x)
         |def pong(x: String): String = ping(x)
         |
-        |def main: {Console} Unit = printLine(ping("unreachable"))""".stripMargin
+        |def main uses Console: Unit = printLine(ping("unreachable"))""".stripMargin
     ).asserting(_ should include("recursively"))
   }
 
@@ -66,7 +66,7 @@ class TerminationIntegrationTest extends FullIntegrationTest {
         |type Foo = Foo
         |def useFoo(x: Foo): Foo = x
         |
-        |def main: {Console} Unit = printLine("unreachable")""".stripMargin
+        |def main uses Console: Unit = printLine("unreachable")""".stripMargin
     ).asserting(_ should include("recursively"))
   }
 
@@ -77,7 +77,7 @@ class TerminationIntegrationTest extends FullIntegrationTest {
         |type B = A
         |def useA(x: A): A = x
         |
-        |def main: {Console} Unit = printLine("unreachable")""".stripMargin
+        |def main uses Console: Unit = printLine("unreachable")""".stripMargin
     ).asserting(_ should include("recursively"))
   }
 
@@ -91,9 +91,9 @@ class TerminationIntegrationTest extends FullIntegrationTest {
       """import eliot.effect.Console
         |import eliot.effect.Abort
         |
-        |def lookup: {Abort} String = abort
+        |def lookup uses Abort: String = abort
         |
-        |def main: {Console} Unit = printLine(lookup else "fallback")""".stripMargin
+        |def main uses Console: Unit = printLine(lookup else "fallback")""".stripMargin
     ).asserting(_ shouldBe "fallback")
   }
 
@@ -104,7 +104,7 @@ class TerminationIntegrationTest extends FullIntegrationTest {
         |def b(x: String): String = c(x)
         |def c(x: String): String = x
         |
-        |def main: {Console} Unit = printLine(a("ok"))""".stripMargin
+        |def main uses Console: Unit = printLine(a("ok"))""".stripMargin
     ).asserting(_ shouldBe "ok")
   }
 
@@ -118,9 +118,9 @@ class TerminationIntegrationTest extends FullIntegrationTest {
       """import eliot.effect.Console
         |import eliot.effect.Inf
         |
-        |def bad: {Console} Unit = forever(printLine("x"))
+        |def bad uses Console: Unit = forever(printLine("x"))
         |
-        |def main: {Console} Unit = bad""".stripMargin
+        |def main uses Console: Unit = bad""".stripMargin
     ).asserting(_ should include("performs the effect 'Inf'"))
   }
 
@@ -132,7 +132,7 @@ class TerminationIntegrationTest extends FullIntegrationTest {
       """import eliot.effect.Console
         |import eliot.effect.Inf
         |
-        |def main: {Inf, Console} Unit = forever(printLine("tick"))""".stripMargin,
+        |def main uses Inf, Console: Unit = forever(printLine("tick"))""".stripMargin,
       timeoutMillis = 400
     ).asserting(_.linesIterator.count(_ == "tick") should be > 5)
   }
@@ -145,9 +145,9 @@ class TerminationIntegrationTest extends FullIntegrationTest {
       """import eliot.effect.Console
         |import eliot.effect.Inf
         |
-        |def serve: {Inf, Console} Unit = forever(printLine("serving"))
+        |def serve uses Inf, Console: Unit = forever(printLine("serving"))
         |
-        |def main: {Inf, Console} Unit = serve""".stripMargin,
+        |def main uses Inf, Console: Unit = serve""".stripMargin,
       timeoutMillis = 400
     ).asserting(_.linesIterator.count(_ == "serving") should be > 5)
   }
@@ -160,9 +160,9 @@ class TerminationIntegrationTest extends FullIntegrationTest {
   "a higher-order combinator over a terminating step" should "itself terminate" in {
     compileAndRun(
       """import eliot.effect.Console
-        |def runStep(step: {} Unit): Unit = step
+        |def runStep(step uses *: Unit): Unit = step
         |
-        |def main: {Console} Unit = runStep(printLine("done"))""".stripMargin
+        |def main uses Console: Unit = runStep(printLine("done"))""".stripMargin
     ).asserting(_ shouldBe "done")
   }
 
@@ -174,9 +174,9 @@ class TerminationIntegrationTest extends FullIntegrationTest {
       """import eliot.effect.Console
         |import eliot.effect.Inf
         |
-        |def runStep(step: {} Unit): Unit = step
+        |def runStep(step uses *: Unit): Unit = step
         |
-        |def main: {Inf, Console} Unit = runStep(forever(printLine("loop")))""".stripMargin,
+        |def main uses Inf, Console: Unit = runStep(forever(printLine("loop")))""".stripMargin,
       timeoutMillis = 400
     ).asserting(_.linesIterator.count(_ == "loop") should be > 5)
   }
@@ -189,9 +189,9 @@ class TerminationIntegrationTest extends FullIntegrationTest {
       """import eliot.effect.Console
         |import eliot.effect.Inf
         |
-        |def driver(step: {} Unit): {Inf} Unit = forever(step)
+        |def driver(step uses *: Unit) uses Inf: Unit = forever(step)
         |
-        |def main: {Inf, Console} Unit = driver(printLine("tick"))""".stripMargin,
+        |def main uses Inf, Console: Unit = driver(printLine("tick"))""".stripMargin,
       timeoutMillis = 400
     ).asserting(_.linesIterator.count(_ == "tick") should be > 5)
   }
@@ -203,9 +203,9 @@ class TerminationIntegrationTest extends FullIntegrationTest {
       """import eliot.effect.Console
         |import eliot.effect.Inf
         |
-        |def driver(step: {} Unit): {Console} Unit = forever(step)
+        |def driver(step uses *: Unit) uses Console: Unit = forever(step)
         |
-        |def main: {Console} Unit = driver(printLine("tick"))""".stripMargin
+        |def main uses Console: Unit = driver(printLine("tick"))""".stripMargin
     ).asserting(_ should include("performs the effect 'Inf'"))
   }
 }

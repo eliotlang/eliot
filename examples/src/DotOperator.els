@@ -10,5 +10,5 @@ def as[A, B](b: B, box: Box[A]): Box[B] = box.map(_ -> b)
 
 def logic: Box[String] = Box("Hello").filter("Expr").map(_ -> "Earth!").as("World!")
 
-def main: {Console} Unit = printLine(logic.content)
+def main uses Console: Unit = printLine(logic.content)
 

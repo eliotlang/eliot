@@ -1,7 +1,7 @@
-// Carrier-free {State[String]} business logic: read the current state, install `next`, return the previous value.
+// Business logic that uses `State[String]`: read the current state, install `next`, return the previous value.
 // Direct style — a block is strict evaluation order, and `state`/`putState` are ordinary calls into the platform's
 // single `State` implementation.
-def swap(next: String): {State[String]} String = {
+def swap(next: String) uses State[String]: String = {
    val old = state
    putState(next)
    old
@@ -9,10 +9,10 @@ def swap(next: String): {State[String]} String = {
 
 // Discharge into a PURE function: `runStateToPair` installs the cell the state lives in, runs the computation inside
 // it, and answers a plain Pair of (returned-old-value, final-state) started from "first". Nothing is left over, so the
-// result is ordinary data — there is no residual carrier to unwrap.
+// result is ordinary data — there is nothing left to unwrap.
 def demo: Pair[String, String] = runStateToPair("first", swap("second"))
 
-def main: {Console} Unit = {
+def main uses Console: Unit = {
    printLine(demo.first)
    printLine(demo.second)
 }

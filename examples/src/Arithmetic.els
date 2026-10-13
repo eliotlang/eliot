@@ -2,4 +2,4 @@
  * Integer arithmetic. Every integer is a plain `Int` (a value's range is meta-information in the refinement channel),
  * and `+`/`-`/`*` compute over it, with `*` binding tighter than `+`/`-`. Prints `14`.
  */
-def main: {Console} Unit = printLine(show(2 + 3 * 4))
+def main uses Console: Unit = printLine(show(2 + 3 * 4))

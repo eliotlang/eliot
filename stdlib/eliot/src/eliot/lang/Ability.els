@@ -1,8 +1,8 @@
 /**
  * Combines two ability constraints on one generic parameter into a single requirement.
  *
- * `&` is the combinator of the `~` constraint syntax: `[F[_] ~ Console & Log]` binds a carrier that
- * has both `Console` and `Log`. It is declared here, in the standard library, rather than being a
+ * `&` is the combinator of the `~` constraint syntax: `[A ~ Show & Eq]` binds a type that
+ * has both `Show` and `Eq`. It is declared here, in the standard library, rather than being a
  * symbol the parser recognises — so the name must be in scope for `~` to accept it, and a module
  * that declares its own `&` takes it back like any other name.
  *
@@ -11,12 +11,12 @@
  * superability relation, not a use of `&`.
  *
  * ```eliot
- * // A carrier that can both print and log. `Web` has no methods: it performs nothing itself,
- * // it only names the pair, so it needs no implementation.
- * ability Web[F[_] ~ Console & Log]
+ * // A type that can be both shown and compared. `Printable` has no methods: it adds nothing
+ * // itself, it only names the pair.
+ * ability Printable[A ~ Show & Eq]
  *
- * // Naming the set is enough — `{Web}` declares `Console` and `Log` along with it.
- * def serve[G[_] ~ Web](request: String): G[String]
+ * // Naming the set is enough — `~ Printable` requires `Show` and `Eq` along with it.
+ * def describe[A ~ Printable](a: A, b: A): String
  *
  * // The same requirement spelled directly on a generic parameter, without naming it.
  * def report[A ~ Show & Eq](a: A, b: A): String

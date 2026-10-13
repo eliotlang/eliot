@@ -30,9 +30,9 @@ def answered: answerType(theAnswer) = "the type says 42 is 42"
  * Whether the number read from the console is the answer — a genuinely runtime comparison, since one operand
  * only exists once the program runs.
  */
-def isAnswer(input: String): {Abort} Bool = input.parseInt == 42
+def isAnswer(input: String) uses Abort: Bool = input.parseInt == 42
 
-def main: {Console} Unit = {
+def main uses Console: Unit = {
    val line = readLine orElse ""
 
    printLine(answered)

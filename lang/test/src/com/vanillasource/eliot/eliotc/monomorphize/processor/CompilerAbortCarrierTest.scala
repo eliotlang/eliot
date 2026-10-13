@@ -34,7 +34,7 @@ class CompilerAbortCarrierTest extends ProcessorTest(LangProcessors(systemModule
       |import eliot.lang.Option
       |
       |ability Abort[F[_]] {
-      |   def abort[A]: {Abort} A
+      |   def abort[A] uses Abort: A
       |}
       |
       |data AbortCarrier[G[_], A](runAbort: G[Option[A]])

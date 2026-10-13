@@ -2,7 +2,7 @@ package com.vanillasource.eliot.eliotc.row.processor
 
 import cats.Id
 import cats.syntax.all.*
-import com.vanillasource.eliot.eliotc.module.fact.{ModuleConstructors, Qualifier, Role, ValueFQN}
+import com.vanillasource.eliot.eliotc.module.fact.{Qualifier, Role, ValueFQN}
 import com.vanillasource.eliot.eliotc.operator.fact.{OperatorResolvedExpression, OperatorResolvedValue}
 import com.vanillasource.eliot.eliotc.platform.Platform
 import com.vanillasource.eliot.eliotc.processor.CompilerIO.*
@@ -104,7 +104,7 @@ class RowElaborationProcessor(isRunBoundary: ValueFQN => Boolean = _ => false)
       val reporting = RowChecker.Universe(known, Set.empty, fqn => { missed += fqn; () })
       BindingWriter.write(value, reporting, isRunBoundary(value.vfqn))
       val fresh     = missed.toSet -- attempted
-      if (fresh.isEmpty) constructorsAmong(known.keySet, platform).map(found => RowChecker.Universe(known, constructors = found))
+      if (fresh.isEmpty) RowChecker.Universe(known).pure[CompilerIO]
       else
         fresh.toSeq
           .traverse(fqn => getFactIfProduced(OperatorResolvedValue.Key(fqn, platform)).map(fqn -> _))
@@ -115,19 +115,5 @@ class RowElaborationProcessor(isRunBoundary: ValueFQN => Boolean = _ => false)
 
     // The value itself is part of its own universe: the write reads its own declaration for the bindings it receives.
     loop(Map(value.vfqn -> value), Set.empty)
-  }
-
-  /** The `data` value constructors among `names`, asked of each candidate's module once.
-    *
-    * [[getFactIfProduced]] by design: a module whose constructor index failed has already reported why, and this value
-    * then proceeds as though that module declared none — which only ever accepts more, never less.
-    */
-  private def constructorsAmong(names: Set[ValueFQN], platform: Platform): CompilerIO[Set[ValueFQN]] = {
-    val candidates = names.filter(fqn => fqn.name.qualifier == Qualifier.Default && fqn.name.name.headOption.exists(_.isUpper))
-    candidates.toSeq
-      .map(_.moduleName)
-      .distinct
-      .traverse(module => getFactIfProduced(ModuleConstructors.Key(module, platform)))
-      .map(_.flatten.flatMap(_.byDataType.values.flatten).toSet.intersect(candidates))
   }
 }

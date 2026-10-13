@@ -29,7 +29,7 @@ def banner(text: String): String where fitsDisplay(size(text)) = text
  */
 def column(position: Int): Int where fitsDisplay(range(position)) = position
 
-def main: {Console} Unit = {
+def main uses Console: Unit = {
    printLine(banner("Eliot"))
    printLine(show(column(length("Eliot"))))
    // A size carried through two stated transfers rather than one. `combine` states its result exactly — five

@@ -9,7 +9,7 @@ def append[A](list: List[A], element: A): List[A]
 
 def prepend[A](list: List[A], element: A): List[A]
 
-def foldLeft[A, B](initial: B, combine: A => B => {} B, list: List[A]): B
+def foldLeft[A, B](initial: B, combine uses *: A => B => B, list: List[A]): B
 
 /**
  * Perform `action` on every element of `list` from front to back, keeping only its effects.
@@ -20,10 +20,10 @@ def foldLeft[A, B](initial: B, combine: A => B => {} B, list: List[A]): B
  * ```eliot
  * // Print every line of a report, in order; the action's `Console` effect
  * // propagates to the caller through `foreach`.
- * def printReport(lines: List[String]): {Console} Unit = lines.foreach(printLine)
+ * def printReport(lines: List[String]) uses Console: Unit = lines.foreach(printLine)
  * ```
  */
-def foreach[A](action: A => {} Unit, list: List[A]): Unit =
+def foreach[A](action uses *: A => Unit, list: List[A]): Unit =
    list.foldLeft(unit, e -> _ -> action(e))
 
 /**
@@ -35,12 +35,12 @@ def foreach[A](action: A => {} Unit, list: List[A]): Unit =
  * ```eliot
  * def lengths(words: List[String]): List[Int] = words.map(length)
  *
- * // An effectful mapping: each prompt is answered in turn, and {Console} propagates to the caller.
- * def answers(prompts: List[String]): {Console} List[String] =
+ * // An effectful mapping: each prompt is answered in turn, on the Console `answers` declares.
+ * def answers(prompts: List[String]) uses Console: List[String] =
  *    prompts.map(p -> { printLine(p) ; readLine orElse "" })
  * ```
  */
-def map[A, B](f: A => {} B, list: List[A]): List[B] =
+def map[A, B](f uses *: A => B, list: List[A]): List[B] =
    list.foldLeft(empty, e -> acc -> append(acc, f(e)))
 
 /**
@@ -54,7 +54,7 @@ def map[A, B](f: A => {} B, list: List[A]): List[B] =
  * def nonEmpty(lines: List[String]): List[String] = lines.filter(line -> length(line) > 0)
  * ```
  */
-def filter[A](predicate: A => {} Bool, list: List[A]): List[A] =
+def filter[A](predicate uses *: A => Bool, list: List[A]): List[A] =
    list.foldLeft(empty, e -> acc -> fold(predicate(e), append(acc, e), acc))
 
 /**
@@ -86,7 +86,7 @@ def isEmpty[A](list: List[A]): Bool = list.foldLeft(true, _ -> _ -> false)
  * def firstComment(lines: List[String]): Option[String] = lines.find(line -> line.startsWith("//"))
  * ```
  */
-def find[A](predicate: A => {} Bool, list: List[A]): Option[A] =
+def find[A](predicate uses *: A => Bool, list: List[A]): Option[A] =
    list.foldLeft(none, e -> acc -> acc.foldOption(fold(predicate(e), some(e), none), _ -> acc))
 
 /**
@@ -111,7 +111,7 @@ def find[A](predicate: A => {} Bool, list: List[A]): Option[A] =
  *    words.groupBy(w -> w.substring(0, 1))
  * ```
  */
-def groupBy[A, K ~ Eq](key: A => {} K, list: List[A]): List[Pair[K, List[A]]] =
+def groupBy[A, K ~ Eq](key uses *: A => K, list: List[A]): List[Pair[K, List[A]]] =
    list.foldLeft(empty, e -> groups -> addToGroup(key(e), e, groups))
 
 /**
@@ -209,7 +209,7 @@ def replaceLast[A](element: A, list: List[A]): List[A] = fold(list.isEmpty, list
  * def hasComment(lines: List[String]): Bool = lines.any(line -> line.startsWith("--"))
  * ```
  */
-def any[A](predicate: A => {} Bool, list: List[A]): Bool =
+def any[A](predicate uses *: A => Bool, list: List[A]): Bool =
    list.foldLeft(false, e -> acc -> acc || predicate(e))
 
 /**
@@ -217,7 +217,7 @@ def any[A](predicate: A => {} Bool, list: List[A]): Bool =
  *
  * `predicate` is applied to every element, with no short-circuiting, exactly as in `any`.
  */
-def all[A](predicate: A => {} Bool, list: List[A]): Bool =
+def all[A](predicate uses *: A => Bool, list: List[A]): Bool =
    list.foldLeft(true, e -> acc -> acc && predicate(e))
 
 /**
@@ -230,7 +230,7 @@ def all[A](predicate: A => {} Bool, list: List[A]): Bool =
  * def allWords(lines: List[String]): List[String] = lines.flatMap(words)
  * ```
  */
-def flatMap[A, B](f: A => {} List[B], list: List[A]): List[B] =
+def flatMap[A, B](f uses *: A => List[B], list: List[A]): List[B] =
    list.foldLeft(empty, e -> acc -> acc ++ f(e))
 
 /**
@@ -349,7 +349,7 @@ def lookupOption[K ~ Eq, V](key: K, entries: List[Pair[K, V]]): Option[V] =
  * def port(settings: List[Pair[String, String]]): String = settings.lookup("port") else "8080"
  * ```
  */
-def lookup[K ~ Eq, V](key: K, entries: List[Pair[K, V]]): {Abort} V = orAbort(entries.lookupOption(key))
+def lookup[K ~ Eq, V](key: K, entries: List[Pair[K, V]]) uses Abort: V = orAbort(entries.lookupOption(key))
 
 /**
  * `entries` with `key` bound to `value`: an existing binding is replaced where it stands, a new key is appended at
@@ -380,7 +380,7 @@ def put[K ~ Eq, V](key: K, value: V, entries: List[Pair[K, V]]): List[Pair[K, V]
  * def ports(settings: List[String]): List[Int] = settings.filterMap(setting -> runAbort(parseInt(setting)))
  * ```
  */
-def filterMap[A, B](f: A => {} Option[B], list: List[A]): List[B] =
+def filterMap[A, B](f uses *: A => Option[B], list: List[A]): List[B] =
    list.foldLeft(empty, e -> acc -> f(e).foldOption(acc, found -> append(acc, found)))
 
 /**
@@ -394,7 +394,7 @@ def filterMap[A, B](f: A => {} Option[B], list: List[A]): List[B] =
  * def firstPort(settings: List[String]): Option[Int] = settings.findMap(setting -> runAbort(parseInt(setting)))
  * ```
  */
-def findMap[A, B](f: A => {} Option[B], list: List[A]): Option[B] =
+def findMap[A, B](f uses *: A => Option[B], list: List[A]): Option[B] =
    list.foldLeft(none, e -> acc -> acc.foldOption(f(e), _ -> acc))
 
 /**

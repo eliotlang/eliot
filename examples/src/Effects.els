@@ -1,10 +1,10 @@
 /**
- * Direct-style I/O with the `{Console}` effect.
+ * Direct-style I/O with the `Console` effect.
  *
  * `readLine` yields an `Option[String]` and `printLine` consumes a plain `String`, yet both perform `Console`.
  * Writing the one out of the other directly works because an effect operation is an ordinary call: it runs where it
  * is written. Neither `echo` nor `main` names an implementation — the platform's synthesized entry point binds the
- * default `implement Console` for the row `main` declares, and a test would bind its own with `with`.
+ * default `implement Console` for the `uses Console` of `main`, and a test would bind its own with `with`.
  *
  * The `Option` is end of input, answered here by `orElse` — so running out of input is handled where it happens
  * rather than crashing later.
@@ -14,6 +14,6 @@
  * echo "hello effects" | java -jar target/Effects.jar
  * ```
  */
-def echo: {Console} Unit = printLine(readLine orElse "(no input)")
+def echo uses Console: Unit = printLine(readLine orElse "(no input)")
 
-def main: {Console} Unit = echo
+def main uses Console: Unit = echo

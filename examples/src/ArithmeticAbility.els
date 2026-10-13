@@ -5,4 +5,4 @@ def prod(x: Int, y: Int): Int = multiply(x, y)
 
 // Nested calls to the same homogeneous ability method: `add`/`subtract`/`multiply` over plain `Int`.
 
-def main: {Console} Unit = printLine(show(add(sum(30, 20), add(diff(40, 10), prod(3, 4)))))
+def main uses Console: Unit = printLine(show(add(sum(30, 20), add(diff(40, 10), prod(3, 4)))))

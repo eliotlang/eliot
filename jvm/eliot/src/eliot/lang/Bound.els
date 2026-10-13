@@ -1,6 +1,6 @@
 data Bound[T] = Unbounded | Bounded(value: T)
 
-def foldBound[T, B](ifUnbounded: {} B, ifBounded: T => {} B, b: Bound[T]): B = b match {
+def foldBound[T, B](ifUnbounded uses *: B, ifBounded uses *: T => B, b: Bound[T]): B = b match {
    case Unbounded -> ifUnbounded
    case Bounded(v) -> ifBounded(v)
 }

@@ -43,27 +43,20 @@ object Expression {
     */
   case class BlockLine(binder: Option[LambdaParameterDefinition], expression: Sourced[Expression])
 
-  /** The effect-row sugar `{ E1, E2, … } A` written in a type position, in two forms distinguished by `tail`:
+  /** An effect row on a type, `{ E1, E2, … } A`: the unordered set of `effects` a computation *performs*, on
+    * implementations its caller binds. Pure, type-information-free — it never survives past the core processor, where
+    * [[core.processor.EffectSugarDesugarer]] turns each entry into one **binding binder** marked
+    * `Implementation[Console]` and erases the row from the type (`docs/effects.md` §3.1).
     *
-    * **Open row** (`tail == None`) — `{Console} A`: the unordered set of `effects` the computation *performs*, on
-    * implementations its caller binds. Pure, type-information-free — they never survive past the core processor,
-    * where [[core.processor.EffectSugarDesugarer]] turns each entry into one **binding binder** marked
-    * `Implementation[Console]` and erases the row from the type (effects v6, `docs/effects.md` §3.1).
-    *
-    * **Pinned row** (`tail == Some(base)`) — `{Throw[E] | G} A`: a *concrete type*, the canonical carrier stack
-    * realizing exactly these effects over the base `tail`. Entries are **ordered** (leftmost = outermost = discharged
-    * first) and each must be backed by a canonical carrier named by convention `<Ability>Carrier`, colocated with the
-    * ability: the desugarer rewrites `{Throw[E], State[S] | Id} A` to `ThrowCarrier[E, StateCarrier[S, Id], A]`. No
-    * generic parameter is introduced — a pinned row is just type-application spelled in effect vocabulary.
-    *
-    * Discharge is no longer annotated on the row: a discharger's effect vanishes structurally at the monomorphize-phase
-    * residual check (it lands on an inner transformer carrier, absent from the caller's ambient), so there is no
-    * negative `-E` member.
+    * **A user writes it in one place only**, the body of a row alias (`type Git[A] = {Process, FileSystem} A`, see
+    * [[rowAliasBodyParser]]); everywhere else the spelling is a `uses` clause (`docs/effects.md` D21), which the parser
+    * writes onto this node — a definition's onto its return type, a parameter's onto the slot's type or its arrow
+    * codomain — so no phase past `ast` learns the clause. A row written in any other type position is a parse error
+    * naming the clause ([[typeRunAtom]]).
     */
   case class EffectfulType(
       effects: Seq[UnresolvedAbilityConstraint[Sourced[Expression]]],
-      resultType: Sourced[Expression],
-      tail: Option[Sourced[Expression]]
+      resultType: Sourced[Expression]
   ) extends Expression
 
   /** `subject with implementation` — effects v6's binding of a named implementation to its subject
@@ -119,10 +112,8 @@ object Expression {
       case FlatExpression(parts)                                                                => parts.map(_.value.render).mkString(" ")
       case MatchExpression(scrutinee, cases)                                                    =>
         s"${scrutinee.value.render} match { ${cases.map(c => s"case ${c.pattern.value.render} -> ${c.body.value.render}").mkString(" ")} }"
-      case EffectfulType(effects, resultType, tail)                                             =>
-        val members = effects.map(renderAbilityConstraint)
-        val tailStr = tail.fold("")(t => s" | ${t.value.render}")
-        s"{${members.mkString(", ")}$tailStr} ${resultType.value.render}"
+      case EffectfulType(effects, resultType)                                                   =>
+        s"{${effects.map(renderAbilityConstraint).mkString(", ")}} ${resultType.value.render}"
       case BlockExpression(lines)                                                               =>
         lines.map(renderBlockLine).mkString("{ ", "; ", " }")
       case WithBinding(subject, implementation)                                                 =>
@@ -226,8 +217,8 @@ object Expression {
     blockLineParser.anyTimes().between(symbol("{"), symbol("}")).map(BlockExpression.apply)
 
   /** Full atoms including lambdas and `{ … }` blocks. The block alternative is first and atomic: a leading `{` in value
-    * position is always a block (the effect-set sugar `{…} A` lives only in type positions — see [[typeRunParser]] —
-    * never here), and a non-`{` start backtracks to the lambda/type atoms.
+    * position is always a block (an effect row lives only in a row alias's body — see [[rowAliasBodyParser]] — never
+    * here), and a non-`{` start backtracks to the lambda/type atoms.
     */
   private lazy val fullAtom: Parser[Sourced[Token], Expression] =
     blockParser.atomic() or functionLiteralParser.atomic() or typeAtom
@@ -266,44 +257,39 @@ object Expression {
       Sourced.outline(Seq(acc, implementation)).as(WithBinding(acc, implementation))
     }
 
-  /** [[withBindingsParser]] for a parameter's or field's type position (`body: {Console} Unit with mockConsole`). */
+  /** The `with name` chain on its own, for a `uses` clause entry (`body uses *, Console with fake: Unit`). */
+  def withBindings: Parser[Sourced[Token], Seq[Sourced[Expression]]] = withBindingsParser
+
+  /** [[withBindingsParser]] for a parameter's or field's type position (`x: T with name`). */
   def typeWithBindings(typeExpression: Sourced[Expression]): Parser[Sourced[Token], Sourced[Expression]] =
     withBindingsParser.map(applyWithBindings(typeExpression, _))
 
-  /** Parses the effect-row sugar `{ Eff (, Eff)* [| tail] } <type atom>`, e.g. `{Suspend} String`, `{State[Account],
-    * Abort} A`, or the *pinned* form `{Throw[E] | Id} A` naming the base carrier after `|`. Each brace entry is an
-    * ability reference (the same shape as a `~` ability constraint). The row covers exactly the one type atom that
-    * follows, and is itself a type-run atom ([[typeRunAtom]]), so it also reads nested in a run — most usefully in an
-    * arrow codomain, typing an effectful callback: `action: A => {Console} Unit`. See [[EffectfulType]].
-    *
-    * The brace may be **empty** — `{} A` is the row that adds nothing, i.e. "on my own ambient carrier" (effects-v5
-    * step 1, docs/effects-v5-one-carrier.md §1). It is still a row, so it is still a carrier position: the `}` must be
-    * followed by a type atom, which is what keeps an empty *transfer* brace (`: T {}`, nothing after it) and a `where`
-    * guard out of this parser.
-    *
-    * A tail is read **with or without entries**. `{| G} A` is the pinned row at *n = 0*: the canonical stack of no
-    * entries over `G`, which is the plain `G[A]`. It is spelled as a row not for the type — that needs no row — but
-    * for the **tag**: a pinned position declares "this slot hosts a computation on this carrier", which is the one
-    * thing about a user's own carrier that no declaration could state before (docs/effects.md W3). Same type,
-    * different slot, exactly as §1 rule 2 already separates `{} A` from `G[A]`.
+  /** An effect row, `{ Eff (, Eff)* } <type atom>`: each entry an ability reference (the same shape as a `~` ability
+    * constraint), covering exactly the one type atom that follows. The brace may be empty, so that `{} A` is recognised
+    * too — and refused, by [[typeRunAtom]]. The `}` must be followed by a type atom, which is what keeps the
+    * return-position transfer brace (`: T {range(a)}`, nothing after it) and an `implement` body out of this parser.
     */
-  private lazy val effectfulTypeParser: Parser[Sourced[Token], Expression] = for {
+  private lazy val rowParser: Parser[Sourced[Token], Expression] = for {
     _          <- symbol("{")
     entries    <- component[UnresolvedAbilityConstraint[Sourced[Expression]]]
                     .atLeastOnceSeparatedBy(symbol(","))
                     .optional()
                     .map(_.getOrElse(Seq.empty))
-    tail       <- rowTailParser
     _          <- symbol("}")
     resultType <- sourced(typeAtom)
-  } yield EffectfulType(entries, resultType, tail)
+  } yield EffectfulType(entries, resultType)
 
-  /** The optional `| base` tail of an effect row. Read whether or not entries precede it: with entries it names the
-    * base of the canonical stack they build, and with none it is the stack at zero layers — the base itself, tagged as
-    * a capture. See [[effectfulTypeParser]].
+  /** What a row written in a type is refused with: the `uses` clause that replaced it (`docs/effects.md` D21). */
+  private val rowInTypeExpected: String =
+    "a type, with its effects in a `uses` clause before the colon " +
+      "(`def f uses Console: Unit`, `body uses *, Throw[E]: A`)"
+
+  /** What a row written in a `data` field's type is refused with. A field takes no `uses` clause either, so the remedy is
+    * not a respelling: a field holds a value (`docs/effects.md` D20 rule 6).
     */
-  private def rowTailParser: Parser[Sourced[Token], Option[Sourced[Expression]]] =
-    (symbol("|") *> sourced(typeRunParser)).optional()
+  private val rowInFieldExpected: String =
+    "a value type, since a data field holds a value and not a computation " +
+      "(store data describing the work, and perform it where the effects are in scope)"
 
   /** A named reference with an optional generic argument list `[…]` (always attached) and a value-argument list `(…)`
     * attached *only* when its `(` is adjacent to the preceding token (no intervening whitespace). The one call parser
@@ -331,21 +317,15 @@ object Expression {
       case _                              => Option.empty[Seq[Sourced[Expression]]].pure
     }
 
-  /** Type atoms for the type positions (the single per-atom parser [[typeRunParser]] consumes a greedy *run* of these).
-    * [[typeAtom]] (adjacency-sensitive, shared with value positions) extended with the effect-set sugar `{…} A`
-    * ([[effectfulTypeParser]]): in a type run a `{` can only start an effect set (blocks are excluded from the type
-    * surface), so the set is an ordinary atom — at the head of the run (`{Console} Unit`) or nested after an infix type
-    * operator (`action: A => {Console} Unit`). The attempt is atomic: a `{…}` that is *not* an effect set — the
-    * return-position transfer brace `: T {range(a) + …}`, an `implement` body after a `where` guard — backtracks cleanly
-    * (its entries are not ability references, and no type atom ever follows a non-row brace: only `=`, `where`, a
-    * definition keyword, or a closing delimiter can), leaving the `{` for the enclosing parser.
+  /** Type atoms for the type positions (the single per-atom parser [[typeRunParser]] consumes a greedy *run* of these):
+    * [[typeAtom]], shared with value positions, behind one refusal. A `{` cannot start a type atom, so a type-position
+    * brace is either an effect row — the retired spelling, refused here as itself so the error names the `uses` clause
+    * rather than whatever the next alternative expects — or a brace that is not part of the type at all (the
+    * return-position transfer brace `: T {range(a) + …}`, an `implement` body after a `where` guard), which the row
+    * parser does not match, so the refusal fails without consuming and leaves the `{` for the enclosing parser.
     */
   private lazy val typeRunAtom: Parser[Sourced[Token], Expression] =
-    effectfulTypeParser.atomic() or
-      parenthesizedExprParser.atomic() or
-      adjacentCallParser or
-      integerLiteralParser or
-      stringLiteralParser
+    rowParser.refusedAs(rowInTypeExpected) or typeAtom
 
   /** The parser for **every type position** — function argument and return types, lambda-parameter annotations,
     * generic-parameter bounds and ability type-parameters, `type`-alias bodies, and `implement` patterns. It admits a
@@ -358,16 +338,30 @@ object Expression {
     * next definition, because every definition-introducing token (`def`/`type`/`implement`/…/`private`/`opaque`) is a
     * hard keyword and those delimiters are reserved symbols — none is a type-atom start (see [[Primitives.isUserOperator]]
     * and [[FunctionDefinition]]'s keyword note). So inside a `[…]`/`(…)` list it stops at the `,` separator and the
-    * closing bracket, and a lambda-parameter annotation stops at the `->`. The effect-set sugar `{…} A` is an ordinary
-    * type-run atom (see [[typeRunAtom]]), so it appears at the head of the run (`{Console} Unit`) or nested after an
-    * infix type operator (`A => {Console} Unit`). Lambdas, `match`, and `{…}` blocks are deliberately excluded: they are
-    * not part of the type-atom surface, which is what frees a type-position `{` to mean an effect set.
+    * closing bracket, and a lambda-parameter annotation stops at the `->`. Lambdas, `match`, and `{…}` blocks are
+    * deliberately excluded: they are not part of the type-atom surface, and an effect row is refused ([[typeRunAtom]]).
     */
-  lazy val typeRunParser: Parser[Sourced[Token], Expression] =
-    sourced(typeRunAtom).atLeastOnce().map {
+  lazy val typeRunParser: Parser[Sourced[Token], Expression] = typeRunOf(typeRunAtom)
+
+  /** [[typeRunParser]] for a `data` field's type (and a meta slot's, which shares the binder), refusing a row with the
+    * reason a field has none rather than with a `uses` clause it cannot take.
+    */
+  lazy val fieldTypeRunParser: Parser[Sourced[Token], Expression] =
+    typeRunOf(rowParser.refusedAs(rowInFieldExpected) or typeAtom)
+
+  private def typeRunOf(atom: Parser[Sourced[Token], Expression]): Parser[Sourced[Token], Expression] =
+    sourced(atom).atLeastOnce().map {
       case Seq(single) => single.value
       case parts       => FlatExpression(parts)
     }
+
+  /** A `type` alias's body: an ordinary [[typeRunParser]] run, or — the one place a row is still written — a **row
+    * alias**, a row over one type atom and nothing else (`type Test = {Writer[List[TestResult]]} Unit`). An alias names
+    * a set of effects for a definition to receive by naming it as its return type (`docs/effects.md` §2.4); it has no
+    * `uses` spelling until D20a decides one.
+    */
+  lazy val rowAliasBodyParser: Parser[Sourced[Token], Expression] =
+    rowParser.atomic() or typeRunParser
 
   given ASTComponent[Expression] = new ASTComponent[Expression] {
     override def parser: Parser[Sourced[Token], Expression] = fullParser

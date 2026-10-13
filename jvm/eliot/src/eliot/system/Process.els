@@ -6,8 +6,8 @@ import eliot.collection.List
 // Merge copy of the base declarations so the implementation below can resolve them (name resolution is per-file). The
 // merge verifies these copies agree with the abstract effect in the stdlib layer, which carries the documentation.
 effect Process {
-   def run(command: List[String], workingDirectory: Path): {Throw[IoError]} ProcessResult
-   def runInheritingIo(command: List[String], workingDirectory: Path): {Throw[IoError]} Int
+   def run(command: List[String], workingDirectory: Path) uses Throw[IoError]: ProcessResult
+   def runInheritingIo(command: List[String], workingDirectory: Path) uses Throw[IoError]: Int
    def registerExitCode(code: Int): Unit
 }
 
@@ -27,7 +27,7 @@ type ProcessOutcome
  * that reads files *and* runs programs — every build tool — then has one failure channel to discharge instead of two.
  */
 implement Process {
-   def run(command: List[String], workingDirectory: Path): {Throw[IoError]} ProcessResult = {
+   def run(command: List[String], workingDirectory: Path) uses Throw[IoError]: ProcessResult = {
       val outcome = runInternal(command, workingDirectory)
 
       raiseError(outcome)
@@ -35,7 +35,7 @@ implement Process {
       ProcessResult(outcomeExitCode(outcome), outcomeStandardOutput(outcome), outcomeStandardError(outcome))
    }
 
-   def runInheritingIo(command: List[String], workingDirectory: Path): {Throw[IoError]} Int = {
+   def runInheritingIo(command: List[String], workingDirectory: Path) uses Throw[IoError]: Int = {
       val outcome = runInheritingIoInternal(command, workingDirectory)
 
       raiseError(outcome)
@@ -51,7 +51,7 @@ implement Process {
  * result so an operation reads as "call the native, check it, read it" — the shape `eliot.file.File`'s implementation
  * uses.
  */
-private def raiseError(outcome: ProcessOutcome): {Throw[IoError]} Unit =
+private def raiseError(outcome: ProcessOutcome) uses Throw[IoError]: Unit =
    if(isNull(outcomeErrorMessage(outcome)), unit) else raise(IoError(outcomeErrorMessage(outcome)))
 
 /**

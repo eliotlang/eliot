@@ -70,10 +70,9 @@ object StrictPositivityChecker {
     case Expression.MatchExpression(scrutinee, cs)       =>
       negativeOccurrences(dataName, scrutinee, positive) ++
         cs.flatMap(c => negativeOccurrences(dataName, c.body, positive))
-    case Expression.EffectfulType(effects, result, tail) =>
+    case Expression.EffectfulType(effects, result)       =>
       effects.flatMap(_.typeArgs.flatMap(negativeOccurrences(dataName, _, positive))) ++
-        negativeOccurrences(dataName, result, positive) ++
-        tail.toSeq.flatMap(negativeOccurrences(dataName, _, positive))
+        negativeOccurrences(dataName, result, positive)
     case Expression.WithBinding(subject, _)              => negativeOccurrences(dataName, subject, positive)
     case Expression.IntegerLiteral(_)                    => Seq.empty
     case Expression.StringLiteral(_)                     => Seq.empty

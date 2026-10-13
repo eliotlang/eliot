@@ -37,7 +37,7 @@ class AbilityConstraintCombinatorTest extends ProcessorTest(LangProcessors()*) {
   }
 
   it should "not be required by a multi-entry effect row, which is comma-separated" in {
-    errorsOf("data T\ninfix left def &(a: T, b: T): T\ndef f: {Console, Log} String = \"\"")
+    errorsOf("data T\ninfix left def &(a: T, b: T): T\ndef f uses Console, Log: String = \"\"")
       .asserting(_ shouldBe Seq.empty)
   }
 

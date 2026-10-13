@@ -7,7 +7,7 @@ effect Throw[E] {
 /**
  * The JVM `Throw[E]` implementation — the **single** one for this platform, since `Throw` is a control effect and a
  * discharger only installs the frame it exits to (`docs/effects.md` §9.6). It is anonymous, so it is the default every
- * `{Throw[E]}` declaration binds; a test does not replace it, it discharges it.
+ * `uses Throw[E]` declaration binds; a test does not replace it, it discharges it.
  *
  * Its parameter is the frame `raise` leaves through, which the discharger that installed it hands to exactly the
  * computation it discharges (`docs/effects.md` §11, D20c option 5): never the nearest frame of its type, so a helper's
@@ -22,7 +22,7 @@ implement[E] Throw[E](frame: ThrowFrame[E]) {
  * finished, `Left(err)` if it left. The platform body of the base's body-less signature — the base may not carry it,
  * because the exit primitive below is private to this layer.
  */
-def runThrow[E, A](obj: {Throw[E]} A): Either[E, A] =
+def runThrow[E, A](obj uses *, Throw[E]: A): Either[E, A] =
    escapeInternal(obj, (err: E) -> Left(err), a -> Right(a))
 
 /**
@@ -44,7 +44,7 @@ type ThrowFrame[K]
  * nothing, so the platform's default reaches a discharger's block here and nowhere else (`docs/effects.md` §11, D20
  * rule 5).
  */
-private def escapeInternal[K, A, R](body: {Throw[K]} A, onExit: K => {} R, onValue: A => {} R): R
+private def escapeInternal[K, A, R](body uses *, Throw[K]: A, onExit uses *: K => R, onValue uses *: A => R): R
 
 /**
  * Leave through `frame`, carrying `err`. Control does not return, so the result stands in for a value of any type.

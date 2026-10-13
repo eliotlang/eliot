@@ -18,23 +18,23 @@ class WhereOnDefIntegrationTest extends FullIntegrationTest {
       "def useByte(x: Int): Int where withinByte(range(x)) = x\n"
 
   "a where precondition" should "accept a call whose argument range provably fits" in {
-    compileAndRun(useByte + "def main: {Console} Unit = printLine(show(useByte(42)))")
+    compileAndRun(useByte + "def main uses Console: Unit = printLine(show(useByte(42)))")
       .asserting(_ shouldBe "42")
   }
 
   it should "accept an in-range literal even inside a parametered def's body" in {
-    compileAndRun(useByte + "def wrap(ignored: Int): Int = useByte(127)\ndef main: {Console} Unit = printLine(show(wrap(0)))")
+    compileAndRun(useByte + "def wrap(ignored: Int): Int = useByte(127)\ndef main uses Console: Unit = printLine(show(wrap(0)))")
       .asserting(_ shouldBe "127")
   }
 
   it should "reject a call whose argument range exceeds the bound" in {
-    compileForErrors(useByte + "def main: {Console} Unit = printLine(show(useByte(1000)))")
+    compileForErrors(useByte + "def main uses Console: Unit = printLine(show(useByte(1000)))")
       .asserting(_ should include("precondition of 'Test::useByte' is not satisfied"))
   }
 
   it should "reject a call whose argument range is unknown (top), rather than silently accept" in {
     compileForErrors(
-      useByte + "def relay(y: Int): Int = useByte(y)\ndef main: {Console} Unit = printLine(show(relay(42)))"
+      useByte + "def relay(y: Int): Int = useByte(y)\ndef main uses Console: Unit = printLine(show(relay(42)))"
     ).asserting(_ should include("Cannot prove the precondition of 'Test::useByte'"))
   }
 
@@ -45,7 +45,7 @@ class WhereOnDefIntegrationTest extends FullIntegrationTest {
     compileForErrors(
       useByte +
         "def call(f: Int => Int, x: Int): Int = f(x)\n" +
-        "def main: {Console} Unit = printLine(show(call(useByte, 1000)))"
+        "def main uses Console: Unit = printLine(show(call(useByte, 1000)))"
     ).asserting(_ should include("cannot be passed as a value"))
   }
 
@@ -57,7 +57,7 @@ class WhereOnDefIntegrationTest extends FullIntegrationTest {
     compileForErrors(
       useByte +
         "def compute: Int = {\n  val ignored = 1\n  useByte(1000)\n}\n" +
-        "def main: {Console} Unit = printLine(show(compute))"
+        "def main uses Console: Unit = printLine(show(compute))"
     ).asserting(_ should include("precondition of 'Test::useByte' is not satisfied"))
   }
 
@@ -66,7 +66,7 @@ class WhereOnDefIntegrationTest extends FullIntegrationTest {
       useByte +
         "def call(f: Int => Int, x: Int): Int = f(x)\n" +
         "def compute: Int = {\n  val ignored = 1\n  call(useByte, 1000)\n}\n" +
-        "def main: {Console} Unit = printLine(show(compute))"
+        "def main uses Console: Unit = printLine(show(compute))"
     ).asserting(_ should include("cannot be passed as a value"))
   }
 
@@ -74,7 +74,7 @@ class WhereOnDefIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       useByte +
         "def compute: Int = {\n  val ignored = 1\n  useByte(127)\n}\n" +
-        "def main: {Console} Unit = printLine(show(compute))"
+        "def main uses Console: Unit = printLine(show(compute))"
     ).asserting(_ shouldBe "127")
   }
 
@@ -83,7 +83,7 @@ class WhereOnDefIntegrationTest extends FullIntegrationTest {
       "import eliot.effect.Console\n" + withinByte +
         "def clampFirst(a: Int, b: Int): Int where withinByte(range(a)) = a\n" +
         "def apply1(g: Int => Int): Int = g(5)\n" +
-        "def main: {Console} Unit = printLine(show(apply1(clampFirst(200))))"
+        "def main uses Console: Unit = printLine(show(apply1(clampFirst(200))))"
     ).asserting(_ should include("cannot be passed as a value"))
   }
 }

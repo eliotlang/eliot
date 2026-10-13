@@ -31,7 +31,7 @@ type Bound[T]
  *
  * `b` is the last parameter, so this dot-chains as `b.foldBound(...)`.
  */
-def foldBound[T, B](ifUnbounded: {} B, ifBounded: T => {} B, b: Bound[T]): B
+def foldBound[T, B](ifUnbounded uses *: B, ifBounded uses *: T => B, b: Bound[T]): B
 
 /**
  * The lesser of two bounds, with `Unbounded` absorbing: `minBound(Unbounded, b)` is `Unbounded`.

@@ -21,7 +21,7 @@ class NativePartialApplicationIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       """def firstThree: String => String = substring(0, 3)
         |
-        |def main: {Console} Unit = printLine(firstThree("abcdef"))""".stripMargin
+        |def main uses Console: Unit = printLine(firstThree("abcdef"))""".stripMargin
     ).asserting(_ shouldBe "abc")
   }
 
@@ -29,7 +29,7 @@ class NativePartialApplicationIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       """def fromZero: Int => String => String = substring(0)
         |
-        |def main: {Console} Unit = printLine(fromZero(3)("abcdef"))""".stripMargin
+        |def main uses Console: Unit = printLine(fromZero(3)("abcdef"))""".stripMargin
     ).asserting(_ shouldBe "abc")
   }
 
@@ -37,13 +37,13 @@ class NativePartialApplicationIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       """def sub: Int => Int => String => String = substring
         |
-        |def main: {Console} Unit = printLine(sub(1)(4)("abcdef"))""".stripMargin
+        |def main uses Console: Unit = printLine(sub(1)(4)("abcdef"))""".stripMargin
     ).asserting(_ shouldBe "bcd")
   }
 
   "a fully applied native" should "still be one direct call, building no function" in {
     compileAndRun(
-      """def main: {Console} Unit = printLine("abcdef".substring(0, 3))""".stripMargin
+      """def main uses Console: Unit = printLine("abcdef".substring(0, 3))""".stripMargin
     ).asserting(_ shouldBe "abc")
   }
 
@@ -53,7 +53,7 @@ class NativePartialApplicationIntegrationTest extends FullIntegrationTest {
         |
         |def shown: Path => String = show
         |
-        |def main: {Console} Unit = printLine(shown(path("/tmp/one")))""".stripMargin
+        |def main uses Console: Unit = printLine(shown(path("/tmp/one")))""".stripMargin
     ).asserting(_ shouldBe "/tmp/one")
   }
 
@@ -62,7 +62,7 @@ class NativePartialApplicationIntegrationTest extends FullIntegrationTest {
       """import eliot.collection.List
         |import eliot.file.Path
         |
-        |def main: {Console} Unit = printLine(singleton(path("/tmp/one")).map(show).joined(","))""".stripMargin
+        |def main uses Console: Unit = printLine(singleton(path("/tmp/one")).map(show).joined(","))""".stripMargin
     ).asserting(_ shouldBe "/tmp/one")
   }
 
@@ -70,9 +70,9 @@ class NativePartialApplicationIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       """import eliot.effect.Abort
         |
-        |def labelOf(setting: String): {Abort} String = setting.substring(0, setting.indexOf("="))
+        |def labelOf(setting: String) uses Abort: String = setting.substring(0, setting.indexOf("="))
         |
-        |def main: {Console} Unit = {
+        |def main uses Console: Unit = {
         |   printLine(labelOf("host=example.com") else "none")
         |   printLine(labelOf("nokey") else "none")
         |}""".stripMargin

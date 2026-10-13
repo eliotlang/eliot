@@ -68,7 +68,7 @@ class AbilityGuardOverlapLintTest
       compilerScan(
         Seq("eliot", "lang"),
         "Bool",
-        "import eliot.lang.Function\ntype Bool\ndef true: Bool\ndef false: Bool\ndef fold[A](cond: Bool, whenTrue: {} A, whenFalse: {} A): A"
+        "import eliot.lang.Function\ntype Bool\ndef true: Bool\ndef false: Bool\ndef fold[A](cond: Bool, whenTrue uses *: A, whenFalse uses *: A): A"
       ) ++
       compilerScan(Seq("eliot", "lang"), "Unit", "type Unit\ndef unit: Unit") ++
       // Every `ability` block and every effect row declares a binding binder, whose `Implementation[A]` mark and

@@ -19,20 +19,20 @@ class StdlibConveniencesIntegrationTest extends FullIntegrationTest {
         |   case _         -> none
         |}
         |
-        |def checked(code: Int): {Throw[String]} String = {
+        |def checked(code: Int) uses Throw[String]: String = {
         |   unless(code == 0) raise("exit " ++ show(code))
         |   "output"
         |}
         |
-        |def inner(failing: Bool): {Throw[String]} String = if(failing) raise("boom") else "fine"
+        |def inner(failing: Bool) uses Throw[String]: String = if(failing) raise("boom") else "fine"
         |
-        |def translated(failing: Bool): {Throw[Int]} String = inner(failing) catch (e -> raise(length(e)))
+        |def translated(failing: Bool) uses Throw[Int]: String = inner(failing) catch (e -> raise(length(e)))
         |
         |def header(failed: Int): String = if(failed == 0) "ok" else "failed " ++ show(failed)
         |
         |def bools(o: Option[Int]): String = if(o.isSome) "some" else "none"
         |
-        |def main: {Console} Unit = {
+        |def main uses Console: Unit = {
         |   val shapes = singleton(Square(1)) ++ singleton(Circle(2)) ++ singleton(Circle(3))
         |   printLine(shapes.filterMap(radiusOf).joined(","))
         |   printLine(show(shapes.findMap(radiusOf) orElse 0))

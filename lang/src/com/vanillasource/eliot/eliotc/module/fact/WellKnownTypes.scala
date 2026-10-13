@@ -74,18 +74,6 @@ object WellKnownTypes {
   val abilityCombinatorFQN: ValueFQN =
     ValueFQN(ModuleName(defaultSystemPackage, "Ability"), QualifiedName("&", Qualifier.Default))
 
-  /** The **apply operator** `.` — `infix left below apply def .[A, B](a: A, f: A => {} B): B = f(a)` in
-    * `eliot.lang.Function`, the dot of every dot chain: `box.content` is `.(box, content)`, which runs `content(box)`.
-    *
-    * A `def` with an operator name, so [[Qualifier.Default]] — operators are always referenced bare. Recognised by FQN
-    * exactly as [[abilityCombinatorFQN]] is, so a module declaring its own `.` takes the name back and gets none of the
-    * recognition: [[com.vanillasource.eliot.eliotc.row.BindingWriter]] reads through this one name to see a dot chain
-    * as the call it spells, which is what makes reading a stored computation fire at `task.step` as it does at
-    * `step(task)` (`docs/effects.md` §2.3).
-    */
-  val applyOperatorFQN: ValueFQN =
-    ValueFQN(ModuleName.systemFunctionModuleName, QualifiedName(".", Qualifier.Default))
-
   val bigIntFQN: ValueFQN =
     ValueFQN(ModuleName(defaultSystemPackage, "BigInteger"), QualifiedName("BigInteger", Qualifier.Type))
 

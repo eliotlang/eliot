@@ -21,7 +21,7 @@ class RowAliasIntegrationTest extends FullIntegrationTest {
       |type Speaking[A] = {Console} A
       |
       |def greet(name: String): Speaking[Unit] = printLine(combine("hello ", name))
-      |def main: {Console} Unit = greet("world")""".stripMargin)
+      |def main uses Console: Unit = greet("world")""".stripMargin)
       .asserting(_ shouldBe "hello world")
   }
 
@@ -32,7 +32,7 @@ class RowAliasIntegrationTest extends FullIntegrationTest {
       |type Greeting = {Console} Unit
       |
       |def greet: Greeting = printLine("hello")
-      |def main: {Console} Unit = greet""".stripMargin)
+      |def main uses Console: Unit = greet""".stripMargin)
       .asserting(_ shouldBe "hello")
   }
 
@@ -44,7 +44,7 @@ class RowAliasIntegrationTest extends FullIntegrationTest {
       |type Fallible[E, A] = {Throw[E]} A
       |
       |def bad: Fallible[String, String] = raise("nope")
-      |def main: {Console} Unit = printLine(bad catch (e -> combine("caught ", e)))""".stripMargin)
+      |def main uses Console: Unit = printLine(bad catch (e -> combine("caught ", e)))""".stripMargin)
       .asserting(_ shouldBe "caught nope")
   }
 
@@ -55,11 +55,11 @@ class RowAliasIntegrationTest extends FullIntegrationTest {
       |
       |type Speaking[A] = {Console} A
       |
-      |def greet: {Log} Speaking[Unit] = {
+      |def greet uses Log: Speaking[Unit] = {
       |   log("greeting")
       |   printLine("hello")
       |}
-      |def main: {Console, Log} Unit = greet""".stripMargin)
+      |def main uses Console, Log: Unit = greet""".stripMargin)
       .asserting(_ shouldBe "[LOG] greeting\nhello")
   }
 
@@ -71,7 +71,7 @@ class RowAliasIntegrationTest extends FullIntegrationTest {
       |type Speaking[A] = {Console} A
       |
       |def noisy: Speaking[Unit] = log("unnamed")
-      |def main: {Console} Unit = noisy""".stripMargin)
+      |def main uses Console: Unit = noisy""".stripMargin)
       .asserting(_ should include("performs the effect 'Log' but does not declare it"))
   }
 }

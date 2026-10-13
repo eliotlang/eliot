@@ -1,10 +1,10 @@
 
-// Discharge falls out at the monomorphize-phase residual check: `demo` fully discharges the `{Abort}` of its internal
-// `if..else`, so it honestly declares only `{Console}` — the phantom
-// `Abort` false positive is gone. Before the fix this required declaring `{Console, Abort}`.
-def demo(flag: Bool): {Console} Unit = printLine(if(flag, "discharged: ON") else "discharged: OFF")
+// Discharge is a frame inside the body: the `else` discharges the `Abort` its `if` introduced, so `demo` honestly
+// declares only `uses Console` — the `Abort` never reaches its clause. A bare `if` with no `else` would need
+// `uses Console, Abort`, and the scope check would name the missing entry at the reference.
+def demo(flag: Bool) uses Console: Unit = printLine(if(flag, "discharged: ON") else "discharged: OFF")
 
-def main: {Console} Unit = {
+def main uses Console: Unit = {
    printLine("========== discharge demo ==========")
    demo(true)
 }

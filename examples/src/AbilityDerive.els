@@ -12,4 +12,4 @@ implement[A ~ Display] Display[Box[A]] {
   def display(box: Box[A]): String = display(box.content)
 }
 
-def main: {Console} Unit = printLine(display(Box("Hello World!")))
+def main uses Console: Unit = printLine(display(Box("Hello World!")))

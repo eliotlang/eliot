@@ -29,7 +29,7 @@ class StatedTransferResultEdgeIntegrationTest extends FullIntegrationTest with E
        |""".stripMargin
 
   "a call whose stated transfer narrows its result" should "run rather than fail class verification" in {
-    compileAndRun(crossDomain + """def main: {Console} Unit = printLine(show(small(length("hello"))))""")
+    compileAndRun(crossDomain + """def main uses Console: Unit = printLine(show(small(length("hello"))))""")
       .asserting(_ shouldBe "5")
   }
 
@@ -38,7 +38,7 @@ class StatedTransferResultEdgeIntegrationTest extends FullIntegrationTest with E
   // the same number twice. The transfer is still doing its work — the two cases either side of this one are its
   // observable — and it costs no instruction to do it.
   it should "leave its result unconverted where the consumer reads the boundary width anyway" in {
-    compileAndRun(crossDomain + """def main: {Console} Unit = printLine(show(small(length("hello"))))""") >>
+    compileAndRun(crossDomain + """def main uses Console: Unit = printLine(show(small(length("hello"))))""") >>
       instructionsFollowing("eliot/lang/String.length", 1).asserting(_ shouldBe Seq("INVOKESTATIC Test.small"))
   }
 
@@ -46,7 +46,7 @@ class StatedTransferResultEdgeIntegrationTest extends FullIntegrationTest with E
   // literal fails the same precondition the five-code-point one discharges. Without the transfer this call is ⊤ and the
   // precondition can only be *unprovable*, never *violated*.
   it should "carry the literal's size into the Int domain precisely enough to reject" in {
-    compileForErrors(crossDomain + """def main: {Console} Unit = printLine(show(small(length("hello world"))))""")
+    compileForErrors(crossDomain + """def main uses Console: Unit = printLine(show(small(length("hello world"))))""")
       .asserting(_ should include("precondition of 'Test::small' is not satisfied"))
   }
 
@@ -60,7 +60,7 @@ class StatedTransferResultEdgeIntegrationTest extends FullIntegrationTest with E
     compileAndRun(
       """|import eliot.effect.Console
          |def applyTo(f: Function[Int, Int], x: Int): Int = f(x)
-         |def main: {Console} Unit = printLine(show(applyTo(y -> y + y, 3)))""".stripMargin
+         |def main uses Console: Unit = printLine(show(applyTo(y -> y + y, 3)))""".stripMargin
     ).asserting(_ shouldBe "6") >>
       instructionsFollowing("Test.applyTo", 1).asserting(_ shouldBe Seq("INVOKEVIRTUAL java/math/BigInteger.toString"))
   }

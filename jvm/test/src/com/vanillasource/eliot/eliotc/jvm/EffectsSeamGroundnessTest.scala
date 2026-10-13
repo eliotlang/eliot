@@ -108,12 +108,12 @@ object EffectsSeamGroundnessTest {
 
   /** S1 — a `{Console}` def: `echo` names no implementation, so the one it runs on is the one `main`'s boundary binds. */
   private val consoleBlock =
-    """def echo: {Console} Unit = {
+    """def echo uses Console: Unit = {
       |   printLine("a")
       |   printLine("b")
       |}
       |
-      |def main: {Console} Unit = echo
+      |def main uses Console: Unit = echo
       |""".stripMargin
 
   /** S2 — one definition reached at two implementations of its own effect: the platform's default (through `main`'s
@@ -125,16 +125,16 @@ object EffectsSeamGroundnessTest {
       |}
       |
       |implement standard: Terminal {
-      |   def write(line: String): {Console} Unit = printLine(line)
+      |   def write(line: String) uses Console: Unit = printLine(line)
       |}
       |
       |implement quiet: Terminal {
-      |   def write(line: String): {Writer[String]} Unit = tell(line)
+      |   def write(line: String) uses Writer[String]: Unit = tell(line)
       |}
       |
-      |def greet: {Terminal} Unit = write("hello")
+      |def greet uses Terminal: Unit = write("hello")
       |
-      |def main: {Console} Unit = {
+      |def main uses Console: Unit = {
       |   greet with standard
       |   printLine(runWriterToLog(greet with quiet))
       |}

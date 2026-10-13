@@ -28,7 +28,7 @@ class EffectShapeCompileTest extends AsyncFlatSpec with AsyncIOSpec with Matcher
   private val source =
     """def label(line: Option[String]): String = line.orAbort else ""
       |
-      |def main: {Console} Unit = printLine(label(readLine))
+      |def main uses Console: Unit = printLine(label(readLine))
       |""".stripMargin
 
   // Exercises the whole conditional surface (`if`/`else`/`fold` are ordinary functions, never hardcoded): a
@@ -37,7 +37,7 @@ class EffectShapeCompileTest extends AsyncFlatSpec with AsyncIOSpec with Matcher
   // multi-arm `fold` (both bare-`A` Generic arms, only the selected one run — `pick`), and a `val`-bound discharged
   // chain (`describe`).
   private val conditionalSource =
-    """def line: {Console} String = readLine.orAbort else ""
+    """def line uses Console: String = readLine.orAbort else ""
       |
       |def sign(flag: Bool): String = if(flag, "+") else "-"
       |
@@ -46,11 +46,11 @@ class EffectShapeCompileTest extends AsyncFlatSpec with AsyncIOSpec with Matcher
       |   category
       |}
       |
-      |def report(flag: Bool): {Console} Unit = if(flag, printLine("on")) else printLine("off")
+      |def report(flag: Bool) uses Console: Unit = if(flag, printLine("on")) else printLine("off")
       |
-      |def pick(flag: Bool): {Console} Unit = fold(flag, printLine("a"), printLine("b"))
+      |def pick(flag: Bool) uses Console: Unit = fold(flag, printLine("a"), printLine("b"))
       |
-      |def main: {Console} Unit = {
+      |def main uses Console: Unit = {
       |   printLine(sign(line == "yes"))
       |   printLine(describe(line == "a", line == "b"))
       |   report(line == "y")
@@ -65,7 +65,7 @@ class EffectShapeCompileTest extends AsyncFlatSpec with AsyncIOSpec with Matcher
   private val genericBindSource =
     """def first[A, B](a: A, b: B): A = a
       |
-      |def main: {Console} Unit = printLine(first("x", readLine))
+      |def main uses Console: Unit = printLine(first("x", readLine))
       |""".stripMargin
 
   // Exercises the payload-slot CAPTURE case (U4-a(ii)): an effectful actual captured *whole* into a carrier-stack /
@@ -74,9 +74,9 @@ class EffectShapeCompileTest extends AsyncFlatSpec with AsyncIOSpec with Matcher
   // domain, but the whole `?F[String]` pass-through-unifies (`?F := ThrowCarrier[E, G]`, `A := String`), storing the
   // computation — the uniform ladder's arm-1 whole-type pass-through.
   private val captureSource =
-    """def parseOk: {Throw[String]} String = fold(true, "parsed-value", raise("unparseable"))
+    """def parseOk uses Throw[String]: String = fold(true, "parsed-value", raise("unparseable"))
       |
-      |def main: {Console} Unit = printLine(parseOk catch (err -> err))
+      |def main uses Console: Unit = printLine(parseOk catch (err -> err))
       |""".stripMargin
 
   // A fully-polymorphic aborting actual (`abort` stands in for a value of any type) delivered into `printLine`'s
@@ -88,9 +88,9 @@ class EffectShapeCompileTest extends AsyncFlatSpec with AsyncIOSpec with Matcher
     """import eliot.effect.Console
       |import eliot.effect.Abort
       |
-      |def demo: {Abort, Console} Unit = printLine(abort)
+      |def demo uses Abort, Console: Unit = printLine(abort)
       |
-      |def main: {Console} Unit = printLine(foldOption("done", s -> "got", runAbort(demo)))
+      |def main uses Console: Unit = printLine(foldOption("done", s -> "got", runAbort(demo)))
       |""".stripMargin
 
   // A rich stateful program (the `EffectsState` example, inlined): a `{State[String]}` computation in direct style
@@ -102,7 +102,7 @@ class EffectShapeCompileTest extends AsyncFlatSpec with AsyncIOSpec with Matcher
     """import eliot.effect.Console
       |import eliot.effect.State
       |
-      |def swap(next: String): {State[String]} String = {
+      |def swap(next: String) uses State[String]: String = {
       |   val old = state
       |   putState(next)
       |   old
@@ -110,7 +110,7 @@ class EffectShapeCompileTest extends AsyncFlatSpec with AsyncIOSpec with Matcher
       |
       |def demo: Pair[String, String] = runStateToPair("first", swap("second"))
       |
-      |def main: {Console} Unit = {
+      |def main uses Console: Unit = {
       |   printLine(demo.first)
       |   printLine(demo.second)
       |}
@@ -123,9 +123,9 @@ class EffectShapeCompileTest extends AsyncFlatSpec with AsyncIOSpec with Matcher
     """import eliot.effect.Console
       |import eliot.effect.Abort
       |
-      |def grade(s: String): {Abort} String = if(s == "A", "excellent") else if(s == "B", "good")
+      |def grade(s: String) uses Abort: String = if(s == "A", "excellent") else if(s == "B", "good")
       |
-      |def main: {Console} Unit = {
+      |def main uses Console: Unit = {
       |   printLine(grade("A") else "?")
       |   printLine(if(true, "taken") else "skipped")
       |}
@@ -142,10 +142,10 @@ class EffectShapeCompileTest extends AsyncFlatSpec with AsyncIOSpec with Matcher
       |data Database(url: String)
       |data Logger(name: String)
       |
-      |def firstDep: {Dep[Database], Dep[Logger]} String = pick(url(dependency), name(dependency))
+      |def firstDep uses Dep[Database], Dep[Logger]: String = pick(url(dependency), name(dependency))
       |def pick(a: String, b: String): String = a
       |
-      |def main: {Console} Unit = printLine(provide(Logger("the-logger"), provide(Database("the-db"), firstDep)))
+      |def main uses Console: Unit = printLine(provide(Logger("the-logger"), provide(Database("the-db"), firstDep)))
       |""".stripMargin
 
   "the uniform-carrier checker" should "compile a pure value return + payload slots over the whole base" in {
@@ -186,17 +186,17 @@ class EffectShapeCompileTest extends AsyncFlatSpec with AsyncIOSpec with Matcher
   // writes both bindings around whatever the call determines for `T`.
   private val parameterisedAbilityMemberRow =
     """ability Describe[T] {
-      |   def describe(t: T): {Console} String
+      |   def describe(t: T) uses Console: String
       |}
       |
       |implement Describe[String] {
-      |   def describe(t: String): {Console} String = {
+      |   def describe(t: String) uses Console: String = {
       |      printLine("describing")
       |      t
       |   }
       |}
       |
-      |def main: {Console} Unit = printLine(describe[String]("x"))
+      |def main uses Console: Unit = printLine(describe[String]("x"))
       |""".stripMargin
 
   it should "compile a parameterised ability's member declaring a row of its own" in {
@@ -214,7 +214,7 @@ class EffectShapeCompileTest extends AsyncFlatSpec with AsyncIOSpec with Matcher
   it should "report a payload-slot mismatch (pure actual not fitting, no capture)" in {
     // `printLine(true)` — `Bool` into the `String` domain — reaches `uniformCaptureSlot`'s mismatch leaf (not doomed, no
     // whole-type capture), which commits the mismatch directly. The reported errors must be non-empty.
-    compileErrors("def main: {Console} Unit = printLine(true)\n").asserting(_ should not be empty)
+    compileErrors("def main uses Console: Unit = printLine(true)\n").asserting(_ should not be empty)
   }
 
   /** Compile the program (module `Test`) over the base layer roots and return each generated class's name → bytes. */

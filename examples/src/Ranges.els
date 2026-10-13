@@ -7,4 +7,4 @@ def count: Int = 7
 
 def total: Int = count + count + count
 
-def main: {Console} Unit = printLine(show(total))
+def main uses Console: Unit = printLine(show(total))

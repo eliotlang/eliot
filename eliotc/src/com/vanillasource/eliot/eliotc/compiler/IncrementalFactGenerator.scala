@@ -499,7 +499,11 @@ final class IncrementalFactGenerator(
     }
 
   /** The keys whose value this run *moved*: it resolved them and got something other than what the cache held — a
-    * different value, or nothing at all (a failure, which drops the entry).
+    * different value, or nothing at all (a failure, which drops the entry) — or a generation **pushed** them with a value
+    * other than the cache's. A pushed key is never resolved, so it has no `directDependencies` entry of its own, but its
+    * entry advances all the same (one file parse registering a `ModuleValue` for every name it declares): leaving it
+    * out let a run that re-pushed a name with a new definition and never reached its dependents — a failing compile —
+    * retain those dependents against an entry they never consumed, which the next run then accepted (§28).
     *
     * This is what makes retention safe. Validation asks "is this dependency the same as the cache's entry for it?",
     * while what a dependent actually needs to know is "is it the same as what *I* consumed". Those coincide only while
@@ -509,10 +513,11 @@ final class IncrementalFactGenerator(
     * regenerates on its next demand.
     *
     * Only *direct* dependents need dropping: a retained entry pointing at one of them now finds no prior entry, which
-    * validation reads as changed. That holds only until some run builds the missing entry anew, so a key this run
-    * resolved **with no prior entry** has moved too: a retained entry recorded against it consumed some earlier
-    * generation's value, never this one, and would otherwise be accepted against it next run. And a run that moved
-    * nothing (the warm no-change build) does no work here.
+    * validation reads as changed — but only for as long as that entry stays absent. A later run that **creates** it
+    * afresh, without reaching the dependent, would give the dependent an intact-looking input again, one generation
+    * newer than the value it consumed. So a key with no prior entry that this run materialised counts as moved too, and
+    * whatever is still recorded against it is dropped (§28). And a run that moved nothing (the warm no-change build)
+    * does no work here.
     *
     * A **value-less** entry has nothing to compare a regenerated value against, so it moved unless this run's drill
     * proved it unchanged. That exception is not a nicety: a `SemValue` fact is regenerated whenever anything needs its
@@ -525,10 +530,12 @@ final class IncrementalFactGenerator(
       deps: Map[CompilerFactKey[?], Set[CompilerFactKey[?]]],
       drilled: Set[CompilerFactKey[?]]
   ): Set[CompilerFactKey[?]] =
-    deps.keySet.filter { key =>
-      prior.get(key).forall { entry =>
-        if (entry.hasValue) !factMap.get(key).exists(entry.matches)
-        else !drilled(key)
+    (deps.keySet ++ factMap.keySet).filter { key =>
+      prior.get(key) match {
+        case None        => true // created afresh: whatever is still recorded against it saw an older generation
+        case Some(entry) =>
+          if (entry.hasValue) !factMap.get(key).exists(entry.matches)
+          else !drilled(key)
       }
     }
 

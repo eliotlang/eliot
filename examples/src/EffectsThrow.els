@@ -1,15 +1,15 @@
 
 // A parser that fails with a typed error on bad input — here, an empty one. `parseOk` succeeds; `parseBad` raises.
-def parse(raw: String): {Throw[String]} String = fold(raw == "", raise("malformed input"), raw)
+def parse(raw: String) uses Throw[String]: String = fold(raw == "", raise("malformed input"), raw)
 
-def parseOk: {Throw[String]} String = parse("parsed-value")
+def parseOk uses Throw[String]: String = parse("parsed-value")
 
-def parseBad: {Throw[String]} String = parse("")
+def parseBad uses Throw[String]: String = parse("")
 
-// `catch` discharges {Throw[String]} in one step, recovering a raised error to a value of the same type — no Either
+// `catch` discharges the `Throw[String]` in one step, recovering a raised error to a value of the same type — no Either
 // and no transformer in sight: `runThrow` installs the frame `raise` leaves through, and the handler runs after it
 // returns. `Throw` has one implementation per platform, so there is nothing here to choose or to bind.
-def main: {Console} Unit = {
+def main uses Console: Unit = {
    printLine(parseOk catch (err -> err))
    printLine(parseBad catch (err -> err))
 }

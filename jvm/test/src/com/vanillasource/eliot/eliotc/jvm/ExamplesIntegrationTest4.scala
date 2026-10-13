@@ -16,7 +16,7 @@ class ExamplesIntegrationTest4 extends FullIntegrationTest {
       """import eliot.effect.Console
         |def widened: Int = 7
         |
-        |def main: {Console} Unit = printLine(show(widened))""".stripMargin
+        |def main uses Console: Unit = printLine(show(widened))""".stripMargin
     ).asserting(_ shouldBe "7")
   }
 
@@ -27,7 +27,7 @@ class ExamplesIntegrationTest4 extends FullIntegrationTest {
       """import eliot.effect.Console
         |data Counter(n: Int)
         |
-        |def main: {Console} Unit = printLine(show(n(Counter(42))))""".stripMargin
+        |def main uses Console: Unit = printLine(show(n(Counter(42))))""".stripMargin
     ).asserting(_ shouldBe "42")
   }
 
@@ -38,7 +38,7 @@ class ExamplesIntegrationTest4 extends FullIntegrationTest {
         |
         |def field(c: Counter): Int = c match { case Counter(x) -> x }
         |
-        |def main: {Console} Unit = printLine(show(field(Counter(7))))""".stripMargin
+        |def main uses Console: Unit = printLine(show(field(Counter(7))))""".stripMargin
     ).asserting(_ shouldBe "7")
   }
 
@@ -54,7 +54,7 @@ class ExamplesIntegrationTest4 extends FullIntegrationTest {
         |  case Second -> 15
         |}
         |
-        |def main: {Console} Unit = printLine(show(choose(Second)))""".stripMargin
+        |def main uses Console: Unit = printLine(show(choose(Second)))""".stripMargin
     ).asserting(_ shouldBe "15")
   }
 
@@ -71,7 +71,7 @@ class ExamplesIntegrationTest4 extends FullIntegrationTest {
         |   case _         -> "<other>"
         |}
         |
-        |def main: {Console} Unit = printLine(describe(Counter[]))""".stripMargin
+        |def main uses Console: Unit = printLine(describe(Counter[]))""".stripMargin
     ).asserting(_ shouldBe "counter")
   }
 
@@ -80,7 +80,7 @@ class ExamplesIntegrationTest4 extends FullIntegrationTest {
       """import eliot.effect.Console
         |def total: Int = 3 + 4
         |
-        |def main: {Console} Unit = printLine(show(total))""".stripMargin
+        |def main uses Console: Unit = printLine(show(total))""".stripMargin
     ).asserting(_ shouldBe "7")
   }
 
@@ -90,7 +90,7 @@ class ExamplesIntegrationTest4 extends FullIntegrationTest {
       """import eliot.effect.Console
         |def double(x: Int): Int = x + x
         |
-        |def main: {Console} Unit = printLine(show(double(21)))""".stripMargin
+        |def main uses Console: Unit = printLine(show(double(21)))""".stripMargin
     ).asserting(_ shouldBe "42")
   }
 
@@ -101,7 +101,7 @@ class ExamplesIntegrationTest4 extends FullIntegrationTest {
         |
         |def mk(v: Int): Counter = Counter(v)
         |
-        |def main: {Console} Unit = printLine(show(n(mk(42))))""".stripMargin
+        |def main uses Console: Unit = printLine(show(n(mk(42))))""".stripMargin
     ).asserting(_ shouldBe "42")
   }
 
@@ -114,7 +114,7 @@ class ExamplesIntegrationTest4 extends FullIntegrationTest {
       """import eliot.effect.Console
         |def big: Int = 70000
         |
-        |def main: {Console} Unit = printLine(show(big))""".stripMargin
+        |def main uses Console: Unit = printLine(show(big))""".stripMargin
     ).asserting(_ shouldBe "70000")
   }
 
@@ -123,7 +123,7 @@ class ExamplesIntegrationTest4 extends FullIntegrationTest {
       """import eliot.effect.Console
         |def product: Int = 1000 * 1000
         |
-        |def main: {Console} Unit = printLine(show(product))""".stripMargin
+        |def main uses Console: Unit = printLine(show(product))""".stripMargin
     ).asserting(_ shouldBe "1000000")
   }
 
@@ -136,7 +136,7 @@ class ExamplesIntegrationTest4 extends FullIntegrationTest {
         |def intProduct: Int = 1000 * 1000
         |def longSum: Int = 5000000000 + 5000000000
         |
-        |def main: {Console} Unit = {
+        |def main uses Console: Unit = {
         |   printLine(show(byteSum))
         |   printLine(show(shortDiff))
         |   printLine(show(intProduct))
@@ -150,7 +150,7 @@ class ExamplesIntegrationTest4 extends FullIntegrationTest {
       """import eliot.effect.Console
         |def huge: Int = 5000000000
         |
-        |def main: {Console} Unit = printLine(show(huge))""".stripMargin
+        |def main uses Console: Unit = printLine(show(huge))""".stripMargin
     ).asserting(_ shouldBe "5000000000")
   }
 
@@ -163,7 +163,7 @@ class ExamplesIntegrationTest4 extends FullIntegrationTest {
         |def a: Int = 3
         |def b: Int = 5
         |
-        |def main: {Console} Unit = printLine(show(id(a) + id(b)))""".stripMargin
+        |def main uses Console: Unit = printLine(show(id(a) + id(b)))""".stripMargin
     ).asserting(_ shouldBe "8")
   }
 
@@ -174,7 +174,7 @@ class ExamplesIntegrationTest4 extends FullIntegrationTest {
         |def a: Int = 3
         |def big: Int = 5000000000
         |
-        |def main: {Console} Unit = printLine(show(id(a) + id(big)))""".stripMargin
+        |def main uses Console: Unit = printLine(show(id(a) + id(big)))""".stripMargin
     ).asserting(_ shouldBe "5000000003")
   }
 
@@ -189,7 +189,7 @@ class ExamplesIntegrationTest4 extends FullIntegrationTest {
         |  case Duo(x, y) -> x
         |}
         |
-        |def main: {Console} Unit = printLine(firstOf(Duo("hello", "world")))""".stripMargin
+        |def main uses Console: Unit = printLine(firstOf(Duo("hello", "world")))""".stripMargin
     ).asserting(_ shouldBe "hello")
   }
 
@@ -204,7 +204,7 @@ class ExamplesIntegrationTest4 extends FullIntegrationTest {
         |  case Duo(x, y) -> y
         |}
         |
-        |def main: {Console} Unit = printLine(secondOf(Duo("hello", "world")))""".stripMargin
+        |def main uses Console: Unit = printLine(secondOf(Duo("hello", "world")))""".stripMargin
     ).asserting(_ shouldBe "world")
   }
 
@@ -219,7 +219,7 @@ class ExamplesIntegrationTest4 extends FullIntegrationTest {
         |  case Triple(x, y, z) -> y
         |}
         |
-        |def main: {Console} Unit = printLine(middle(Triple("one", "two", "three")))""".stripMargin
+        |def main uses Console: Unit = printLine(middle(Triple("one", "two", "three")))""".stripMargin
     ).asserting(_ shouldBe "two")
   }
 
@@ -233,7 +233,7 @@ class ExamplesIntegrationTest4 extends FullIntegrationTest {
         |
         |def make(s: String): Function[Unit, String] = ignore -> firstOf(s, s)
         |
-        |def main: {Console} Unit = printLine(apply(make("captured-twice"), unit))""".stripMargin
+        |def main uses Console: Unit = printLine(apply(make("captured-twice"), unit))""".stripMargin
     ).asserting(_ shouldBe "captured-twice")
   }
 
@@ -247,7 +247,7 @@ class ExamplesIntegrationTest4 extends FullIntegrationTest {
         |  case IntPair(s, l) -> s + l
         |}
         |
-        |def main: {Console} Unit = printLine(show(sum(IntPair(200, 5000000000))))""".stripMargin
+        |def main uses Console: Unit = printLine(show(sum(IntPair(200, 5000000000))))""".stripMargin
     ).asserting(_ shouldBe "5000000200")
   }
 
@@ -267,7 +267,7 @@ class ExamplesIntegrationTest4 extends FullIntegrationTest {
         |  case Duo(x, y) -> y
         |}
         |
-        |def main: {Console} Unit = printLine(secondOf(Duo(Box("boxed"), secondOf(Duo("c", "plain")))))""".stripMargin
+        |def main uses Console: Unit = printLine(secondOf(Duo(Box("boxed"), secondOf(Duo("c", "plain")))))""".stripMargin
     ).asserting(_ shouldBe "plain")
   }
 
@@ -280,7 +280,7 @@ class ExamplesIntegrationTest4 extends FullIntegrationTest {
       """import eliot.effect.Console
         |data Tagged[A](tag: String, value: A)
         |
-        |def main: {Console} Unit = printLine(value(value(Tagged("outer", Tagged("inner", "deep")))))""".stripMargin
+        |def main uses Console: Unit = printLine(value(value(Tagged("outer", Tagged("inner", "deep")))))""".stripMargin
     ).asserting(_ shouldBe "deep")
   }
 
@@ -298,7 +298,7 @@ class ExamplesIntegrationTest4 extends FullIntegrationTest {
         |  case Red -> "red"
         |}
         |
-        |def main: {Console} Unit = printLine(name(Red))""".stripMargin
+        |def main uses Console: Unit = printLine(name(Red))""".stripMargin
     ).asserting(_ shouldBe "red")
   }
 
@@ -310,7 +310,7 @@ class ExamplesIntegrationTest4 extends FullIntegrationTest {
       """import eliot.effect.Console
         |data Box[A] = Wrap(item: A)
         |
-        |def main: {Console} Unit = printLine(item(Wrap("wrapped")))""".stripMargin
+        |def main uses Console: Unit = printLine(item(Wrap("wrapped")))""".stripMargin
     ).asserting(_ shouldBe "wrapped")
   }
 
@@ -327,7 +327,7 @@ class ExamplesIntegrationTest4 extends FullIntegrationTest {
         |
         |def total: Int = add(a, add(b, c))
         |
-        |def main: {Console} Unit = printLine(show(total))""".stripMargin
+        |def main uses Console: Unit = printLine(show(total))""".stripMargin
     ).asserting(_ shouldBe "60")
   }
 
@@ -343,7 +343,7 @@ class ExamplesIntegrationTest4 extends FullIntegrationTest {
         |
         |def total: Int = add(a, b)
         |
-        |def main: {Console} Unit = printLine(show(total))""".stripMargin
+        |def main uses Console: Unit = printLine(show(total))""".stripMargin
     ).asserting(_ shouldBe "50")
   }
 
@@ -360,7 +360,7 @@ class ExamplesIntegrationTest4 extends FullIntegrationTest {
         |
         |def total: Int = plus(a, b)
         |
-        |def main: {Console} Unit = printLine(show(total))""".stripMargin
+        |def main uses Console: Unit = printLine(show(total))""".stripMargin
     ).asserting(_ shouldBe "50")
   }
 
@@ -375,7 +375,7 @@ class ExamplesIntegrationTest4 extends FullIntegrationTest {
         |def a: Int = 30
         |def b: Int = 20
         |
-        |def main: {Console} Unit = printLine(show(plus(times(a, b), a)))""".stripMargin
+        |def main uses Console: Unit = printLine(show(plus(times(a, b), a)))""".stripMargin
     ).asserting(_ shouldBe "630")
   }
 
@@ -397,7 +397,7 @@ class ExamplesIntegrationTest4 extends FullIntegrationTest {
            |
            |def sum: Interval[Int] = a + b
            |
-           |def main: {Console} Unit = printLine(showInterval(sum))""".stripMargin
+           |def main uses Console: Unit = printLine(showInterval(sum))""".stripMargin
     ).asserting(_ shouldBe "[1, 3]")
   }
 
@@ -412,7 +412,7 @@ class ExamplesIntegrationTest4 extends FullIntegrationTest {
            |def diff: Interval[Int] = a - b
            |def prod: Interval[Int] = a * b
            |
-           |def main: {Console} Unit = {
+           |def main uses Console: Unit = {
            |  printLine(showInterval(diff))
            |  printLine(showInterval(prod))
            |}""".stripMargin
@@ -423,7 +423,7 @@ class ExamplesIntegrationTest4 extends FullIntegrationTest {
   it should "construct intervals open on one side" in {
     compileAndRun(
       "import eliot.effect.Console\n" + showing +
-        """|def main: {Console} Unit = {
+        """|def main uses Console: Unit = {
            |  printLine(showInterval(atLeast(2)))
            |  printLine(showInterval(atMost(3)))
            |  printLine(showInterval(whole))
@@ -440,7 +440,7 @@ class ExamplesIntegrationTest4 extends FullIntegrationTest {
         """|def open: Interval[Int] = atLeast(2)
            |def b: Interval[Int] = closed(1, 2)
            |
-           |def main: {Console} Unit = {
+           |def main uses Console: Unit = {
            |  printLine(showInterval(open + b))
            |  printLine(showInterval(open - b))
            |}""".stripMargin
@@ -456,7 +456,7 @@ class ExamplesIntegrationTest4 extends FullIntegrationTest {
         """|def open: Interval[Int] = atLeast(2)
            |def b: Interval[Int] = closed(1, 2)
            |
-           |def main: {Console} Unit = printLine(showInterval(open * b))""".stripMargin
+           |def main uses Console: Unit = printLine(showInterval(open * b))""".stripMargin
     ).asserting(_ shouldBe "[-inf, +inf]")
   }
 }

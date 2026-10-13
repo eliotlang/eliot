@@ -3,7 +3,7 @@
  * A single effectful program that uses three effects at once — `Dep[Database]`, `Log`, and `Console` — in
  * direct style. `Database` is the injected dependency `run` reads.
  *
- * The effect set in `{...}` is an unordered set of capabilities, with no nesting or transformer in the
+ * The entries of a `uses` clause are an unordered set of capabilities, with no nesting or transformer in the
  * signature, and it is checked: a function may only perform the effects it declares.
  *
  * ```sh
@@ -18,11 +18,11 @@ data Database(url: String)
  * `printLine` (Console), performed left to right. Direct style: a block is strict evaluation order, and each operation
  * is a direct call to the implementation the declaration bound.
  */
-def run: {Dep[Database], Log, Console} Unit = {
+def run uses Dep[Database], Log, Console: Unit = {
    log(dependency.url)
    printLine(readLine orElse "(no input)")
 }
 
 // The database dependency is injected at the discharge site with `provide`, which hands the value to every
 // `dependency` read of that type. `run` itself never names a concrete Database.
-def main: {Console, Log} Unit = provide(Database("jdbc://app-db"), run)
+def main uses Console, Log: Unit = provide(Database("jdbc://app-db"), run)

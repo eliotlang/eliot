@@ -10,30 +10,30 @@ import eliot.collection.List
  * anyone must remember to edit: each module simply declares a value under the agreed name, and the fold finds it.
  *
  * Because a gathered value is handed to a *declared slot* instead of being stored, it is `combine` that decides what it
- * receives. A slot with a row receives the gathered value as a computation to run in place; a row entry the slot
- * *supplies* is one `combine` discharges; a `with` on the slot's type binds the gathered value's calls to an
+ * receives. A slot with a `uses` clause receives the gathered value as code to run in place; an entry the slot
+ * *supplies* is one `combine` discharges; a `with` on the slot's clause entry binds the gathered value's calls to an
  * implementation of `combine`'s choosing. That is what `namedValues` cannot do — a list element is a payload, and a
  * payload may never be a computation — so an effectful value can be gathered here and not there. Each value is
- * monomorphized on its own, so the gathered values may differ in effect row *and* in type, as long as each one fits
+ * monomorphized on its own, so the gathered values may differ in the effects they use *and* in type, as long as each one fits
  * `combine`'s slot; a value that does not is a compile error, never a silent omission.
  *
  * `name` must be a literal `String`, and `combine` must be a **declared value** rather than a lambda, since only a
- * declaration can state the effect rows of the values it receives; both are hard errors rather than an empty fold. The
+ * declaration can state the `uses` clauses of the values it receives; both are hard errors rather than an empty fold. The
  * values are folded in qualified-name order, so a suite runs the same way on every build.
  *
  * ```eliot
  * // Every test module declares one of these, and imports nothing from the framework.
- * def test: {Console, Throw[String]} Unit
+ * def test uses Console, Throw[String]: Unit
  *
  * // One test, then the rest of the suite. The failure is discharged here, so a failing test
  * // does not fail the run, and `rest` — every test to the right — is still unrun at this point.
- * def runTest(name: String, test: {Throw[String]} Unit, rest: {} Unit): {Console} Unit = {
+ * def runTest(name: String, test uses *, Throw[String]: Unit, rest uses *: Unit) uses Console: Unit = {
  *    printLine("- " ++ name)
  *    test catch (e -> printLine("  FAILED: " ++ e))
  *    rest
  * }
  *
- * def main: {Console} Unit = foldNamedValues("test", printLine("done"), runTest)
+ * def main uses Console: Unit = foldNamedValues("test", printLine("done"), runTest)
  * ```
  */
 def foldNamedValues[B, C](name: String, initial: B, combine: C): B

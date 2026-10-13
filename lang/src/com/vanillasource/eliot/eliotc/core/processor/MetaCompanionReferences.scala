@@ -42,8 +42,7 @@ object MetaCompanionReferences {
       namesOf(scrutinee.value) ++ cases.flatMap(matchCase => namesOf(matchCase.body.value))
     case SourceExpression.BlockExpression(lines)                                            =>
       lines.flatMap(line => namesOf(line.expression.value))
-    case SourceExpression.EffectfulType(_, resultType, tail)                                =>
-      namesOf(resultType.value) ++ tail.toSeq.flatMap(base => namesOf(base.value))
+    case SourceExpression.EffectfulType(_, resultType)                                      => namesOf(resultType.value)
     case SourceExpression.WithBinding(subject, _)                                           => namesOf(subject.value)
     case _                                                                                  => Seq.empty
   }

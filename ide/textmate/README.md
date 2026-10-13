@@ -45,7 +45,7 @@ ln -s "$PWD/ide/textmate" ~/.vscode/extensions/eliot-textmate
 | Line / block / doc comments | `// ...`, `/* ... */`, `/** ... */` | `comment.*.eliot` |
 | Strings + escapes | `"Hello\n"` | `string.quoted.double.eliot` |
 | Integer literals (incl. glued negative) | `42`, `-128` | `constant.numeric.integer.eliot` |
-| Declaration keywords | `import data def type ability effect implement with` | `keyword.other.eliot` |
+| Declaration keywords | `import data def type ability effect implement with uses` | `keyword.other.eliot` |
 | Control keywords | `match case` | `keyword.control.eliot` |
 | Fixity / precedence | `infix left at +`, `prefix`, `postfix` | `storage.modifier.*.eliot` |
 | Modifiers | `opaque`, `auto` | `storage.modifier.eliot` |

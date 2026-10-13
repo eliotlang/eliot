@@ -33,7 +33,7 @@ class NamedValuesIntegrationTest extends AsyncFlatSpec with AsyncIOSpec with Mat
       "Test" ->
         (registryPrelude + extra +
           """def total: Int = namedValues[Int]("contribution").foldLeft(0, e -> acc -> add(e, acc))
-            |def main: {Console} Unit = printLine(show(total))""".stripMargin)
+            |def main uses Console: Unit = printLine(show(total))""".stripMargin)
     )
 
   "namedValues" should "gather same-named values from every module and collect them into a List" in {
@@ -56,7 +56,7 @@ class NamedValuesIntegrationTest extends AsyncFlatSpec with AsyncIOSpec with Mat
         "Test" ->
           (registryPrelude +
             """def total: Int = namedValues[Int]("noSuchName").foldLeft(0, e -> acc -> add(e, acc))
-              |def main: {Console} Unit = printLine(show(total))""".stripMargin)
+              |def main uses Console: Unit = printLine(show(total))""".stripMargin)
       )
     ).asserting(_ shouldBe "0")
   }
@@ -68,7 +68,7 @@ class NamedValuesIntegrationTest extends AsyncFlatSpec with AsyncIOSpec with Mat
           (registryPrelude +
             """def dynamicName: String = "contribution"
               |def total: Int = namedValues[Int](dynamicName).foldLeft(0, e -> acc -> add(e, acc))
-              |def main: {Console} Unit = printLine(show(total))""".stripMargin)
+              |def main uses Console: Unit = printLine(show(total))""".stripMargin)
       )
     ).asserting(_.mkString("\n") should include("requires a literal String name"))
   }
@@ -79,7 +79,7 @@ class NamedValuesIntegrationTest extends AsyncFlatSpec with AsyncIOSpec with Mat
         "Test"    ->
           (registryPrelude +
             """def labels: String = namedValues[String]("label").joined(",")
-              |def main: {Console} Unit = printLine(labels)""".stripMargin),
+              |def main uses Console: Unit = printLine(labels)""".stripMargin),
         "PluginB" -> """def label: String = "b"""",
         "PluginA" -> """def label: String = "a""""
       )
@@ -108,11 +108,11 @@ class NamedValuesIntegrationTest extends AsyncFlatSpec with AsyncIOSpec with Mat
       "Test" ->
         (suitePrelude + step +
           """
-            |def main: {Console} Unit = foldNamedValues("test", printLine("done"), step)""".stripMargin)
+            |def main uses Console: Unit = foldNamedValues("test", printLine("done"), step)""".stripMargin)
     ) ++ extra
 
   private val runningStep =
-    """def step(name: String, test: {Throw[String]} Unit, rest: {} Unit): {Console} Unit = {
+    """def step(name: String, test uses *, Throw[String]: Unit, rest uses *: Unit) uses Console: Unit = {
       |   printLine(name)
       |   test catch (e -> printLine("FAILED " ++ e))
       |   rest
@@ -123,8 +123,8 @@ class NamedValuesIntegrationTest extends AsyncFlatSpec with AsyncIOSpec with Mat
       suite(
         runningStep,
         Map(
-          "AlphaTest" -> """def test: {Console} Unit = printLine("alpha ok")""",
-          "BetaTest"  -> """def test: {Throw[String]} Unit = raise("beta broke")"""
+          "AlphaTest" -> """def test uses Console: Unit = printLine("alpha ok")""",
+          "BetaTest"  -> """def test uses Throw[String]: Unit = raise("beta broke")"""
         )
       )
     ).asserting(
@@ -144,7 +144,7 @@ class NamedValuesIntegrationTest extends AsyncFlatSpec with AsyncIOSpec with Mat
           (suitePrelude +
             """def render[V ~ Show](name: String, value: V, acc: String): String =
               |   name ++ "=" ++ show(value) ++ ";" ++ acc
-              |def main: {Console} Unit = printLine(foldNamedValues("setting", "", render))""".stripMargin),
+              |def main uses Console: Unit = printLine(foldNamedValues("setting", "", render))""".stripMargin),
         "Host" -> """def setting: String = "localhost"""",
         "Port" -> """def setting: Int = 8080"""
       )
@@ -156,7 +156,7 @@ class NamedValuesIntegrationTest extends AsyncFlatSpec with AsyncIOSpec with Mat
       Map(
         "Test" ->
           (suitePrelude +
-            """def main: {Console} Unit =
+            """def main uses Console: Unit =
               |   printLine(foldNamedValues("test", "", n -> t -> acc -> acc ++ n))""".stripMargin),
         "AlphaTest" -> """def test: String = "alpha""""
       )

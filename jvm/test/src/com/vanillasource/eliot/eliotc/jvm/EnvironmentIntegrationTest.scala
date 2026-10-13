@@ -8,7 +8,7 @@ class EnvironmentIntegrationTest extends FullIntegrationTest {
 
   private val recordingConsole =
     """implement recordingConsole: Console {
-      |   def printLine(s: String): {Writer[String]} Unit = tell(s ++ ";")
+      |   def printLine(s: String) uses Writer[String]: Unit = tell(s ++ ";")
       |
       |   def readLine: Option[String] = None
       |}
@@ -18,8 +18,8 @@ class EnvironmentIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       s"""import eliot.effect.Console
          |$recordingConsole
-         |def greet: {Console} Unit = printLine("Bob")
-         |def main: {Console} Unit = printLine(runWriterToLog(greet with recordingConsole))""".stripMargin
+         |def greet uses Console: Unit = printLine("Bob")
+         |def main uses Console: Unit = printLine(runWriterToLog(greet with recordingConsole))""".stripMargin
     ).asserting(_ shouldBe "Bob;")
   }
 
@@ -27,7 +27,7 @@ class EnvironmentIntegrationTest extends FullIntegrationTest {
     compileForErrors(
       s"""import eliot.effect.Console
          |$recordingConsole
-         |def main: {Console} Unit =
+         |def main uses Console: Unit =
          |   printLine(runWriterToLog(printLine(runWriterToLog(printLine("Bob"))) with recordingConsole))""".stripMargin
     ).asserting(_ should include("and a nearer binding of 'Writer' stands between them"))
   }
@@ -36,8 +36,8 @@ class EnvironmentIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       s"""import eliot.effect.Console
          |$recordingConsole
-         |def inner: {Console} Unit = printLine("[" ++ runWriterToLog(printLine("Bob")) ++ "]")
-         |def main: {Console} Unit = printLine(runWriterToLog(inner with recordingConsole))""".stripMargin
+         |def inner uses Console: Unit = printLine("[" ++ runWriterToLog(printLine("Bob")) ++ "]")
+         |def main uses Console: Unit = printLine(runWriterToLog(inner with recordingConsole))""".stripMargin
     ).asserting(_ shouldBe "Bob;[];")
   }
 
@@ -45,13 +45,13 @@ class EnvironmentIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       """import eliot.effect.Console
         |
-        |def guarded(body: {} Unit): {Console} Unit =
+        |def guarded(body uses *: Unit) uses Console: Unit =
         |   catch[String, Unit]({
         |      body
         |      printLine("helper: body finished")
         |   }, e -> printLine("helper caught: " ++ e))
         |
-        |def main: {Console} Unit =
+        |def main uses Console: Unit =
         |   catch[String, Unit]({
         |      guarded(raise("boom"))
         |      printLine("caller: after guarded")
@@ -63,10 +63,10 @@ class EnvironmentIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       """import eliot.effect.Console
         |
-        |def counted(body: {} Unit): {Console} Unit =
+        |def counted(body uses *: Unit) uses Console: Unit =
         |   printLine("helper's state: " ++ runStateToFinalState("helper", body))
         |
-        |def main: {Console} Unit =
+        |def main uses Console: Unit =
         |   printLine("caller's state: " ++ runStateToFinalState("caller", counted(putState("written by caller"))))""".stripMargin
     ).asserting(_ shouldBe "helper's state: helper\ncaller's state: written by caller")
   }
@@ -75,13 +75,13 @@ class EnvironmentIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       """import eliot.effect.Console
         |
-        |def both(flag: Bool): {Throw[String], Throw[Bool]} Unit = if(flag, raise("text")) else raise(true)
+        |def both(flag: Bool) uses Throw[String], Throw[Bool]: Unit = if(flag, raise("text")) else raise(true)
         |def outcome(flag: Bool): String =
         |   catch[Bool, String](catch[String, String]({
         |      both(flag)
         |      "none"
         |   }, s -> "string " ++ s), b -> "bool")
-        |def main: {Console} Unit = {
+        |def main uses Console: Unit = {
         |   printLine(outcome(true))
         |   printLine(outcome(false))
         |}""".stripMargin
@@ -92,7 +92,7 @@ class EnvironmentIntegrationTest extends FullIntegrationTest {
     compileForErrors(
       """import eliot.effect.Console
         |
-        |def main: {Console, Throw[String]} Unit = {
+        |def main uses Console, Throw[String]: Unit = {
         |   printLine("start")
         |   raise("never caught")
         |}""".stripMargin
@@ -104,9 +104,9 @@ class EnvironmentIntegrationTest extends FullIntegrationTest {
       compileAndRun(
         """import eliot.effect.Console
           |
-          |def describedAs(body: {Throw[String]} Unit, message: String): {Throw[String]} Unit =
+          |def describedAs(body uses *, Throw[String]: Unit, message: String) uses Throw[String]: Unit =
           |   catch[String, Unit](body, cause -> raise(message ++ " (" ++ cause ++ ")"))
-          |def main: {Console} Unit = catch[String, Unit](describedAs(raise("boom"), "described"), e -> printLine(e))""".stripMargin
+          |def main uses Console: Unit = catch[String, Unit](describedAs(raise("boom"), "described"), e -> printLine(e))""".stripMargin
       ).asserting(_ shouldBe "described (boom)")
     }
 
@@ -114,11 +114,11 @@ class EnvironmentIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       """import eliot.effect.Console
         |
-        |def twice(body: {Throw[String]} Unit): {Throw[String]} Unit = {
+        |def twice(body uses *, Throw[String]: Unit) uses Throw[String]: Unit = {
         |   body
         |   body
         |}
-        |def main: {Console} Unit = catch[String, Unit](twice(raise("once")), e -> printLine(e))""".stripMargin
+        |def main uses Console: Unit = catch[String, Unit](twice(raise("once")), e -> printLine(e))""".stripMargin
     ).asserting(_ shouldBe "once")
   }
 }

@@ -1,21 +1,21 @@
 /**
  * The abort effect: a computation that may short-circuit, abandoning the rest of the work.
  *
- * A function that might stop processing at any point in its body may declare `{Abort}` and call `abort` to stop.
+ * A function that might stop processing at any point in its body may declare `uses Abort` and call `abort` to stop.
  * Because `abort` stands in
- * for a value of any type, it drops straight into ordinary code; the `{Abort}` then floats up to the
- * caller. Whether the computation aborted is materialised only when the effect is discharged by
+ * for a value of any type, it drops straight into ordinary code; the `Abort` then floats up into the
+ * caller's `uses` clause. Whether the computation aborted is materialised only when the effect is discharged by
  * `runAbort`, as an `Option` that is `none` if it aborted. The untyped sibling of `Throw[E]`, which also
  * carries a reason.
  *
  * ```eliot
  * // Get a setting as string for a given key. If the setting
  * // does not exists, this function aborts.
- * def setting(key: String): {Abort} String
+ * def setting(key: String) uses Abort: String
  *
  * // Get a DB connection with settings. If any of the settings aborts,
  * // this function aborts without opening a connection.
- * def dbConnection: {Abort} Connection = {
+ * def dbConnection uses Abort: Connection = {
  *   val host = setting("host") // This is a String
  *   val port = setting("port") // Also a String
  *   openConnection(host, port)
@@ -41,7 +41,7 @@ effect Abort {
  * private (`docs/effects.md` §9.6). Consume the result with `foldOption`, or reach for `else` to supply a
  * fallback in one step without ever naming `Option`.
  */
-def runAbort[A](obj: {Abort} A): Option[A]
+def runAbort[A](obj uses *, Abort: A): Option[A]
 
 /**
  * Reflect an `Option` into the `Abort` effect: yield the present value, or `abort` on absence. The bridge from an
@@ -49,16 +49,16 @@ def runAbort[A](obj: {Abort} A): Option[A]
  * `runAbort`. Pair it with `else` to supply a fallback in one step:
  *
  * ```eliot
- * def name: {Console} String = orAbort(readLine) else "anonymous"
+ * def name uses Console: String = orAbort(readLine) else "anonymous"
  * ```
  */
-def orAbort[A](o: Option[A]): {Abort} A = foldOption(abort, a -> a, o)
+def orAbort[A](o: Option[A]) uses Abort: A = foldOption(abort, a -> a, o)
 
 /**
- * Discharge an `{Abort}` computation, supplying `fallback` if it short-circuits — the everyday way to run `Abort`, and
+ * Discharge a computation that uses `Abort`, supplying `fallback` if it short-circuits — the everyday way to run `Abort`, and
  * the `else` of the `if..else` sugar. On completion it yields the computed value; on `abort` it runs `fallback`
- * instead, never exposing `Option`. The fallback is a suspended slot (`{} A`), so only the taken side ever runs and it
- * may itself perform whatever the enclosing definition declares. `else` discharges the `Abort` layer and touches
+ * instead, never exposing `Option`. The fallback is a suspended slot (`uses *`), so only the taken side ever runs and it
+ * may itself perform whatever the enclosing definition declares. `else` discharges the `Abort` frame and touches
  * nothing else. Binds right-associatively, so `if(..) else if(..) else default` nests as expected, and looser than
  * every ordinary operator, so a fallback may be an operator expression as it stands:
  * `if(failed == 0) "ok" else "failed " ++ show(failed)`. (The *first* arm of an `if` is a juxtaposed argument, which
@@ -66,14 +66,14 @@ def orAbort[A](o: Option[A]): {Abort} A = foldOption(abort, a -> a, o)
  *
  * ```eliot
  * // Get a setting for a key; aborts if the setting does not exist.
- * def setting(key: String): {Abort} String
+ * def setting(key: String) uses Abort: String
  *
  * // Discharged at the use site, inside an effectful context.
- * def main: {Console} Unit = printLine(setting("host") else "localhost")
+ * def main uses Console: Unit = printLine(setting("host") else "localhost")
  *
  * // Discharged into a PURE function: nothing is left over, so the result is a plain String.
  * def port: String = setting("port") else "8080"
  * ```
  */
 infix right below (++, ||)
-def else[A](computation: {Abort} A, fallback: {} A): A = foldOption(fallback, a -> a, runAbort(computation))
+def else[A](computation uses *, Abort: A, fallback uses *: A): A = foldOption(fallback, a -> a, runAbort(computation))

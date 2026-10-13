@@ -68,14 +68,14 @@ class RunModeIntegrationTest extends AsyncFlatSpec with AsyncIOSpec with Matcher
       |import eliot.system.Environment
       |import eliot.collection.List
       |
-      |def main: {Process, Environment} Unit = registerExitCode(arguments.size)
+      |def main uses Process, Environment: Unit = registerExitCode(arguments.size)
       |""".stripMargin
 
   private def exitingWith(code: Int): String =
     s"""
        |import eliot.system.Process
        |
-       |def main: {Process} Unit = registerExitCode($code)
+       |def main uses Process: Unit = registerExitCode($code)
        |""".stripMargin
 
   private def layerPathArgs: List[String] = {

@@ -1,10 +1,10 @@
 // A validation that always rejects: it aborts regardless of its input. `abort` stands in for a value of any type.
-def reject(value: String): {Abort} String = abort
+def reject(value: String) uses Abort: String = abort
 
-// ONE {State, Abort} program: install a new state, THEN abort. Direct style — a block is strict evaluation order. The
-// interaction question — "does the abort roll back the state?" — is deliberately left open in the flat effect set,
+// ONE program using `State` and `Abort`: install a new state, THEN abort. Direct style — a block is strict evaluation order. The
+// interaction question — "does the abort roll back the state?" — is deliberately left open by the `uses` clause,
 // decided only by the ORDER the two dischargers install their frames below.
-def modifyThenAbort: {State[String], Abort} String = {
+def modifyThenAbort uses State[String], Abort: String = {
    putState("modified")
    reject("modified")
 }
@@ -19,7 +19,7 @@ def stateSurvives: Pair[Option[String], String] = runStateToPair("initial", runA
 // surviving state at all.
 def stateDiscarded: Option[Pair[String, String]] = runAbort(runStateToPair("initial", modifyThenAbort))
 
-def main: {Console} Unit = {
+def main uses Console: Unit = {
    printLine(stateSurvives.first.foldOption("<no value>", s -> s))
    printLine(stateSurvives.second)
    printLine(stateDiscarded.foldOption("<no state>", p -> p.second))

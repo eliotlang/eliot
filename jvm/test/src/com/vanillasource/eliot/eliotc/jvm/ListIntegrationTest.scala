@@ -19,7 +19,7 @@ class ListIntegrationTest extends FullIntegrationTest {
         |
         |def total(list: List[Int]): Int = list.foldLeft(0, e -> acc -> add(e, acc))
         |
-        |def main: {Console} Unit = printLine(show(total(numbers)))""".stripMargin
+        |def main uses Console: Unit = printLine(show(total(numbers)))""".stripMargin
     ).asserting(_ shouldBe "50")
   }
 
@@ -33,7 +33,7 @@ class ListIntegrationTest extends FullIntegrationTest {
         |
         |def lastOr(list: List[String], start: String): String = list.foldLeft(start, e -> acc -> e)
         |
-        |def main: {Console} Unit = printLine(lastOr(entries, "none"))""".stripMargin
+        |def main uses Console: Unit = printLine(lastOr(entries, "none"))""".stripMargin
     ).asserting(_ shouldBe "last")
   }
 
@@ -49,7 +49,7 @@ class ListIntegrationTest extends FullIntegrationTest {
         |
         |def toNumber(list: List[Int]): Int = list.foldLeft(0, e -> acc -> add(multiply(acc, 10), e))
         |
-        |def main: {Console} Unit = printLine(show(toNumber(digits)))""".stripMargin
+        |def main uses Console: Unit = printLine(show(toNumber(digits)))""".stripMargin
     ).asserting(_ shouldBe "123")
   }
 
@@ -63,7 +63,7 @@ class ListIntegrationTest extends FullIntegrationTest {
         |
         |def sumFrom(list: List[Int], start: Int): Int = list.foldLeft(start, e -> acc -> add(e, acc))
         |
-        |def main: {Console} Unit = printLine(show(sumFrom(emptyInts, 7)))""".stripMargin
+        |def main uses Console: Unit = printLine(show(sumFrom(emptyInts, 7)))""".stripMargin
     ).asserting(_ shouldBe "7")
   }
 
@@ -77,7 +77,7 @@ class ListIntegrationTest extends FullIntegrationTest {
         |
         |def sum(list: List[Int]): Int = list.foldLeft(0, e -> acc -> add(e, acc))
         |
-        |def main: {Console} Unit = printLine(show(sum(justOne)))""".stripMargin
+        |def main uses Console: Unit = printLine(show(sum(justOne)))""".stripMargin
     ).asserting(_ shouldBe "9")
   }
 
@@ -91,7 +91,7 @@ class ListIntegrationTest extends FullIntegrationTest {
         |
         |def count(list: List[String]): Int = list.foldLeft(0, e -> acc -> add(acc, 1))
         |
-        |def main: {Console} Unit = printLine(show(count(items)))""".stripMargin
+        |def main uses Console: Unit = printLine(show(count(items)))""".stripMargin
     ).asserting(_ shouldBe "3")
   }
 
@@ -103,9 +103,9 @@ class ListIntegrationTest extends FullIntegrationTest {
         |
         |def digits: List[Int] = append(append(append(empty, 1), 2), 3)
         |
-        |def printAll(list: List[Int]): {Console} Unit = list.foreach(e -> printLine(show(e)))
+        |def printAll(list: List[Int]) uses Console: Unit = list.foreach(e -> printLine(show(e)))
         |
-        |def main: {Console} Unit = printAll(digits)""".stripMargin
+        |def main uses Console: Unit = printAll(digits)""".stripMargin
     ).asserting(_ shouldBe "1\n2\n3")
   }
 
@@ -120,7 +120,7 @@ class ListIntegrationTest extends FullIntegrationTest {
         |
         |def joinAll(list: List[String]): String = list.foldLeft("", e -> acc -> acc ++ e)
         |
-        |def main: {Console} Unit = printLine(joinAll(prepend(base, "a")) ++ joinAll(prepend(base, "b")))""".stripMargin
+        |def main uses Console: Unit = printLine(joinAll(prepend(base, "a")) ++ joinAll(prepend(base, "b")))""".stripMargin
     ).asserting(_ shouldBe "axbx")
   }
 
@@ -134,7 +134,7 @@ class ListIntegrationTest extends FullIntegrationTest {
         |
         |def joinAll(list: List[String]): String = list.foldLeft("", e -> acc -> acc ++ e)
         |
-        |def main: {Console} Unit = printLine(joinAll(digits.map(n -> show(n))))""".stripMargin
+        |def main uses Console: Unit = printLine(joinAll(digits.map(n -> show(n))))""".stripMargin
     ).asserting(_ shouldBe "123")
   }
 
@@ -148,14 +148,14 @@ class ListIntegrationTest extends FullIntegrationTest {
         |
         |def digits: List[Int] = append(append(empty, 1), 2)
         |
-        |def announce(n: Int): {Console} String = {
+        |def announce(n: Int) uses Console: String = {
         |   printLine("at " ++ show(n))
         |   show(n)
         |}
         |
         |def joinAll(list: List[String]): String = list.foldLeft("", e -> acc -> acc ++ e)
         |
-        |def main: {Console} Unit = {
+        |def main uses Console: Unit = {
         |   val labels = digits.map(announce)
         |   printLine(joinAll(labels))
         |}""".stripMargin
@@ -172,7 +172,7 @@ class ListIntegrationTest extends FullIntegrationTest {
         |
         |def joinAll(list: List[String]): String = list.foldLeft("", e -> acc -> acc ++ e)
         |
-        |def main: {Console} Unit = printLine(joinAll(digits.filter(e -> e > 2).map(n -> show(n))))""".stripMargin
+        |def main uses Console: Unit = printLine(joinAll(digits.filter(e -> e > 2).map(n -> show(n))))""".stripMargin
     ).asserting(_ shouldBe "34")
   }
 
@@ -186,7 +186,7 @@ class ListIntegrationTest extends FullIntegrationTest {
         |
         |def joinAll(list: List[String]): String = list.foldLeft("", e -> acc -> acc ++ e)
         |
-        |def main: {Console} Unit = printLine(joinAll(digits.reverse.map(n -> show(n))) ++ joinAll(empty.reverse))""".stripMargin
+        |def main uses Console: Unit = printLine(joinAll(digits.reverse.map(n -> show(n))) ++ joinAll(empty.reverse))""".stripMargin
     ).asserting(_ shouldBe "321")
   }
 
@@ -200,7 +200,7 @@ class ListIntegrationTest extends FullIntegrationTest {
         |
         |def emptyInts: List[Int] = empty
         |
-        |def main: {Console} Unit = printLine(fold(digits.isEmpty, "yes", "no") ++ fold(emptyInts.isEmpty, "yes", "no"))""".stripMargin
+        |def main uses Console: Unit = printLine(fold(digits.isEmpty, "yes", "no") ++ fold(emptyInts.isEmpty, "yes", "no"))""".stripMargin
     ).asserting(_ shouldBe "noyes")
   }
 
@@ -215,7 +215,7 @@ class ListIntegrationTest extends FullIntegrationTest {
         |def firstOver(list: List[Int], limit: Int): String =
         |   list.find(e -> e > limit).foldOption("none", v -> show(v))
         |
-        |def main: {Console} Unit = printLine(firstOver(digits, 1) ++ ":" ++ firstOver(digits, 9))""".stripMargin
+        |def main uses Console: Unit = printLine(firstOver(digits, 1) ++ ":" ++ firstOver(digits, 9))""".stripMargin
     ).asserting(_ shouldBe "4:none")
   }
 
@@ -229,12 +229,12 @@ class ListIntegrationTest extends FullIntegrationTest {
         |
         |def digits: List[Int] = append(append(append(empty, 1), 4), 2)
         |
-        |def probe(n: Int, limit: Int): {Console} Bool = {
+        |def probe(n: Int, limit: Int) uses Console: Bool = {
         |   printLine("probing " ++ show(n))
         |   n > limit
         |}
         |
-        |def main: {Console} Unit = {
+        |def main uses Console: Unit = {
         |   val found = digits.find(e -> probe(e, 1))
         |   printLine(found.foldOption("none", v -> show(v)))
         |}""".stripMargin
@@ -255,7 +255,7 @@ class ListIntegrationTest extends FullIntegrationTest {
         |def showGroup(group: Pair[String, List[String]]): String =
         |   group.foldPair(key -> members -> key ++ "=" ++ members.foldLeft("", e -> acc -> acc ++ e ++ ","))
         |
-        |def main: {Console} Unit = animals.groupBy(w -> w.substring(0, 1)).foreach(g -> printLine(showGroup(g)))""".stripMargin
+        |def main uses Console: Unit = animals.groupBy(w -> w.substring(0, 1)).foreach(g -> printLine(showGroup(g)))""".stripMargin
     ).asserting(_ shouldBe "a=ant,ape,\nb=bee,bat,\nc=cow,")
   }
 
@@ -267,7 +267,7 @@ class ListIntegrationTest extends FullIntegrationTest {
         |
         |def noAnimals: List[String] = empty
         |
-        |def main: {Console} Unit = printLine(fold(noAnimals.groupBy(w -> w).isEmpty, "no groups", "some groups"))""".stripMargin
+        |def main uses Console: Unit = printLine(fold(noAnimals.groupBy(w -> w).isEmpty, "no groups", "some groups"))""".stripMargin
     ).asserting(_ shouldBe "no groups")
   }
 
@@ -281,7 +281,7 @@ class ListIntegrationTest extends FullIntegrationTest {
         |
         |def digits: List[Int] = append(append(append(empty, 1), 2), 3)
         |
-        |def parity(n: Int): {Console} String = {
+        |def parity(n: Int) uses Console: String = {
         |   printLine("keying " ++ show(n))
         |   fold(n > 2, "big", "small")
         |}
@@ -289,7 +289,7 @@ class ListIntegrationTest extends FullIntegrationTest {
         |def showGroup(group: Pair[String, List[Int]]): String =
         |   group.foldPair(key -> members -> key ++ "=" ++ members.foldLeft("", e -> acc -> acc ++ show(e)))
         |
-        |def main: {Console} Unit = {
+        |def main uses Console: Unit = {
         |   val groups = digits.groupBy(parity)
         |   groups.foreach(g -> printLine(showGroup(g)))
         |}""".stripMargin
@@ -310,7 +310,7 @@ class ListIntegrationTest extends FullIntegrationTest {
         |
         |def sum(list: List[Int]): Int = list.foldLeft(0, e -> acc -> add(e, acc))
         |
-        |def main: {Console} Unit = printLine(show(add(sum(two), sum(three))))""".stripMargin
+        |def main uses Console: Unit = printLine(show(add(sum(two), sum(three))))""".stripMargin
     ).asserting(_ shouldBe "7")
   }
 
@@ -333,7 +333,7 @@ class ListIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       sampleProgram +
         """
-          |def main: {Console} Unit =
+          |def main uses Console: Unit =
           |   printLine(show(sample.size) ++ show(singleton("only").size) ++ show(empty.size))""".stripMargin
     ).asserting(_ shouldBe "310")
   }
@@ -342,7 +342,7 @@ class ListIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       sampleProgram +
         """
-          |def main: {Console} Unit =
+          |def main uses Console: Unit =
           |   printLine((sample.head orElse "-") ++ "|" ++ (sample.last orElse "-") ++ "|" ++
           |             (sample.at(1) orElse "-") ++ "|" ++ (sample.at(9) orElse "-") ++ "|" ++
           |             (empty.at(0) orElse "-"))""".stripMargin
@@ -355,7 +355,7 @@ class ListIntegrationTest extends FullIntegrationTest {
         """
           |def noWords: List[String] = empty
           |
-          |def main: {Console} Unit =
+          |def main uses Console: Unit =
           |   printLine(sample.tail.joined(",") ++ "|" ++ sample.dropLast.joined(",") ++ "|" ++
           |             sample.replaceLast("omega").joined(",") ++ "|" ++ noWords.dropLast.joined(",") ++ "." ++
           |             noWords.replaceLast("x").joined(","))""".stripMargin
@@ -366,7 +366,7 @@ class ListIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       sampleProgram +
         """
-          |def main: {Console} Unit =
+          |def main uses Console: Unit =
           |   printLine(yn(sample.any(w -> w == "alpha")) ++ yn(sample.any(w -> w == "delta")) ++
           |             yn(sample.all(w -> w.contains("a"))) ++ yn(sample.all(w -> w != "beta")) ++
           |             yn(empty.any(w -> w == "x")) ++ yn(empty.all(w -> w == "x")))""".stripMargin
@@ -377,7 +377,7 @@ class ListIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       sampleProgram +
         """
-          |def main: {Console} Unit =
+          |def main uses Console: Unit =
           |   printLine(sample.flatMap(w -> append(singleton(w), w.take(1))).joined(",") ++ "|" ++
           |             append(append(empty, sample), singleton("delta")).flatten.joined(","))""".stripMargin
     ).asserting(_ shouldBe "beta,b,alpha,a,gamma,g|beta,alpha,gamma,delta")
@@ -387,7 +387,7 @@ class ListIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       sampleProgram +
         """
-          |def main: {Console} Unit =
+          |def main uses Console: Unit =
           |   printLine(sample.sorted.joined(",") ++ "|" ++ sample.sorted.sorted.joined(",") ++ "|" ++
           |             insert("beta", sample.sorted).joined(","))""".stripMargin
     ).asserting(_ shouldBe "alpha,beta,gamma|alpha,beta,gamma|alpha,beta,beta,gamma")
@@ -399,7 +399,7 @@ class ListIntegrationTest extends FullIntegrationTest {
         """
           |def noWords: List[String] = empty
           |
-          |def main: {Console} Unit =
+          |def main uses Console: Unit =
           |   printLine(sample.joined(", ") ++ "|" ++ singleton("one").joined(", ") ++ "|" ++ noWords.joined(", ") ++ ".")""".stripMargin
     ).asserting(_ shouldBe "beta, alpha, gamma|one|.")
   }
@@ -408,7 +408,7 @@ class ListIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       sampleProgram +
         """
-          |def main: {Console} Unit =
+          |def main uses Console: Unit =
           |   printLine((table.lookup("beta") else "-") ++ "|" ++ (table.lookup("delta") else "-") ++ "|" ++
           |             (table.lookupOption("alpha") orElse "-") ++ "|" ++
           |             put("gamma", "third", table).map(keyOfEntry).joined(",") ++ "|" ++
@@ -420,7 +420,7 @@ class ListIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       sampleProgram +
         """
-          |def main: {Console} Unit = {
+          |def main uses Console: Unit = {
           |   val line = readLine orElse ""
           |   printLine(line.split(" ").joined("|") ++ "/" ++ split("  ", line).joined("|") ++ "/" ++
           |             split(",", line).joined("|"))
@@ -433,7 +433,7 @@ class ListIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       sampleProgram +
         """
-          |def main: {Console} Unit = {
+          |def main uses Console: Unit = {
           |   val line = readLine orElse ""
           |   printLine(split("", line).joined("-") ++ "/" ++ split("", "").joined("-") ++ ".")
           |}""".stripMargin,
@@ -449,7 +449,7 @@ class ListIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       sampleProgram +
         """
-          |def main: {Console} Unit = {
+          |def main uses Console: Unit = {
           |   val line = readLine orElse ""
           |   val text = line ++ "😀b"
           |   printLine(show(split("", text).size) ++ "/" ++ show(split("", text).joined("").length))
@@ -462,7 +462,7 @@ class ListIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       sampleProgram +
         """
-          |def main: {Console} Unit = {
+          |def main uses Console: Unit = {
           |   val line = readLine orElse ""
           |   printLine(line.words.joined("|") ++ "/" ++ words("   ").joined("|") ++ ".")
           |}""".stripMargin,
@@ -474,7 +474,7 @@ class ListIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       sampleProgram +
         """
-          |def main: {Console} Unit = {
+          |def main uses Console: Unit = {
           |   val line = readLine orElse ""
           |   printLine(line.split(",").joined(","))
           |}""".stripMargin,

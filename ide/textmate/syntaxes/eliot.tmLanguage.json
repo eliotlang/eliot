@@ -109,7 +109,7 @@
     },
     "declaration-keywords": {
       "name": "keyword.other.eliot",
-      "match": "\\b(ability|effect|implement|where|with|data|def|type|val)\\b"
+      "match": "\\b(ability|effect|implement|where|with|uses|data|def|type|val)\\b"
     },
     "control-keywords": {
       "name": "keyword.control.eliot",

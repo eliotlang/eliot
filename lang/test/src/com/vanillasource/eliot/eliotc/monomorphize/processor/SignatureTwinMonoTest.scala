@@ -55,7 +55,7 @@ class SignatureTwinMonoTest extends ProcessorTest(LangProcessors(systemModules =
       |
       |def eqParam[E ~ Eq](a: E): E = a
       |
-      |def raiseGuard: {Throw[String]} Type = raise("empty")
+      |def raiseGuard uses Throw[String]: Type = raise("empty")
       |""".stripMargin
 
   // The compile-time `Either` carrier plus the effect abilities it implements — the machinery a `{Throw[String]}` guard
@@ -107,7 +107,7 @@ class SignatureTwinMonoTest extends ProcessorTest(LangProcessors(systemModules =
       compilerScan(
         Seq("eliot", "effect"),
         "Throw",
-        "import eliot.lang.Function\nability Throw[E, F[_]] {\n  def raise[A](err: E): {Throw[E]} A\n}"
+        "import eliot.lang.Function\nability Throw[E, F[_]] {\n  def raise[A](err: E) uses Throw[E]: A\n}"
       ) ++
       compilerScan(Seq("eliot", "lang"), "Either", eitherContent) ++
       compilerScan(Seq("test"), "M", mContent)

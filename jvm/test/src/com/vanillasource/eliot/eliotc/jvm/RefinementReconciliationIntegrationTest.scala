@@ -15,7 +15,7 @@ class RefinementReconciliationIntegrationTest extends FullIntegrationTest {
         |
         |def pick[A](a: A, b: A): A = a
         |
-        |def main: {Console} Unit = printLine(show(pick(3, 700)))""".stripMargin
+        |def main uses Console: Unit = printLine(show(pick(3, 700)))""".stripMargin
     ).asserting(_ shouldBe "3")
   }
 
@@ -27,7 +27,7 @@ class RefinementReconciliationIntegrationTest extends FullIntegrationTest {
         |
         |def wide: Int = pick(3, 700)
         |
-        |def main: {Console} Unit = printLine(show(wide))""".stripMargin
+        |def main uses Console: Unit = printLine(show(wide))""".stripMargin
     ).asserting(_ shouldBe "700")
   }
 
@@ -46,7 +46,7 @@ class RefinementReconciliationIntegrationTest extends FullIntegrationTest {
         |  42
         |}
         |
-        |def main: {Console} Unit = printLine(show(compute))""".stripMargin
+        |def main uses Console: Unit = printLine(show(compute))""".stripMargin
     ).asserting(_ shouldBe "42")
   }
 
@@ -59,7 +59,7 @@ class RefinementReconciliationIntegrationTest extends FullIntegrationTest {
         |  v
         |}
         |
-        |def main: {Console} Unit = printLine(show(compute))""".stripMargin
+        |def main uses Console: Unit = printLine(show(compute))""".stripMargin
     ).asserting(_ shouldBe "1")
   }
 
@@ -69,15 +69,15 @@ class RefinementReconciliationIntegrationTest extends FullIntegrationTest {
         |import eliot.effect.State
         |import eliot.effect.Abort
         |
-        |def parsePort(raw: String): {Abort} Int = abort
+        |def parsePort(raw: String) uses Abort: Int = abort
         |
-        |def nextPort: {Console, State[String], Abort} Int = {
+        |def nextPort uses Console, State[String], Abort: Int = {
         |  val raw = readLine.orAbort else ""
         |  putState(raw)
         |  parsePort(raw)
         |}
         |
-        |def main: {Console} Unit = {
+        |def main uses Console: Unit = {
         |  val result = runStateToPair("<none>", nextPort else 8080)
         |  printLine(show(result.first))
         |}""".stripMargin,

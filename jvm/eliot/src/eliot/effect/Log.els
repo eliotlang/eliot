@@ -14,6 +14,6 @@ implement Log {
 
 /**
  * The single impure operation behind `log`: writes a diagnostic line to standard output. `private` so user
- * code reaches logging only through the `{Log}`-typed `log`. Implemented by the backend.
+ * code reaches logging only through `log`, which uses `Log`. Implemented by the backend.
  */
 private def logInternal(s: String): Unit

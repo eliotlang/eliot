@@ -322,7 +322,7 @@ object ProcessorTest {
   val abortStubContent: String  = "effect Abort {\ndef abort[A]: A\n}"
   val throwStubContent: String  = "effect Throw[E] {\ndef raise[A](err: E): A\n}"
   val stateStubContent: String  = "effect State[S] {\ndef state: S\ndef putState(s: S): Unit\n}"
-  val infStubContent: String    = "effect Inf {\ndef forever(step: {} Unit): Unit\n}"
+  val infStubContent: String    = "effect Inf {\ndef forever(step uses *: Unit): Unit\n}"
   val writerStubContent: String = "effect Writer[W] {\ndef tell(w: W): Unit\n}"
 
   /** The *legacy* ambient prelude a self-contained checker/monomorphize unit test relies on: value application

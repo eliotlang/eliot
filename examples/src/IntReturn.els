@@ -4,4 +4,4 @@
  */
 def double(x: Int): Int = x + x
 
-def main: {Console} Unit = printLine(show(double(21)))
+def main uses Console: Unit = printLine(show(double(21)))

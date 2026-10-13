@@ -4,4 +4,4 @@
  */
 data Counter(n: Int)
 
-def main: {Console} Unit = printLine(show(Counter(42).n))
+def main uses Console: Unit = printLine(show(Counter(42).n))

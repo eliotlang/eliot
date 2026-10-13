@@ -17,7 +17,7 @@ class ExamplesIntegrationTest3 extends FullIntegrationTest {
         |
         |def as[A, B](b: B, box: Box[A]): Box[B] = box.map(_ -> b)
         |
-        |def main: {Console} Unit = {
+        |def main uses Console: Unit = {
         |  val result: Box[String] = Box("Hello")
         |    .map(_ -> "Earth!")
         |    .as("World!")
@@ -34,19 +34,19 @@ class ExamplesIntegrationTest3 extends FullIntegrationTest {
       """import eliot.effect.Console
         |import eliot.effect.State
         |
-        |def swap(next: String): {State[String]} String = {
+        |def swap(next: String) uses State[String]: String = {
         |  val old = state
         |  putState(next)
         |  old
         |}
         |
-        |def rename(next: String): {Console, State[String]} Unit = {
+        |def rename(next: String) uses Console, State[String]: Unit = {
         |  printLine("renaming the account...")
         |  val previous = swap(next)
         |  printLine(previous)
         |}
         |
-        |def main: {Console} Unit = {
+        |def main uses Console: Unit = {
         |  val outcome = runStateToPair("before", rename("after"))
         |  printLine(second(outcome))
         |}""".stripMargin
@@ -57,7 +57,7 @@ class ExamplesIntegrationTest3 extends FullIntegrationTest {
   "a nested block" should "compute the inner block's value and bind it" in {
     compileAndRun(
       """import eliot.effect.Console
-        |def main: {Console} Unit = {
+        |def main uses Console: Unit = {
         |  val x = {
         |    val inner = "deep"
         |    inner
@@ -72,7 +72,7 @@ class ExamplesIntegrationTest3 extends FullIntegrationTest {
   "a block ending in a binding" should "be rejected" in {
     compileForErrors(
       """import eliot.effect.Console
-        |def main: {Console} Unit = {
+        |def main uses Console: Unit = {
         |  printLine("x")
         |  val leftover = "oops"
         |}""".stripMargin
@@ -92,7 +92,7 @@ class ExamplesIntegrationTest3 extends FullIntegrationTest {
         |   def display(a: Hello): String = "Hello World!"
         |}
         |
-        |def main: {Console} Unit = printLine(display(Hello("World")))""".stripMargin
+        |def main uses Console: Unit = printLine(display(Hello("World")))""".stripMargin
     ).asserting(_ shouldBe "Hello World!")
   }
 
@@ -111,7 +111,7 @@ class ExamplesIntegrationTest3 extends FullIntegrationTest {
         |
         |def displayAnything[A ~ Display](thing: A): String = display(thing)
         |
-        |def main: {Console} Unit = printLine(displayAnything(Hello("World")))""".stripMargin
+        |def main uses Console: Unit = printLine(displayAnything(Hello("World")))""".stripMargin
     ).asserting(_ shouldBe "Hello World!")
   }
 
@@ -132,7 +132,7 @@ class ExamplesIntegrationTest3 extends FullIntegrationTest {
         |  def display(box: Box[A]): String = display(content(box))
         |}
         |
-        |def main: {Console} Unit = printLine(display(Box("Hello World!")))""".stripMargin
+        |def main uses Console: Unit = printLine(display(Box("Hello World!")))""".stripMargin
     ).asserting(_ shouldBe "Hello World!")
   }
 
@@ -141,7 +141,7 @@ class ExamplesIntegrationTest3 extends FullIntegrationTest {
       """import eliot.effect.Console
         |def hello[I: BigInteger]: String = "Hello World!"
         |
-        |def main: {Console} Unit = printLine(hello[1])""".stripMargin
+        |def main uses Console: Unit = printLine(hello[1])""".stripMargin
     ).asserting(_ shouldBe "Hello World!")
   }
 
@@ -155,14 +155,14 @@ class ExamplesIntegrationTest3 extends FullIntegrationTest {
         |  case Just(v) -> v
         |}
         |
-        |def main: {Console} Unit = printLine(describe(Just("hello")))""".stripMargin
+        |def main uses Console: Unit = printLine(describe(Just("hello")))""".stripMargin
     ).asserting(_ shouldBe "hello")
   }
 
   "operators" should "evaluate infix operators with correct associativity" in {
     compileAndRun(
       """import eliot.effect.Console
-        |def main: {Console} Unit = printLine(content(Cell("Hello") | Cell("World") | Cell("!")))
+        |def main uses Console: Unit = printLine(content(Cell("Hello") | Cell("World") | Cell("!")))
         |
         |data Cell(content: String)
         |
@@ -190,7 +190,7 @@ class ExamplesIntegrationTest3 extends FullIntegrationTest {
         |
         |infix def or(s1: String, s2: String): String = s1
         |
-        |def main: {Console} Unit = printLine(something(Else) or greet(Goodbye))""".stripMargin
+        |def main uses Console: Unit = printLine(something(Else) or greet(Goodbye))""".stripMargin
     ).asserting(_ shouldBe "Else!")
   }
 
@@ -201,7 +201,7 @@ class ExamplesIntegrationTest3 extends FullIntegrationTest {
         |
         |def someFunction[I: BigInteger](arg: String): Box[I + 1] = Box[3](arg)
         |
-        |def main: {Console} Unit = printLine(content(someFunction[2]("Hello World!")))""".stripMargin
+        |def main uses Console: Unit = printLine(content(someFunction[2]("Hello World!")))""".stripMargin
     ).asserting(_ shouldBe "Hello World!")
   }
 
@@ -214,7 +214,7 @@ class ExamplesIntegrationTest3 extends FullIntegrationTest {
         |
         |def stringBoxWithContent: stringBox = Box("Hello World!")
         |
-        |def main: {Console} Unit = printLine(content(stringBoxWithContent))""".stripMargin
+        |def main uses Console: Unit = printLine(content(stringBoxWithContent))""".stripMargin
     ).asserting(_ shouldBe "Hello World!")
   }
 
@@ -230,7 +230,7 @@ class ExamplesIntegrationTest3 extends FullIntegrationTest {
         |   case _            -> "<not a person>"
         |}
         |
-        |def main: {Console} Unit = printLine(personName(Person["John"]))""".stripMargin
+        |def main uses Console: Unit = printLine(personName(Person["John"]))""".stripMargin
     ).asserting(_ shouldBe "John")
   }
 
@@ -249,14 +249,14 @@ class ExamplesIntegrationTest3 extends FullIntegrationTest {
         |
         |def logic: Box[String] = Box("Hello").filter("Expr").map(_ -> "Earth!").as("World!")
         |
-        |def main: {Console} Unit = printLine(logic.content)""".stripMargin
+        |def main uses Console: Unit = printLine(logic.content)""".stripMargin
     ).asserting(_ shouldBe "World!")
   }
 
   "unicode" should "support unicode operator names" in {
     compileAndRun(
       """import eliot.effect.Console
-def main: {Console} Unit = printLine(<===>)
+def main uses Console: Unit = printLine(<===>)
         |
         |def <===>: String = "Hello World!"""".stripMargin
     ).asserting(_ shouldBe "Hello World!")
@@ -265,28 +265,28 @@ def main: {Console} Unit = printLine(<===>)
   "integer addition" should "compute and print a sum at runtime" in {
     compileAndRun(
       """import eliot.effect.Console
-def main: {Console} Unit = printLine(show(3 + 4))""".stripMargin
+def main uses Console: Unit = printLine(show(3 + 4))""".stripMargin
     ).asserting(_ shouldBe "7")
   }
 
   "integer subtraction" should "compute and print a difference at runtime" in {
     compileAndRun(
       """import eliot.effect.Console
-def main: {Console} Unit = printLine(show(10 - 4))""".stripMargin
+def main uses Console: Unit = printLine(show(10 - 4))""".stripMargin
     ).asserting(_ shouldBe "6")
   }
 
   "integer arithmetic" should "respect operator precedence at runtime" in {
     compileAndRun(
       """import eliot.effect.Console
-def main: {Console} Unit = printLine(show(2 + 3 * 4))""".stripMargin
+def main uses Console: Unit = printLine(show(2 + 3 * 4))""".stripMargin
     ).asserting(_ shouldBe "14")
   }
 
   it should "compute a negative result at runtime" in {
     compileAndRun(
       """import eliot.effect.Console
-def main: {Console} Unit = printLine(show(3 - 10))""".stripMargin
+def main uses Console: Unit = printLine(show(3 - 10))""".stripMargin
     ).asserting(_ shouldBe "-7")
   }
 
@@ -296,7 +296,7 @@ def main: {Console} Unit = printLine(show(3 - 10))""".stripMargin
   it should "carry a byte-operand sum into a wider result representation at runtime" in {
     compileAndRun(
       """import eliot.effect.Console
-def main: {Console} Unit = printLine(show(100 + 100))""".stripMargin
+def main uses Console: Unit = printLine(show(100 + 100))""".stripMargin
     ).asserting(_ shouldBe "200")
   }
 
@@ -306,7 +306,7 @@ def main: {Console} Unit = printLine(show(100 + 100))""".stripMargin
   it should "narrow a short-operand difference into a byte result at runtime" in {
     compileAndRun(
       """import eliot.effect.Console
-def main: {Console} Unit = printLine(show(1000 - 999))""".stripMargin
+def main uses Console: Unit = printLine(show(1000 - 999))""".stripMargin
     ).asserting(_ shouldBe "1")
   }
 

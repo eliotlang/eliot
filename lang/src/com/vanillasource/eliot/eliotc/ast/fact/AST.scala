@@ -59,7 +59,7 @@ object AST {
             // The named form must be tried first: its head is atomic through the `name:` that tells it apart.
             NamedImplementation.namedImplementation.parser.map(Item.Named.apply) or
             ImplementBlock.implementBlock.parser.map(Item.Block.apply))
-            .recoveringAnyTimes(isKeyword)
+            .recoveringAnyTimes(isItemBoundary)
       } yield {
         // Each implement block already carries its identity in the `AbilityImplementation` qualifier — a canonical
         // `(pattern + guard)` key assigned by `ImplementBlock` — so no source-order numbering is needed here; the

@@ -3,15 +3,15 @@ data NetError(netReason: String)
 data ParseError(parseReason: String)
 
 // Each failure source carries its own error type.
-def fetch(url: String): {Throw[NetError]} String = raise(NetError("http 503"))
+def fetch(url: String) uses Throw[NetError]: String = raise(NetError("http 503"))
 
-def parse(raw: String): {Throw[ParseError]} String = raise(ParseError("unexpected token"))
+def parse(raw: String) uses Throw[ParseError]: String = raise(ParseError("unexpected token"))
 
 // ONE function, BOTH error types. The row is their union: each callee's `raise` leaves
 // through the frame installed for *its* error type, and nothing here has to say so.
-def loadConfig(url: String): {Throw[NetError], Throw[ParseError]} String = parse(fetch(url))
+def loadConfig(url: String) uses Throw[NetError], Throw[ParseError]: String = parse(fetch(url))
 
 // Handle BOTH — each handler accesses a field unique to its error type, which
 // pins which Throw that catch discharges.
-def main: {Console} Unit =
+def main uses Console: Unit =
    printLine(loadConfig("https://cfg") catch ((netErr:NetError) -> netErr.netReason) catch ((parseErr: ParseError) -> parseErr.parseReason))

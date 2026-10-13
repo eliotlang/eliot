@@ -1,36 +1,36 @@
-// Block syntax: `val` bindings and statement sequencing (see docs/block-syntax.md).
+// Block syntax: `val` bindings and statement sequencing.
 //
 // A block `{ … }` is a sequence of statements/bindings ending in a result expression. It lowers to a tower of
-// immediately-applied lambdas, so effect threading falls out for free: a `val` binds the carried result of an
-// effectful step (or a plain value), and bare statements are sequenced through the carrier automatically — no
+// immediately-applied lambdas, and since every call is strict the statements run in order: a `val` binds the result
+// of an effectful step (or a plain value), and a bare statement runs for its effects and is discarded — no
 // hand-written `flatMap` nest.
 
 
 // `swap` reads the current state, installs `next`, and returns the previous value. In block form:
-//   `val old = state`      binds the carried state,
+//   `val old = state`      binds the current state,
 //   `putState(next)`       is a bare effectful statement,
 //   `old`                  is the result expression.
-// This is exactly the hand-written form it lowers to:
-//   flatMap(old -> flatMap(ignored -> pure(old), putState(next)), state)
-def swap(next: String): {State[String]} String = {
+// This is exactly the immediately-applied lambdas it lowers to:
+//   (old -> (_ -> old)(putState(next)))(state)
+def swap(next: String) uses State[String]: String = {
   val old = state
   putState(next)
   old
 }
 
-// A two-effect {Console, State[String]} interaction, also direct-style: announce the change, perform the swap, and
-// report the previous value. `Console` and `State` share one carrier, threaded automatically across the block.
-def rename(next: String): {Console, State[String]} Unit = {
+// A two-effect interaction using `Console` and `State[String]`, also direct-style: announce the change, perform the
+// swap, and report the previous value. Each call runs where it is written, on the bindings `rename`'s caller hands it.
+def rename(next: String) uses Console, State[String]: Unit = {
   printLine("renaming the account...")
   val previous = swap(next)
   printLine(previous)
 }
 
-// `main` is itself a block ending in an expression. The first binding is a plain (non-effectful) `val` that captures
-// the runtime carrier produced by discharging `State`, inside a `{Console}`-declaring body; only `State` is
-// discharged, `Console` rides on. The discharger takes its computation at its own pinned parameter, so it is called
-// directly rather than dot-chained — `.` transports a value, never a computation.
-def main: {Console} Unit = {
+// `main` is itself a block ending in an expression. The first binding is a plain `val` holding the `Pair` produced by
+// discharging `State`, inside a body that declares `uses Console`; only `State` is discharged, `Console` rides on.
+// The discharger takes `rename("after")` as code at its own `uses` slot, so it is called directly rather than
+// dot-chained — `.` transports a value, never code.
+def main uses Console: Unit = {
   val outcome = runStateToPair("before", rename("after"))
   printLine(outcome.second)
 }

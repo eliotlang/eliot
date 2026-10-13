@@ -31,6 +31,14 @@ import cats.syntax.all.*
   *   machinery entry `Effect` here (see [[core.processor.EffectSugarDesugarer.rowEntries]]), so the position is tagged
   *   exactly as the older `{Effect}` spelling tagged it — the tag is what tells a row position from a carrier-typed
   *   one, and an entry-less tag would silently turn every migrated slot into the latter.
+  * @param callbackEffects
+  *   One entry per value parameter whose type is a **function with a row in its codomain** — `action: A => {} Unit`,
+  *   `combine: A => B => {} B` — holding the parameter's index, how many arguments the callee calls it with, and that
+  *   row's entries. Such a parameter is **code**:
+  *   the callee calls it, so a lambda written at it is the caller's text and sees the caller's bindings, while a
+  *   function parameter with no row is a **value**, and a value is pure (`docs/effects.md` D21, rules 2 and 3 — the
+  *   later `f uses *: A => B`). Unlike [[parameterEffects]] the type is not thunked: the codomain row lowers to its
+  *   payload, so nothing but this record tells the two spellings apart.
   * @tparam C
   *   The phase's ability-constraint representation: [[UnresolvedAbilityConstraint]] over the ast's and then the core's
   *   expression type, and from resolution onwards
@@ -38,7 +46,8 @@ import cats.syntax.all.*
   */
 case class EffectRow[C](
     returnEffects: Seq[C] = Seq.empty[C],
-    parameterEffects: Seq[EffectRow.ParameterEffects[C]] = Seq.empty[EffectRow.ParameterEffects[C]]
+    parameterEffects: Seq[EffectRow.ParameterEffects[C]] = Seq.empty[EffectRow.ParameterEffects[C]],
+    callbackEffects: Seq[EffectRow.CallbackEffects[C]] = Seq.empty[EffectRow.CallbackEffects[C]]
 ) {
 
   /** Convert every entry with a pure function, preserving positions — the pure fact-chain hops (ast→core,
@@ -47,7 +56,8 @@ case class EffectRow[C](
   def map[D](f: C => D): EffectRow[D] =
     EffectRow(
       returnEffects.map(f),
-      parameterEffects.map(_.map(f))
+      parameterEffects.map(_.map(f)),
+      callbackEffects.map(_.map(f))
     )
 
   /** Convert every entry with an effectful function, preserving positions — the resolving fact-chain hops
@@ -56,7 +66,8 @@ case class EffectRow[C](
   def traverse[F[_]: Applicative, D](f: C => F[D]): F[EffectRow[D]] =
     (
       returnEffects.traverse(f),
-      parameterEffects.traverse(_.traverse(f))
+      parameterEffects.traverse(_.traverse(f)),
+      callbackEffects.traverse(_.traverse(f))
     ).mapN(EffectRow.apply)
 }
 
@@ -64,12 +75,29 @@ object EffectRow {
 
   /** A single value parameter's open-row entries, tagged with the parameter's positional index into the definition's
     * value args (stable through the fact chain — no phase reorders value parameters).
+    *
+    * @param closed
+    *   Whether the row is **closed** — written `body uses Throw[E]: A`, with no `*` (`docs/effects.md` D21 rule 4): the
+    *   argument may use what the slot supplies and must discharge everything else itself, reaching nothing from the
+    *   scope it is written in.
     */
-  case class ParameterEffects[C](parameterIndex: Int, effects: Seq[C]) {
-    def map[D](f: C => D): ParameterEffects[D] = ParameterEffects(parameterIndex, effects.map(f))
+  case class ParameterEffects[C](parameterIndex: Int, effects: Seq[C], closed: Boolean = false) {
+    def map[D](f: C => D): ParameterEffects[D] = ParameterEffects(parameterIndex, effects.map(f), closed)
 
     def traverse[F[_]: Applicative, D](f: C => F[D]): F[ParameterEffects[D]] =
-      effects.traverse(f).map(ParameterEffects(parameterIndex, _))
+      effects.traverse(f).map(ParameterEffects(parameterIndex, _, closed))
+  }
+
+  /** A **code** parameter of function type — the callback `combine: A => B => {} B` — tagged with its positional index
+    * and its **arity**, the number of arrows before the row: that many nested lambdas written at the slot are the
+    * caller's code, and a lambda past them is the value the code hands back. [[closed]] is as for
+    * [[ParameterEffects.closed]]: the code may reach nothing from where it is written.
+    */
+  case class CallbackEffects[C](parameterIndex: Int, arity: Int, effects: Seq[C], closed: Boolean = false) {
+    def map[D](f: C => D): CallbackEffects[D] = CallbackEffects(parameterIndex, arity, effects.map(f), closed)
+
+    def traverse[F[_]: Applicative, D](f: C => F[D]): F[CallbackEffects[D]] =
+      effects.traverse(f).map(CallbackEffects(parameterIndex, arity, _, closed))
   }
 
   def empty[C]: EffectRow[C] = EffectRow(Seq.empty, Seq.empty)

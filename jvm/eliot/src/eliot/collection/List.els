@@ -5,7 +5,7 @@ type List[A]
  * `combine` performs whatever the caller's own declarations cover, where it is written, so this reduces to the plain
  * strict fold it always was underneath.
  */
-def foldLeft[A, B](initial: B, combine: A => B => {} B, list: List[A]): B =
+def foldLeft[A, B](initial: B, combine uses *: A => B => B, list: List[A]): B =
   foldLeftInternal(list, initial, combine)
 
 /**
@@ -13,4 +13,4 @@ def foldLeft[A, B](initial: B, combine: A => B => {} B, list: List[A]): B =
  * `foldLeft`; kept list-first (and thus always called fully applied) because the backend emits it as a single erased
  * generic native, which cannot be partially applied. Implemented by the backend.
  */
-private def foldLeftInternal[A, B](list: List[A], initial: B, combine: A => B => {} B): B
+private def foldLeftInternal[A, B](list: List[A], initial: B, combine uses *: A => B => B): B

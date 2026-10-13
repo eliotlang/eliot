@@ -18,7 +18,7 @@ implement Abort(frame: AbortFrame[Unit]) {
  * Its frame is this module's own `escapeInternal`, so it can never be confused with a `Throw[Unit]` frame: the two are
  * different names and the backend keys a frame class on the name it was installed by.
  */
-def runAbort[A](obj: {Abort} A): Option[A] = escapeInternal(obj, (nothing: Unit) -> None, a -> Some(a))
+def runAbort[A](obj uses *, Abort: A): Option[A] = escapeInternal(obj, (nothing: Unit) -> None, a -> Some(a))
 
 /**
  * The frame an `abort` leaves through: made by `escapeInternal`. It has no constructor, so nothing else
@@ -32,7 +32,7 @@ type AbortFrame[K]
  * own, which is also what keeps the two frames apart. Implemented by the backend. `body` is given `Abort` and its frame,
  * as `Throw`'s copy gives `Throw[K]` (D20 rule 5).
  */
-private def escapeInternal[K, A, R](body: {Abort} A, onExit: K => {} R, onValue: A => {} R): R
+private def escapeInternal[K, A, R](body uses *, Abort: A, onExit uses *: K => R, onValue uses *: A => R): R
 
 /**
  * Leave through `frame`. Implemented by the backend.

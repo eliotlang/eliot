@@ -8,7 +8,7 @@ import TestSuite
  */
 def defaultPort: String = "8080"
 
-def test: {Console, Throw[String]} Unit = {
+def test uses Console, Throw[String]: Unit = {
    printLine("  checking the default port")
    assertEquals("80", defaultPort)
 }

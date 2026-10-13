@@ -18,7 +18,7 @@ class OverApplicationIntegrationTest extends FullIntegrationTest {
         |
         |def use(w: Wrapper): String = unwrap(w)("x")
         |
-        |def main: {Console} Unit = printLine(use(Wrapper(n -> "hi")))""".stripMargin
+        |def main uses Console: Unit = printLine(use(Wrapper(n -> "hi")))""".stripMargin
     ).asserting(_ shouldBe "hi")
   }
 
@@ -32,7 +32,7 @@ class OverApplicationIntegrationTest extends FullIntegrationTest {
         |
         |def shout: String => String = compose(exclaim, exclaim)
         |
-        |def main: {Console} Unit = printLine(shout("hello"))""".stripMargin
+        |def main uses Console: Unit = printLine(shout("hello"))""".stripMargin
     ).asserting(_ shouldBe "!")
   }
 
@@ -44,7 +44,7 @@ class OverApplicationIntegrationTest extends FullIntegrationTest {
         |
         |def use(c: Curried): String = pick(c)("first")("second")
         |
-        |def main: {Console} Unit = printLine(use(Curried(a -> b -> b)))""".stripMargin
+        |def main uses Console: Unit = printLine(use(Curried(a -> b -> b)))""".stripMargin
     ).asserting(_ shouldBe "second")
   }
 }

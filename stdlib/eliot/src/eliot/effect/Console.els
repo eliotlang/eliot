@@ -1,25 +1,25 @@
 /**
  * The console effect: reading lines from and writing lines to the standard text streams.
  *
- * The everyday I/O effect — declare `{Console}` and call `printLine`/`readLine`. Nothing here says *how* a line
+ * The everyday I/O effect — declare `uses Console` and call `printLine`/`readLine`. Nothing here says *how* a line
  * is printed: the platform layer's `implement Console` is the default a program binds, and a test binds its own
  * named implementation with `with`, without the code under test knowing.
  *
  * ```eliot
- * def greet: {Console} Unit = printLine("hello")
+ * def greet uses Console: Unit = printLine("hello")
  * ```
  *
  * Running out of input is an ordinary outcome, not a failure: `readLine` yields an `Option[String]` that is
- * `None` at end of input. Reach for `orAbort` to turn that into `{Abort}` and hand it to `else`, or eliminate
+ * `None` at end of input. Reach for `orAbort` to turn that into an `Abort` and hand it to `else`, or eliminate
  * it directly with `foldOption`:
  *
  * ```eliot
- * def name: {Console} String = orAbort(readLine) else "anonymous"
+ * def name uses Console: String = orAbort(readLine) else "anonymous"
  * ```
  *
  * The effect carries no failure channel of its own. A console that breaks underneath a running program (a
  * closed stream, a severed pipe) is an environment failure the program cannot act on, so it terminates the
- * program rather than entering every `{Console}` row — the same stance every mainstream runtime takes for
+ * program rather than entering every `uses Console` clause —the same stance every mainstream runtime takes for
  * standard output.
  */
 effect Console {
@@ -28,8 +28,8 @@ effect Console {
     *
     * There is no failure channel: `printLine` cannot fail from the program's point of view. A write that
     * breaks underneath a running program (a closed stream, a severed pipe) is an environment failure the
-    * program cannot meaningfully act on, so it terminates the program rather than entering the `{Console}`
-    * row — the same stance every mainstream runtime takes for standard output.
+    * program cannot meaningfully act on, so it terminates the program rather than entering the `uses Console`
+    * clause —the same stance every mainstream runtime takes for standard output.
     */
    def printLine(s: String): Unit
 

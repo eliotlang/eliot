@@ -14,4 +14,4 @@ def something(s: Something): String = s match {
 
 infix def or(s1: String, s2: String): String = s1
 
-def main: {Console} Unit = printLine(something(Else) or greet(Goodbye))
+def main uses Console: Unit = printLine(something(Else) or greet(Goodbye))
