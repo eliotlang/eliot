@@ -593,8 +593,12 @@ signature, an example or a test conflicts with them, the rule wins and the artef
 **Three other constructs.** An **`effect`** is an ability with no carrier binder; a member's clause lists what it
 performs *beyond* the effect it belongs to (`uses Console` on a member of `effect Console` is not written). An
 **anonymous `implement`** in one of the two sites is the *default* for its pattern; a **named `implement`** is never a
-default — it may live anywhere, is never searched, is not checked for overlap, takes no parameters and closes over
-nothing, and its clauses may carry `uses`. **`with`** binds a name for every effect of its ability that **escapes its
+default — it may live anywhere, is never searched, is not checked for overlap, closes over nothing, and its clauses
+may carry `uses`. It may take **parameters**, supplied by the `with` that binds it (`implement scripted(answer:
+String): Terminal`, `greet with scripted("Bob")`): the resolver lowers that `with` to a call of the implementation's
+body-less binder `scripted$with(args…, subject with scripted)` so the checker types the arguments, and
+`EnvironmentThreading` turns the call into the arguments bound around the subject, where they become the frame's own
+parts (`docs/effects.md` §3.1, §3.4). Not with type parameters on the same implementation yet (§8 item 30). **`with`** binds a name for every effect of its ability that **escapes its
 subject** (D23): infix, subject-first, loosest precedence, left-associative, as an expression in a body or after an
 entry of a parameter's clause. A `with` nothing escapes to is an error; one around a run of a code parameter binds
 what the slot lists and is moved onto the slot (`operator/processor/RunWithHoister`), since the caller compiles that
@@ -653,7 +657,7 @@ arguments**, and its binding must be the code's. The platform's control effects 
 `AbortFrame`, `StateCell`, `WriterCell`, `DepCell`) that their body-less primitives make and hand to the thunk they
 run, so a helper's own `catch` cannot intercept its caller's `raise`, and an undischarged control effect at `main` is
 a compile error (D19). The compile track threads its frames the same way, over its own intrinsics (§3.4). Not built:
-`with Ability(args)`, named implementations with parameters, parameterised ability implementations.
+`with Ability(args)` (user defaults with parameters), parameterised ability implementations.
 
 **Three platform-private primitives, and nothing else.** A finishing clause is a non-local exit; a stateful
 implementation threads a value through calls that never mention it. Neither is expressible in a strict pure core, so

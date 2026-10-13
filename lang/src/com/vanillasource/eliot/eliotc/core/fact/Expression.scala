@@ -45,11 +45,17 @@ object Expression {
     * resolved at [[com.vanillasource.eliot.eliotc.resolve.processor.ImplementationNameResolver]] to the
     * implementation's marker; the node itself is consumed by the `row` phase, which writes the binding into every
     * phantom binder inside the subject and erases the node, so nothing from saturation onwards ever sees it.
+    *
+    * `arguments` are what a `with` supplies to an implementation that takes parameters (`greet with
+    * scripted(List("Bob"))`); the resolver lowers them to a call of the implementation's binder declaration around the
+    * resolved `with` ([[com.vanillasource.eliot.eliotc.ast.fact.ImplementationParameters]]), so no later phase's `with`
+    * carries any.
     */
   case class WithBinding(
       subject: Sourced[Expression],
       implementationName: Sourced[String],
-      moduleName: Option[Sourced[String]] = None
+      moduleName: Option[Sourced[String]] = None,
+      arguments: Seq[Sourced[Expression]] = Seq.empty
   ) extends Expression
 
   case class MatchCase(
@@ -91,10 +97,11 @@ object Expression {
       // A slot's `with` is part of the signature: a layer's copy binds the same implementation or it is a different
       // definition. Without this arm two identical copies fall to `false` below and the merge rejects them, which is
       // what a control effect's discharger (`obj: {Abort} A with abortByEscape`) is spelled with.
-      case (WithBinding(s1, n1, m1), WithBinding(s2, n2, m2))               =>
+      case (WithBinding(s1, n1, m1, a1), WithBinding(s2, n2, m2, a2))       =>
         structuralEquality.eqv(s1.value, s2.value) &&
         n1.value == n2.value &&
-        m1.map(_.value) == m2.map(_.value)
+        m1.map(_.value) == m2.map(_.value) &&
+        a1.length == a2.length && (a1 zip a2).forall { case (a, b) => structuralEquality.eqv(a.value, b.value) }
       case _                                                                => false
     }
 
@@ -115,8 +122,9 @@ object Expression {
         lines
           .map(l => l.binderName.map(n => s"val ${n.value} = ").getOrElse("") + l.expression.value.render)
           .mkString("{ ", "; ", " }")
-      case WithBinding(subject, implementationName, moduleName)               =>
+      case WithBinding(subject, implementationName, moduleName, arguments)    =>
         s"${subject.value.render} with " + moduleName.map(m => s"${m.value}::").getOrElse("") +
-          implementationName.value
+          implementationName.value +
+          (if (arguments.isEmpty) "" else arguments.map(_.value.render).mkString("(", ", ", ")"))
     }
 }

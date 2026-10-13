@@ -5,6 +5,7 @@ import com.vanillasource.eliot.eliotc.ast.fact.{
   ArgumentDefinition,
   Expression,
   FunctionDefinition,
+  ImplementationParameters,
   ImplementationRows,
   NamedImplementation,
   Visibility
@@ -41,6 +42,10 @@ import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, Qualifier}
   *     module's [[com.vanillasource.eliot.eliotc.module.fact.ModuleAbilities.markerOfImplementationName]], and only the
   *     real marker flows onward.
   *
+  * A named implementation that takes **parameters** (`implement scripted(lines: List[String]): Terminal`) adds two
+  * declarations, as [[ImplementationParameters]] describes: the parameters declaration an anonymous one has too, and
+  * the binder a `with` supplying arguments is lowered to. Each clause receives the parameters ahead of its own.
+  *
   * A named implementation is always public: it exists to be named from elsewhere.
   */
 object NamedImplementationDesugarer {
@@ -55,10 +60,14 @@ object NamedImplementationDesugarer {
     val qualifier   = Qualifier.AbilityImplementation(abilityName, patternKey, Some(implName))
     val anchor      = implementation.name
 
+    val clauseRow = ImplementationRows.union(implementation.functions)
+
+    // An associated type (`type Cases[R]`) carries no clause row and takes no parameters; a clause carries both.
     val methods = implementation.functions.map(f =>
       f.copy(
         name = f.name.map(n => QualifiedName(n.name, qualifier)),
         genericParameters = implementation.genericParameters ++ f.genericParameters,
+        args = (if (f.name.value.qualifier == Qualifier.Type) Seq.empty else implementation.parameters) ++ f.args,
         visibility = Visibility.Public
       )
     )
@@ -70,10 +79,7 @@ object NamedImplementationDesugarer {
       // The clause row rides the guard slot, exactly as it does for the anonymous form: the row is erased from every
       // type, so the unguarded `true` is untouched, and what the marker gains is the phantom-binder declaration
       // `BindingWriter` reads back to write `recordingConsole[…]` at a `with` ([[ImplementationRows]]).
-      ImplementationRows.rowed(
-        ImplementationRows.union(implementation.functions),
-        Expression.trueReference(implementation.ability)
-      ),
+      ImplementationRows.rowed(clauseRow, Expression.trueReference(implementation.ability)),
       None
     )
 
@@ -85,6 +91,10 @@ object NamedImplementationDesugarer {
       None
     )
 
-    (methods :+ marker) :+ nameMarker
+    val declarations =
+      ImplementationParameters.declaration(anchor, qualifier, implementation.genericParameters, implementation.parameters, clauseRow).toSeq ++
+        ImplementationParameters.binder(anchor, qualifier, implementation.genericParameters, implementation.parameters)
+
+    (methods ++ declarations :+ marker) :+ nameMarker
   }
 }

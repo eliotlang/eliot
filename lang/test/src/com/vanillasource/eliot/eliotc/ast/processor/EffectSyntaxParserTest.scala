@@ -55,6 +55,17 @@ class EffectSyntaxParserTest extends ProcessorTest(new Tokenizer(), new ASTParse
       .asserting(a => (a.namedImplementations, a.functionDefinitions.size) shouldBe (Seq.empty, 2))
   }
 
+  "a named implementation with parameters" should "carry them between its name and its ability" in {
+    ast("implement scripted(answer: String, count: Int): Terminal {\n  def read: String = answer\n}")
+      .asserting(_.namedImplementations.map(n => (n.name.value, n.parameters.map(_.name.value), n.ability.value)) shouldBe
+        Seq(("scripted", Seq("answer", "count"), "Terminal")))
+  }
+
+  "a named implementation without parameters" should "carry none" in {
+    ast("implement recordingConsole: Console {\n  def readLine: Option[String] = None\n}")
+      .asserting(_.namedImplementations.flatMap(_.parameters) shouldBe empty)
+  }
+
   "an anonymous implementation with parameters" should "give each clause the parameters ahead of its own" in {
     ast("implement[S] State[S](cell: Cell[S]) {\n  def putState(s: S): Unit = write(cell, s)\n}")
       .asserting(_.functionDefinitions.map(f => (f.name.value.name, f.args.map(_.name.value))) shouldBe
@@ -86,6 +97,14 @@ class EffectSyntaxParserTest extends ProcessorTest(new Tokenizer(), new ASTParse
   it should "bind loosest inside a call argument" in {
     body("def a: X = written(greeting(name) with recordingConsole)")
       .asserting(_ shouldBe "written(greeting(name) with recordingConsole)")
+  }
+
+  it should "supply arguments to an implementation that takes parameters" in {
+    bodyNode("def a: X = greet with scripted(name, 1)").asserting {
+      case Some(Expression.WithBinding(_, Sourced(_, _, Expression.FunctionApplication(None, name, None, arguments)))) =>
+        (name.value, arguments.map(_.value.render)) shouldBe ("scripted", Seq("name", "1"))
+      case other                                                                                                    => fail(s"unexpected: $other")
+    }
   }
 
   it should "accept a module-qualified implementation name" in {

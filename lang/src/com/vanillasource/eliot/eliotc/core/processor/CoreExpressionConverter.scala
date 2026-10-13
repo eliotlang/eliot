@@ -119,13 +119,21 @@ object CoreExpressionConverter {
         // Effects v6 (`docs/effects.md` §9.3): the binding rides the tree as far as the `row` phase, which writes it
         // into every phantom binder inside the subject and erases the node. The name is carried as written and
         // resolved at `ImplementationNameResolver`; the parser guarantees the shape below (a bare, optionally
-        // module-qualified lower-case identifier, never applied).
-        val (moduleName, name) = implementation.value match {
-          case SourceExpression.FunctionApplication(module, fnName, None, Seq()) => (module, fnName)
-          case other                                                             =>
+        // module-qualified lower-case identifier, applied only to the arguments of an implementation that takes
+        // parameters). The arguments are values, computed where the `with` is written.
+        val (moduleName, name, arguments) = implementation.value match {
+          case SourceExpression.FunctionApplication(module, fnName, None, arguments) => (module, fnName, arguments)
+          case other                                                                 =>
             throw IllegalStateException(s"An implementation binding is not a plain name: ${other.render}")
         }
-        expr.as(WithBinding(convertExpression(subject, typeContext, compilerTrackContext), name, moduleName))
+        expr.as(
+          WithBinding(
+            convertExpression(subject, typeContext, compilerTrackContext),
+            name,
+            moduleName,
+            arguments.map(convertExpression(_, typeContext = false, compilerTrackContext))
+          )
+        )
       case _: SourceExpression.EffectfulType                                           =>
         // EffectSugarDesugarer rewrites every `{…} A` to `F[A]` across the whole function before conversion, so an
         // EffectfulType reaching here means it was written somewhere the desugarer does not reach (only signature and

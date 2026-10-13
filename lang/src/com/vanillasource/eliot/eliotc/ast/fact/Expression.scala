@@ -241,15 +241,17 @@ object Expression {
 
   /** The trailing `with name` chain of an expression or a parameter type — zero or more, read after everything else so
     * `with` sits at the loosest precedence (see [[WithBinding]]). Each name is a bare implementation reference: an
-    * optionally module-qualified lower-case identifier, never applied.
+    * optionally module-qualified lower-case identifier, applied to an argument list only when the implementation takes
+    * parameters (`with scripted(List("Bob"))`) — the list attached to the name, as a call's is.
     */
   private lazy val withBindingsParser: Parser[Sourced[Token], Seq[Sourced[Expression]]] =
     (keyword("with") *> sourced(implementationReferenceParser)).anyTimes()
 
   private lazy val implementationReferenceParser: Parser[Sourced[Token], Expression] = for {
-    module <- (moduleParser <* symbol("::")).atomic().optional()
-    name   <- acceptIfAll(isIdentifier, isLowerCase)("implementation name")
-  } yield FunctionApplication(module, name.map(_.content), None, Seq.empty)
+    module    <- (moduleParser <* symbol("::")).atomic().optional()
+    name      <- acceptIfAll(isIdentifier, isLowerCase)("implementation name")
+    arguments <- valueArgsIfAdjacentTo(name.range.to).map(_.getOrElse(Seq.empty))
+  } yield FunctionApplication(module, name.map(_.content), None, arguments)
 
   /** Fold a `with` chain onto its subject left-associatively: `c with a with b` is `(c with a) with b`. */
   def applyWithBindings(subject: Sourced[Expression], bindings: Seq[Sourced[Expression]]): Sourced[Expression] =

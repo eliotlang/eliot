@@ -1,6 +1,7 @@
 package com.vanillasource.eliot.eliotc.operator.processor
 
 import cats.syntax.all.*
+import com.vanillasource.eliot.eliotc.ast.fact.ImplementationParameters
 import com.vanillasource.eliot.eliotc.module.fact.ValueFQN
 import com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedExpression.*
 import com.vanillasource.eliot.eliotc.operator.fact.{OperatorResolvedExpression, OperatorResolvedValue}
@@ -21,6 +22,9 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
   * unused. A moved `with` holds for every run of the parameter, so every run must bind the same implementation for it,
   * and a slot that already names one must name that one. Only nullary code parameters move: a callback's listed
   * entries are its own scope's, not the callee's to bind (§7 item 1).
+  *
+  * A `with` supplying arguments to an implementation that takes parameters does not move: its arguments are computed in
+  * the body, where a slot cannot name them, so around a run of a listed entry it is an error.
   */
 object RunWithHoister {
 
@@ -33,7 +37,7 @@ object RunWithHoister {
   def candidates(orv: OperatorResolvedValue): Set[ValueFQN] =
     codeParameters(orv).fold(Set.empty) { parameters =>
       val slots = SignatureView.of(orv.signature).parameters
-      runsIn(orv, parameters).flatMap(_.withs.map(_.value)).toSet ++
+      runsIn(orv, parameters).flatMap(run => (run.withs ++ run.parameterised).map(_.value)).toSet ++
         parameters.values.flatMap((index, _) => slots.lift(index).toSeq.flatMap(tpe => slotImplementations(tpe.value)))
           .map(_.value)
     }
@@ -51,6 +55,11 @@ object RunWithHoister {
         val decided   = parameters.toSeq.map { case (name, (index, listed)) =>
           val own       = runs.filter(_.parameter.value == name)
           val bindings  = own.map(run => run -> hoistable(run, listed, abilityOf))
+          val supplied  = own.flatMap(run =>
+            run.parameterised.toSeq
+              .filter(named => abilityOf.get(named.value).exists(listed.contains))
+              .map(named => parameterisedAroundRun(named, run.parameter))
+          )
           val slotNamed = slotTypes.lift(index).toSeq.flatMap(tpe => slotImplementations(tpe.value))
           val abilities = bindings.flatMap(_._2.keys).distinct
           val chosen    = abilities.flatMap { ability =>
@@ -67,7 +76,7 @@ object RunWithHoister {
             disagreeing.map(run => disagreement(run.parameter, ability)) ++
               onSlot.map(named => slotDisagreement(named, name, ability))
           }
-          (name, index, chosen, errors)
+          (name, index, chosen, errors ++ supplied)
         }
         val hoisted   = decided.map { case (name, _, chosen, _) => name -> chosen.values.map(_.value).toSet }.toMap
         val signature = SignatureView
@@ -91,9 +100,13 @@ object RunWithHoister {
     }
 
   /** One run of a code parameter: the reference, and the implementations the `with`s directly around it name,
-    * innermost first.
+    * innermost first, apart from those supplied arguments there.
     */
-  private case class Run(parameter: Sourced[String], withs: Seq[Sourced[ValueFQN]])
+  private case class Run(
+      parameter: Sourced[String],
+      withs: Seq[Sourced[ValueFQN]],
+      parameterised: Seq[Sourced[ValueFQN]] = Seq.empty
+  )
 
   /** The definition's nullary code parameters by name: their index and the abilities their slot lists. */
   private def codeParameters(orv: OperatorResolvedValue): Option[Map[String, (Int, Set[AbilityFQN])]] = {
@@ -135,10 +148,38 @@ object RunWithHoister {
       case ParameterReference(name)                =>
         Option.when(inScope.contains(name.value))(Run(name, Seq.empty)).toSeq
       case FunctionLiteral(name, _, body)          => runs(body, inScope - name.value, 0)
-      case FunctionApplication(target, argument)   => runs(target, inScope, 0) ++ runs(argument, inScope, 0)
+      case FunctionApplication(target, argument)   =>
+        runs(target, inScope, 0) ++ (suppliedTo(target.value, argument.value) match {
+          case Some(named) =>
+            runs(argument, inScope, 0).map(run =>
+              if (run.withs.lastOption.exists(_.value == named.value))
+                run.copy(withs = run.withs.init, parameterised = run.parameterised :+ run.withs.last)
+              else run
+            )
+          case None        => runs(argument, inScope, 0)
+        })
       case ValueReference(_, typeArgs)             => typeArgs.flatMap(runs(_, inScope, 0))
       case _: IntegerLiteral | _: StringLiteral    => Seq.empty
     }
+
+  /** The `with` an application supplies arguments to: `argument` is the `with` and `target` the implementation's binder
+    * applied to its arguments ([[ImplementationParameters.binder]]), which is what the resolver lowers
+    * `subject with scripted(xs)` to.
+    */
+  private def suppliedTo(
+      target: OperatorResolvedExpression,
+      argument: OperatorResolvedExpression
+  ): Option[Sourced[ValueFQN]] =
+    argument match {
+      case WithBinding(_, named) if headOf(target).contains(ImplementationParameters.binderOf(named.value)) => Some(named)
+      case _                                                                                                 => None
+    }
+
+  private def headOf(expr: OperatorResolvedExpression): Option[ValueFQN] = expr match {
+    case FunctionApplication(target, _) => headOf(target.value)
+    case ValueReference(name, _)        => Some(name.value)
+    case _                              => None
+  }
 
   /** A chain of `with`s and the subject it wraps; the innermost `with` first. */
   private def unwrap(
@@ -205,6 +246,18 @@ object RunWithHoister {
         s"A `with` around '${run.value}' binds the effect '${ability.abilityName}' of code its caller wrote, so it is " +
           s"bound once, for every run: write the same `with` around each run of '${run.value}', or once on its slot " +
           s"(`${run.value} uses *, ${ability.abilityName} with …`)."
+      )
+    )
+
+  private def parameterisedAroundRun(named: Sourced[ValueFQN], run: Sourced[String]): (Sourced[String], Seq[String]) =
+    (
+      named.as(
+        s"This `with` supplies arguments to an implementation of an effect '${run.value}' lists, but code its caller " +
+          "wrote is bound by its slot, and a slot cannot supply arguments."
+      ),
+      Seq(
+        s"Bind an implementation without parameters around '${run.value}', or let the caller bind this one around the " +
+          "code it writes."
       )
     )
 

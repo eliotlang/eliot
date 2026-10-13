@@ -69,6 +69,32 @@ class NamedImplementationDesugarerTest extends ProcessorTest(new Tokenizer(), ne
       .asserting(_.find(_.name.value.name == "Buffer").get.typeDefinition.value.render shouldBe "Type")
   }
 
+  "a named implementation with parameters" should "give each clause the parameters ahead of its own" in {
+    definitions("implement scripted(answer: String): Terminal {\n  def write(line: String): Unit = u\n  def read: String = answer\n}")
+      .asserting(_.filter(_.body.isDefined).map(f => (f.name.value.name, f.args.map(_.name.value))) shouldBe
+        Seq(("write", Seq("answer", "line")), ("read", Seq("answer"))))
+  }
+
+  it should "declare its parameters, and the binder a `with` supplying them is lowered to" in {
+    definitions("implement scripted(answer: String): Terminal {\n  def read: String = answer\n}")
+      .asserting(_.filter(f => f.name.value.name.startsWith("$")).map(f =>
+        (f.name.value.name, f.genericParameters.map(_.name.value), f.args.map(_.name.value), f.typeDefinition.value.render)
+      ) shouldBe Seq(
+        ("$parameters", Seq.empty, Seq("answer"), "Unit"),
+        ("$with", Seq("Subject$"), Seq("answer", "subject$"), "Subject$")
+      ))
+  }
+
+  it should "not give an associated type the parameters" in {
+    definitions("implement scripted(answer: String): Terminal {\n  def read: String = answer\n  type Buffer = X\n}")
+      .asserting(_.find(_.name.value.name == "Buffer").get.args shouldBe empty)
+  }
+
+  "a named implementation without parameters" should "declare neither its parameters nor a binder" in {
+    desugar("implement recordingConsole: Console {\n  def readLine: X = None\n}")
+      .asserting(_.map(_._1).filter(_.startsWith("$")) shouldBe empty)
+  }
+
   private def definitions(source: String) =
     ast(source).map(_.namedImplementations.flatMap(NamedImplementationDesugarer.desugar))
 

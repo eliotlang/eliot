@@ -1,7 +1,7 @@
 package com.vanillasource.eliot.eliotc.row
 
 import cats.syntax.all.*
-import com.vanillasource.eliot.eliotc.ast.fact.EffectRow
+import com.vanillasource.eliot.eliotc.ast.fact.{EffectRow, ImplementationParameters}
 import com.vanillasource.eliot.eliotc.core.fact.RoleHint
 import com.vanillasource.eliot.eliotc.module.fact.{Qualifier, Role, ValueFQN, WellKnownTypes}
 import com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedExpression.*
@@ -638,6 +638,9 @@ object BindingWriter {
         case _ =>
           val (head, args) = spine(expr.value)
           head match {
+            case ValueReference(callee, existing) if ImplementationParameters.isBinder(callee.value) &&
+                  universe.lookup(callee.value).isDefined =>
+              walkSupplied(expr, expr.as(head), callee, existing, args, scope, applied)
             case ValueReference(callee, existing)                                   =>
               val written      = writeBindings(expr.as(head), callee.value, existing, scope, args)
               unappliedEffectful(callee, args.size + applied, scope).foreach(violations += _)
@@ -653,6 +656,52 @@ object BindingWriter {
               expr.as(applyChain(walkCode(expr.as(head), scope, args.size), args.map(walk(_, scope))))
           }
       }
+
+    /** A `with` supplying arguments, as the resolver lowers it: `scripted$with(List("Bob"), greet with scripted)`
+      * ([[ImplementationParameters.binder]]). The arguments are values computed where the `with` is written, outside
+      * its binding; the subject, the binder's last parameter, stands where the `with` stands and is walked exactly as
+      * the `with` itself would be, so a lambda or an unapplied reference there is what it was before the arguments
+      * were supplied.
+      */
+    private def walkSupplied(
+        expr: Sourced[OperatorResolvedExpression],
+        head: Sourced[OperatorResolvedExpression],
+        callee: Sourced[ValueFQN],
+        existing: Seq[Sourced[OperatorResolvedExpression]],
+        args: Seq[Sourced[OperatorResolvedExpression]],
+        scope: Scope,
+        applied: Int
+    ): Sourced[OperatorResolvedExpression] = {
+      val declared = universe.lookup(callee.value).fold(0)(orv => SignatureView.of(orv.signature).parameters.size - 1)
+      val written  = writeBindings(head, callee.value, existing, scope, args)
+      // The resolver puts the `with` right after the arguments it supplies; what follows applies the subject's value.
+      val position = args.indexWhere(_.value match {
+        case WithBinding(_, named) => ImplementationParameters.binderOf(named.value) == callee.value
+        case _                     => false
+      })
+      if (position < 0) expr.as(applyChain(written, args.map(walk(_, scope))))
+      else {
+        if (position != declared) {
+          val name = callee.value.name.qualifier match {
+            case Qualifier.AbilityImplementation(_, _, Some(name)) => name
+            case _                                                 => callee.value.name.name
+          }
+          violations += Violation(
+            args(position).as(
+              s"The implementation '$name' takes $declared parameter${if (declared == 1) "" else "s"}, but this " +
+                s"`with` supplies $position."
+            )
+          )
+        }
+        val (supplied, rest) = args.splitAt(position)
+        expr.as(
+          applyChain(
+            written,
+            supplied.map(walk(_, scope)) ++ (walk(rest.head, scope, applied + rest.size - 1) +: rest.tail.map(walk(_, scope)))
+          )
+        )
+      }
+    }
 
     /** An effect a code parameter's clause lists is this definition's **to handle or to declare**
       * (`docs/effects.md` §1 rule 5, D22): every listed entry it does not declare ([[thunkRequirements]]) must be

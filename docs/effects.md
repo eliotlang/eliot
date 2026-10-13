@@ -2,7 +2,8 @@
 
 **Status (2026-10-13).** This is the effect system's single document. What the tree builds is effects v6 (2026-09-09)
 in D20/D21's `uses` surface (2026-10-09/10) with D20c option 5's environments and (b) (2026-10-12), and D22's reading
-of a listed effect, D23's reading of `with`, D24's `uses *` on a definition and compile-track frames (2026-10-13). An effect is an ability declared with the `effect`
+of a listed effect, D23's reading of `with`, D24's `uses *` on a definition, compile-track frames and named
+implementations with parameters (2026-10-13). An effect is an ability declared with the `effect`
 keyword. A definition's `uses` clause says what its caller hands it. An implementation has two halves: its **code**, a
 compile-time name written at every reference by a syntax-directed pass that reads declarations only, and its
 **environment** (an escape frame, a cell, its own parameters), a value threaded after monomorphization — on the
@@ -35,8 +36,11 @@ lives now.
    (193) and eliot-build (368) pass unchanged and eliot-build's launcher builds, so no dependent needs a change.
 6. ~~**Release the next `v0` tag**~~ — done 2026-10-13: `v0.12` carries step 5's two commits and the two non-effect
    fixes below. eliot-test (193) and eliot-build (368, and its launcher) were run against it; no dependent moved.
-7. **Named implementations with parameters**, the next of §11's "Decided, not built", then user defaults with
-   parameters and parameterised ability implementations, in that order.
+7. **Named implementations with parameters** — built 2026-10-13 (§2, §3.4): `greet with scripted("Bob")`. One
+   named implementation with **type** parameters as well is refused where it is bound, since a named implementation's
+   type parameters are never solved for a binding (§8 item 30); that is the next item's to lift. Every example jar is
+   byte-identical, and eliot-test (193) and eliot-build (368, and its launcher) pass unchanged. Next: user defaults
+   with parameters, then parameterised ability implementations, in that order.
 
 D20a, D20c and D3 stay open until decided; none blocks the steps above.
 
@@ -46,8 +50,8 @@ D20a, D20c and D3 stay open until decided; none blocks the steps above.
 - **Loud, at compile time:** a
   `catch` over a parameter spells its arguments (§7 item 2); a function-typed code parameter's own entries are never
   supplied (§7 item 1); `runThrow("no failure")` with its argument spelled is accepted (§8 item 4).
-- **Decided, not built:** parameterised named and ability implementations, user defaults with parameters (§11,
-  "Decided, not built").
+- **Decided, not built:** parameterised ability implementations (which need a named implementation's type
+  parameters solved, §8 item 30), user defaults with parameters (§11, "Decided, not built").
 - **Undecided:** naming a set of effects in a clause (D20a), storing an effectful computation (D20c), `~`/`&` in user
   space (D3).
 - **Outside this document:** `v0.9` is the first release carrying `uses` (`v0.8` is tagged before it, and its release
@@ -225,8 +229,12 @@ the ability's module or the type's module — is the default for its pattern, su
 pattern (`implement[S] State[S](cell: StateCell[S])`), which are its runtime environment; only a platform primitive
 can supply them today (§3.4). A **named** `implement` may live anywhere, is never searched, is not checked for
 overlap, and its clauses may carry `uses` — what the implementation performs beyond its ability, charged wherever the
-name is bound. It takes no parameters yet and closes over nothing: what it needs at runtime it asks an effect for
-(parameters for it are decided, not built: §11).
+name is bound. It closes over nothing, but it may take **parameters**, written between its name and its ability as a
+definition's are (`implement scripted(answer: String): Terminal`) and supplied by the `with` that binds it
+(`greet with scripted("Bob")`): each clause receives them ahead of its own, as an anonymous implementation's do. They
+are its runtime environment, so one specialisation serves every argument. No keyword marks such an implementation —
+parameters are an ordinary parameter list, whether they hold a frame or a function. A named implementation with type
+parameters may not take parameters yet (§8 item 30).
 
 ```eliot
 implement Console {                                       -- the platform's default
@@ -237,6 +245,11 @@ implement Console {                                       -- the platform's defa
 implement session: Terminal {                             -- a test's, in the test module
    def write(line: String) uses Writer[String]: Unit = tell(line ++ ";")
    def read: String = "Bob"
+}
+
+implement scripted(answer: String): Terminal {           -- a test's that takes parameters
+   def write(line: String) uses Writer[String]: Unit = tell(line ++ ";")
+   def read: String = answer
 }
 ```
 
@@ -252,6 +265,7 @@ both application under the types-are-values cornerstone.
 
 ```eliot
 def greetTranscript: String = runWriterToLog(greet with session)
+def bobTranscript: String = runWriterToLog(greet with scripted("Bob"))
 def sorted: List[Int] = sort(xs) with reverseOrd
 
 def transcriptOf(program uses *, Console with recordingConsole: Unit) uses *: String = runWriterToLog(program)
@@ -268,6 +282,13 @@ entry even when the definition also declares that effect — the declaration the
 performs itself. A `with` around a run binds only what the slot **lists**: an effect the code uses through `*`
 unlisted was bound where it was written, and a `with` for it binds nothing. A `with` after a definition's own clause
 is rejected: it would be a second spelling of `with` around the body.
+
+**A `with`'s arguments are values computed where it is written**, outside its binding: in
+`greet with scripted(answer) with scripted("outer")` the inner `answer` reads from `scripted("outer")`. Only a body
+`with` supplies them. A parameter's clause cannot (*"… takes parameters, which a parameter's clause cannot supply"*),
+since a signature has no arguments to compute, and so a `with` supplying arguments around a run of a code parameter
+whose slot lists its effect is an error rather than moved onto the slot. A `with` naming an implementation that takes
+parameters must supply exactly them, and one naming an implementation without parameters supplies none.
 
 **`with` is written almost nowhere.** Most code fixes nothing: a def declaring `uses Console` receives its binding
 from its caller, up to `main`. That chain is what makes a fake possible — `greeting` never said which console, so a
@@ -509,6 +530,13 @@ stands before a binding (`greetAs(Bob(…))`, whose `A` only the checker reads o
 treats a binder left off the end of the list; a binding itself is never left to one. The pass is idempotent, and its
 idempotence test is the same mark (`GenericParameter.isBinding`).
 
+**A `with` supplying arguments is a call before it is a `with`.** The resolver lowers `greet with scripted("Bob")` to
+`scripted$with("Bob", greet with scripted)`, a call of the implementation's body-less **binder** declaration
+`def scripted$with[Subject$](answer: String, subject$: Subject$): Subject$` (`ast/fact/ImplementationParameters`), so
+the checker types the arguments as any call's, and they stand outside the `with`, where they are computed. The row
+phase walks the subject exactly as it would walk the `with` alone (`BindingWriter.walkSupplied`), and checks the count.
+Nothing ever runs the binder: the environment threading replaces it (§3.4).
+
 A **row alias** (§2.4) adds no mechanism of its own: a definition naming one as its return type is handed the alias's
 row *entries* by `resolve/…/ValueResolver`, which mints them exactly as `EffectSugarDesugarer` mints entries written
 in a definition's clause.
@@ -709,6 +737,10 @@ default needing parameters with nothing to give them is *"The effect 'Throw' is 
 discharge it"*, at the operation — which is how an undischarged control effect at `main` became a compile error. A
 named implementation bound by a body `with` is not a frame in scope (the walk erased the `with`), so its frame is
 built at the reference from the frames there, which the walk's check in §3.1 guarantees are the frames at the `with`.
+Its own parameters are the `with`'s arguments: the threading turns `scripted$with(xs, subject)` into
+`(answer -> subject)(xs)` and walks the subject with `answer` supplied to `scripted`, so a frame built for `scripted`
+there holds it, unless a frame of the entry is nearer — a block whose slot rides the entry is given its frame where it
+runs, as (b) says.
 
 **What that does and does not remove.** There is no search across calls: a frame reaches a definition only as a value
 passed to it, so a helper's own `catch` or `State` cannot intercept the effects of a block its caller wrote with
@@ -948,7 +980,8 @@ Four properties fall out of the design rather than being added for testing.
   declare** — which are charged, and bound, at the binding site.
 - **A double keeps its own state through an effect**: `session` above writes to `Writer[String]`, and that entry is
   charged where `session` is bound and discharged there by `runWriterToLog`. It never appears in `greet`'s clause.
-  (A double taking parameters, `with scripted(List("Bob"))`, is decided and not built: §11.)
+  A double may also take parameters (`greet with scripted("Bob")`), which configure it per binding without a
+  specialisation per value. They are values: state that changes as the code runs is still an effect's.
 - **Interpretation is per effect, not per program.** `body with mockConsole with mockFileSystem` binds two
   doubles and leaves everything else at its default.
 
@@ -1003,6 +1036,20 @@ items keep one line, and their full record is in git history (§13).
 
 4. **`runThrow("no failure")` is accepted** when the call spells the argument, although §2.2 lists an actual that
    raises nothing among the shapes rejected. Loud by construction (the argument is written by hand), so last.
+29. **A rejected `main` reports a second, misleading error.** Found 2026-10-13, present before named implementations
+    took parameters. When `main`'s runtime write fails (any row-phase violation), the synthesized entry point falls
+    back through `NativeBinding` and `ContributedBinding` to `main`'s **compile-track** monomorphization at no type
+    arguments, where its own binding binders are therefore `Type`; a named implementation bound in `main` whose clause
+    performs `Console` then adds *"No ability implementation found for ability 'Console' with type arguments [Type]"*
+    at that clause, and a `with` supplying the wrong number of arguments adds *"Not a function."* Loud, and only after a
+    real error, which is reported first.
+30. **A named implementation's own type parameters are never solved for a binding.** `with none`, for
+    `implement[T] none: Source[Option[T]]`, is written `none[]`, and dispatch runs its methods at the binding's type
+    arguments, so the clause runs at `T := Type` — which a body that never relies on `T` survives by erasure (measured
+    2026-10-13). With parameters the types of its environment would be unknown where its frame is built, so a named
+    implementation taking both is refused where it is bound (*"… takes both type parameters and parameters, which is
+    not supported yet"*). Solving them from the entry the binding answers is what parameterised ability
+    implementations (`byKey[T](key: T => Int): Ord[T]`, §11) need first.
 **Closed.**
 
 | # | defect | closed |
@@ -1184,9 +1231,6 @@ not a value, so an ability denotes no type of values.
 
 From D20c option 5's decisions of 2026-10-12, in the order they would be built:
 
-- **Named implementations with parameters**, supplied at the `with`: `greet with scripted(List("Bob"))`, a double
-  keeping state without a `Writer`. One construct chooses code and supplies arguments; no keyword marks such an
-  implementation (it would mark a property nothing reads, and reinstate the family bit §3.5 keeps out).
 - **User defaults with parameters**: `implement Config(s: Settings) { … }`, given by
   `def withConfig[A](s: Settings, body uses *, Config: A) uses *: A = body with Config(s)` — `with Ability(args)` names the
   default by its ability and supplies its arguments, choosing nothing the declaration had not already chosen. This
@@ -1218,6 +1262,9 @@ Numbers are kept so citations resolve; the record of each is in git history (§1
   is closed, and purity is the absence of `uses`.
 - **D20c option 5 and (b)** (2026-10-12, built): an implementation's environment threaded after monomorphization;
   ride by code, give by frame (§3.4). D20c's open question remains, above.
+- **Named implementations with parameters** (decided 2026-10-12, built 2026-10-13): supplied at the `with`,
+  `greet with scripted("Bob")`; one construct chooses code and supplies arguments, and no keyword marks such an
+  implementation (§2, §3.4). Built without type parameters on the same implementation (§8 item 30).
 - **Compile-track frames** (decided 2026-10-12, built 2026-10-13): the compile track threads its frames as the runtime
   track does, after monomorphization, and the guarded-return read gives a signature's own control effects (§3.4).
 - **D23** (2026-10-13): *what does a `with` apply to?* **Every effect of its ability that escapes its subject** — what

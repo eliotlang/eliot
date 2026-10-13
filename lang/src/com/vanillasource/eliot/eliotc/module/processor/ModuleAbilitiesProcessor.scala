@@ -54,8 +54,8 @@ class ModuleAbilitiesProcessor extends SingleFactProcessor[ModuleAbilities.Key] 
               methodName,
               qualifier @ Qualifier.AbilityImplementation(abilityName, pattern, implementationName),
               Role.Runtime
-            ) if methodName != ImplementationParameters.name && !superseded.contains(qualifier) =>
-          // An implementation's parameters declaration is looked up by name, never one of its clauses.
+            ) if !ImplementationParameters.isAuxiliary(methodName) && !superseded.contains(qualifier) =>
+          // An implementation's parameters and binder declarations are looked up by name, never one of its clauses.
           ModuleAbilities.Impl(ValueFQN(key.moduleName, qn), methodName, abilityName, pattern, implementationName)
       }
       ModuleAbilities(key.moduleName, declaredMethods, implementations, key.platform)

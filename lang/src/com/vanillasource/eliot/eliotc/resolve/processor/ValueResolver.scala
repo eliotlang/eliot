@@ -4,6 +4,7 @@ import cats.Id
 import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.ast.fact.{
   EffectRow,
+  ImplementationParameters,
   PrecedenceDeclaration as AstPrecedenceDeclaration,
   UnresolvedAbilityConstraint,
   Visibility
@@ -621,11 +622,61 @@ class ValueResolver
     expression match {
       // Effects v6 §9.4 step 1: the name is resolved here, to the implementation's marker, and only that marker
       // flows onward — a name carried downstream would ignore import scope and be decided by hash order.
-      case WithBinding(subject, implementationName, moduleName)      =>
+      //
+      // A `with` supplying arguments to an implementation that takes parameters (`greet with scripted(List("Bob"))`) is
+      // lowered here to a call of that implementation's binder declaration around the resolved `with`
+      // (`scripted$with(List("Bob"), greet with scripted)`, [[ImplementationParameters]]): the checker types the
+      // arguments as any call's, and they stand outside the `with`, so they see none of its bindings.
+      case WithBinding(subject, implementationName, moduleName, arguments) =>
         for {
           resolvedSubject <- resolveExpression(subject.value, runtime).map(subject.as)
           marker          <- ImplementationNameResolver.resolve(implementationName, moduleName)
-        } yield Expression.WithBinding(resolvedSubject, implementationName.as(marker))
+          parameters      <- ImplementationNameResolver.parametersOf(marker)
+          bound            = Expression.WithBinding(resolvedSubject, implementationName.as(marker))
+          lowered         <- parameters match {
+            case ImplementationNameResolver.Parameters.None if arguments.isEmpty =>
+              bound.pure[ScopedIO]
+            case ImplementationNameResolver.Parameters.None                      =>
+              compilerAbort[Expression](
+                arguments.head.as(s"The implementation '${implementationName.value}' takes no parameters.")
+              ).liftToScoped
+            case _ if arguments.isEmpty                                           =>
+              compilerAbort[Expression](
+                implementationName.as(
+                  s"The implementation '${implementationName.value}' takes parameters, and they are supplied where " +
+                    s"it is bound: `with ${implementationName.value}(…)`."
+                )
+              ).liftToScoped
+            case _ if !runtime                                                    =>
+              compilerAbort[Expression](
+                implementationName.as(
+                  s"The implementation '${implementationName.value}' takes parameters, which a parameter's clause " +
+                    "cannot supply."
+                ),
+                Seq(s"Bind it with `with ${implementationName.value}(…)` in the body, where its arguments are computed.")
+              ).liftToScoped
+            // Not built: a named implementation's own type parameters are not solved for a binding (its methods run
+            // at the binding's type arguments, which name none), so its parameters' types would be unknown where its
+            // environment is threaded (`docs/effects.md` §11, parameterised ability implementations).
+            case ImplementationNameResolver.Parameters.WithTypeParameters         =>
+              compilerAbort[Expression](
+                implementationName.as(
+                  s"The implementation '${implementationName.value}' takes both type parameters and parameters, " +
+                    "which is not supported yet."
+                ),
+                Seq("Give the implementation concrete types, or drop its parameters.")
+              ).liftToScoped
+            case ImplementationNameResolver.Parameters.Plain                      =>
+              arguments.traverse(argument => resolveExpression(argument.value, runtime).map(argument.as)).map {
+                resolvedArguments =>
+                  (resolvedArguments :+ implementationName.as(bound)).foldLeft[Sourced[Expression]](
+                    implementationName.as(
+                      Expression.ValueReference(implementationName.as(ImplementationParameters.binderOf(marker)))
+                    )
+                  )((target, argument) => argument.as(Expression.FunctionApplication(target, argument))).value
+              }
+          }
+        } yield lowered
       case NamedValueReference(nameSrc, None, typeArgExprs)          =>
         isParameter(nameSrc.value.name).flatMap { isParam =>
           if (isParam) {

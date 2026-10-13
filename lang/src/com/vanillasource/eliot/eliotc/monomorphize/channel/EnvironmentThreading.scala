@@ -63,7 +63,10 @@ import scala.util.chaining.*
   *
   * A **named implementation bound by a body `with`** is not in scope as a frame, because the row phase erases the
   * `with`. Its frame is built at the reference from the frames in scope there, which are the frames at the `with`:
-  * the row phase rejects a use of a `with`'s binding below a nearer binding of an effect its clauses perform.
+  * the row phase rejects a use of a `with`'s binding below a nearer binding of an effect its clauses perform. One that
+  * takes **parameters** reaches here as its binder applied to the `with`'s arguments around the subject
+  * (`scripted$with(xs, greet)`, [[ImplementationParameters.binder]]): the arguments are bound to fresh parameters
+  * around the subject, and a frame built for that implementation inside it holds them as its own parts.
   *
   * Nothing here changes a definition that receives and supplies no environment: its frames have no parts, a block
   * with nothing to take keeps its `unit`, and the woven body is the monomorphic one.
@@ -135,6 +138,9 @@ object EnvironmentThreading {
 
   /** One part of an environment: a parameter in scope holding it, and its type. */
   private case class Part(name: String, tpe: GroundValue)
+
+  /** The arguments a `with` supplied to the implementation `marker` names, held by parameters around its subject. */
+  private case class Supplied(marker: ValueFQN, own: Seq[Part], level: Int)
 
   /** A frame in scope: the entry it answers, the binding its code was written with, the frames its implementation's
     * clauses perform on, and the implementation's own parameters.
@@ -258,14 +264,24 @@ object EnvironmentThreading {
         case _                                                                                   => walk(node, context)
       }
 
-    /** The lexical context: the frames in scope innermost first, the parameters whose type the threading changed, and
-      * this definition's row-typed parameters by index — running one passes its frames.
+    /** The lexical context: the frames in scope innermost first, the parameters whose type the threading changed,
+      * this definition's row-typed parameters by index — running one passes its frames — and the arguments the `with`s
+      * around this point supplied, innermost first. A frame and a supplied argument list are told apart in nearness by
+      * their level, which every push raises.
       */
-    private case class Context(frames: Seq[Frame], types: Map[String, GroundValue], runs: Map[String, Int]) {
-      def push(more: Seq[Frame]): Context = {
-        val level = frames.headOption.fold(0)(_.level) + 1
-        copy(frames = more.map(_.copy(level = level)) ++ frames)
-      }
+    private case class Context(
+        frames: Seq[Frame],
+        types: Map[String, GroundValue],
+        runs: Map[String, Int],
+        supplied: Seq[Supplied] = Seq.empty,
+        depth: Int = 0
+    ) {
+      def push(more: Seq[Frame]): Context =
+        copy(frames = more.map(_.copy(level = depth + 1)) ++ frames, depth = depth + 1)
+
+      def supply(marker: ValueFQN, own: Seq[Part]): Context =
+        copy(supplied = Supplied(marker, own, depth + 1) +: supplied, depth = depth + 1)
+
       def shadow(name: String): Context  = copy(types = types - name, runs = runs - name)
 
       def declare(name: String, tpe: GroundValue, run: Option[Int]): Context =
@@ -294,6 +310,9 @@ object EnvironmentThreading {
         case _ =>
           val (head, args) = spineOf(node)
           head.value.expression match {
+            case reference: MonomorphicExpression.MonomorphicValueReference
+                if ImplementationParameters.isBinder(reference.valueName.value) =>
+              supply(head, reference, args, context)
             case reference: MonomorphicExpression.MonomorphicValueReference  =>
               call(head, reference, args, context)
             case MonomorphicExpression.ParameterReference(name)
@@ -349,6 +368,52 @@ object EnvironmentThreading {
           )
       }
 
+    /** A `with` supplying arguments, as the resolver lowered it: `scripted$with(xs, subject)` becomes
+      * `(answer -> subject)(xs)`, the subject walked with `answer` supplied to `scripted`, so every frame built for
+      * `scripted` inside it holds them ([[built]]). The binder is never called, and what follows its subject applies
+      * the subject's value.
+      */
+    private def supply(
+        head: Sourced[MonomorphicExpression],
+        reference: MonomorphicExpression.MonomorphicValueReference,
+        args: Seq[Sourced[MonomorphicExpression]],
+        context: Context
+    ): CompilerIO[Sourced[MonomorphicExpression]] = {
+      val binder = reference.valueName.value
+      for {
+        orv     <- getFactOrAbort(OperatorResolvedValue.Key(binder, track.platform))
+        count    = SignatureView.of(orv.signature).parameters.size - 1
+        _       <- if (args.sizeIs <= count)
+                     compilerAbort[Unit](head.as("Internal: an implementation's binder is not applied to its subject."))
+                   else ().pure[CompilerIO]
+        marker  <- markerOfBinder(binder, head)
+        supplied = args.take(count)
+        parts    = parameterTypes(head.value.expressionType, count).map(tpe => Part(fresh(), tpe))
+        walked  <- supplied.traverse(walk(_, context))
+        subject <- walk(args(count), context.supply(marker, parts))
+        rest    <- args.drop(count + 1).traverse(walk(_, context))
+      } yield {
+        val bound = parts.foldRight(subject) { (part, inner) =>
+          inner.as(
+            MonomorphicExpression(
+              functionType(part.tpe, inner.value.expressionType),
+              MonomorphicExpression.FunctionLiteral(head.as(part.name), part.tpe, inner)
+            )
+          )
+        }
+        applyAll(applyAll(bound, walked, keepTypes = None), rest, keepTypes = None)
+      }
+    }
+
+    /** The marker of the implementation `binder` is the binder declaration of. */
+    private def markerOfBinder(binder: ValueFQN, at: Sourced[?]): CompilerIO[ValueFQN] =
+      binder.name.qualifier match {
+        case qualifier: Qualifier.AbilityImplementation =>
+          ValueFQN(binder.moduleName, QualifiedName(qualifier.name, qualifier)).pure[CompilerIO]
+        case _                                          =>
+          compilerAbort(at.as("Internal: an implementation's binder is outside its implementation."))
+      }
+
     /** What a reference passes: the parts, and for a dispatched one how many of them are the implementation's own. */
     private case class Passed(parts: Seq[Part], own: Int)
 
@@ -360,7 +425,7 @@ object EnvironmentThreading {
     ): CompilerIO[Passed] =
       callee.effects.received
         .traverse(received =>
-          lookup(context.frames, received.entry, typeArguments.lift(received.binderIndex).getOrElse(defaultBinding), at)
+          lookup(context, received.entry, typeArguments.lift(received.binderIndex).getOrElse(defaultBinding), at)
         )
         .map(frames => Passed(frames.flatMap(_.parts), 0))
 
@@ -374,7 +439,7 @@ object EnvironmentThreading {
         context: Context
     ): CompilerIO[Passed] =
       for {
-        frame    <- lookup(context.frames, dispatch.entry, dispatch.binding, at)
+        frame    <- lookup(context, dispatch.entry, dispatch.binding, at)
         perCall  <- memberDeclared(memberOf(clause.vfqn, dispatch.entry.ability))
         own      <- declaredEntries(clause.vfqn)
         received <- clause.effects.received.traverse { received =>
@@ -382,7 +447,7 @@ object EnvironmentThreading {
                       val callSite = own.get(received.binderIndex).exists(perCall.contains)
                       frame.clauses.find(candidate => candidate.entry == received.entry) match {
                         case Some(clauseFrame) if !callSite => clauseFrame.pure[CompilerIO]
-                        case _                              => lookup(context.frames, received.entry, binding, at)
+                        case _                              => lookup(context, received.entry, binding, at)
                       }
                     }
       } yield Passed(received.flatMap(_.parts) ++ frame.own, frame.own.size)
@@ -531,11 +596,11 @@ object EnvironmentThreading {
       val slot  = mv.effects.slots.find(_.parameterIndex == index).getOrElse(MonomorphicEffects.Slot(index, Seq.empty))
       for {
         frames <- listed(mv, slot).flatMap(_.traverse {
-                    case Listed.Rides(entry, binding)         => lookup(context.frames, entry, binding, name)
-                    case Listed.Supplied(entry, None)         => lookup(context.frames, entry, defaultBinding, name)
+                    case Listed.Rides(entry, binding)         => lookup(context, entry, binding, name)
+                    case Listed.Supplied(entry, None)         => lookup(context, entry, defaultBinding, name)
                     case Listed.Supplied(entry, Some(marker)) =>
                       namedClauses(marker).flatMap(
-                        _.traverse(clause => lookup(context.frames, clause, clauseBinding(mv, clause), name))
+                        _.traverse(clause => lookup(context, clause, clauseBinding(mv, clause), name))
                       ).map(clauseFrames => Frame(entry, namedBinding(marker), clauseFrames, Seq.empty))
                   })
         parts   = frames.flatMap(_.parts)
@@ -686,18 +751,32 @@ object EnvironmentThreading {
         case _                                  => false
       }
 
-    /** The frame in scope for `entry`, which the reference was written to run on `binding`. */
-    private def lookup(frames: Seq[Frame], entry: Entry, binding: GroundValue, at: Sourced[?]): CompilerIO[Frame] =
-      nearest(frames, entry, at).flatMap {
-        case Some(frame) if sameImplementation(frame.binding, binding) => frame.pure[CompilerIO]
-        case Some(frame) if !isNamed(binding)                          =>
-          compilerAbort(
-            at.as(
-              s"This runs the effect '${entry.ability.abilityName}' on ${describe(binding)}, but the nearest frame of it " +
-                s"here runs ${describe(frame.binding)}."
+    /** The frame in scope for `entry`, which the reference was written to run on `binding`. Arguments a `with` supplied
+      * to that implementation nearer than any frame of the entry are what its frame is built from: the `with` is the
+      * binding the row phase wrote here.
+      */
+    private def lookup(context: Context, entry: Entry, binding: GroundValue, at: Sourced[?]): CompilerIO[Frame] =
+      nearest(context.frames, entry, at).flatMap { frame =>
+        (frame, suppliedFor(context, binding)) match {
+          case (_, Some(supplied)) if frame.forall(_.level < supplied.level)   =>
+            built(context, entry, binding, at, Some(supplied.own))
+          case (Some(frame), _) if sameImplementation(frame.binding, binding) => frame.pure[CompilerIO]
+          case (Some(frame), _) if !isNamed(binding)                          =>
+            compilerAbort(
+              at.as(
+                s"This runs the effect '${entry.ability.abilityName}' on ${describe(binding)}, but the nearest frame of " +
+                  s"it here runs ${describe(frame.binding)}."
+              )
             )
-          )
-        case _                                                         => built(frames, entry, binding, at)
+          case _                                                              => built(context, entry, binding, at, None)
+        }
+      }
+
+    /** The nearest arguments a `with` supplied to the implementation `binding` names. */
+    private def suppliedFor(context: Context, binding: GroundValue): Option[Supplied] =
+      ImplementationBinding.fromGround(binding) match {
+        case Some(ImplementationBinding.Implementation(head, _)) => context.supplied.find(_.marker == head)
+        case _                                                   => None
       }
 
     /** The nearest frame for `entry`. Two at the same distance — a definition receiving `{Throw[E1], Throw[E2]}` at an
@@ -718,12 +797,25 @@ object EnvironmentThreading {
       }
 
     /** A frame nothing in scope holds: a default, or a named implementation a body `with` bound, built from the frames in
-      * scope for its clauses. Its own parameters have nothing to come from, which is the error for a default that needs
-      * them — a control effect nothing discharges.
+      * scope for its clauses. Its own parameters are the arguments its `with` supplied, if it supplied any; otherwise they
+      * have nothing to come from, which is the error for a default that needs them — a control effect nothing
+      * discharges.
       */
-    private def built(frames: Seq[Frame], entry: Entry, binding: GroundValue, at: Sourced[?]): CompilerIO[Frame] =
+    private def built(
+        context: Context,
+        entry: Entry,
+        binding: GroundValue,
+        at: Sourced[?],
+        supplied: Option[Seq[Part]]
+    ): CompilerIO[Frame] =
       shapeOf(entry, binding).flatMap { shape =>
-        if (shape.own.nonEmpty && guarded)
+        if (supplied.exists(_.map(_.tpe) != shape.own))
+          compilerAbort(at.as("Internal: the arguments a `with` supplied do not match its implementation's parameters."))
+        else if (supplied.isDefined)
+          shape.clauses
+            .traverse { case (clauseEntry, clauseBinding, _) => lookup(context, clauseEntry, clauseBinding, at) }
+            .map(clauses => Frame(entry, binding, clauses, supplied.getOrElse(Seq.empty)))
+        else if (shape.own.nonEmpty && guarded)
           guards
             .find(guard => guard.entry == entry && sameImplementation(guard.binding, binding))
             .getOrElse(held(entry, binding, shape).tap(guards += _))
@@ -737,7 +829,7 @@ object EnvironmentThreading {
           )
         else
           shape.clauses
-            .traverse { case (clauseEntry, clauseBinding, _) => lookup(frames, clauseEntry, clauseBinding, at) }
+            .traverse { case (clauseEntry, clauseBinding, _) => lookup(context, clauseEntry, clauseBinding, at) }
             .map(clauses => Frame(entry, binding, clauses, Seq.empty))
       }
 

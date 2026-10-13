@@ -25,6 +25,11 @@ import com.vanillasource.eliot.eliotc.token.Token
   *   The implementation's own (lower-case) name, the one `with` refers to.
   * @param ability
   *   The ability or effect implemented, with its pattern's type arguments in `pattern`.
+  * @param parameters
+  *   The implementation's **parameters** (`docs/effects.md` §11, "named implementations with parameters"), its runtime
+  *   environment, supplied where it is bound: `implement scripted(lines: List[String]): Terminal { … }`, bound by
+  *   `greet with scripted(List("Bob"))`. Each clause receives them as leading value parameters, exactly as an
+  *   anonymous implementation's ([[ImplementationParameters]]).
   * @param doc
   *   The `/** ... */` documentation comment preceding the declaration, attached by position in `ASTParser`.
   */
@@ -34,7 +39,8 @@ case class NamedImplementation(
     ability: Sourced[String],
     pattern: Seq[Sourced[Expression]],
     functions: Seq[FunctionDefinition],
-    doc: Option[Sourced[String]] = None
+    doc: Option[Sourced[String]] = None,
+    parameters: Seq[ArgumentDefinition] = Seq.empty
 )
 
 object NamedImplementation {
@@ -44,16 +50,19 @@ object NamedImplementation {
     new ASTComponent[(Seq[ParserError], NamedImplementation)] {
       // The head is atomic up to and including the `:`, which is what tells a named implementation
       // (`implement name: Ability`) from an anonymous one (`implement Ability`) without consuming the latter's input.
-      private val head: Parser[Sourced[Token], (Seq[GenericParameter], Sourced[Token])] = (for {
+      // The parameters sit between the name and the `:`, as a definition's do: `implement scripted(lines: List[String]):
+      // Terminal`.
+      private val head: Parser[Sourced[Token], (Seq[GenericParameter], Sourced[Token], Seq[ArgumentDefinition])] = (for {
         _                 <- keyword("implement")
         genericParameters <- component[Seq[GenericParameter]]
         name              <- acceptIfAll(isIdentifier, isLowerCase)("implementation name")
+        parameters        <- optionalArgumentListOf(component[ArgumentDefinition])
         _                 <- symbol(":")
-      } yield (genericParameters, name)).atomic()
+      } yield (genericParameters, name, parameters)).atomic()
 
       override val parser: Parser[Sourced[Token], (Seq[ParserError], NamedImplementation)] =
         for {
-          (genericParameters, name) <- head
+          (genericParameters, name, parameters) <- head
           ability                   <- acceptIfAll(isIdentifier, isUpperCase)("ability name")
           pattern                   <- optionalBracketedCommaSeparatedItems("[", sourced(Expression.typeRunParser), "]")
           // Tagged by branch: a `def` is a **clause** and carries the block's clause row, a `type` is an associated
@@ -73,7 +82,14 @@ object NamedImplementation {
                                        }
         } yield (
           errors,
-          NamedImplementation(name.map(_.content), genericParameters, ability.map(_.content), pattern, functions)
+          NamedImplementation(
+            name.map(_.content),
+            genericParameters,
+            ability.map(_.content),
+            pattern,
+            functions,
+            parameters = parameters
+          )
         )
     }
 }

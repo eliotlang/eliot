@@ -45,7 +45,7 @@ object SignatureBlockChecker {
     case FunctionLiteral(_, parameterType, body)     => parameterType.toSeq.flatMap(blocksIn) ++ blocksIn(body)
     case FlatExpression(parts)                       => parts.flatMap(blocksIn)
     case MatchExpression(scrutinee, cases)           => blocksIn(scrutinee) ++ cases.flatMap(c => blocksIn(c.body))
-    case WithBinding(subject, _, _)                  => blocksIn(subject)
+    case WithBinding(subject, _, _, arguments)       => blocksIn(subject) ++ arguments.flatMap(blocksIn)
     case IntegerLiteral(_) | StringLiteral(_)        => Seq.empty
   }
 }
