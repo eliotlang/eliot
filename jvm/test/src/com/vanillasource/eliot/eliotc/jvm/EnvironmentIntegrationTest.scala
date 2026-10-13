@@ -32,6 +32,28 @@ class EnvironmentIntegrationTest extends FullIntegrationTest {
     ).asserting(_ should include("and a nearer binding of 'Writer' stands between them"))
   }
 
+  it should "not count a nearer discharge of the same effect at other arguments as standing between" in {
+    compileAndRun(
+      """import eliot.effect.Console
+        |
+        |implement refusingConsole: Console {
+        |   def printLine(s: String) uses Throw[String]: Unit = raise("refused " ++ s)
+        |
+        |   def readLine: Option[String] = None
+        |}
+        |
+        |def counted(body uses *, Throw[Bool]: Unit): String = catch[Bool, String]({
+        |   body
+        |   "finished"
+        |}, b -> "bool")
+        |
+        |def greet uses Console: Unit = printLine("Bob")
+        |
+        |def main uses Console: Unit =
+        |   printLine(catch[String, String](counted(greet) with refusingConsole, e -> e))""".stripMargin
+    ).asserting(_ shouldBe "refused Bob")
+  }
+
   it should "keep writing into that discharge through a definition that receives it" in {
     compileAndRun(
       s"""import eliot.effect.Console

@@ -23,9 +23,8 @@ lives now.
 
 1. ~~**§8 item 14**~~ — closed 2026-10-13: an unapplied reference to a `uses` definition in a value position is the
    rule-2 error.
-2. **Make eliot-build's suite compile again.** Its `CacheTests` use seven `with`s below a nearer `catch` of `Throw`
-   (likely its test code to change, in eliot-build); the `Writer[List[TestResult]]` resolution failure in eliot-test's
-   `Test.els`, which appears only together with eliot-build, is untraced and may be the compiler's.
+2. ~~**Make eliot-build's suite compile again.**~~ — done 2026-10-13: the compiler's (§8 item 22). Its pushed suite
+   passes (368) under this compiler with eliot-test's pushed master, which passes too (183).
 3. **Release the next `v0` tag**, the first carrying `uses`, then move eliot-test's and eliot-build's `dep` lines and
    the docs site's install page to it.
 4. **The loud usability gaps**: §8 item 21 (a rejected definition is "Name not defined." at its callers) and item 15
@@ -48,10 +47,6 @@ D20a, D20c and D3 stay open until decided; none blocks the steps above.
   eliot-build's `dep` lines and the docs site's install page wait on the next tag; the site's generated `apidoc/`
   pages predate effects v6; eliot-test's own notes still say a row cannot be closed and list `runThrow` spellings that
   are now redundant.
-- **eliot-build's pushed suite does not compile against this compiler** (measured 2026-10-13, identically before and
-  after D23): seven `with`s in its `CacheTests` are used below a nearer binding of `Throw` (option 5's check, §3.1), and
-  in that combination eliot-test's `Test.els` fails to resolve `Writer[List[TestResult]]`. eliot-test's own suite is
-  green (183).
 
 ---
 
@@ -541,7 +536,9 @@ its caller's write promised (`BindingWriter.checkGiven`, rule 5): each entry the
 by a callee's slot that supplies it (a `Binding` marked `bySlot`) — a row of the definition's own is not a frame,
 nor is a `with` in the body, except around a run of the parameter, which is the slot's own (below). A body `with`
 whose named implementation performs an effect in its clauses may not be used below a nearer binding of that effect,
-the one shape whose frame would be intercepted (§3.4). A body `with` no reference in its subject is written from is
+the one shape whose frame would be intercepted (§3.4); "that effect" is the clause's **entry**, looked up at its own
+arguments as a frame is chosen, so a nearer `Throw[NotFetched]` does not stand between a `with` and the use of an
+implementation performing `Throw[GitError]`. A body `with` no reference in its subject is written from is
 *"This `with` binds nothing …"*, with the help naming the slot spelling when its subject is a code parameter.
 
 **A `with` around a run of a code parameter is moved onto the slot before anyone reads the declaration**
@@ -997,6 +994,7 @@ items keep one line, and their full record is in git history (§13).
 | 18 | a slot's named implementation performed its clause effects into whatever frame enclosed the run | 2026-10-12: its clause effects are promised to the block (§2.2) |
 | 19 | two entries of one effect were one binding in the walk | 2026-10-12: entry-level keying (§3.1) and frames chosen by entry (§3.4) |
 | 20 | a slot `with` on an entry the definition also declares was silently dropped, and the code ran its caller's implementation | 2026-10-13 by D23: a slot `with` always handles its entry |
+| 22 | a body `with`'s implementation was rejected below a nearer discharge of the same effect at *other* arguments (eliot-build's `CacheTests`: `offline`'s `Throw[NotFetched]` read as intercepting `tableGit`'s `Throw[GitError]`; its `Writer[List[TestResult]]` error was a knock-on) | 2026-10-13: the clause check keys by entry, as frames are chosen |
 
 Items 9–13 were found 2026-10-05 while designing D20 and share one cause: a row on a slot both *marked a block* and
 *minted bindings*, and nothing kept the block inside the call or checked that the callee had the binding it handed

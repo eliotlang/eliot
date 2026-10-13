@@ -99,9 +99,10 @@ object BindingWriter {
     *   slot's `Throw[Refused]` does not shadow the received `Throw[Missing]` ([[Scope.binding]]). `None` — an entry still
     *   generic in some binder, or a `with` — answers any.
     * @param clauses
-    *   For a body `with`'s implementation, the [[serial]] of the binding in scope at the `with` for each effect its
-    *   clauses perform: the environment threading builds that implementation's frame where it is used, from the frames
-    *   in scope there, so they must be the ones at the `with` ([[Writer.checkClauses]]).
+    *   For a body `with`'s implementation, the [[serial]] of the binding in scope at the `with` for each entry its
+    *   clauses perform, with the entry's known arguments: the environment threading builds that implementation's frame
+    *   where it is used, from the frames in scope there, so they must be the ones at the `with`
+    *   ([[Writer.checkClauses]]).
     * @param serial
     *   Tells two bindings apart however alike their terms are, and survives the copies [[Scope.enterValue]] makes.
     */
@@ -113,11 +114,14 @@ object BindingWriter {
       beyondValue: Boolean = false,
       bySlot: Boolean = false,
       arguments: Option[Seq[String]] = None,
-      clauses: Map[AbilityFQN, Option[Long]] = Map.empty,
+      clauses: Seq[Binding.Clause] = Seq.empty,
       serial: Long = Binding.nextSerial()
   )
 
   private object Binding {
+
+    /** One entry a `with`'s implementation performs in its clauses, and the binding that answered it at the `with`. */
+    case class Clause(ability: AbilityFQN, arguments: Option[Seq[String]], serial: Option[Long])
     private val serials = new java.util.concurrent.atomic.AtomicLong()
 
     def nextSerial(): Long = serials.incrementAndGet()
@@ -370,6 +374,21 @@ object BindingWriter {
     }.toMap
   }
 
+  /** Every entry the implementation `marker` is parameterised by — its phantom binders' abilities, each with the
+    * arguments its clause spells where they are ground ([[knownArguments]]), so `Throw[GitError]` is told from a
+    * `Throw[NotFetched]` beside it.
+    */
+  private def bindingEntries(
+      marker: ValueFQN,
+      universe: RowChecker.Universe
+  ): Seq[(AbilityFQN, Option[Seq[String]])] =
+    universe.lookup(marker).toSeq.flatMap { orv =>
+      val entries = entryArguments(orv)
+      phantoms(orv).map { case (index, ability) =>
+        ability -> entries.get(index).flatMap(knownArguments(_, Map.empty))
+      }
+    }
+
   /** Every ability the implementation `marker` is parameterised by — its phantom binders' abilities. */
   private def bindingAbilities(marker: ValueFQN, universe: RowChecker.Universe): Seq[AbilityFQN] =
     universe.lookup(marker).toSeq.flatMap(orv => phantoms(orv).map(_._2))
@@ -557,11 +576,11 @@ object BindingWriter {
         case WithBinding(subject, implementation) =>
           abilityOf(implementation.value, universe) match {
             case Some(ability) =>
-              val clauses = bindingAbilities(implementation.value, universe).map(clause =>
-                clause -> scope.binding(clause).map(_.serial)
-              )
+              val clauses = bindingEntries(implementation.value, universe).map { case (clause, arguments) =>
+                Binding.Clause(clause, arguments, scope.binding(clause, arguments).map(_.serial))
+              }
               val binding =
-                Binding(ability, boundImplementation(implementation, scope), byWith = true, clauses = clauses.toMap)
+                Binding(ability, boundImplementation(implementation, scope), byWith = true, clauses = clauses)
               val written = walk(subject, scope.bind(binding), applied)
               if (!scope.uncoveredDefaults && !used.contains(binding.serial))
                 violations += unusedWith(subject, implementation, ability, scope)
@@ -661,16 +680,19 @@ object BindingWriter {
     ): Sourced[OperatorResolvedExpression] =
       expr.value match {
         case FunctionLiteral(paramName, paramType, body) if arity > 0          =>
-          expr.as(FunctionLiteral(paramName, paramType, walkCode(body, scope.shadow(paramName.value), arity - 1)))
+          expr.as(FunctionLiteral(paramName, paramType, walkCode(body, scope.shadow(paramName.value), peeled(arity))))
         case ParameterReference(name) if scope.callbacks.contains(name.value) => expr
         case _                                                                => walk(expr, scope, residual(arity))
       }
 
     /** The arguments code is still called with once its written lambdas are peeled. A `match` arm's count is not known
-      * here ([[isMatchMachinery]]), and its lambdas are the constructor's fields, so what stands past them is the arm's
-      * result: a value.
+      * here ([[isMatchMachinery]]) and is `Int.MaxValue`, never decremented ([[peeled]]); its lambdas are the
+      * constructor's fields, so what stands past them is the arm's result: a value.
       */
     private def residual(arity: Int): Int = if (arity === Int.MaxValue) 0 else arity
+
+    /** The arity left once one lambda is peeled; an unknown one stays unknown. */
+    private def peeled(arity: Int): Int = if (arity === Int.MaxValue) arity else arity - 1
 
     /** A reference to a definition that `uses` an effect, given fewer arguments than it declares before its return
       * position: it performs nothing where it stands, and whatever receives it performs its effects later, wherever it
@@ -1182,11 +1204,13 @@ object BindingWriter {
     /** A body `with`'s implementation used below a nearer binding of an effect its clauses perform. Its clauses were
       * written to perform that effect on the binding at the `with`, but the frame they would reach at runtime is the
       * nearer one: the implementation's frame is built where it is used (effects D20c option 5), and a discharge between
-      * the `with` and the use is exactly what that would intercept.
+      * the `with` and the use is exactly what that would intercept. Each entry is looked up at its own arguments, as a
+      * frame is chosen by entry: a nearer discharge of `Throw[NotFetched]` does not stand between a `with` and the use
+      * of an implementation performing `Throw[GitError]`.
       */
     private def checkClauses(binding: Binding, at: Sourced[?], scope: Scope): Unit =
-      binding.clauses.toSeq.sortBy(_._1.abilityName).foreach { case (clause, serial) =>
-        if (scope.binding(clause).map(_.serial) != serial)
+      binding.clauses.sortBy(_.ability.abilityName).foreach { case Binding.Clause(clause, arguments, serial) =>
+        if (scope.binding(clause, arguments).map(_.serial) != serial)
           violations += Violation(
             at.as(
               s"The implementation of '${binding.ability.abilityName}' bound by the `with` around this performs " +

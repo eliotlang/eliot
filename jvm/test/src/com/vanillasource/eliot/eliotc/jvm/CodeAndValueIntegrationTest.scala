@@ -233,6 +233,27 @@ class CodeAndValueIntegrationTest extends FullIntegrationTest {
     ).asserting(_ shouldBe "a\nb")
   }
 
+  "a call in a match arm to a definition that uses an effect" should "be a call, not an unapplied reference" in {
+    compileAndRun(
+      """import eliot.effect.Console
+        |
+        |data Shape = Dot | Line(from: String, to: String)
+        |
+        |def draw(from: String, to: String, label: String) uses Console: Unit = printLine(label ++ from ++ to)
+        |
+        |def show(shape: Shape) uses Console: Unit = shape match {
+        |   case Dot            -> printLine("dot")
+        |   case Line(from, to) -> draw(from, to, "line ")
+        |}
+        |
+        |def main uses Console: Unit = {
+        |   show(Line("a", "b"))
+        |   show(Dot)
+        |}
+        |""".stripMargin
+    ).asserting(_ shouldBe "line ab\ndot")
+  }
+
   "an effectful definition returning a function" should "be called by a bare reference" in {
     compileAndRun(
       """import eliot.effect.Console
