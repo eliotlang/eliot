@@ -30,16 +30,23 @@ lives now.
    page depend on `v0.10`.
 4. ~~**The loud usability gaps**~~ — §8 items 21 and 15 closed 2026-10-13 (15 by option (a), the checker's hole).
    Building 15 found §8 items 24 (silent) and 25 (a runtime crash), both closed the same day.
-5. **Compile-track frames**, the first of §11's "Decided, not built"; it also closes §7 items 4 and 7.
+5. **Compile-track frames**, the first of §11's "Decided, not built"; it also closes §7 item 4 and §8 item 26.
+   Measured first (2026-10-13): no compile-track code in the corpus — this repository's tests and examples, eliot-test,
+   eliot-build and its launcher — ever takes an exit with two frames of one key installed, so item 26 is reachable
+   but met by nothing that exists. Measuring it found §8 item 27, which had kept every guarded return's fallback from
+   reducing at all, and §8 item 28. What is left to decide is how a frame reaches an operation on the compile track
+   (§11, "Compile-track frames").
 
 D20a, D20c and D3 stay open until decided; none blocks the steps above.
 
 **Open, in order of severity.**
 
-- **Silent:** none known (§8 items 14 and 24 closed 2026-10-13).
+- **Silent:** on the compile track a helper's own discharge catches its caller's effect, so a guarded return can
+  compute the wrong type and compile (§8 item 26). Nothing in the corpus meets it.
 - **Loud, at compile time:** a
   `catch` over a parameter spells its arguments (§7 item 2); a function-typed code parameter's own entries are never
-  supplied (§7 item 1); the compile track still finds a frame by its type (§7 item 7).
+  supplied (§7 item 1); a `where` written over a control effect, or naming `rangeWithin` itself, cannot be evaluated
+  (§8 item 28).
 - **Decided, not built:** parameterised named and ability implementations, user defaults with parameters,
   compile-track frames (§11, "Decided, not built").
 - **Undecided:** naming a set of effects in a clause (D20a), storing an effectful computation (D20c), `~`/`&` in user
@@ -737,7 +744,7 @@ separates the frames for free and lets each copy name the one effect it gives.
 
 **The compile track is not threaded.** Its `escape`/`withCell` intrinsics (`EffectIntrinsics`) are generic over a key,
 cannot name one effect, and find a frame by its type, the nearest of its instantiation. That track is never reported,
-so they state nothing (§7 item 7).
+so they state nothing (§8 item 26).
 
 ### 3.5 Discharge
 
@@ -960,10 +967,7 @@ Each is stated, fail-safe, and either has a plan entry or is a deliberate trade.
 6. **An effectful computation cannot be stored** (§2.3). Deliberate: what a frame-bound implementation captures
    cannot outlive its frame, and data describing the work covers the trampoline while keeping every step testable.
    Storing one handled where it runs is D20c; frame-free capture is §12's entry B.
-7. **The compile track finds a frame by its type.** Environments are threaded on the runtime track only (§3.4), so on
-   the compile track a helper's private discharge still catches its caller's effect of the same instantiation (§8
-   items 16–17 are closed on the runtime track). Whether any compile-time code in the tree meets that shape is
-   unmeasured; the decided fix is compile-track frames (§11).
+7. *Moved to §8 item 26 (2026-10-13)*: measured, it is not fail-safe — the wrong frame compiles.
 
 ---
 
@@ -978,6 +982,24 @@ items keep one line, and their full record is in git history (§13).
 
 4. **`runThrow("no failure")` is accepted** when the call spells the argument, although §2.2 lists an actual that
    raises nothing among the shapes rejected. Loud by construction (the argument is written by hand), so last.
+26. **On the compile track a helper's own discharge catches its caller's effect** — silent. Environments are threaded
+    on the runtime track only (§3.4), and the compile track's escape finds the nearest frame of its key, so:
+
+    ```eliot
+    def tryOr[A](body uses *: A, fallback: A) uses *: A = body else fallback
+    def pick[C: Bool]: tryOr(if(C, String[]), Int[]) else Bool[] = 42
+    ```
+
+    compiles, with `pick[false]: Int`: `tryOr`'s private `else` caught the `abort` its caller wrote, which D22 makes
+    invisible to it. The same shape in a body takes the caller's frame (§8 items 16–17). Measured 2026-10-13: no
+    compile-track code in the corpus takes an exit with two frames of one key installed. The fix is compile-track
+    frames (§11).
+28. **A `where` over a control effect cannot be evaluated** — loud: `where (if(c, true) else false)` and even
+    `where rangeWithin[0, 255](range(x))` written inline report *"Cannot evaluate the `where` precondition"*, while
+    the same predicate behind a helper (`withinByte`, the `WherePrecondition` example) works. The channel's reduction
+    of the `if` form's `^Where` companion answers a lambda still waiting for `if`'s `value`; the inline `rangeWithin`
+    form is undiagnosed. The `if` form is present at `v0.0`. A failing precondition also leaves a runnable jar behind (exit 1),
+    which is the build-artifact invariant's, not this document's.
 **Closed.**
 
 | # | defect | closed |
@@ -1006,6 +1028,7 @@ items keep one line, and their full record is in git history (§13).
 | 23 | a slot's named implementation's clause entry rode the caller whenever the definition declared the same *ability* at other arguments (eliot-test's `mocked`: `mockFileSystem`'s `Throw[IoError]` against `mocked`'s `Throw[AssertionError]`), and the definition was not held to giving it | 2026-10-13: supplied-versus-rides and the given-check compare by entry |
 | 24 | an ability member's own clause binding was dropped at dispatch: `printLine(describe("x")) with recordingConsole`, `describe` declaring `uses Console`, printed the implementation's output to the real console, since a dispatched reference kept only the implementation's own type arguments | 2026-10-13: the clause binders whose entries the member declares take the call's binding, per reference |
 | 25 | a definition specialised on a binding with an environment and on one without was emitted at one shared arity, so `shout("a")` beside `shout("b") with recordingConsole` failed at runtime with `NoSuchMethodError` (in `v0.10` too) | 2026-10-13: the backend caps each specialisation at its own natural arity; `used` caps at the widest |
+| 27 | a guarded return's `else` arm never reduced: `if(C, String[]) else Bool[]` at `C := false` read back as `abort(Default)`, since the signature's raw read dispatches no ability and the escape answered `Right` of the undispatched call (present at `v0.0`; a fallback reached only through a nested discharge happened to work) | 2026-10-13: a type-level read-back treats a result holding an ability method's call as stuck (`EscalatingReducer.typeLevelStuck`), so the raw read falls through and the checked one escalates to the callee reduced at its instantiation |
 
 Items 9–13 were found 2026-10-05 while designing D20 and share one cause: a row on a slot both *marked a block* and
 *minted bindings*, and nothing kept the block inside the call or checked that the callee had the binding it handed
@@ -1158,8 +1181,21 @@ From D20c option 5's decisions of 2026-10-12, in the order they would be built:
 
 - **Compile-track frames.** A frame becomes a `SemValue` with identity in `EffectIntrinsics`, and a signature's control
   effect (a guarded return's `if`/`else`/`raise`) is given by the guarded-return read, `GuardDischargeResolver`,
-  acting as the discharger. Closes §7 items 4 and 7. It must meet the rule that an escape whose result is neutral stays
+  acting as the discharger. Closes §7 item 4 and §8 item 26. It must meet the rule that an escape whose result is neutral stays
   stuck and fires again.
+
+  **Open within it (2026-10-13): how a frame reaches an operation.** On the runtime track a frame is a value passed
+  along the declared chain, at the `WovenValue` seam, over a `MonomorphicValue`. The compile track evaluates three
+  things that have no such form: a signature, in the checker, as a checked expression; a callee, as its
+  `CompilerMonomorphicValue`'s reduced body; and a `^Meta`/`^Where` companion, through the channel's
+  `EscalatingReducer`. A frame with identity cannot simply be dynamically scoped with closures capturing it: a slot that
+  supplies an entry hands the frame to the block it runs *through* every pass-through (`else` ⤳ `runAbort` ⤳ the
+  primitive), which a capture-at-creation rule loses — passing it along the chain is the threading again.
+  **Recommended:** the same threading on the compile track — record `MonomorphicEffects` there, thread a
+  `CompilerMonomorphicValue`'s reduced body as `EnvironmentThreading` threads a woven one, and let the signature twin
+  receive its control entries as hidden parameters that `GuardDischargeResolver` gives (a `runThrow` around the
+  signature, read as `Right(t)`/`Left(msg)`). The overlay's `Abort` then takes `AbortFrame` like the jvm's, its `Aborted`
+  marker goes, and a compile-track `Throw` joins it.
 - **Named implementations with parameters**, supplied at the `with`: `greet with scripted(List("Bob"))`, a double
   keeping state without a `Writer`. One construct chooses code and supplies arguments; no keyword marks such an
   implementation (it would mark a property nothing reads, and reinstate the family bit §3.5 keeps out).

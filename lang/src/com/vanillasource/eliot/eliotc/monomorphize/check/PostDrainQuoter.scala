@@ -114,14 +114,15 @@ class PostDrainQuoter(
     * hole (§3.5) — the shape falling out of the reduction rather than a per-shape branch.
     */
   def reduceSignatureToGround(expr: SemExpression, at: Sourced[?]): CompilerIO[GroundValue] =
-    reduceWithEscalation(monoEnv, expr).flatMap(reduced => orAbort(quoteDeep(reduced), at))
+    reduceWithEscalation(monoEnv, expr, EscalatingReducer.typeLevelStuck)
+      .flatMap(reduced => orAbort(quoteDeep(reduced), at))
 
   /** Non-aborting [[reduceSignatureToGround]]: the reduced ground signature, or [[None]] when it does not fully reduce
     * (a guard stuck on a leftover `GroundValue.Param`). The signature twin uses this so it can fall back to publishing
     * the guard's undischarged *carrier type* instead of aborting (signature-unification C2).
     */
   def reduceSignatureToGroundOption(expr: SemExpression): CompilerIO[Option[GroundValue]] =
-    reduceWithEscalation(monoEnv, expr).map(reduced => quoteDeep(reduced).toOption)
+    reduceWithEscalation(monoEnv, expr, EscalatingReducer.typeLevelStuck).map(reduced => quoteDeep(reduced).toOption)
 
   /** Quote a sourced [[SemExpression]] tree to a sourced [[MonomorphicExpression]] tree, applying the staging gate. */
   def quoteSourced(expr: Sourced[SemExpression]): CompilerIO[Sourced[MonomorphicExpression]] =
@@ -192,7 +193,11 @@ class PostDrainQuoter(
     * [[EscalatingReducer.escalatingLoop]], shared with the channel's post-monomorphize executor
     * ([[EscalatingReducer.reduceApplied]]) so the two are one mechanism, not siblings.
     */
-  private def reduceWithEscalation(env: Env, expr: SemExpression): CompilerIO[SemValue] = {
+  private def reduceWithEscalation(
+      env: Env,
+      expr: SemExpression,
+      stuck: (SemValue, MetaStore) => Boolean = EscalatingReducer.reducibleStuck
+  ): CompilerIO[SemValue] = {
     val resolved                                           = resolveAbilityRefs(expr)
     // Evaluate, then **renormalise** (re-firing a stuck native `add(2,1)` ⤳ `3`, descending under `VPi` binders) before
     // deciding the result is stuck — exactly what `quoteSem` does. Without this a native left stuck at evaluation time
@@ -206,7 +211,7 @@ class PostDrainQuoter(
         lookupTopDef,
         deep = true
       )
-    EscalatingReducer.escalatingLoop(metaStore, evalWith, escalationBindings(resolved, _))
+    EscalatingReducer.escalatingLoop(metaStore, evalWith, escalationBindings(resolved, _), stuck)
   }
 
   /** The in-checker instantiation of [[EscalatingReducer.escalate]]'s escalation fetch: escalate each value reference

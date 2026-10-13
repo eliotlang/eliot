@@ -7,6 +7,7 @@ import com.vanillasource.eliot.eliotc.monomorphize.domain.*
 import com.vanillasource.eliot.eliotc.monomorphize.domain.SemValue.*
 import com.vanillasource.eliot.eliotc.monomorphize.eval.{Evaluator, Quoter}
 import com.vanillasource.eliot.eliotc.monomorphize.fact.*
+import com.vanillasource.eliot.eliotc.monomorphize.processor.EscalatingReducer
 import com.vanillasource.eliot.eliotc.monomorphize.unify.{SemValuePrinter, UnifyError}
 import com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedExpression.SignatureView
 import com.vanillasource.eliot.eliotc.operator.fact.{OperatorResolvedExpression, OperatorResolvedValue}
@@ -209,8 +210,11 @@ class TypeStackLoop(
       // **effectful** inline guard (`if..else..raise`), whose `else`/`runAbort` need the checker's effect-lift `pure`
       // absent from the raw signature — so fall back there to the **checked** arrow chain via the escalation loop, which
       // reduces it to its `Right(t)` / `Left(msg)` verdict. No `sawGuard`: the shape falls out of which reduction settles.
+      // The raw evaluation dispatches no ability, so a raw result still holding an ability method's call is not a type
+      // either: `abort else Bool[]` raw-reduces to `abort(Default)`, which quotes, since the escape answers `Right` of
+      // anything that is not a neutral. Accepting it lost every guard's fallback; the checked chain dispatches it.
       raw        <- checker.evalExpr(bodyExpr.value)
-      groundSig  <- quoter.quoteSemOption(raw) match {
+      groundSig  <- quoter.quoteSemOption(raw).filterNot(EscalatingReducer.holdsAbilityCall) match {
                       case Some(ground) => liftF(ground.pure[CompilerIO])
                       case None         =>
                         liftF(quoter.reduceSignatureToGroundOption(checked)).flatMap {

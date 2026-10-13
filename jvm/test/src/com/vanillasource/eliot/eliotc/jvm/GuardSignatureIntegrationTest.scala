@@ -66,6 +66,38 @@ class GuardSignatureIntegrationTest extends FullIntegrationTest {
     ).asserting(rejects)
   }
 
+  // An `else` arm is the guard's fallback *type*. The raw read of a signature dispatches no ability, and it once
+  // answered the undispatched `abort` itself (`abort(Default)`), so every unsatisfied guard lost its fallback.
+  "an unsatisfied `if..else` guard" should "type as its fallback" in {
+    compileAndRun(
+      """import eliot.effect.Console
+        |
+        |def pick[C: Bool]: if(C, String[]) else Bool[] = true
+        |
+        |def main uses Console: Unit = printLine(if(pick[false], "fallback") else "payload")""".stripMargin
+    ).asserting(_ shouldBe "fallback")
+  }
+
+  "a satisfied `if..else` guard" should "type as its payload" in {
+    compileAndRun(
+      """import eliot.effect.Console
+        |
+        |def pick[C: Bool]: if(C, String[]) else Bool[] = "payload"
+        |
+        |def main uses Console: Unit = printLine(pick[true])""".stripMargin
+    ).asserting(_ shouldBe "payload")
+  }
+
+  "a guard whose `abort` is reached through a callee's body" should "type as its fallback" in {
+    compileAndRun(
+      """import eliot.effect.Console
+        |
+        |def pick[C: Bool]: orAbort(fold(C, Some(String[]), None)) else Bool[] = true
+        |
+        |def main uses Console: Unit = printLine(if(pick[false], "fallback") else "payload")""".stripMargin
+    ).asserting(_ shouldBe "fallback")
+  }
+
   // A compile-time guard written through a *user-defined* pipe and a user guard combinator (effect-lift Step 5): the
   // pipe and `guardOr` are ordinary user source, compiled on the compiler track like any other value; the checker's
   // effect lift elaborates their `{Throw[String]}` path per instantiation and the signature still reduces to

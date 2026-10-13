@@ -142,6 +142,36 @@ object EscalatingReducer {
     case other                                                  => Quoter.quote(0, other, metaStore).isLeft
   }
 
+  /** [[reducibleStuck]] for a **type-level** read-back (a signature): stuck also when the result quotes but still holds
+    * an ability method's call ([[holdsAbilityCall]]). A body reached transitively — `if`'s, inside a guarded return —
+    * is evaluated generically, where its `abort` is not dispatched; the escape around it answers `Right` of the
+    * undispatched call, which quotes. Treating that as stuck escalates to `if` reduced at its instantiation, where the
+    * call is dispatched. A runtime track signature never holds such a call, so the extra quote is the only cost.
+    */
+  def typeLevelStuck(forced: SemValue, metaStore: MetaStore): Boolean = forced match {
+    case SemValue.VLam(_, _)                                    => false
+    case SemValue.VNeutral(SemValue.NeutralHead.Param(_, _), _) => false
+    case SemValue.VNeutral(SemValue.NeutralHead.Fresh(_, _), _) => false
+    case other                                                  =>
+      Quoter.quote(0, other, metaStore) match {
+        case Left(_)   => true
+        case Right(gv) => holdsAbilityCall(gv)
+      }
+  }
+
+  /** Whether a ground value holds an ability **method**'s call anywhere: an evaluation that dispatched nothing, not a
+    * value. An ability's *marker* is named after the ability itself and is not a call.
+    */
+  def holdsAbilityCall(gv: GroundValue): Boolean = gv match {
+    case GroundValue.Structure(name, args, _) =>
+      (name.name.qualifier match {
+        case Qualifier.Ability(ability) => name.name.name != ability
+        case _                          => false
+      }) || args.exists(holdsAbilityCall)
+    case GroundValue.Param(_, args, _)        => args.exists(holdsAbilityCall)
+    case _                                    => false
+  }
+
   /** Fetch the *reduced-at-instantiation* binding for each `candidate` value reference not yet escalated (`already`)
     * and not an ancestor on the active fact-request chain (would dead-lock). Each fetched form is post-processed by
     * `wrap` (the in-checker read-back wraps in ignore-lambdas to absorb the reference's type arguments; the
