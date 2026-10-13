@@ -54,6 +54,21 @@ class EnvironmentIntegrationTest extends FullIntegrationTest {
     ).asserting(_ shouldBe "refused Bob")
   }
 
+  // docs/effects.md §8 item 25: `shout` on `recordingConsole` takes the implementation's frame as a leading parameter
+  // and `shout` on the default does not; the two were emitted at one shared arity, and the wider one's call site linked
+  // to a method that did not exist (`NoSuchMethodError`).
+  it should "leave the definition callable both ways in one program" in {
+    compileAndRun(
+      s"""import eliot.effect.Console
+         |$recordingConsole
+         |def shout(s: String) uses Console: Unit = printLine(s ++ "!")
+         |def main uses Console: Unit = {
+         |   shout("a")
+         |   printLine(runWriterToLog(shout("b") with recordingConsole))
+         |}""".stripMargin
+    ).asserting(_ shouldBe "a!\nb!;")
+  }
+
   it should "keep writing into that discharge through a definition that receives it" in {
     compileAndRun(
       s"""import eliot.effect.Console

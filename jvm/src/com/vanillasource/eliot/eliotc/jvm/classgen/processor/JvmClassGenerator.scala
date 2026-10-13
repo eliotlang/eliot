@@ -27,6 +27,7 @@ import com.vanillasource.eliot.eliotc.module.fact.{
   ValueFQN,
   WellKnownTypes
 }
+import com.vanillasource.eliot.eliotc.monomorphize.channel.WovenValue
 import com.vanillasource.eliot.eliotc.monomorphize.fact.GroundValue
 import com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedValue
 import com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedExpression.SignatureView
@@ -401,7 +402,7 @@ class JvmClassGenerator extends SingleKeyTypeProcessor[GeneratedModule.Key] with
           // representations give different descriptors and so legitimately overload the same mangled name.
           result <- distinctTypeArgs.foldLeftM((Seq.empty[ClassFile], 0, Set.empty[String])) {
                       case ((accFiles, lambdaCount, seen), typeArgs) =>
-                        arities.foldLeftM((accFiles, lambdaCount, seen)) {
+                        instanceArities(vfqn, typeArgs, arities).flatMap(_.foldLeftM((accFiles, lambdaCount, seen)) {
                           case ((innerAccFiles, innerLambdaCount, innerSeen), arity) =>
                             for {
                               uncurriedValue <- getFactOrAbort(UncurriedMonomorphicValue.Key(vfqn, typeArgs, arity))
@@ -415,7 +416,7 @@ class JvmClassGenerator extends SingleKeyTypeProcessor[GeneratedModule.Key] with
                                       (innerAccFiles ++ files, newLambdaCount, innerSeen + key)
                                     }
                             } yield next
-                        }
+                        })
                     }
           (classFiles, _, _) = result
           // Check if this is the main function
@@ -426,6 +427,17 @@ class JvmClassGenerator extends SingleKeyTypeProcessor[GeneratedModule.Key] with
           _                 <- createApplicationMain(vfqn, mainClassGenerator).whenA(isMain(highestUncurried))
         } yield classFiles
   }
+
+  /** The arities one instance is emitted at: the value's recorded direct-call arities, each capped at **this
+    * instance's** natural arity — the same cap a call site applies (`ExpressionCodeGenerator`'s direct-call arity).
+    * Instances of one value may differ in natural arity: a specialisation whose binding carries an environment takes the
+    * frame as a leading parameter (`docs/effects.md` §3.4), so a cap shared across instances would emit the wider one
+    * below the arity its call sites use. A body-less value has no natural arity and keeps every recorded arity.
+    */
+  private def instanceArities(vfqn: ValueFQN, typeArgs: Seq[GroundValue], arities: Seq[Int]): CompilerIO[Seq[Int]] =
+    getFactIfProduced(WovenValue.Key(vfqn, typeArgs)).map(woven =>
+      woven.flatMap(_.naturalArity).fold(arities)(cap => arities.map(_ min cap).distinct)
+    )
 
   /** A stable key for a generated method's emitted signature: the mangled name plus the lowered parameter and return
     * representations (i.e. its JVM descriptor). Two monomorphic instantiations sharing this key are byte-identical and

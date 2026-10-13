@@ -169,6 +169,39 @@ class UsesClauseIntegrationTest extends FullIntegrationTest {
       .asserting(_ shouldBe "describing\nx")
   }
 
+  // docs/effects.md §8 item 24: the member's own `Console` binding, written at the call, used to be dropped at dispatch,
+  // so the implementation printed to the real console under any `with`.
+  it should "run on the implementation a `with` binds, not the default" in {
+    compileAndRun(
+      describe ++
+        """implement recordingConsole: Console {
+          |   def printLine(s: String) uses Writer[String]: Unit = tell(s ++ ";")
+          |
+          |   def readLine: Option[String] = None
+          |}
+          |
+          |def main uses Console: Unit = printLine(runWriterToLog(printLine(describe("x")) with recordingConsole))""".stripMargin
+    ).asserting(_ shouldBe "describing;x;")
+  }
+
+  // One resolution serves every reference at the same ability-level arguments; the member's own bindings are each
+  // reference's, so the two calls below run on two implementations of `Console`.
+  it should "run each call on its own binding where two calls share a resolution" in {
+    compileAndRun(
+      describe ++
+        """implement recordingConsole: Console {
+          |   def printLine(s: String) uses Writer[String]: Unit = tell(s ++ ";")
+          |
+          |   def readLine: Option[String] = None
+          |}
+          |
+          |def main uses Console: Unit = {
+          |   printLine(describe("a"))
+          |   printLine(runWriterToLog(printLine(describe("b")) with recordingConsole))
+          |}""".stripMargin
+    ).asserting(_ shouldBe "describing\na\ndescribing;b;")
+  }
+
   it should "raise into the caller's frame with its type argument inferred" in {
     compileAndRun(
       """import eliot.effect.Console

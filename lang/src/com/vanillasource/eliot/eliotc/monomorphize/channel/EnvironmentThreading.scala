@@ -11,7 +11,7 @@ import com.vanillasource.eliot.eliotc.module.fact.{
   ValueFQN,
   WellKnownTypes
 }
-import com.vanillasource.eliot.eliotc.monomorphize.check.ImplementationBinding
+import com.vanillasource.eliot.eliotc.monomorphize.check.{DeclaredEntries, ImplementationBinding}
 import com.vanillasource.eliot.eliotc.monomorphize.fact.MonomorphicEffects.Entry
 import com.vanillasource.eliot.eliotc.monomorphize.fact.{GroundValue, MonomorphicEffects, MonomorphicExpression, MonomorphicValue}
 import com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedExpression.SignatureView
@@ -322,10 +322,7 @@ object EnvironmentThreading {
     private def memberOf(clause: ValueFQN, ability: AbilityFQN): ValueFQN =
       ValueFQN(ability.moduleName, QualifiedName(clause.name.name, Qualifier.Ability(ability.abilityName)))
 
-    /** An effect entry as its declaration spells it: the ability and its arguments, rendered. What compares a clause's
-      * row with its member's, before either is specialised.
-      */
-    private type Declared = (AbilityFQN, Seq[String])
+    private type Declared = DeclaredEntries.Declared
 
     /** The entries an ability member declares beyond its own ability — `FileSystem.readFile`'s `{Throw[IoError]}`. Each
       * call performs them on the caller's binding, so their frames come from the call site, never from the
@@ -353,20 +350,10 @@ object EnvironmentThreading {
 
     private val memberRows: mutable.Map[ValueFQN, Set[Declared]] = mutable.Map.empty
 
-    /** The effect entries a definition performs itself, by the index of the binder each binds — read off the constraint
-      * on the binder, which an entry an `implement` clause only carries for a sibling does not have.
-      */
+    /** The effect entries a definition performs itself, by the index of the binder each binds ([[DeclaredEntries]]). */
     private def declaredEntries(vfqn: ValueFQN): CompilerIO[Map[Int, Declared]] =
-      getFactIfProduced(OperatorResolvedValue.Key(vfqn, Platform.Runtime)).map(_.fold(Map.empty[Int, Declared]) { orv =>
-        val binders = SignatureView.of(orv.signature).binders.map(_.name.value)
-        val row     = orv.effectRow.returnEffects.map(_.abilityFQN).toSet
-        orv.paramConstraints.values.flatten.flatMap { constraint =>
-          constraint.typeArgs.headOption
-            .collect { case OperatorResolvedExpression.ParameterReference(name) => binders.indexOf(name.value) }
-            .filter(index => index >= 0 && row.contains(constraint.abilityFQN))
-            .map(_ -> (constraint.abilityFQN, constraint.typeArgs.drop(1).map(_.render)))
-        }.toMap
-      })
+      getFactIfProduced(OperatorResolvedValue.Key(vfqn, Platform.Runtime))
+        .map(_.fold(Map.empty[Int, Declared])(DeclaredEntries.of))
 
     /** The effect entries an implementation's **environment** holds: those one of its clauses performs itself while the
       * member it implements does not declare them. `recordingConsole`'s `printLine` performs `Writer[String]`, which

@@ -9,7 +9,7 @@ import com.vanillasource.eliot.eliotc.monomorphize.eval.{Evaluator, Quoter}
 import com.vanillasource.eliot.eliotc.monomorphize.fact.{BodyValueReferences, CompilerMonomorphicValue, GroundValue}
 import com.vanillasource.eliot.eliotc.monomorphize.unify.UnifyResult
 import com.vanillasource.eliot.eliotc.platform.Platform
-import com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedExpression
+import com.vanillasource.eliot.eliotc.operator.fact.{OperatorResolvedExpression, OperatorResolvedValue}
 import com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedExpression.SignatureView
 import com.vanillasource.eliot.eliotc.processor.CompilerIO.*
 import com.vanillasource.eliot.eliotc.saturate.fact.SaturatedValue
@@ -59,11 +59,20 @@ class Checker(
   /** The ability-resolution saturation concern: discovering ability-qualified references and resolving each to its
     * concrete impl. A non-equality *saturation* pass, kept out of this checker's definitional equality concern. Called
     * only from [[TypeStackLoop]] (`processIO` seeds refs via `collectAbilityRefs`; the `resolve-abilities` post-drain
-    * pass drives `resolveAbilities`). Constructed with the two CompilerIO primitives it needs plus the platform. See
+    * pass drives `resolveAbilities`). Constructed with the CompilerIO primitives it needs plus the platform. See
     * [[AbilityResolver]].
     */
   private[check] val abilityResolver: AbilityResolver =
-    new AbilityResolver(resolveAbility, platform)
+    new AbilityResolver(resolveAbility, bindingForwards, platform)
+
+  /** Which binders of `method` take the call's binding when `member` dispatches to it, off the two declarations — both
+    * referenced and resolved, so present. See [[DeclaredEntries.forwarded]].
+    */
+  private def bindingForwards(member: ValueFQN, method: ValueFQN): CompilerIO[Seq[(Int, Int)]] =
+    for {
+      memberValue <- getFactOrAbort(OperatorResolvedValue.Key(member, platform))
+      clauseValue <- getFactOrAbort(OperatorResolvedValue.Key(method, platform))
+    } yield DeclaredEntries.forwarded(memberValue, clauseValue)
 
   /** Ensure a NativeBinding is in the cache, fetching it via CompilerIO if needed. */
   private def ensureBinding(vfqn: ValueFQN): CheckIO[Option[SemValue]] =

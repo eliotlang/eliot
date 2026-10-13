@@ -29,16 +29,14 @@ lives now.
    the first eliot-test's merged `whenFailing` compiles on. eliot-test `v0.4`, eliot-build and the docs site's install
    page depend on `v0.10`.
 4. ~~**The loud usability gaps**~~ — §8 items 21 and 15 closed 2026-10-13 (15 by option (a), the checker's hole).
-   Building 15 found **§8 item 24**, silent: an ability member's own clause binding is dropped at dispatch. It is
-   now the first thing to do, ahead of step 5.
+   Building 15 found §8 items 24 (silent) and 25 (a runtime crash), both closed the same day.
 5. **Compile-track frames**, the first of §11's "Decided, not built"; it also closes §7 items 4 and 7.
 
 D20a, D20c and D3 stay open until decided; none blocks the steps above.
 
 **Open, in order of severity.**
 
-- **Silent:** an ability member's own clause entry runs its implementation on the default, whatever the call wrote
-  (§8 item 24).
+- **Silent:** none known (§8 items 14 and 24 closed 2026-10-13).
 - **Loud, at compile time:** a
   `catch` over a parameter spells its arguments (§7 item 2); a function-typed code parameter's own entries are never
   supplied (§7 item 1); the compile track still finds a frame by its type (§7 item 7).
@@ -713,8 +711,10 @@ as in Koka. That is the decided meaning of listing (D22): a listed effect is the
 - an `implement` clause gets **no frame for an entry it only carries** for a sibling (`ImplementationRows`' union):
   its binder keeps its positional slot but no constraint (`FunctionDefinition.carriedEffects`);
 - an effect a **member declares** (`FileSystem.readFile`'s `uses Throw[IoError]`) is per call: its frame comes from the
-  call site, and an implementation's environment holds only the effects a clause performs that its member does not
-  declare;
+  call site, and so does its binding — dispatch hands the implementation's method the call's binding at each clause
+  binder whose entry the member declares, compared as the declarations spell it (`DeclaredEntries.forwarded`, recorded
+  per resolution by `AbilityResolver`, applied per reference by `PostDrainQuoter`) — and an implementation's
+  environment holds only the effects a clause performs that its member does not declare;
 - supplied-versus-rides is decided **as the declaration spells it**, not at ground arguments (§2.2), and two frames
   that coincide at one depth are a use-site error;
 - frame types are public, body-less, constructor-less types (`ThrowFrame`, `StateCell`, …), because `private` reaches
@@ -972,20 +972,6 @@ items keep one line, and their full record is in git history (§13).
 
 4. **`runThrow("no failure")` is accepted** when the call spells the argument, although §2.2 lists an actual that
    raises nothing among the shapes rejected. Loud by construction (the argument is written by hand), so last.
-24. **An ability member's own clause binding is dropped at dispatch.** With `ability Describe[T] { def describe(t: T)
-    uses Console: String }` and an anonymous `implement Describe[String]` whose method prints, `printLine(describe("x"))
-    with recordingConsole` prints `describing` to the **real** console and only `x` to the double — spelled
-    `describe[String]` or not, so it predates item 15's fix, which only made the inferred spelling reachable. The write
-    puts `recordingConsole` at the member reference's own binder, but `AbilityResolver` records a resolution as the
-    implementation's method at the **implementation's** type arguments alone, and `PostDrainQuoter.resolveIfAbility`
-    rewrites the reference to exactly that, so the method-level arguments — the member's own bindings — are dropped and
-    the implementation method's binder for `Console` is left to `Default`. A control effect is unaffected, since a
-    member-declared effect's *frame* comes from the call site (§3.4) and a control effect has one implementation;
-    `FileSystem.readFile`'s `Throw[IoError]` works. Silent (standing rule 8), so first. The fix maps a dispatched
-    reference's method-level arguments onto the implementation method's binders for the entries the member declares,
-    which is a change to dispatch: §3.4's "an implementation's environment holds only the effects a clause performs
-    that its member does not declare" already says the member's are the call's.
-
 **Closed.**
 
 | # | defect | closed |
@@ -1012,6 +998,8 @@ items keep one line, and their full record is in git history (§13).
 | 21 | a definition the effect check rejected was "Name not defined." at every caller | 2026-10-13: the checker names it — *"Cannot use 'X' here: its own definition was rejected."* |
 | 22 | a body `with`'s implementation was rejected below a nearer discharge of the same effect at *other* arguments (eliot-build's `CacheTests`: `offline`'s `Throw[NotFetched]` read as intercepting `tableGit`'s `Throw[GitError]`; its `Writer[List[TestResult]]` error was a knock-on) | 2026-10-13: the clause check keys by entry, as frames are chosen |
 | 23 | a slot's named implementation's clause entry rode the caller whenever the definition declared the same *ability* at other arguments (eliot-test's `mocked`: `mockFileSystem`'s `Throw[IoError]` against `mocked`'s `Throw[AssertionError]`), and the definition was not held to giving it | 2026-10-13: supplied-versus-rides and the given-check compare by entry |
+| 24 | an ability member's own clause binding was dropped at dispatch: `printLine(describe("x")) with recordingConsole`, `describe` declaring `uses Console`, printed the implementation's output to the real console, since a dispatched reference kept only the implementation's own type arguments | 2026-10-13: the clause binders whose entries the member declares take the call's binding, per reference |
+| 25 | a definition specialised on a binding with an environment and on one without was emitted at one shared arity, so `shout("a")` beside `shout("b") with recordingConsole` failed at runtime with `NoSuchMethodError` (in `v0.10` too) | 2026-10-13: the backend caps each specialisation at its own natural arity; `used` caps at the widest |
 
 Items 9–13 were found 2026-10-05 while designing D20 and share one cause: a row on a slot both *marked a block* and
 *minted bindings*, and nothing kept the block inside the call or checked that the callee had the binding it handed

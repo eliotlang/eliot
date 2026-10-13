@@ -351,6 +351,7 @@ class TypeStackLoop(
       state.unifier.metaStore,
       state.abilityResolutions,
       state.abilityArities,
+      state.bindingForwards,
       monoEnv,
       fqn =>
         implBindings.get(fqn).orElse(abilityMethodBindings.get(fqn)).orElse(state.bindingCache.getOrElse(fqn, None)),

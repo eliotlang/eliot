@@ -47,6 +47,7 @@ class PostDrainQuoter(
     metaStore: MetaStore,
     abilityResolutions: Map[CheckState.AbilityResolutionKey, (ValueFQN, Seq[GroundValue])],
     abilityArities: Map[ValueFQN, Int],
+    bindingForwards: Map[(ValueFQN, ValueFQN), Seq[(Int, Int)]],
     monoEnv: Env,
     lookupTopDef: ValueFQN => Option[SemValue],
     platform: Platform,
@@ -257,7 +258,10 @@ class PostDrainQuoter(
         case Some((implFqn, implTypeArgs)) =>
           SemExpression(
             se.expressionType,
-            SemExpression.ValueReference(vfqn.as(implFqn), implTypeArgs.map(Evaluator.groundToSem))
+            SemExpression.ValueReference(
+              vfqn.as(implFqn),
+              forwarded(vfqn.value, implFqn, implTypeArgs.map(Evaluator.groundToSem), typeArgs)
+            )
           )
         case None                          => se
       }
@@ -545,7 +549,7 @@ class PostDrainQuoter(
           case Some((implFqn, implTypeArgs)) =>
             MonomorphicExpression.MonomorphicValueReference(
               vfqn.as(implFqn),
-              implTypeArgs,
+              forwarded(vfqn.value, implFqn, implTypeArgs, typeArgs),
               dispatchOf(AbilityFQN(vfqn.value.moduleName, abilityName), abilityArgs)
             )
           case None                          =>
@@ -581,6 +585,16 @@ class PostDrainQuoter(
       .toList
       .traverse(a => Quoter.quote(0, a, metaStore))
       .toOption
+
+  /** The implementation method's type arguments with the **call's** bindings at the clause binders that take them
+    * ([[CheckState.bindingForwards]]): `describe(t: T) uses Console` under `with recordingConsole` runs the
+    * implementation's `printLine` on `recordingConsole`, not on what the implementation was resolved with.
+    */
+  private def forwarded[A](member: ValueFQN, method: ValueFQN, implArguments: Seq[A], callArguments: Seq[A]): Seq[A] =
+    bindingForwards.getOrElse((member, method), Seq.empty).foldLeft(implArguments) {
+      case (acc, (clauseIndex, memberIndex)) =>
+        callArguments.lift(memberIndex).filter(_ => acc.isDefinedAt(clauseIndex)).fold(acc)(acc.updated(clauseIndex, _))
+    }
 
   private def lookupResolution(
       vfqn: Sourced[ValueFQN],
