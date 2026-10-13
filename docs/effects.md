@@ -19,6 +19,21 @@ decision changes Part I when it is *built*; until then it lives in §11. How the
 the option debate of D20c, the work-list logs — is in git history, and §13 maps every citation to where its content
 lives now.
 
+**Next, in order** (2026-10-13). The open items below say *what* is open; this says what to do first.
+
+1. **§8 item 14** — an unapplied reference to a `uses` definition passes as a value. The one silent defect left, which
+   standing rule 8 ranks first; the fix sits beside `Scope.enterValue`.
+2. **Make eliot-build's suite compile again.** Its `CacheTests` use seven `with`s below a nearer `catch` of `Throw`
+   (likely its test code to change, in eliot-build); the `Writer[List[TestResult]]` resolution failure in eliot-test's
+   `Test.els`, which appears only together with eliot-build, is untraced and may be the compiler's.
+3. **Release the next `v0` tag**, the first carrying `uses`, then move eliot-test's and eliot-build's `dep` lines and
+   the docs site's install page to it.
+4. **The loud usability gaps**: §8 item 21 (a rejected definition is "Name not defined." at its callers) and item 15
+   (an effectful ability method needs its type arguments spelled).
+5. **Compile-track frames**, the first of §11's "Decided, not built"; it also closes §7 items 4 and 7.
+
+D20a, D20c and D3 stay open until decided; none blocks the steps above.
+
 **Open, in order of severity.**
 
 - **Silent:** an unapplied reference to a `uses` definition passes as a value (§8 item 14).
