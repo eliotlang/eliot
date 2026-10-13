@@ -69,6 +69,20 @@ class EnvironmentIntegrationTest extends FullIntegrationTest {
     ).asserting(_ shouldBe "a!\nb!;")
   }
 
+  // The same two instances met in the other order: the backend probed the first one met for `main` at the widest
+  // arity any instance takes, which only the frame-taking one has ("Could not extract parameters.").
+  it should "leave the definition callable both ways when the frame-taking use comes first" in {
+    compileAndRun(
+      s"""import eliot.effect.Console
+         |$recordingConsole
+         |def shout(s: String) uses Console: Unit = printLine(s ++ "!")
+         |def main uses Console: Unit = {
+         |   printLine(runWriterToLog(shout("b") with recordingConsole))
+         |   shout("a")
+         |}""".stripMargin
+    ).asserting(_ shouldBe "b!;\na!")
+  }
+
   it should "keep writing into that discharge through a definition that receives it" in {
     compileAndRun(
       s"""import eliot.effect.Console

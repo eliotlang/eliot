@@ -419,10 +419,12 @@ class JvmClassGenerator extends SingleKeyTypeProcessor[GeneratedModule.Key] with
                         })
                     }
           (classFiles, _, _) = result
-          // Check if this is the main function
+          // Check if this is the main function. The widest recorded arity is capped at the probed instance's own natural
+          // arity, since another instance may be the one that takes it (a frame parameter, `instanceArities`).
           highestTypeArgs    = distinctTypeArgs.headOption.getOrElse(Seq.empty)
+          highestArity      <- instanceArities(vfqn, highestTypeArgs, stats.highestArity.toSeq)
           highestUncurried  <- getFactOrAbort(
-                                 UncurriedMonomorphicValue.Key(vfqn, highestTypeArgs, stats.highestArity.getOrElse(0))
+                                 UncurriedMonomorphicValue.Key(vfqn, highestTypeArgs, highestArity.headOption.getOrElse(0))
                                )
           _                 <- createApplicationMain(vfqn, mainClassGenerator).whenA(isMain(highestUncurried))
         } yield classFiles
