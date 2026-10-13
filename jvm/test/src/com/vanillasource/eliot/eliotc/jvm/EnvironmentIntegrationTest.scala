@@ -41,7 +41,7 @@ class EnvironmentIntegrationTest extends FullIntegrationTest {
     ).asserting(_ shouldBe "Bob;[];")
   }
 
-  "a caller's raise" should "reach the caller's catch, not a helper's own (docs/effects.md §8 item 14)" in {
+  "a caller's raise" should "reach the caller's catch, not a helper's own (docs/effects.md §8 item 16)" in {
     compileAndRun(
       """import eliot.effect.Console
         |
@@ -59,7 +59,7 @@ class EnvironmentIntegrationTest extends FullIntegrationTest {
     ).asserting(_ shouldBe "caller caught: boom")
   }
 
-  "a caller's putState" should "write the caller's state, not a helper's own (docs/effects.md §8 item 15)" in {
+  "a caller's putState" should "write the caller's state, not a helper's own (docs/effects.md §8 item 17)" in {
     compileAndRun(
       """import eliot.effect.Console
         |

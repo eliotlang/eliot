@@ -533,11 +533,11 @@ a **phantom generic binder** whose value is an **implementation name**, written 
 syntax-directed pass. Clauses and implementations are two different things on purpose, and keeping them apart is
 what makes effects free of special cases. Authoritative design: `docs/effects.md` — Part I states the shipped
 design (§1 the user rules, §2 the surface, §3 the mechanism, §4 the scope check, §5 the standing rules, §6 testing,
-§7 the live limitations); Part II is what is left (§8 where the tree diverges from Part I, §9 the binding binder
-marked by its declared type `Implementation[A]`, §10 the gate and method, §11 the open and recently built decisions —
-**D20** "effects are parameters" and **D21** "purity is spelled by absence" are the surface below, **D20c option 5**
-the environment threading); Part III holds §12's **do-not-re-propose** list and the provenance for a comment citing a
-retired document or plan record (§13).
+§7 the live limitations; §3.4 is the primitives and the environment threading); Part II is what is left (§8 where
+the tree diverges from Part I, §9 the binding binder marked by its declared type `Implementation[A]`, §10 the gate and
+method, §11 the open and decided-but-unbuilt decisions — **D22** handler or pass-through, **D20a** naming a set of
+effects, **D20c** storing an open computation); Part III holds §12's **do-not-re-propose** list and §13, which maps
+every citation of a condensed record (**D20**/**D21** rules and steps, **D20c option 5**, **(b)**) to Part I.
 **There is no carrier, no monad, no `Id`, and nothing to infer** — if you are reading code or a comment that mentions
 one, it is history.
 
@@ -628,11 +628,12 @@ order at the run site decides interaction** — `runStateToPair(s, runThrow(c))`
 c))` is the difference between state surviving a `raise` and not — and there is no canonical form for the compiler
 to choose. A definition may discharge the **very effect it declares**, which is what lets `describedAs` rewrite its
 body's failure message: a slot entry the definition also declares **rides by code and is given by frame** — the
-block's binding is the caller's, its frame the one where it runs (D20c's decided (b)) — so running the block performs
+block's binding is the caller's, its frame the one where it runs (D20c's decided (b)); whether a slot listing such an entry
+is therefore always a handler is the open **D22** — so running the block performs
 that entry.
 
-**An implementation is code plus an environment, passed and never searched for** (D20c option 5, built on the runtime
-track). The code is the binding, as above. The environment — an escape frame, a cell, an anonymous implementation's
+**An implementation is code plus an environment, passed and never searched for** (`docs/effects.md` §3.4; D20c option 5,
+built on the runtime track). The code is the binding, as above. The environment — an escape frame, a cell, an anonymous implementation's
 own parameters (`implement[S] State[S](cell: StateCell[S])`, recorded on a body-less `$parameters` declaration,
 `ast/fact/ImplementationParameters`) — is threaded **after monomorphization**, at the `WovenValue` seam
 (`monomorphize/channel/EnvironmentThreading`), whose ground re-check checks the plumbing: each value mono records its
@@ -711,7 +712,7 @@ and an ambient name colliding with a local declaration or explicit import is sil
 the prelude can grow without breaking code), while explicit imports keep the strict shadowing errors.
 
 **What has no spelling, on purpose.** A stored effectful computation (a field holds a value; store data and interpret
-it — D21 "Storing effectful computations"), a native that keeps a callback (the platform's axiom), and `uses *` on a
+it — `docs/effects.md` §2.3, and D20c for one handled where it runs), a native that keeps a callback (the platform's axiom), and `uses *` on a
 definition (a body has no caller's text to be open to). One gap is carried, fail-safe: a function-typed code
 parameter's own entries (`f uses *, E: A => B`) land on the codomain the callee never supplies, so code using `E`
 there is rejected.
