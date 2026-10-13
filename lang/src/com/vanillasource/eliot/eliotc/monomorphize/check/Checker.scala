@@ -351,7 +351,7 @@ class Checker(
 
     case OperatorResolvedExpression.ValueReference(vfqn, typeArgs) =>
       for {
-        explicitTypeArgs <- typeArgs.traverse(ta => evalExpr(ta.value))
+        explicitTypeArgs <- typeArgs.traverse(explicitTypeArgument)
         result           <- inferValueReference(tm, vfqn, explicitTypeArgs)
       } yield result
 
@@ -380,6 +380,17 @@ class Checker(
     case OperatorResolvedExpression.FunctionLiteral(_, None, _) =>
       liftF(compilerError(tm.as("Cannot infer type of unannotated lambda.")) >> abort)
   }
+
+  /** One written type argument: evaluated, except the `row` phase's hole ([[WellKnownTypes.inferredTypeArgumentFQN]]),
+    * which is a fresh metavariable — solved from the call's arguments like a binder past the end of the list.
+    */
+  private def explicitTypeArgument(typeArg: Sourced[OperatorResolvedExpression]): CheckIO[SemValue] =
+    typeArg.value match {
+      case OperatorResolvedExpression.ValueReference(name, Seq()) if name.value === WellKnownTypes.inferredTypeArgumentFQN =>
+        freshMeta.widen[SemValue]
+      case other                                                                                                       =>
+        evalExpr(other)
+    }
 
   /** Infer a value reference's type from its saturated signature, applying the given (already-evaluated) explicit type
     * arguments.

@@ -203,12 +203,12 @@ class EffectShapeCompileTest extends AsyncFlatSpec with AsyncIOSpec with Matcher
     compileClasses(parameterisedAbilityMemberRow).asserting(_ should not be empty)
   }
 
-  // The other half of that shape, and why the declaration-level rejection became a call-level one: a type-argument
-  // list has no hole, so a call that leaves `T` to inference leaves the `{Console}` binding at index 2 unreachable.
-  // Dropping it silently would run the member on the platform's default with no error at all.
-  it should "reject a call to such a member that leaves its type argument to inference" in {
-    compileErrors(parameterisedAbilityMemberRow.replace("describe[String](", "describe("))
-      .asserting(_.mkString should include("Cannot pass the implementation of 'Console' to 'describe'"))
+  // The other half of that shape (`docs/effects.md` §8 item 15): a call that leaves `T` to inference. The write puts
+  // the checker's hole at index 1 (`eliot.lang.Implementation::Inferred`), so the `Console` binding at index 2 is still
+  // written, and the checker infers `T` as it infers a binder left off the end of the list.
+  it should "compile a call to such a member that leaves its type argument to inference" in {
+    compileClasses(parameterisedAbilityMemberRow.replace("describe[String](", "describe("))
+      .asserting(_ should not be empty)
   }
 
   it should "report a payload-slot mismatch (pure actual not fitting, no capture)" in {

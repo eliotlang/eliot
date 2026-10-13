@@ -135,6 +135,9 @@ object BindingWriter {
     *   regions, and both because something other than this definition's row answers for the effect: a platform **run
     *   boundary**, where every effect's chain ends (§9.5), and a **signature**, whose `raise`/`abort` is the guard
     *   channel's vocabulary and is discharged by the guarded-return read, not performed at runtime at all.
+    * @param signature
+    *   Whether this is a signature, whose references are evaluated rather than checked, so a type-argument list there
+    *   may not hold the checker's hole ([[Writer.mergeTypeArguments]]).
     */
   private case class Scope(
       bindings: Seq[Binding],
@@ -144,7 +147,8 @@ object BindingWriter {
       captured: Set[String] = Set.empty,
       thunkNeeds: Map[String, Seq[(AbilityFQN, Option[Seq[String]])]] = Map.empty,
       closed: Boolean = false,
-      ridden: Map[String, Set[AbilityFQN]] = Map.empty
+      ridden: Map[String, Set[AbilityFQN]] = Map.empty,
+      signature: Boolean = false
   ) {
     def bind(binding: Binding): Scope = copy(bindings = binding +: bindings)
     def shadow(name: String): Scope   =
@@ -229,7 +233,11 @@ object BindingWriter {
       .map(writer.walkDefinition(_, scope, view.binders.size + view.parameters.size))
     val overstated = body.filterNot(_ => atBoundary).toSeq.flatMap(_ => overDeclared(orv, writer.consumed.toSet))
     val signature  =
-      writer.walkDefinition(orv.signature, Scope(received, Set.empty, uncoveredDefaults = true), view.binders.size)
+      writer.walkDefinition(
+        orv.signature,
+        Scope(received, Set.empty, uncoveredDefaults = true, signature = true),
+        view.binders.size
+      )
     Written(
       orv.copy(runtime = body.orElse(orv.runtime), signature = signature),
       writer.violations.toSeq,
@@ -918,9 +926,10 @@ object BindingWriter {
       * a **supplied row slot** settles (A6).
       *
       * Type-argument application is positional, so what is written is the run from index 0 that every slot below it
-      * fills. A binder past the first gap is left to the checker, which is always the fail-safe direction — except
-      * for a **binding**, which the checker has no way to solve and would silently ground to the platform's default;
-      * that one is reported ([[unreachableBinding]]).
+      * fills. In a body a gap before a binding is written as the checker's hole ([[mergeTypeArguments]]), so every
+      * binding is reached; a binder past the last one is left to the checker, which is always the fail-safe direction.
+      * In a signature, which has no hole, a binding behind a gap is reported ([[unreachableBinding]]): the checker has
+      * no way to solve a binding and would silently ground it to the platform's default.
       */
     private def writeBindings(
         reference: Sourced[OperatorResolvedExpression],
@@ -941,6 +950,7 @@ object BindingWriter {
             SignatureView.of(orv.signature).binders.size,
             marks,
             determined,
+            Option.unless(scope.signature)(reference.as(ValueReference(reference.as(WellKnownTypes.inferredTypeArgumentFQN)))),
             (index, ability) =>
               reference.as(
                 bindingFor(
@@ -962,6 +972,12 @@ object BindingWriter {
     /** Merge the bindings with what the call determines, slot by slot: index `i` is `binding(ability)` where the
       * declaration marks it, and the next undetermined value otherwise.
       *
+      * Where nothing determines a binder that stands **before** a binding, `hole` fills it — the checker's "infer this
+      * one" ([[WellKnownTypes.inferredTypeArgumentFQN]]) — so the binding behind it is still written: `greetAs` of
+      * `ability Greeter[A]` with `uses Console` is `[Impl, A, Impl0]`, and only the checker reads `A` off the argument.
+      * A binder past the last binding is left off the list as before, which the checker infers the same way. In a
+      * signature there is no hole (`None`), and the list stops at the first gap.
+      *
       * Returns the arguments to write and how many of the callee's binders they reach. Anything left over once every
       * binder has a value is appended — an over-spelled explicit list is the caller's to answer for, not this write's
       * to truncate — and cannot be a gap, because the fillers run out before a gap can open.
@@ -970,28 +986,32 @@ object BindingWriter {
         binderCount: Int,
         marks: Map[Int, AbilityFQN],
         determined: Seq[Sourced[OperatorResolvedExpression]],
+        hole: Option[Sourced[OperatorResolvedExpression]],
         binding: (Int, AbilityFQN) => Sourced[OperatorResolvedExpression]
     ): (Seq[Sourced[OperatorResolvedExpression]], Int) = {
+      val lastBinding       = marks.keys.maxOption.getOrElse(-1)
       val (slots, leftover) = (0 until binderCount).foldLeft(
         (Seq.empty[Option[Sourced[OperatorResolvedExpression]]], determined)
       ) { case ((acc, rest), index) =>
         marks.get(index) match {
           case Some(ability) => (acc :+ Some(binding(index, ability)), rest)
-          case None          => (acc :+ rest.headOption, rest.drop(1))
+          case None          =>
+            (acc :+ rest.headOption.orElse(hole.filter(_ => index < lastBinding)), rest.drop(1))
         }
       }
       val reached = slots.takeWhile(_.isDefined).flatten
       (reached ++ leftover, reached.size)
     }
 
-    /** A binding this call cannot reach: it sits at a type-argument index behind a binder nothing here determines, and
-      * a type-argument list applies positionally.
+    /** A binding a **signature**'s reference cannot reach: it sits at a type-argument index behind a binder nothing
+      * there determines, a type-argument list applies positionally, and a signature's list holds no hole
+      * ([[mergeTypeArguments]]) because its references are evaluated rather than checked.
       *
       * The shape is a member of a **parameterised** ability declaring effects of its own
-      * (`ability Show[T] { def show(t: T): {Log} String }`): the block's `T` stands between the two bindings, and `T`
-      * is inferred from the argument at every call rather than written. Spelling the call's type arguments
-      * (`show[String](x)`) reaches past it; nothing else does, so writing the short prefix silently would leave the
-      * second binding on the platform's default.
+      * (`ability Show[T] { def show(t: T) uses Log: String }`): the block's `T` stands between the two bindings.
+      * Spelling the reference's type arguments (`show[String](x)`) reaches past it; nothing else does, so writing the
+      * short prefix silently would leave the second binding on the platform's default. In a body the same call needs
+      * nothing spelled.
       */
     private def unreachableBinding(
         orv: OperatorResolvedValue,

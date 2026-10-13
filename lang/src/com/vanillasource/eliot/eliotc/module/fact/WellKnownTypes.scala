@@ -48,6 +48,18 @@ object WellKnownTypes {
   val defaultImplementationFQN: ValueFQN =
     ValueFQN(ModuleName(defaultSystemPackage, "Implementation"), QualifiedName("Default", Qualifier.Type))
 
+  /** The **hole** in a written type-argument list: "the checker infers this one" — `type Inferred` in
+    * `eliot.lang.Implementation`, beside [[defaultImplementationFQN]] (`docs/effects.md` §3.1).
+    *
+    * A type-argument list applies positionally, so the `row` phase cannot write a binding that stands behind a binder
+    * only the checker determines — a member of `ability Greeter[A]` declaring `uses Console` has `[Impl, A, Impl0]`, and
+    * `A` is read off the argument. [[com.vanillasource.eliot.eliotc.row.BindingWriter]] writes this at such a binder,
+    * in a body only, and the checker's `inferValueReference` replaces it with a fresh metavariable — what it already
+    * does for every binder past the end of the list.
+    */
+  val inferredTypeArgumentFQN: ValueFQN =
+    ValueFQN(ModuleName(defaultSystemPackage, "Implementation"), QualifiedName("Inferred", Qualifier.Type))
+
   /** The **mark** a binding binder carries as its declared type — `type Implementation[A] = Type` in
     * `eliot.lang.Implementation`, beside [[defaultImplementationFQN]] (`docs/effects.md` §9.2).
     *

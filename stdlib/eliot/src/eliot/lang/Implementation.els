@@ -12,6 +12,16 @@
 type Default
 
 /**
+ * The compiler's hole in a type-argument list: "infer this one".
+ *
+ * A call's type arguments are written by position, and the compiler writes every binding it passes. Where a binding
+ * stands behind a type parameter only the type checker can read off the call's arguments — `greetAs(Bob(…))` for a
+ * member of `ability Greeter[A]` that `uses Console` — the compiler writes `Inferred` at that parameter, and the
+ * checker infers it exactly as it infers a type parameter left off the end of the list. Only the compiler writes it.
+ */
+type Inferred
+
+/**
  * The **mark** on a binding binder: a binder the compiler mints for a `uses` entry, a `~` constraint or an
  * `ability` block's implementation slot is declared `Impl: Implementation[A]`, `A` being the ability it binds
  * (`docs/effects.md` §9).

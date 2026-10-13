@@ -28,16 +28,18 @@ lives now.
 3. ~~**Release the next `v0` tag**~~ — done 2026-10-13: `v0.9` is the first carrying `uses`, and `v0.10` (§8 item 23)
    the first eliot-test's merged `whenFailing` compiles on. eliot-test `v0.4`, eliot-build and the docs site's install
    page depend on `v0.10`.
-4. **The loud usability gaps**: ~~§8 item 21~~ (closed 2026-10-13) and item 15 (an effectful ability method needs its
-   type arguments spelled) — traced, and waiting on a choice between its two fixes (§8 item 15).
+4. ~~**The loud usability gaps**~~ — §8 items 21 and 15 closed 2026-10-13 (15 by option (a), the checker's hole).
+   Building 15 found **§8 item 24**, silent: an ability member's own clause binding is dropped at dispatch. It is
+   now the first thing to do, ahead of step 5.
 5. **Compile-track frames**, the first of §11's "Decided, not built"; it also closes §7 items 4 and 7.
 
 D20a, D20c and D3 stay open until decided; none blocks the steps above.
 
 **Open, in order of severity.**
 
-- **Silent:** none known (§8 item 14 closed 2026-10-13).
-- **Loud, at compile time:** an effectful ability method needs its ability's type arguments spelled (§8 item 15); a
+- **Silent:** an ability member's own clause entry runs its implementation on the default, whatever the call wrote
+  (§8 item 24).
+- **Loud, at compile time:** a
   `catch` over a parameter spells its arguments (§7 item 2); a function-typed code parameter's own entries are never
   supplied (§7 item 1); the compile track still finds a frame by its type (§7 item 7).
 - **Decided, not built:** parameterised named and ability implementations, user defaults with parameters,
@@ -488,7 +490,10 @@ signature. It lives between `core` and `row` and nowhere else: the write erases 
 (`BindingWriter.Writer.unmarked`), so the checker is handed the signature it was handed before the mark
 existed. Minted binders are still *placed* together, but they need not be a **prefix**: `typeArgs` applies
 positionally, and the write merges the marked indices with what the call determines for the rest — which is
-what lets a member of a *parameterised* ability declare effects of its own. The pass is idempotent, and its
+what lets a member of a *parameterised* ability declare effects of its own. Where nothing determines a binder that
+stands before a binding (`greetAs(Bob(…))`, whose `A` only the checker reads off the argument), a body's write puts the
+**hole** `eliot.lang.Implementation::Inferred` there, which the checker replaces with a fresh meta exactly as it
+treats a binder left off the end of the list; a binding itself is never left to one. The pass is idempotent, and its
 idempotence test is the same mark (`GenericParameter.isBinding`).
 
 A **row alias** (§2.4) adds no mechanism of its own: a definition naming one as its return type is handed the alias's
@@ -967,21 +972,19 @@ items keep one line, and their full record is in git history (§13).
 
 4. **`runThrow("no failure")` is accepted** when the call spells the argument, although §2.2 lists an actual that
    raises nothing among the shapes rejected. Loud by construction (the argument is written by hand), so last.
-15. **An effectful ability method needs its ability's type arguments spelled.** With `ability Greeter[A] { def
-    greetAs(a: A) uses Console: Unit }`, `greetAs(Bob(…))` is *"Cannot pass the implementation of 'Console' … behind a
-    type parameter this call does not determine"*, although the argument determines `A`; `greetAs[Bob](…)` compiles.
-    Loud; a usability gap. **Traced 2026-10-13:** the member's binders are `[Impl: Implementation[Greeter], A,
-    Impl0: Implementation[Console]]` — its own binding is minted past the ability-level run (`EffectSugarDesugarer.mintAt`),
-    because a reference's ability-level arguments are matched against the marker's parameters from index 0. A
-    type-argument list applies positionally and nothing in the row phase determines `A` (only the checker does, from
-    the argument), so the write stops at `A` and `Impl0` is out of reach (`BindingWriter.unreachableBinding`). The two
-    fixes both need a decision: **(a)** a *hole* in a type-argument list — a sentinel the write puts at an undetermined
-    unmarked binder and the checker's `inferValueReference` replaces with a fresh meta, which keeps the binding written
-    and leaves `A` to the checker as a trailing binder is today, but adds a construct every consumer of a written
-    reference must tolerate (bodies only: a signature's references are evaluated, not checked); **(b)** mint a member's
-    own bindings *before* the ability-level run and read that run by its `abilityLevel` mark instead of from index 0,
-    which touches ability resolution (`ImplementationBinding`, `AbilityResolver.abilityArity`). Determining `A` in the
-    row phase from the argument's type would be inference and is out (§5 rule 3).
+24. **An ability member's own clause binding is dropped at dispatch.** With `ability Describe[T] { def describe(t: T)
+    uses Console: String }` and an anonymous `implement Describe[String]` whose method prints, `printLine(describe("x"))
+    with recordingConsole` prints `describing` to the **real** console and only `x` to the double — spelled
+    `describe[String]` or not, so it predates item 15's fix, which only made the inferred spelling reachable. The write
+    puts `recordingConsole` at the member reference's own binder, but `AbilityResolver` records a resolution as the
+    implementation's method at the **implementation's** type arguments alone, and `PostDrainQuoter.resolveIfAbility`
+    rewrites the reference to exactly that, so the method-level arguments — the member's own bindings — are dropped and
+    the implementation method's binder for `Console` is left to `Default`. A control effect is unaffected, since a
+    member-declared effect's *frame* comes from the call site (§3.4) and a control effect has one implementation;
+    `FileSystem.readFile`'s `Throw[IoError]` works. Silent (standing rule 8), so first. The fix maps a dispatched
+    reference's method-level arguments onto the implementation method's binders for the entries the member declares,
+    which is a change to dispatch: §3.4's "an implementation's environment holds only the effects a clause performs
+    that its member does not declare" already says the member's are the call's.
 
 **Closed.**
 
@@ -1000,6 +1003,7 @@ items keep one line, and their full record is in git history (§13).
 | 12 | a data constructor supplied a field's row by `Default` | 2026-10-09 by D20 step 3 (rule 6) |
 | 13 | a slot laundered an interpretation effect into a pure signature | 2026-10-09 by D20 step 2 (rule 5) |
 | 14 | an unapplied reference to a `uses` definition passed as a value (`Holder(printLine)` printed from a pure signature) | 2026-10-13: the rule-2 error at the reference, beside `Scope.enterValue` |
+| 15 | an effectful member of a parameterised ability needed its type arguments spelled (`greetAs[Bob](…)`), since a positional list cannot reach the member's own binding past the ability's undetermined `A` | 2026-10-13 by option (a): in a body the write puts the checker's hole, `eliot.lang.Implementation::Inferred`, at such a binder, and the checker infers it with a fresh meta |
 | 16 | a helper's own `catch` swallowed its caller's `raise` | 2026-10-12 by option 5, runtime track (§3.4, §7 item 7) |
 | 17 | a helper's own `State` received its caller's `putState` | 2026-10-12 by option 5, runtime track |
 | 18 | a slot's named implementation performed its clause effects into whatever frame enclosed the run | 2026-10-12: its clause effects are promised to the block (§2.2) |
@@ -1037,10 +1041,12 @@ wrong. **Do not re-propose the original readings.**
   or the fixed-FQN abilities are missed and a mistyped effect reads "Name not defined.". Every pool declaring a row,
   a constraint or an ability therefore needs `eliot.lang.Implementation`, test stubs included
   (`ProcessorTest.implementationStubContent`).
-- **The prefix's diagnostic does not go with the prefix.** A type-argument list has no hole, so the merge still stops
-  at the first slot nothing fills; the diagnostic moved from the declaration to the **call**
+- **The prefix's diagnostic does not go with the prefix.** A type-argument list had no hole, so the merge stopped at
+  the first slot nothing fills; the diagnostic moved from the declaration to the **call**
   (`BindingWriter.Writer.unreachableBinding`), raised only when that call's own arguments leave a binding out of reach.
-  `show[String](x)` reaches it.
+  Since §8 item 15 (2026-10-13) a **body**'s list has one — `eliot.lang.Implementation::Inferred`, a fresh meta to the
+  checker — at an undetermined binder before a binding, so the diagnostic is left to a signature, whose references are
+  evaluated rather than checked.
 - **An alias mints no binders of its own** (measured building step 5). Its parameters are value arguments, where a
   mark is never erased; and an alias is a name for a row, not a definition that performs one, so it has nothing to
   receive. It *declares* its row (step 8), which needed a type definition's own row resolved with its value args in

@@ -146,4 +146,43 @@ class UsesClauseIntegrationTest extends FullIntegrationTest {
         |""".stripMargin
     ).asserting(_ should include("Expected a type, with its effects in a `uses` clause before the colon"))
   }
+
+  // docs/effects.md §8 item 15: a member of a parameterised ability declaring a clause of its own, called with its
+  // type argument left to inference. The binding behind that type argument is written, not left to the default.
+  private val describe =
+    """import eliot.effect.Console
+      |
+      |ability Describe[T] {
+      |   def describe(t: T) uses Console: String
+      |}
+      |
+      |implement Describe[String] {
+      |   def describe(t: String) uses Console: String = {
+      |      printLine("describing")
+      |      t
+      |   }
+      |}
+      |""".stripMargin
+
+  "a parameterised ability's member with a clause of its own" should "run with its type argument inferred" in {
+    compileAndRun(describe ++ """def main uses Console: Unit = printLine(describe("x"))""")
+      .asserting(_ shouldBe "describing\nx")
+  }
+
+  it should "raise into the caller's frame with its type argument inferred" in {
+    compileAndRun(
+      """import eliot.effect.Console
+        |
+        |ability Check[T] {
+        |   def check(t: T) uses Throw[String]: T
+        |}
+        |
+        |implement Check[String] {
+        |   def check(t: String) uses Throw[String]: String = raise("refused " ++ t)
+        |}
+        |
+        |def main uses Console: Unit = printLine(catch[String, String](check("x"), e -> e))
+        |""".stripMargin
+    ).asserting(_ shouldBe "refused x")
+  }
 }
