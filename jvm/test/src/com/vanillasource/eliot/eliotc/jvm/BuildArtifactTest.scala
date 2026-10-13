@@ -16,6 +16,12 @@ class BuildArtifactTest extends FullIntegrationTest {
   private val other   = """def main uses Console: Unit = printLine("other")"""
   private val broken  = """def main uses Console: Unit = printLine(nonExistentName)"""
 
+  /** Fails only in the refinement channel, after type checking: `1000` does not fit `asByte`'s `where`. */
+  private val unmetPrecondition =
+    """def withinByte(i: Interval[BigInteger]): Bool = rangeWithin[0, 127](i)
+      |def asByte(x: Int): Int where withinByte(range(x)) = x
+      |def main uses Console: Unit = printLine(show(asByte(1000)))""".stripMargin
+
   "a failed compilation" should "leave no jar behind" in {
     (compileAndRun(working) >> compileForErrors(broken) >> exists(jarPath)).asserting(_ shouldBe false)
   }
@@ -26,6 +32,10 @@ class BuildArtifactTest extends FullIntegrationTest {
 
   it should "still report its errors" in {
     compileForErrors(broken).asserting(_ should include("Name not defined."))
+  }
+
+  "a failed where precondition" should "leave no jar behind" in {
+    (compileAndRun(working) >> compileForErrors(unmetPrecondition) >> exists(jarPath)).asserting(_ shouldBe false)
   }
 
   "a fixed compilation" should "produce the jar again" in {

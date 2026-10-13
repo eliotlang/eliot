@@ -40,8 +40,10 @@ class ReconcileProcessor
       umv: UncurriedMonomorphicValue
   ): CompilerIO[ReconciledMonomorphicValue] =
     for {
-      refinementTable <- getFactIfProduced(RefinementTable.Key(key.vfqn, key.typeArguments))
-      metas            = refinementTable.map(t => metaByPosition(t.metas)).getOrElse(Map.empty[PositionRange, GroundValue])
+      // Read or abort: the channel declines its table exactly when it reported an error — a failing `where` among them —
+      // and a body laid out at ⊤ in its place compiled, leaving a runnable jar behind a failed build.
+      refinementTable <- getFactOrAbort(RefinementTable.Key(key.vfqn, key.typeArguments))
+      metas            = metaByPosition(refinementTable.metas)
       reconciledBody   = umv.body.map(b => walk(b.as(UncurriedMonomorphicExpression(umv.returnType, b.value)), metas))
     } yield ReconciledMonomorphicValue(
       vfqn = key.vfqn,

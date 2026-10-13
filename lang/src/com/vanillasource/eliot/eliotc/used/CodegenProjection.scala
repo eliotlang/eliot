@@ -22,9 +22,9 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
   *
   *   - '''CollapseErase''' — a phantom binder (in no scanned position): dropped from the key entirely.
   *   - '''CollapseToRepresentation''' — a representation-determining binder: replaced by a '''head-preserving'''
-  *     representation key. Width-equivalent bounds (`Int[0, 100]`/`Int[0, 50]`, both a byte) fold together, while the
-  *     nominal head is kept so two distinct opaque types sharing a representation (a `Money` and an `Int` both lowering
-  *     to `JvmByte`) are *not* merged — they generate differently-named methods (soundness checkpoint 2).
+  *     representation key. Instances differing only in a detail no longer carried by the type (an `Int`'s width is
+  *     refinement-channel meta) fold together, while the nominal head is kept so two distinct opaque types sharing a
+  *     representation (a `Money` and an `Int` both lowering to `JvmByte`) are *not* merged — they generate differently-named methods (soundness checkpoint 2).
   *   - '''Specialize''' — kept verbatim (a distinct ability selection or a bounded reified family).
   *
   * A value with no [[SaturatedValue]] (and hence no role information) keeps all its type arguments verbatim — the most
@@ -53,22 +53,21 @@ object CodegenProjection {
       }
 
   /** A dedup-key element keyed on the nominal head ([[GroundValue.carrierFQN]] — what the backend mangles the method
-    * name with), keeping every *structural* type argument, itself erased the same way, and dropping only value-level
-    * (`Direct`) arguments. That is exactly the backend's mangling (`CommonPatterns.mangleTypeArgument` recurses through
-    * structural arguments and drops `Direct` ones), and it has to be: a generic value's body names its callees by
-    * mangling its own type arguments, so `else[Option[Name]]` calls `runAbort$Option$Name` and `else[Option[String]]`
-    * calls `runAbort$Option$String`. Keyed on the head alone the two merged, only one was walked, and the other's callee
-    * was never emitted — a `NoSuchMethodError` at run time. Two distinct heads sharing a representation stay distinct
-    * (they mangle to different method names). Used only as a `visited`-set identity, never to fetch a fact.
+    * name with), keeping every type argument applied to it, itself erased the same way, and every value-level
+    * (`Direct`) argument verbatim. That is exactly the backend's mangling (`CommonPatterns.mangleTypeArgument` recurses
+    * through structural arguments and spells a `Direct` one's constant), and it has to be: a generic value's body names
+    * its callees by mangling its own type arguments, so `else[Option[Name]]` calls `runAbort$Option$Name` and
+    * `else[Option[String]]` calls `runAbort$Option$String`. Keyed on the head alone the two merged, only one was walked,
+    * and the other's callee was never emitted — a `NoSuchMethodError` at run time. Two distinct heads sharing a
+    * representation stay distinct (they mangle to different method names). Used only as a `visited`-set identity, never
+    * to fetch a fact.
     */
   private def erasedCarrier(arg: GroundValue): GroundValue =
     arg match {
       case GroundValue.Structure(_, args, _) =>
-        GroundValue.Structure(
-          arg.carrierFQN,
-          args.filterNot(_.isInstanceOf[GroundValue.Direct]).map(erasedCarrier),
-          GroundValue.Type
-        )
+        GroundValue.Structure(arg.carrierFQN, args.map(erasedCarrier), GroundValue.Type)
+      case GroundValue.Direct(_, _)          =>
+        arg
       case _                                 =>
         GroundValue.Structure(arg.carrierFQN, Seq.empty, GroundValue.Type)
     }

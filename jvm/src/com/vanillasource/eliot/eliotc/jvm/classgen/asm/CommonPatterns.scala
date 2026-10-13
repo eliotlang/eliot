@@ -41,16 +41,27 @@ object CommonPatterns {
     * byte-identical and silently drops one body — a whole-program miscompile surfacing as a runtime
     * `ClassCastException` in the wrong-carrier accessor. Recursing on the applied arguments keeps the depth distinct.
     *
-    * Value-level (`Direct`) arguments — e.g. the `Int[MIN, MAX]` refinement bounds — carry no carrier structure and are
-    * dropped, so `Int[0, 3]` and `Int[0, 5]` still mangle identically and legitimately share their one `Byte` method.
+    * A value-level (`Direct`) argument is mangled as its type followed by the constant itself, for the same reason:
+    * `def pick[C: Bool]` at `false` and at `true` are two bodies of one descriptor, and with the constant dropped both
+    * were `pick$Any`, so one silently replaced the other. A string is prefixed with its length, so that a `$` inside it
+    * cannot forge the separator between two arguments (`String$3$a$b` is one argument, never two).
     */
   private def mangleTypeArgument(v: GroundValue): String =
     v match {
-      case GroundValue.Structure(_, args, _) =>
-        val structuralArgs = args.collect { case arg if !arg.isInstanceOf[GroundValue.Direct] => arg }
-        (valueType(v).name.name +: structuralArgs.map(mangleTypeArgument)).mkString("$")
-      case _                                 =>
+      case GroundValue.Structure(_, args, _)     =>
+        (valueType(v).name.name +: args.map(mangleTypeArgument)).mkString("$")
+      case GroundValue.Direct(literal, litType) =>
+        mangleTypeArgument(litType) + "$" + mangleLiteral(literal)
+      case _                                     =>
         valueType(v).name.name
+    }
+
+  private def mangleLiteral(literal: GroundValue.Literal): String =
+    literal match {
+      case GroundValue.Literal.IntegerValue(value) => value.toString
+      case GroundValue.Literal.StringValue(value)  => s"${value.length}$$$value"
+      case GroundValue.Literal.BooleanValue(value) => value.toString
+      case GroundValue.Literal.UnitValue           => "unit"
     }
 
   /** The JVM method name for a monomorphic value: its base name, plus an impl-disambiguator when the value is an

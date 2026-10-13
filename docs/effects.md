@@ -54,11 +54,10 @@ D20a, D20c and D3 stay open until decided; none blocks the steps above.
   workflow failed, so it publishes no assets); `v0.11` is the latest, and eliot-test `v0.5`, eliot-build and the docs
   site's install page depend on it. The site's generated `apidoc/` pages predate effects v6; eliot-test's own notes
   still say a row cannot be closed and list `runThrow` spellings that are now redundant. Two defects found while
-  building step 5, neither an effect one: the jvm backend names a specialisation's method after its type arguments
-  with a `Bool` value collapsed to `Any`, so `pick[false]` and `pick[true]` of one `def pick[C: Bool]` are emitted as one
-  `pick$Any` and one silently replaces the other (**silent**, a runtime miscompile); and a failing `where`
-  precondition exits 1 but leaves a runnable jar behind, against the build-artifact rule that a failed build leaves
-  none.
+  building step 5, neither an effect one, were fixed on 2026-10-13: the jvm backend named a specialisation's method
+  with a value-level type argument collapsed to `Any`, so `pick[false]` and `pick[true]` of one `def pick[C: Bool]` were
+  one `pick$Any` (a silent miscompile; the constant is now part of the name), and a failing `where` precondition left a
+  runnable jar behind (the reconcile pass now reads the channel's table or aborts).
 
 ---
 
