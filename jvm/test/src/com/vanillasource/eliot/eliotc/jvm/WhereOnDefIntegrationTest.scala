@@ -86,4 +86,31 @@ class WhereOnDefIntegrationTest extends FullIntegrationTest {
         "def main uses Console: Unit = printLine(show(apply1(clampFirst(200))))"
     ).asserting(_ should include("cannot be passed as a value"))
   }
+
+  // A predicate written over a control effect, or naming `rangeWithin` itself, could not be evaluated at all before the
+  // compile track threaded its frames: "Cannot evaluate the `where` precondition" (`docs/effects.md` §8 item 28).
+  private val inlineByte =
+    "import eliot.effect.Console\ndef asByte(x: Int): Int where rangeWithin[0, 255](range(x)) = x\n"
+
+  private val branchingByte =
+    "import eliot.effect.Console\n" +
+      "def asByte(x: Int): Int where (if(rangeWithin[0, 255](range(x)), true) else false) = x\n"
+
+  "a where precondition naming rangeWithin inline" should "accept a call whose argument range fits" in {
+    compileAndRun(inlineByte + "def main uses Console: Unit = printLine(show(asByte(200)))").asserting(_ shouldBe "200")
+  }
+
+  it should "reject a call whose argument range exceeds the bound" in {
+    compileForErrors(inlineByte + "def main uses Console: Unit = printLine(show(asByte(300)))")
+      .asserting(_ should include("precondition of 'Test::asByte' is not satisfied"))
+  }
+
+  "a where precondition written over if..else" should "accept a call whose argument range fits" in {
+    compileAndRun(branchingByte + "def main uses Console: Unit = printLine(show(asByte(3)))").asserting(_ shouldBe "3")
+  }
+
+  it should "reject a call whose argument range exceeds the bound" in {
+    compileForErrors(branchingByte + "def main uses Console: Unit = printLine(show(asByte(300)))")
+      .asserting(_ should include("precondition of 'Test::asByte' is not satisfied"))
+  }
 }

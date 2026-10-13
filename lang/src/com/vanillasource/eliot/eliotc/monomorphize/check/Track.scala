@@ -36,7 +36,8 @@ sealed trait Track {
   /** Read a checked body back into a [[MonomorphicExpression]] tree: reduced (compiler) or structural (runtime). */
   def readBackBody(
       quoter: PostDrainQuoter,
-      srcSem: Sourced[SemExpression]
+      srcSem: Sourced[SemExpression],
+      threading: PostDrainQuoter.Threading
   ): CompilerIO[Sourced[MonomorphicExpression]]
 
 }
@@ -55,7 +56,8 @@ object Track {
 
     override def readBackBody(
         quoter: PostDrainQuoter,
-        srcSem: Sourced[SemExpression]
+        srcSem: Sourced[SemExpression],
+        threading: PostDrainQuoter.Threading
     ): CompilerIO[Sourced[MonomorphicExpression]] = quoter.quoteSourced(srcSem)
   }
 
@@ -84,10 +86,14 @@ object Track {
                     .map(_.flatten.toMap)
       } yield result
 
+    /** Reduce the body, threaded as the value's specialisation: a control effect it runs gets its frame along the
+      * declared chain (`docs/effects.md` §3.4).
+      */
     override def readBackBody(
         quoter: PostDrainQuoter,
-        srcSem: Sourced[SemExpression]
-    ): CompilerIO[Sourced[MonomorphicExpression]] = quoter.reduceSourced(srcSem)
+        srcSem: Sourced[SemExpression],
+        threading: PostDrainQuoter.Threading
+    ): CompilerIO[Sourced[MonomorphicExpression]] = quoter.reduceSourced(srcSem, Some(threading))
 
   }
 }

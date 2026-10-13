@@ -479,14 +479,14 @@ must be **self-sufficient** from the base plus its own `compiler/`. Roots reach 
 repeatable **`--path <module>/eliot/src`** (no separate compiler/runtime path flags, no `compiler` Mill module);
 `LangPlugin.eliotCompilerOverlay` derives each root's sibling. **One** root ships an overlay today,
 `stdlib/eliot/compiler/`: the self-sufficient compile-time `Either`, `Option`, `Pair` and `Bound`/`Interval` (the
-data the evaluator's escape/cell intrinsics answer, `monomorphize/processor/EffectIntrinsics`), the two intrinsic
-declarations themselves (`eliot/compiler/Escape.els`, `eliot/compiler/Cell.els` — declared once and publicly,
-because `EffectIntrinsics` matches their exact FQNs, and compile-track-only so no user program can reach them), and
-the compile-time `Abort` written over `escape`, which is what makes an `if..else` return guard reduce. **The
-compile track has `Abort` and no `Throw`**: `Abort` keys its frame on its own nullary `Aborted` marker, while a
-generic binder has no value form (`escape(E[], …)` does not compile), so a compile-time reduction reaching
-`runThrow` is *stuck* — loud, not wrong — and a guarded return therefore cannot carry its author's message
-(`docs/effects.md` §7). Anything pure and already on the path
+data the evaluator's intrinsics answer, `monomorphize/processor/EffectIntrinsics`), the type-keyed cell's declarations
+(`eliot/compiler/Cell.els`, which no compile-track effect is written over), and the compile-time **`Abort` and
+`Throw`**, spelled exactly as the jvm layer's (`implement Abort(frame: AbortFrame[Unit])`, so the overlay's supersedes
+on the compile track) over each module's private `escapeIntrinsic`/`exitIntrinsic`, which `EffectIntrinsics` answers by
+FQN: a fresh frame with identity, threaded along the declared chain as on the runtime track (`docs/effects.md` §3.4).
+That is what makes an `if..else` return guard reduce, keeps a helper's own `else` from catching its caller's `abort`,
+and lets a guarded return's `raise("…")` carry its author's message — the guarded-return read gives a signature its
+control effects' frames. Anything pure and already on the path
 (base bodies, a user program's pure helpers) is **borrowed, not duplicated**. `CompilerNativesProcessor` reads that pool; the
 compile-time intrinsics (`add`, `Bool` `fold`, `true`/`false`, `typeEquals`) are Scala native **leaves** in
 `SystemNativesProcessor` (lang) / `StdlibNativesProcessor` (stdlib arithmetic) — the compiler platform's leaf
@@ -652,13 +652,13 @@ row-typed slot's thunk takes the frames it supplies in place of `unit`; a frame 
 arguments**, and its binding must be the code's. The platform's control effects take a frame (`ThrowFrame`,
 `AbortFrame`, `StateCell`, `WriterCell`, `DepCell`) that their body-less primitives make and hand to the thunk they
 run, so a helper's own `catch` cannot intercept its caller's `raise`, and an undischarged control effect at `main` is
-a compile error (D19). Not built: `with Ability(args)`, named implementations with parameters, parameterised ability
-implementations, compile-track frames (the compile track still keys a frame by its type).
+a compile error (D19). The compile track threads its frames the same way, over its own intrinsics (§3.4). Not built:
+`with Ability(args)`, named implementations with parameters, parameterised ability implementations.
 
 **Three platform-private primitives, and nothing else.** A finishing clause is a non-local exit; a stateful
 implementation threads a value through calls that never mention it. Neither is expressible in a strict pure core, so
 each target ships **escape** (`escapeInternal(body, onExit, onValue)` — on jvm a fresh frame object handed to `body`,
-exited by identity; an evaluator intrinsic keyed by type on the compile track), **cell** (`withCellInternal(initial,
+exited by identity; on the compile track an evaluator intrinsic of the same shape), **cell** (`withCellInternal(initial,
 body, combine)` — a one-slot array local to the call, handed to `body`) and **loop** (`foreverInternal`). The control effects' single implementations are
 written over them, and each jvm copy states in its own clause what it gives its `body` (rule 5). They are private
 because a public cell is Landin's knot (`termination/PurityGuardTest` exists to keep it out), so

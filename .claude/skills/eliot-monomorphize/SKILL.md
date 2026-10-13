@@ -43,6 +43,10 @@ monomorphize/
 │   │                            implementation is used directly, only `Default` reaches the two-site search)
 │   └── Track.scala             (Runtime/Compiler strategy: platform + 4 per-track hooks, no platform match in the core)
 ├── channel/
+│   ├── EnvironmentThreading.scala (passes each implementation's environment — a frame, a cell, its parameters —
+│   │                            along the declared chain, read through a track: the runtime track at the WovenValue
+│   │                            seam, the compile track wherever it evaluates something that can reach a frame
+│   │                            (reduced instances, a body's read-back, the channel, a signature's guarded read))
 │   ├── RefinementChannelProcessor.scala (post-pass flow analysis over MonomorphicValue: ^Meta transfers/merges,
 │   │                                     ^Where precondition demands)
 │   ├── RefinementTable.scala   (per-node meta values keyed by source position; read by reconcile/backend/LSP)
@@ -79,10 +83,11 @@ monomorphize/
     ├── SystemNativesProcessor.scala          (Function → VNative→VPi, Type → VType, Bool true/false constants,
     │                                          integerLiteral, the Eq[Type] equals leaf, + ListReductions/EffectIntrinsics)
     ├── ListReductions.scala                  (compile-time twins of the List leaves: a list is a prepend chain over empty)
-    ├── EffectIntrinsics.scala                (effects v6 §10.1 step 7: the compile track's escape/exit and withCell/read/
-    │                                          write natives — a dynamically scoped frame stack keyed by the instantiation
-    │                                          passed as a TYPE VALUE (post-mono evaluation erases type args and binds by
-    │                                          FQN); stuck with no frame; settles what crosses a frame; + the foldPair twin)
+    ├── EffectIntrinsics.scala                (docs/effects.md §3.4: the compile track's escapeIntrinsic/exitIntrinsic —
+    │                                          a fresh frame with identity handed to the body, exited by identity, stuck
+    │                                          through a frame not installed or on an undecided result — the guarded-return
+    │                                          read's `discharging`, and the type-keyed withCell/read/write; settles what
+    │                                          crosses a frame)
     ├── DataTypeNativesProcessor.scala        (body-less Type-qualified names → inert VTopDef; pool-guarded)
     ├── MatchNativesProcessor.scala           (handleCases/typeMatch impls → VNative; pool-guarded)
     ├── DeclaringPool.scala                   (quiet two-pool membership probe used by the two leaf contributors above)

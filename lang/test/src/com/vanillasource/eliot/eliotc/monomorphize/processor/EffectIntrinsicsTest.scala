@@ -9,10 +9,11 @@ import com.vanillasource.eliot.eliotc.monomorphize.fact.GroundValue
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 
-/** The compile track's escape and cell primitives, fired directly as the evaluator fires them (effects v6 §10.1 step
-  * 7): a frame catches exactly the exit of its own instantiation and lets another's through, a cell threads a value
-  * through a body that never mentions it, both settle what crosses the frame so a lazily pending application runs
-  * inside it, and every use with no frame to reach stays stuck rather than answering.
+/** The compile track's escape and cell primitives, fired directly as the evaluator fires them (`docs/effects.md`
+  * §3.4): an escape hands its body a fresh frame and catches exactly the exit through that frame, whatever is installed
+  * in between; a cell threads a value through a body that never mentions it; both settle what crosses the frame so a
+  * lazily pending application runs inside it; and every use with no installed frame to reach stays stuck rather than
+  * answering.
   */
 class EffectIntrinsicsTest extends AnyFlatSpec with Matchers {
   private def native(fqn: ValueFQN): SemValue = EffectIntrinsics.bindings(fqn)
@@ -37,8 +38,16 @@ class EffectIntrinsicsTest extends AnyFlatSpec with Matchers {
 
   private def thunk(body: => SemValue): SemValue = VLam("_", _ => body)
 
-  private def escape(key: SemValue, body: => SemValue): SemValue = app(native(escapeFQN), key, thunk(body))
-  private def exit(key: SemValue, value: SemValue): SemValue    = app(native(exitFQN), key, value)
+  private val escapeFqn: ValueFQN = escapeIntrinsicFQNs.head
+  private val exitFqn: ValueFQN   = exitIntrinsicFQNs.head
+
+  /** The handlers the overlay's `runThrow` passes: `Left` of what left, `Right` of what finished. */
+  private val onExit: SemValue  = VLam("e", left)
+  private val onValue: SemValue = VLam("a", right)
+
+  private def escape(body: SemValue => SemValue): SemValue =
+    app(native(escapeFqn), VLam("frame", body), onExit, onValue)
+  private def exit(frame: SemValue, value: SemValue): SemValue = app(native(exitFqn), frame, value)
 
   private def withCell(key: SemValue, initial: SemValue, body: => SemValue): SemValue =
     app(native(withCellFQN), key, initial, thunk(body))
@@ -50,50 +59,60 @@ class EffectIntrinsicsTest extends AnyFlatSpec with Matchers {
   private def later(body: => SemValue): SemValue   = VTopDef(laterFqn, Some(Lazy(body)), Spine.SNil)
   private def marked(inner: SemValue): SemValue    = VTopDef(laterFqn, None, spineOf(inner))
 
-  "escape" should "answer Right of the body's result when nothing exits" in {
-    escape(stringKey, str("done")) shouldBe right(str("done"))
+  "escape" should "answer its onValue of the body's result when nothing exits" in {
+    escape(_ => str("done")) shouldBe right(str("done"))
   }
 
-  it should "answer Left of the value exited to it" in {
-    escape(stringKey, exit(stringKey, str("boom"))) shouldBe left(str("boom"))
+  it should "answer its onExit of the value exited through its frame" in {
+    escape(frame => exit(frame, str("boom"))) shouldBe left(str("boom"))
   }
 
-  it should "be reached by the nearest frame of the same instantiation" in {
-    escape(stringKey, escape(stringKey, exit(stringKey, str("inner")))) shouldBe right(left(str("inner")))
+  it should "catch an exit through its own frame inside another escape" in {
+    escape(_ => escape(inner => exit(inner, str("inner")))) shouldBe right(left(str("inner")))
   }
 
-  it should "let the exit of another instantiation pass through to the frame that owns it" in {
-    escape(stringKey, escape(intKey, exit(stringKey, str("outer")))) shouldBe left(str("outer"))
+  it should "let an exit through an outer frame pass every frame installed in between" in {
+    escape(outer => escape(_ => exit(outer, str("outer")))) shouldBe left(str("outer"))
   }
 
   it should "run a pending application of the body's result inside the frame" in {
-    escape(stringKey, later(exit(stringKey, str("late")))) shouldBe left(str("late"))
+    escape(frame => later(exit(frame, str("late")))) shouldBe left(str("late"))
   }
 
   it should "settle the constructor arguments of the body's result inside the frame" in {
-    escape(stringKey, marked(later(exit(stringKey, str("deep"))))) shouldBe left(str("deep"))
+    escape(frame => marked(later(exit(frame, str("deep"))))) shouldBe left(str("deep"))
   }
 
   it should "settle an exit's payload before taking it, so an exit pending inside it wins" in {
-    escape(stringKey, exit(stringKey, later(exit(stringKey, str("first"))))) shouldBe left(str("first"))
+    escape(frame => exit(frame, later(exit(frame, str("first"))))) shouldBe left(str("first"))
   }
 
-  it should "stay stuck on a key that is not concrete" in {
-    val body = thunk(str("x"))
-    app(native(escapeFQN), rigid, body) shouldBe VStuckNative(escapeFQN, spineOf(rigid, body))
+  it should "stay stuck when its body settles to a neutral" in {
+    val body = VLam("frame", _ => rigid)
+    app(native(escapeFqn), body, onExit, onValue) shouldBe VStuckNative(escapeFqn, spineOf(body, onExit, onValue))
   }
 
-  it should "leave no frame behind after an exit" in {
-    escape(stringKey, exit(stringKey, str("a")))
-    exit(stringKey, str("b")) shouldBe VStuckNative(exitFQN, spineOf(stringKey, str("b")))
+  it should "stay stuck when its body's result holds an operation that did not run" in {
+    val body = VLam("frame", _ => marked(exit(Evaluator.unitValue, str("x"))))
+    app(native(escapeFqn), body, onExit, onValue) shouldBe VStuckNative(escapeFqn, spineOf(body, onExit, onValue))
   }
 
-  "exit" should "stay stuck when no frame of its instantiation is installed" in {
-    escape(intKey, exit(stringKey, str("x"))) shouldBe right(VStuckNative(exitFQN, spineOf(stringKey, str("x"))))
+  "exit" should "stay stuck on a value that is not a frame" in {
+    exit(Evaluator.unitValue, str("x")) shouldBe VStuckNative(exitFqn, spineOf(Evaluator.unitValue, str("x")))
   }
 
-  it should "stay stuck on a key that is not concrete even inside a frame" in {
-    escape(stringKey, exit(rigid, str("x"))) shouldBe right(VStuckNative(exitFQN, spineOf(rigid, str("x"))))
+  it should "stay stuck through a frame whose escape has returned" in {
+    var kept: SemValue = Evaluator.unitValue
+    escape { frame => kept = frame; str("a") }
+    exit(kept, str("b")) shouldBe VStuckNative(exitFqn, spineOf(kept, str("b")))
+  }
+
+  "discharging" should "answer Right of the body's result when nothing exits" in {
+    EffectIntrinsics.discharging(1)(_ => str("ok")) shouldBe Right(str("ok"))
+  }
+
+  it should "answer Left of the value exited through any of its frames" in {
+    EffectIntrinsics.discharging(2)(frames => exit(frames(1), str("x"))) shouldBe Left(str("x"))
   }
 
   "withCell" should "pair the body's result with the initial content when nothing writes" in {
@@ -126,7 +145,7 @@ class EffectIntrinsicsTest extends AnyFlatSpec with Matchers {
   }
 
   it should "be discarded by an exit through it, restoring the frames outside" in {
-    escape(stringKey, withCell(intKey, int(0), { write(intKey, int(5)); exit(stringKey, str("out")) })) shouldBe
+    escape(frame => withCell(intKey, int(0), { write(intKey, int(5)); exit(frame, str("out")) })) shouldBe
       left(str("out"))
     read(intKey) shouldBe VStuckNative(cellReadFQN, spineOf(intKey))
   }

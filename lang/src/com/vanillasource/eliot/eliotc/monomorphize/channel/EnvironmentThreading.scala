@@ -13,7 +13,13 @@ import com.vanillasource.eliot.eliotc.module.fact.{
 }
 import com.vanillasource.eliot.eliotc.monomorphize.check.{DeclaredEntries, ImplementationBinding}
 import com.vanillasource.eliot.eliotc.monomorphize.fact.MonomorphicEffects.Entry
-import com.vanillasource.eliot.eliotc.monomorphize.fact.{GroundValue, MonomorphicEffects, MonomorphicExpression, MonomorphicValue}
+import com.vanillasource.eliot.eliotc.monomorphize.fact.{
+  CompilerMonomorphicValue,
+  GroundValue,
+  MonomorphicEffects,
+  MonomorphicExpression,
+  MonomorphicValue
+}
 import com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedExpression.SignatureView
 import com.vanillasource.eliot.eliotc.operator.fact.{OperatorResolvedExpression, OperatorResolvedValue}
 import com.vanillasource.eliot.eliotc.platform.Platform
@@ -23,6 +29,7 @@ import com.vanillasource.eliot.eliotc.resolve.fact.AbilityFQN
 import com.vanillasource.eliot.eliotc.source.content.Sourced.compilerAbort
 
 import scala.collection.mutable
+import scala.util.chaining.*
 
 /** **Environment threading** — effects D20c option 5, decided as threaded after monomorphization (`docs/effects.md`
   * §11, "The `transcriptOf` spike"). An implementation is compile-time code and a runtime environment: the code is the
@@ -65,7 +72,66 @@ object EnvironmentThreading {
 
   /** The woven signature and body of `mv`. */
   def thread(mv: MonomorphicValue): CompilerIO[(GroundValue, Option[Sourced[MonomorphicExpression.Expression]])] =
-    new Threader(mv).run
+    new Threader(Specialisation.of(mv), Track.Runtime, guarded = false).run
+      .map(threaded => (threaded.signature, threaded.body))
+
+  /** A compile-track specialisation's body, threaded as the runtime track threads a woven one: what the compile track
+    * evaluates wherever a control effect may run, so that a frame reaches its operation along the declared chain
+    * (`docs/effects.md` §3.4). [[None]] when it has no body.
+    */
+  def threadCompiled(value: Specialisation): CompilerIO[Option[Sourced[MonomorphicExpression.Expression]]] =
+    new Threader(value, Track.Compiler, guarded = false).run.map(_.body)
+
+  /** A **signature**'s expression threaded with its own control effects given by the guarded-return read
+    * (`docs/effects.md` §3.4): a `raise` or an `abort` nothing in the signature discharges is performed on a frame the
+    * read installs, so the threaded body takes one leading parameter per such frame part, outermost, in
+    * [[Threaded.guards]].
+    */
+  def threadGuarded(value: Specialisation): CompilerIO[Threaded] =
+    new Threader(value, Track.Compiler, guarded = true).run
+
+  /** What the threading made of a value: its signature and body, and the leading parameters of the body that are the
+    * guarded-return read's frames (only ever in a guarded threading).
+    */
+  case class Threaded(
+      signature: GroundValue,
+      body: Option[Sourced[MonomorphicExpression.Expression]],
+      guards: Seq[GroundValue]
+  )
+
+  /** One specialisation as the threading reads it, on either track: a [[MonomorphicValue]] on the runtime track, a
+    * [[CompilerMonomorphicValue]] — whose body is its reduced one, structural wherever it takes arguments — on the
+    * compile track, or a value the compile track is still checking, whose body is the one being read back.
+    */
+  case class Specialisation(
+      vfqn: ValueFQN,
+      typeArguments: Seq[GroundValue],
+      name: Sourced[QualifiedName],
+      signature: GroundValue,
+      body: Option[Sourced[MonomorphicExpression.Expression]],
+      effects: MonomorphicEffects
+  ) {
+    def naturalArity: Option[Int] = body.map(b => MonomorphicValue.countLeadingLambdas(b.value, 0))
+  }
+
+  object Specialisation {
+    def of(mv: MonomorphicValue): Specialisation =
+      Specialisation(mv.vfqn, mv.typeArguments, mv.name, mv.signature, mv.runtime, mv.effects)
+
+    def of(cmv: CompilerMonomorphicValue): Specialisation =
+      Specialisation(cmv.vfqn, cmv.typeArguments, cmv.name, cmv.signature, cmv.reduced, cmv.effects)
+  }
+
+  /** Which pool the threading reads declarations from, and which specialisations it reads. */
+  private enum Track(val platform: Platform) {
+    case Runtime  extends Track(Platform.Runtime)
+    case Compiler extends Track(Platform.Compiler)
+
+    def specialisation(vfqn: ValueFQN, typeArguments: Seq[GroundValue]): CompilerIO[Specialisation] = this match {
+      case Runtime  => getFactOrAbort(MonomorphicValue.Key(vfqn, typeArguments)).map(Specialisation.of)
+      case Compiler => getFactOrAbort(CompilerMonomorphicValue.Key(vfqn, typeArguments)).map(Specialisation.of)
+    }
+  }
 
   /** One part of an environment: a parameter in scope holding it, and its type. */
   private case class Part(name: String, tpe: GroundValue)
@@ -98,7 +164,7 @@ object EnvironmentThreading {
 
   private val defaultBinding: GroundValue = ImplementationBinding.defaultGround
 
-  private class Threader(mv: MonomorphicValue) {
+  private class Threader(mv: Specialisation, track: Track, guarded: Boolean) {
     private var counter = 0
 
     private def fresh(): String = {
@@ -106,18 +172,21 @@ object EnvironmentThreading {
       s"$$env$counter"
     }
 
-    def run: CompilerIO[(GroundValue, Option[Sourced[MonomorphicExpression.Expression]])] =
+    /** The frames the guarded-return read gives: a signature's own control effects, made the first time one is met. */
+    private val guards: mutable.ListBuffer[Frame] = mutable.ListBuffer.empty
+
+    def run: CompilerIO[Threaded] =
       for {
         received  <- receivedFrames(mv)
-        _         <- if (mv.runtime.isEmpty && received.exists(_.parts.nonEmpty))
+        _         <- if (mv.body.isEmpty && received.exists(_.parts.nonEmpty))
                        compilerAbort[Unit](
                          mv.name.as("Internal: a body-less value cannot receive an environment it would have to pass on.")
                        )
                      else ().pure[CompilerIO]
         signature <- signatureOf(mv)
-        body      <- mv.runtime.traverse { body =>
+        body      <- mv.body.traverse { body =>
                        walkDefinition(body.map(MonomorphicExpression(mv.signature, _)), mv, received).map(walked =>
-                         received
+                         (guards.toSeq ++ received)
                            .flatMap(_.parts)
                            .foldRight(walked) { (part, inner) =>
                              inner.as(
@@ -130,10 +199,10 @@ object EnvironmentThreading {
                            .map(_.expression)
                        )
                      }
-      } yield (signature, body)
+      } yield Threaded(signature, body, guards.toSeq.flatMap(_.parts).map(_.tpe))
 
     /** The frames a definition receives, each held by fresh hidden parameters. */
-    private def receivedFrames(value: MonomorphicValue): CompilerIO[Seq[Frame]] =
+    private def receivedFrames(value: Specialisation): CompilerIO[Seq[Frame]] =
       value.effects.received.traverse { received =>
         val binding = value.typeArguments.lift(received.binderIndex).getOrElse(defaultBinding)
         shapeOf(received.entry, binding).map(shape => held(received.entry, binding, shape))
@@ -155,7 +224,7 @@ object EnvironmentThreading {
       */
     private def walkDefinition(
         body: Sourced[MonomorphicExpression],
-        value: MonomorphicValue,
+        value: Specialisation,
         received: Seq[Frame]
     ): CompilerIO[Sourced[MonomorphicExpression]] =
       for {
@@ -284,7 +353,7 @@ object EnvironmentThreading {
     private case class Passed(parts: Seq[Part], own: Int)
 
     private def receivedParts(
-        callee: MonomorphicValue,
+        callee: Specialisation,
         typeArguments: Seq[GroundValue],
         at: Sourced[?],
         context: Context
@@ -299,7 +368,7 @@ object EnvironmentThreading {
       * on, anything else from scope — and then the implementation's own parameters.
       */
     private def dispatchedParts(
-        clause: MonomorphicValue,
+        clause: Specialisation,
         dispatch: MonomorphicEffects.Dispatch,
         at: Sourced[?],
         context: Context
@@ -332,7 +401,7 @@ object EnvironmentThreading {
       memberRows.get(member) match {
         case Some(declared) => declared.pure[CompilerIO]
         case None           =>
-          getFactIfProduced(OperatorResolvedValue.Key(member, Platform.Runtime))
+          getFactIfProduced(OperatorResolvedValue.Key(member, track.platform))
             .map(
               _.toSeq
                 .flatMap(_.effectRow.returnEffects)
@@ -352,7 +421,7 @@ object EnvironmentThreading {
 
     /** The effect entries a definition performs itself, by the index of the binder each binds ([[DeclaredEntries]]). */
     private def declaredEntries(vfqn: ValueFQN): CompilerIO[Map[Int, Declared]] =
-      getFactIfProduced(OperatorResolvedValue.Key(vfqn, Platform.Runtime))
+      getFactIfProduced(OperatorResolvedValue.Key(vfqn, track.platform))
         .map(_.fold(Map.empty[Int, Declared])(DeclaredEntries.of))
 
     /** The effect entries an implementation's **environment** holds: those one of its clauses performs itself while the
@@ -362,7 +431,7 @@ object EnvironmentThreading {
       * brings its own.
       */
     private def environmentEntries(marker: ValueFQN, ability: AbilityFQN): CompilerIO[Set[Declared]] =
-      getFactOrAbort(ModuleAbilities.Key(marker.moduleName, Platform.Runtime)).flatMap { abilities =>
+      getFactOrAbort(ModuleAbilities.Key(marker.moduleName, track.platform)).flatMap { abilities =>
         abilities.implementations
           .filter(impl => impl.vfqn.name.qualifier == marker.name.qualifier && impl.methodName != impl.abilityName)
           .traverse { impl =>
@@ -377,7 +446,7 @@ object EnvironmentThreading {
     /** A block at a callee's slot: the thunk the row phase wrapped it in now takes the frames the slot supplies. */
     private def block(
         arg: Sourced[MonomorphicExpression],
-        callee: MonomorphicValue,
+        callee: Specialisation,
         slot: MonomorphicEffects.Slot,
         context: Context
     ): CompilerIO[Sourced[MonomorphicExpression]] =
@@ -415,7 +484,7 @@ object EnvironmentThreading {
       * block's code for it: the code rides, the frame is given where the block runs (`docs/effects.md` D20c, (b)).
       */
     private def givenFrames(
-        callee: MonomorphicValue,
+        callee: Specialisation,
         slot: MonomorphicEffects.Slot,
         context: Context,
         arg: Sourced[?]
@@ -481,7 +550,7 @@ object EnvironmentThreading {
       * own binding for it. An entry the slot names an implementation for is supplied even when `value` declares it too
       * (`docs/effects.md` D23): the slot's `with` handles it.
       */
-    private def listed(value: MonomorphicValue, slot: MonomorphicEffects.Slot): CompilerIO[Seq[Listed]] =
+    private def listed(value: Specialisation, slot: MonomorphicEffects.Slot): CompilerIO[Seq[Listed]] =
       for {
         named <- slotImplementations(value, slot.parameterIndex)
         rides <- ridingFlags(value, slot)
@@ -506,7 +575,7 @@ object EnvironmentThreading {
       * which is what the caller writes for a clause the slot supplies. Either way the frame is given where the block runs
       * (`docs/effects.md` D20c, decided (b)).
       */
-    private def clauseBinding(value: MonomorphicValue, clause: Entry): GroundValue =
+    private def clauseBinding(value: Specialisation, clause: Entry): GroundValue =
       value.effects.received
         .find(_.entry == clause)
         .flatMap(received => value.typeArguments.lift(received.binderIndex))
@@ -517,8 +586,8 @@ object EnvironmentThreading {
       * {Throw[AssertionError]} Unit` supplies `Throw[E]` even where `E` is `AssertionError`, so the block's frame is the
       * slot's. An entry list that does not line up with the declaration's is a failure, never a guess.
       */
-    private def ridingFlags(value: MonomorphicValue, slot: MonomorphicEffects.Slot): CompilerIO[Seq[Boolean]] =
-      getFactOrAbort(OperatorResolvedValue.Key(value.vfqn, Platform.Runtime)).flatMap { orv =>
+    private def ridingFlags(value: Specialisation, slot: MonomorphicEffects.Slot): CompilerIO[Seq[Boolean]] =
+      getFactOrAbort(OperatorResolvedValue.Key(value.vfqn, track.platform)).flatMap { orv =>
         val row      = orv.effectRow.returnEffects.map(entry => (entry.abilityFQN, entry.typeArgs.map(_.render))).toSet
         val declared = orv.effectRow.parameterEffects.find(_.parameterIndex == slot.parameterIndex).toSeq.flatMap(_.effects)
         if (declared.size != slot.entries.size)
@@ -529,8 +598,8 @@ object EnvironmentThreading {
     /** The implementations a slot's declared type names with `with`, by ability. The row phase strips them from the
       * signature it hands on, so they are read off the operator-resolved declaration, as the row phase read them.
       */
-    private def slotImplementations(value: MonomorphicValue, index: Int): CompilerIO[Map[AbilityFQN, ValueFQN]] =
-      getFactIfProduced(OperatorResolvedValue.Key(value.vfqn, Platform.Runtime)).flatMap {
+    private def slotImplementations(value: Specialisation, index: Int): CompilerIO[Map[AbilityFQN, ValueFQN]] =
+      getFactIfProduced(OperatorResolvedValue.Key(value.vfqn, track.platform)).flatMap {
         case None      => Map.empty.pure[CompilerIO]
         case Some(orv) =>
           SignatureView
@@ -549,7 +618,7 @@ object EnvironmentThreading {
     }
 
     private def abilityOfMarker(marker: ValueFQN): CompilerIO[Option[AbilityFQN]] =
-      getFactIfProduced(OperatorResolvedValue.Key(marker, Platform.Runtime)).map(_.flatMap(_.name.value.qualifier match {
+      getFactIfProduced(OperatorResolvedValue.Key(marker, track.platform)).map(_.flatMap(_.name.value.qualifier match {
         case com.vanillasource.eliot.eliotc.resolve.fact.Qualifier.AbilityImplementation(ability, _, _) => Some(ability)
         case _                                                                                          => None
       }))
@@ -569,7 +638,7 @@ object EnvironmentThreading {
       }
 
     /** What a block at `slot` of `value` takes: the parts of the frames of the entries the slot lists, in order. */
-    private def slotDomain(value: MonomorphicValue, slot: MonomorphicEffects.Slot): CompilerIO[Seq[GroundValue]] =
+    private def slotDomain(value: Specialisation, slot: MonomorphicEffects.Slot): CompilerIO[Seq[GroundValue]] =
       listed(value, slot).flatMap(_.flatTraverse {
         case Listed.Rides(entry, binding)         => shapeOf(entry, binding).map(_.types)
         case Listed.Supplied(entry, None)         => shapeOf(entry, defaultBinding).map(_.types)
@@ -582,7 +651,7 @@ object EnvironmentThreading {
     /** A value's woven signature: the parts of the frames it receives, then its own parameters with each row-typed one
       * retyped to the block it now is.
       */
-    private def signatureOf(value: MonomorphicValue): CompilerIO[GroundValue] =
+    private def signatureOf(value: Specialisation): CompilerIO[GroundValue] =
       for {
         received <- value.effects.received.traverse { received =>
                       val binding = value.typeArguments.lift(received.binderIndex).getOrElse(defaultBinding)
@@ -599,13 +668,15 @@ object EnvironmentThreading {
     /** The callee a reference names, when it is a monomorphized value that receives or supplies anything; [[None]] when
       * its declaration has no constraint and no row-typed parameter, which is every type reference and most values.
       */
-    private def calleeOf(reference: MonomorphicExpression.MonomorphicValueReference): CompilerIO[Option[MonomorphicValue]] =
-      getFactIfProduced(OperatorResolvedValue.Key(reference.valueName.value, Platform.Runtime)).flatMap {
+    private def calleeOf(
+        reference: MonomorphicExpression.MonomorphicValueReference
+    ): CompilerIO[Option[Specialisation]] =
+      getFactIfProduced(OperatorResolvedValue.Key(reference.valueName.value, track.platform)).flatMap {
         case Some(orv) if orv.paramConstraints.nonEmpty || orv.effectRow.parameterEffects.nonEmpty =>
-          getFactOrAbort(MonomorphicValue.Key(reference.valueName.value, reference.typeArguments)).map(Some(_))
+          track.specialisation(reference.valueName.value, reference.typeArguments).map(Some(_))
         case _                                                                                    =>
           if (reference.dispatchedFrom.isDefined || isImplementationClause(reference.valueName.value))
-            getFactOrAbort(MonomorphicValue.Key(reference.valueName.value, reference.typeArguments)).map(Some(_))
+            track.specialisation(reference.valueName.value, reference.typeArguments).map(Some(_))
           else None.pure[CompilerIO]
       }
 
@@ -652,7 +723,12 @@ object EnvironmentThreading {
       */
     private def built(frames: Seq[Frame], entry: Entry, binding: GroundValue, at: Sourced[?]): CompilerIO[Frame] =
       shapeOf(entry, binding).flatMap { shape =>
-        if (shape.own.nonEmpty)
+        if (shape.own.nonEmpty && guarded)
+          guards
+            .find(guard => guard.entry == entry && sameImplementation(guard.binding, binding))
+            .getOrElse(held(entry, binding, shape).tap(guards += _))
+            .pure[CompilerIO]
+        else if (shape.own.nonEmpty)
           compilerAbort(
             at.as(
               s"The effect '${entry.ability.abilityName}' is performed here with nothing to discharge it: its " +
@@ -723,7 +799,7 @@ object EnvironmentThreading {
             entry.ability.moduleName,
             QualifiedName(entry.ability.abilityName, Qualifier.Ability(entry.ability.abilityName))
           )
-          getFactIfProduced(AbilityImplementation.Key(abilityMarker, entry.arguments, Platform.Runtime))
+          getFactIfProduced(AbilityImplementation.Key(abilityMarker, entry.arguments, track.platform))
             .map(_.flatMap(_.resolution.resolved))
       }
 
@@ -736,7 +812,7 @@ object EnvironmentThreading {
         marker: ValueFQN,
         typeArguments: Option[Seq[GroundValue]]
     ): CompilerIO[Seq[(Entry, GroundValue)]] =
-      getFactOrAbort(OperatorResolvedValue.Key(marker, Platform.Runtime)).flatMap { orv =>
+      getFactOrAbort(OperatorResolvedValue.Key(marker, track.platform)).flatMap { orv =>
         val performed = orv.effectRow.returnEffects.map(_.abilityFQN).toSet
         if (performed.isEmpty) Seq.empty.pure[CompilerIO]
         else {
@@ -745,7 +821,7 @@ object EnvironmentThreading {
           for {
             held   <- abilityOfImplementation(orv).fold(Set.empty[Declared].pure[CompilerIO])(environmentEntries(marker, _))
             own    <- declaredEntries(marker)
-            ground <- getFactOrAbort(MonomorphicValue.Key(marker, arguments))
+            ground <- track.specialisation(marker, arguments)
           } yield ground.effects.received
             .filter(received =>
               performed.contains(received.entry.ability) && own.get(received.binderIndex).exists(held.contains)
@@ -767,12 +843,12 @@ object EnvironmentThreading {
       */
     private def ownParameterTypes(marker: ValueFQN, typeArguments: Seq[GroundValue]): CompilerIO[Seq[GroundValue]] = {
       val declaration = ImplementationParameters.of(marker)
-      getFactOrAbort(UnifiedModuleNames.Key(marker.moduleName, Platform.Runtime)).flatMap { names =>
+      getFactOrAbort(UnifiedModuleNames.Key(marker.moduleName, track.platform)).flatMap { names =>
         if (!names.names.contains(declaration.name)) Seq.empty.pure[CompilerIO]
         else
           for {
-            orv   <- getFactOrAbort(OperatorResolvedValue.Key(declaration, Platform.Runtime))
-            ground <- getFactOrAbort(MonomorphicValue.Key(declaration, typeArguments))
+            orv   <- getFactOrAbort(OperatorResolvedValue.Key(declaration, track.platform))
+            ground <- track.specialisation(declaration, typeArguments)
           } yield parameterTypes(ground.signature, SignatureView.of(orv.signature).parameters.size)
       }
     }

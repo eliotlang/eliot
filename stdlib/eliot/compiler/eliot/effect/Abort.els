@@ -1,37 +1,47 @@
-import eliot.compiler.Escape
-
-// The compile-time `Abort`: what makes an `if(cond, value) else fallback` return guard reduce during checking, which is
-// the control effect the checker meets in ordinary type-level code. Written over the evaluator's escape intrinsic; it
-// replaces the `Either`-based `AbortCarrier` overlay this layer used to carry. `Abort` is re-declared here because name
-// resolution is per-file; the layer merge verifies the copy agrees with the base.
+// The compile-time `Abort`: what makes an `if(cond, value) else fallback` reduce during checking — in a guarded return
+// type, a `where` predicate, any compile-time body. The same shape as the jvm layer's (`jvm/eliot/src/eliot/effect/
+// Abort.els`), over this track's own evaluator intrinsic instead of a bytecode leaf, because a layer's compile-time
+// track may not borrow a sibling target. `Abort` is re-declared here because name resolution is per-file; the layer
+// merge verifies the copy agrees with the base.
 effect Abort {
    def abort[A]: A
 }
 
 /**
- * `abort` leaves through the nearest enclosing `runAbort` frame.
+ * The compile-time `Abort` implementation: `abort` leaves through the frame its `runAbort` made, carrying nothing.
  *
- * Its key is this module's own `Aborted` marker, not `Unit`. The compile track has **one** escape intrinsic, keyed by
- * the type value it is handed, so two effects that both key on an ordinary type share frames — an `abort` would be
- * caught by a `runThrow[Unit]`, and the other way round. A marker nothing else has a reason to name keeps them apart.
- * (The jvm layer needs no marker: its leaves are declared per module, so the frames are already separate names.)
+ * Its parameter is that frame, handed along the declared chain by the environment threading (`docs/effects.md` §3.4),
+ * so a helper's own `else` cannot catch an `abort` its caller wrote. Spelled exactly as the jvm layer spells it: the
+ * parameters are part of an implementation's identity, so the two are one implementation, and this one supersedes the
+ * borrowed one on the compile track.
  */
-implement Abort {
-   def abort[A]: A = exit(Aborted[], unit)
+implement Abort(frame: AbortFrame[Unit]) {
+   def abort[A]: A = exitIntrinsic(frame, unit)
 }
 
 /**
- * Discharge `Abort` on the compile track: `Some(a)` if the computation finished, `None` if it left. The platform body
- * of the base's body-less signature — and, through the base's `else`, what discharges every `if..else`.
+ * Discharge `Abort` on the compile track: `Some(a)` if the computation finished, `None` if it left. The platform body of
+ * the base's body-less signature — and, through the base's `else`, what discharges every `if..else`.
  */
-def runAbort[A](obj uses *, Abort: A) uses *: Option[A] = foldEither(_ -> None, a -> Some(a), escape(Aborted[], obj))
+def runAbort[A](obj uses *, Abort: A) uses *: Option[A] = escapeIntrinsic(obj, (nothing: Unit) -> None, a -> Some(a))
 
 /**
- * The frame key of this module's escape, and nothing else: an abstract type with no representation, whose only role is
- * to be a name no other effect has a reason to hand to `escape`.
- *
- * Public because `private` reaches only `data` and `def` — a body-less `type` cannot be marked. That is a small hole:
- * compile-track code that deliberately wrote `uses Throw[Aborted]` would share frames with `abort`. It is not worth a
- * language change; a real fix would be a private abstract type, or keying on the effect's own marker.
+ * The frame an `abort` leaves through: made by `escapeIntrinsic`. It has no constructor, so nothing else can make one.
  */
-type Aborted
+type AbortFrame[K]
+
+/**
+ * Make a fresh frame, run `body` with it, and answer `onValue` of its result, or `onExit` of what an `exitIntrinsic`
+ * through that frame carried. Answered by the evaluator (`monomorphize/processor/EffectIntrinsics`). `body` is given
+ * `Abort` and its frame (`docs/effects.md` §1 rule 5): a body-less declaration is the only kind that gives an effect from
+ * nothing.
+ *
+ * Named apart from the jvm layer's `escapeInternal` on purpose: an intrinsic serves both tracks' evaluators, and the
+ * runtime track must keep finding no binding for a jvm leaf.
+ */
+private def escapeIntrinsic[K, A, R](body uses *, Abort: A, onExit uses *: K => R, onValue uses *: A => R) uses *: R
+
+/**
+ * Leave through `frame`. Answered by the evaluator; stuck when `frame` is not an installed frame.
+ */
+private def exitIntrinsic[K, A](frame: AbortFrame[K], nothing: K): A

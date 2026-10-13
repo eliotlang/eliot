@@ -366,17 +366,16 @@ Two properties hand over, for free, the guards CTFE needs elsewhere:
 
    **What it folds that a purity gate would refuse**, correctly — as far as the compile track implements the
    effect involved:
-   - A discharged `Abort` reduces today — `if (c) a else b` over a known `c` is the case — because the compile
-     track's `Abort` (`stdlib/eliot/compiler/eliot/effect/Abort.els`) is written over the escape intrinsic
-     (`monomorphize/processor/EffectIntrinsics`). That is the same reduction that already makes an `if..else`
-     guarded return type reduce during checking.
-   - **`Throw`, `State` and `Writer` do not reduce today.** The compile track has `Abort` and no `Throw`
-     (CLAUDE.md's compiler-as-platform section), and nothing implements `State` or `Writer` over the cell
-     intrinsic that `eliot/compiler/Cell.els` already declares. So `runThrow(…)`, `runStateToPair(…)` and
+   - A discharged `Abort` or `Throw` reduces today — `if (c) a else b` over a known `c` is the case — because the
+     compile track's `Abort` and `Throw` (`stdlib/eliot/compiler/eliot/effect/`) are written over the escape
+     intrinsic (`monomorphize/processor/EffectIntrinsics`), with their frames threaded along the declared chain
+     (`docs/effects.md` §3.4). That is the same reduction that makes a guarded return type reduce during checking.
+   - **`State` and `Writer` do not reduce today.** Nothing implements them over the cell intrinsic that
+     `eliot/compiler/Cell.els` declares. So `runStateToPair(…)` and
      `runWriterToLog(greeting("Bob") with recordingConsole)` are stuck and stay in the code — safe, merely
-     unoptimized. Each starts folding once its effect gets a compile-track implementation over the intrinsics,
-     the same overlay work `Abort` got; the mocked `greeting` would then fold to `"Hello, Bob!;"`, since a named
-     double is pure Eliot. The gate needs no change for that — only the compile track's coverage grows.
+     unoptimized. Each starts folding once its effect gets a compile-track implementation, the same overlay work
+     `Abort` and `Throw` got; the mocked `greeting` would then fold to `"Hello, Bob!;"`, since a named double is pure
+     Eliot. The gate needs no change for that — only the compile track's coverage grows.
    - An undischarged `raise` or `abort` has no frame and is stuck; `printLine` under `main`'s binding reaches the
      platform's native and is stuck. Both stay in the code.
 

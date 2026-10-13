@@ -119,8 +119,16 @@ class TypeStackLoop(
       // The compiler track reduces its body (`reduceSourced`); the runtime track keeps it structural (`quoteSourced`).
       // Narrow-representation reconciliation happens in the backend's `ExpressionCodeGenerator` off the refinement
       // channel, so the body is read back directly.
-      monoBody  <- runtime.traverse(srcSem => liftF(track.readBackBody(quoter, srcSem)))
       effects   <- monomorphicEffects(resolvedValue, typeArguments, quoter, monoEnv)
+      threading  = PostDrainQuoter.Threading(
+                     resolvedValue.vfqn,
+                     typeArguments,
+                     resolvedValue.name.as(resolvedValue.vfqn.name),
+                     groundSig,
+                     effects,
+                     guarded = false
+                   )
+      monoBody  <- runtime.traverse(srcSem => liftF(track.readBackBody(quoter, srcSem, threading)))
     } yield TypeStackLoop.Result(
       groundSig,
       monoBody.map(sourcedMono => sourcedMono.as(sourcedMono.value.expression)),
@@ -210,20 +218,44 @@ class TypeStackLoop(
       // **effectful** inline guard (`if..else..raise`), whose `else`/`runAbort` need the checker's effect-lift `pure`
       // absent from the raw signature — so fall back there to the **checked** arrow chain via the escalation loop, which
       // reduces it to its `Right(t)` / `Left(msg)` verdict. No `sawGuard`: the shape falls out of which reduction settles.
-      // The raw evaluation dispatches no ability, so a raw result still holding an ability method's call is not a type
-      // either: `abort else Bool[]` raw-reduces to `abort(Default)`, which quotes, since the escape answers `Right` of
-      // anything that is not a neutral. Accepting it lost every guard's fallback; the checked chain dispatches it.
+      // The raw evaluation dispatches no ability and threads no frame, so it is not read at all for a signature that
+      // runs a control effect: an operation stays an undispatched call there, and a discharger's handler can turn it
+      // into a plausible wrong value — `runThrow(…)` read through `foldEither(_ -> false, …)` answered `false` for a
+      // guard that had raised. Elsewhere a raw result still holding an ability method's call is not a type either.
       raw        <- checker.evalExpr(bodyExpr.value)
-      groundSig  <- quoter.quoteSemOption(raw).filterNot(EscalatingReducer.holdsAbilityCall) match {
+      threaded   <- liftF(quoter.runsControlEffects(checked))
+      rawSig      = quoter.quoteSemOption(raw).filterNot(EscalatingReducer.holdsAbilityCall).filterNot(_ => threaded)
+      groundSig  <- rawSig match {
                       case Some(ground) => liftF(ground.pure[CompilerIO])
                       case None         =>
-                        liftF(quoter.reduceSignatureToGroundOption(checked)).flatMap {
+                        liftF(
+                          quoter.reduceSignatureToGroundOption(checked, guardRead(resolvedValue, typeArguments))
+                        ).flatMap {
                           case Some(ground) => liftF(ground.pure[CompilerIO])
                           case None         => publishStuckGuardCarrier(view, checked, quoter, resolvedValue)
                         }
                     }
     } yield TypeStackLoop.Result(groundSig, None)
   }
+
+  /** How the compile track threads a signature's read-back: the **guarded-return read** gives the signature's own
+    * control effects their frames (`docs/effects.md` §3.4), so a `raise("…")` it performs is read as the rejection
+    * `Left("…")`, carrying its author's message, and an `else` in it catches only the `abort` written inside it.
+    */
+  private def guardRead(
+      resolvedValue: OperatorResolvedValue,
+      typeArguments: Seq[GroundValue]
+  ): Option[PostDrainQuoter.Threading] =
+    Option.when(track.platform == Platform.Compiler)(
+      PostDrainQuoter.Threading(
+        resolvedValue.vfqn,
+        typeArguments,
+        resolvedValue.name.as(resolvedValue.vfqn.name),
+        GroundValue.Type,
+        MonomorphicEffects.empty,
+        guarded = true
+      )
+    )
 
   /** A guard whose verdict depends on a *leftover generic binder* (a [[GroundValue.Param]]) is stuck as a value — its
     * `fold`/`else` cannot reduce with the binder abstract, so neither the raw quote nor the escalation grounds it

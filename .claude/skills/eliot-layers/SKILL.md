@@ -16,16 +16,16 @@ Eliot package in the build system's standard layout (`src/`, `compiler/`), parke
 already owns `<layer>/src` for the Scala — which is what that module's `at` clause in `eliot.pkg` says. The same name
 in several layers/roots is **merged**. There is **no standalone `compiler` Mill module** — a layer's compile-time
 contribution is a sibling `compiler/` root next to its `src/` root (today only `stdlib` ships one:
-`Either`/`Option`/`Pair`/`Bound`/`Interval`, the two evaluator-intrinsic declarations `eliot.compiler.Escape` and
-`eliot.compiler.Cell`, and the compile-time `Abort` written over `escape`, which is what makes an `if..else`
-return guard reduce).
+`Either`/`Option`/`Pair`/`Bound`/`Interval`, the type-keyed cell intrinsic's declarations `eliot.compiler.Cell`, and
+the compile-time `Abort` and `Throw`, spelled as the jvm layer's over their own private `escapeIntrinsic`/
+`exitIntrinsic`, which is what makes an `if..else` return guard reduce and a guard's `raise("…")` carry its message).
 
 | Layer / root | Holds | On which pool |
 |-------|-------|---------------|
 | `lang/eliot/src` | core compiler (Scala) **and** compiler-owned `.els` (`eliot.compiler.{Meta,Reflect,Type}`, `eliot.compiler.internal.{PatternMatch,TypeMatch}`, the `Eq[Type]` instance, `Bool`'s `true`/`false`, `eliot.collection.List`) | **both** |
 | `stdlib/eliot/src` | the platform-independent base: abstract `type`s, body-less `def` signatures, `ability` decls, pure platform-independent bodies/instances | **both** |
 | `jvm/eliot/src` | the runtime platform: concrete `data`, `def` bodies, native leaves, ability and effect `implement`s, the three private control-flow primitives (`escapeInternal`/`withCellInternal`/`foreverInternal`) and the discharger bodies over them | runtime only (**borrowed** into the compiler pool) |
-| `stdlib/eliot/compiler` | the compile-time overlay: `data`/instances the NbE checker must *evaluate at compile time* that **aren't borrowable** — the self-sufficient `Either`/`Option`/`Pair`, the `Interval` `Meta`/`Numeric` instances, the `Escape`/`Cell` intrinsic declarations, and the compile-time `Abort` over them | compiler only (**override**) |
+| `stdlib/eliot/compiler` | the compile-time overlay: `data`/instances the NbE checker must *evaluate at compile time* that **aren't borrowable** — the self-sufficient `Either`/`Option`/`Pair`, the `Interval` `Meta`/`Numeric` instances, the `Cell` intrinsic declarations, and the compile-time `Abort`/`Throw` over their own private escape intrinsics | compiler only (**override**) |
 
 ## The two pools — the operational key
 

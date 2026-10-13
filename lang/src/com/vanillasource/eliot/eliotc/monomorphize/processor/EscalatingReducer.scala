@@ -52,24 +52,29 @@ object EscalatingReducer {
       argMetas: Seq[SemValue]
   ): CompilerIO[Option[GroundValue]] =
     getFactIfProduced(CompilerMonomorphicValue.Key(vfqn, typeArguments)).flatMap {
-      case Some(CompilerMonomorphicValue(_, _, _, _, Some(reduced))) =>
-        ReducedBindingClosure.collectBindings(reduced.value, vfqn, Platform.Compiler, deep = false).flatMap { base =>
-          def evalWith(extra: Map[ValueFQN, SemValue]): SemValue = {
-            val lookup: ValueFQN => Option[SemValue] = fqn => extra.get(fqn).orElse(base.get(fqn))
-            val body                                 =
-              new MonomorphicEvaluator(lookup).eval(Env.empty, MonomorphicExpression(GroundValue.Type, reduced.value))
-            val applied                              = argMetas.foldLeft(body)(Evaluator.applyValue)
-            Evaluator.renormalize(applied, MetaStore.empty, lookup, deep = true)
-          }
+      case Some(cmv @ CompilerMonomorphicValue(_, _, _, _, Some(_), _)) =>
+        // Threaded, a body passes frames to its callees, which must then be threaded too: link each one reduced at its
+        // instantiation, as an escalation would, rather than the raw one-hop binding that takes no frame.
+        ReducedBindingClosure.threaded(cmv).flatMap(_.flatTraverse { reduced =>
+          val deep = !cmv.reduced.contains(reduced)
+          ReducedBindingClosure.collectBindings(reduced.value, vfqn, Platform.Compiler, deep).flatMap { base =>
+            def evalWith(extra: Map[ValueFQN, SemValue]): SemValue = {
+              val lookup: ValueFQN => Option[SemValue] = fqn => extra.get(fqn).orElse(base.get(fqn))
+              val body                                 =
+                new MonomorphicEvaluator(lookup).eval(Env.empty, MonomorphicExpression(GroundValue.Type, reduced.value))
+              val applied                              = argMetas.foldLeft(body)(Evaluator.applyValue)
+              Evaluator.renormalize(applied, MetaStore.empty, lookup, deep = true)
+            }
 
-          val candidates = ReducedBindingClosure.valueReferences(reduced.value).toSeq.filterNot(_._1 == vfqn)
-          escalatingLoop(
-            MetaStore.empty,
-            evalWith,
-            already => escalate(candidates, already, ReducedBindingClosure.reduceInstance(_, _), (_, sem) => sem),
-            channelStuck
-          ).map(result => Quoter.quote(0, result, MetaStore.empty).toOption.filterNot(isAbstractAbilityStructure))
-        }
+            val candidates = ReducedBindingClosure.valueReferences(reduced.value).toSeq.filterNot(_._1 == vfqn)
+            escalatingLoop(
+              MetaStore.empty,
+              evalWith,
+              already => escalate(candidates, already, ReducedBindingClosure.reduceInstance(_, _), (_, sem) => sem),
+              channelStuck
+            ).map(result => Quoter.quote(0, result, MetaStore.empty).toOption.filterNot(isAbstractAbilityStructure))
+          }
+        })
       case _                                                         => none[GroundValue].pure[CompilerIO]
     }
 

@@ -11,19 +11,17 @@ import java.io.{ByteArrayOutputStream, PrintStream}
 import java.net.URLClassLoader
 import java.nio.file.{Files, Path}
 
-/** End-to-end proof of the compile track's escape and cell intrinsics (effects v6 §10.1 step 7, `EffectIntrinsics`)
-  * through the real evaluator paths: an ability guard is decided by a pure def that escapes, exits and threads a cell
-  * — reduced on the compiler track through its own `Id`-elaborated body, the overlay's `foldEither`/`foldPair` and
-  * the `Bool` `fold` twin — so each `handler[..]` site is bound to one implementation in the emitted bytecode.
+/** End-to-end proof of the compile track's escape and cell intrinsics (`EffectIntrinsics`, `docs/effects.md` §3.4)
+  * through the real evaluator paths: an ability guard is decided by a pure def that discharges a control effect or
+  * threads a cell, reduced on the compiler track, so each `handler[..]` site is bound to one implementation in the
+  * emitted bytecode.
   *
-  * Until the flag day nothing in the layers declares the primitives, so each program declares them itself as body-less
-  * defs in the modules the intrinsics are keyed on (`eliot.compiler.Escape` / `eliot.compiler.Cell`): the native
-  * category answers for those FQNs regardless of which root declares them. **The instantiation is passed as a type
-  * value** (`escape(String[], …)`), the one way the evaluator can key a frame, and the conditional arms are thunks
-  * applied after selection — a native fires the moment it is applied, so a bare `exit` in a strict arm would fire
-  * before `fold` chose, which is exactly why a post-flag-day row arm is a thunk. The cell holds a `Bool`: a body-less
-  * leaf whose bare generic result is instantiated at a meta-carrying type (`read[S]` at `String`) must state a
-  * transfer (R2), a question the flag day's overlay has to answer for these primitives.
+  * The escape is the real one: the compile-track overlay's `runThrow`/`else` over its `escapeIntrinsic`, with each
+  * frame handed along the declared chain. The cell has no compile-track effect written over it, so the program
+  * declares the primitives itself as body-less defs in the module the intrinsics are keyed on (`eliot.compiler.Cell`):
+  * the native category answers for those FQNs regardless of which root declares them. The cell holds a `Bool`: a
+  * body-less leaf whose bare generic result is instantiated at a meta-carrying type (`read[S]` at `String`) must
+  * state a transfer (R2).
   *
   * As in `ListGuardReductionIntegrationTest`, a pair of guarded implementations selected from one program is the
   * point: a guard that could not reduce would fail to select, not select wrongly.
@@ -32,11 +30,7 @@ class EffectIntrinsicsIntegrationTest extends AsyncFlatSpec with AsyncIOSpec wit
   import EffectIntrinsicsIntegrationTest.*
 
   private val primitives = Map(
-    "eliot/compiler/Escape" ->
-      """def escape[E, A](key: Type, body uses *: A) uses *: Either[E, A]
-        |def exit[E, A](key: Type, e: E): A
-        |""".stripMargin,
-    "eliot/compiler/Cell"   ->
+    "eliot/compiler/Cell" ->
       """def withCell[S, A](key: Type, initial: S, body uses *: A) uses *: Pair[A, S]
         |def read[S](key: Type): S
         |def write[S](key: Type, s: S): Unit
@@ -50,7 +44,6 @@ class EffectIntrinsicsIntegrationTest extends AsyncFlatSpec with AsyncIOSpec wit
     */
   private val prelude =
     """import eliot.effect.Console
-      |import eliot.compiler.Escape
       |import eliot.compiler.Cell
       |ability Route[S: String] { def handler: String }
       |data Arm(run: Function[Unit, Bool])
@@ -67,7 +60,7 @@ class EffectIntrinsicsIntegrationTest extends AsyncFlatSpec with AsyncIOSpec wit
     runProject(
       program(
         """def accepted(s: String): Bool =
-          |   foldEither(_ -> false, b -> b, escape(String[], pick(s == "/api", Arm(_ -> true), Arm(_ -> exit(String[], "no")))))
+          |   foldEither(_ -> false, b -> b, runThrow[String, Bool](if(s == "/api", true) else raise("no")))
           |implement[S: String] Route[S] where accepted(S) { def handler: String = "hit" }
           |implement[S: String] Route[S] where !accepted(S) { def handler: String = "miss" }
           |def main uses Console: Unit = printLine(handler["/api"] ++ "/" ++ handler["/x"])
@@ -76,13 +69,12 @@ class EffectIntrinsicsIntegrationTest extends AsyncFlatSpec with AsyncIOSpec wit
     ).asserting(_ shouldBe "hit/miss")
   }
 
-  it should "let an exit pass through a frame of another instantiation to its own" in {
+  it should "let an exit pass through a discharger of another effect to its own frame" in {
     runProject(
       program(
-        """def inner(s: String): Bool =
-          |   foldEither(_ -> false, b -> b, escape(Unit[], pick(s == "/api", Arm(_ -> exit(String[], "outer")), Arm(_ -> true))))
+        """def inner(s: String) uses Throw[String]: Bool = if(s == "/api", raise("outer")) else true
           |def accepted(s: String): Bool =
-          |   foldEither(e -> e == "outer", _ -> false, escape(String[], inner(s)))
+          |   foldEither(e -> e == "outer", _ -> false, runThrow[String, Bool](inner(s)))
           |implement[S: String] Route[S] where accepted(S) { def handler: String = "outer" }
           |implement[S: String] Route[S] where !accepted(S) { def handler: String = "inner" }
           |def main uses Console: Unit = printLine(handler["/api"] ++ "/" ++ handler["/x"])

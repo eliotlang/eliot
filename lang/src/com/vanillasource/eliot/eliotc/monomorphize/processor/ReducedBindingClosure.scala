@@ -2,6 +2,7 @@ package com.vanillasource.eliot.eliotc.monomorphize.processor
 
 import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.module.fact.ValueFQN
+import com.vanillasource.eliot.eliotc.monomorphize.channel.EnvironmentThreading
 import com.vanillasource.eliot.eliotc.monomorphize.domain.*
 import com.vanillasource.eliot.eliotc.monomorphize.domain.SemValue.*
 import com.vanillasource.eliot.eliotc.monomorphize.eval.MonomorphicEvaluator
@@ -13,6 +14,7 @@ import com.vanillasource.eliot.eliotc.monomorphize.fact.{
 }
 import com.vanillasource.eliot.eliotc.platform.Platform
 import com.vanillasource.eliot.eliotc.processor.CompilerIO.*
+import com.vanillasource.eliot.eliotc.source.content.Sourced
 
 /** Turns the compiler backend's *reduced* body (a [[MonomorphicExpression]] from
   * [[com.vanillasource.eliot.eliotc.monomorphize.fact.CompilerMonomorphicValue]]) into a self-contained
@@ -52,9 +54,19 @@ object ReducedBindingClosure {
       typeArguments: Seq[GroundValue]
   ): CompilerIO[Option[SemValue]] =
     getFactIfProduced(CompilerMonomorphicValue.Key(vfqn, typeArguments)).flatMap {
-      case Some(cmv) => cmv.reduced.traverse(r => buildBinding(vfqn, r.value, Platform.Compiler, deep = true))
+      case Some(cmv) =>
+        threaded(cmv).flatMap(_.traverse(r => buildBinding(vfqn, r.value, Platform.Compiler, deep = true)))
       case None      => None.pure[CompilerIO]
     }
+
+  /** A compile-track specialisation's reduced body, **threaded** (`docs/effects.md` §3.4): every binding a reduction
+    * links is threaded, so a control effect's frame reaches its operation along the declared chain, exactly as on the
+    * runtime track. A specialisation receiving and supplying nothing comes back as it was. Where the threading fails,
+    * its errors are kept and the unthreaded body is linked — which takes no frame, so a control effect run through it
+    * stays stuck rather than reaching another frame.
+    */
+  def threaded(cmv: CompilerMonomorphicValue): CompilerIO[Option[Sourced[MonomorphicExpression.Expression]]] =
+    recover(EnvironmentThreading.threadCompiled(EnvironmentThreading.Specialisation.of(cmv)))(cmv.reduced)
 
   /** Build the NbE binding for `vfqn` from its reduced compile-time body, resolving each dependency's binding in the
     * given `platform` pool. The dependencies are resolved once here; the resulting `VTopDef` thunk is self-contained,

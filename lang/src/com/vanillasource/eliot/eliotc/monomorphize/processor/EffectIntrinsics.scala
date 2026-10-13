@@ -1,81 +1,74 @@
 package com.vanillasource.eliot.eliotc.monomorphize.processor
 
-import com.vanillasource.eliot.eliotc.module.fact.ValueFQN
+import com.vanillasource.eliot.eliotc.module.fact.{Qualifier, ValueFQN}
 import com.vanillasource.eliot.eliotc.module.fact.WellKnownTypes.{
   cellReadFQN,
   cellWriteFQN,
-  escapeFQN,
-  exitFQN,
-  leftFQN,
+  escapeFrameFQN,
+  escapeIntrinsicFQNs,
+  exitIntrinsicFQNs,
   pairConstructorFQN,
-  rightFQN,
   typeFQN,
   withCellFQN
 }
 import com.vanillasource.eliot.eliotc.monomorphize.domain.{MetaStore, SemValue}
 import com.vanillasource.eliot.eliotc.monomorphize.domain.SemValue.*
 import com.vanillasource.eliot.eliotc.monomorphize.eval.{ConcreteNormalForm, Evaluator}
+import com.vanillasource.eliot.eliotc.monomorphize.fact.GroundValue
+import com.vanillasource.eliot.eliotc.monomorphize.fact.GroundValue.Literal
 
+import java.util.concurrent.atomic.AtomicLong
 import scala.util.DynamicVariable
 import scala.util.control.ControlThrowable
 
-/** The compiler platform's two control-flow primitives — **escape** and **cell** — as evaluator intrinsics (effects v6,
-  * `docs/effects.md` §9.6, §10.1 step 7). A finishing clause is a non-local exit and a stateful implementation needs a
-  * value threaded through calls that never mention it; neither is expressible as a def in a strict pure core, so each
+/** The compiler platform's two control-flow primitives — **escape** and **cell** — as evaluator intrinsics
+  * (`docs/effects.md` §3.4). A finishing clause is a non-local exit and a stateful implementation needs a value
+  * threaded through calls that never mention it; neither is expressible as a def in a strict pure core, so each
   * platform has them as private leaves — an exception and a static field on the jvm, and here, on the compile track,
-  * two natives the one NbE evaluator runs directly. At the flag day the compile-track overlay bodies `runThrow`,
-  * `catch`, `else`, `runAbort` and `runState*` over these, and the `Either`-based `AbortCarrier` overlay goes.
+  * natives the one NbE evaluator runs directly.
   *
-  * '''Frames, and the machine stack's discipline.''' `escape` and `withCell` each install a **frame** for the extent
-  * of one call and remove it when the call returns or is exited through; `exit`, `read` and `write` reach the
-  * **nearest enclosing frame of their instantiation** and nothing else. That is the discipline of the machine stack,
-  * kept inside the leaf and nowhere else (§12, "a runtime handler stack"): the frames are a dynamically scoped stack
-  * of the evaluator's own, the escape is a Scala control exception caught by exactly the frame it names, and no frame
-  * is ever reachable after its call — so nothing can dangle.
+  * '''Escape: a frame is a value with identity.''' Each control effect's compile-track overlay module declares its own
+  * private `escapeIntrinsic`/`exitIntrinsic` pair, as each jvm module declares its `escapeInternal`/`exitInternal`. The
+  * escape makes a **fresh frame** and hands it to the body it runs — a thunk the environment threading made take the
+  * frame (`monomorphize/channel/EnvironmentThreading`) — and `exitIntrinsic(frame, payload)` leaves through exactly
+  * that frame, by identity. Which frame an operation reaches is decided by what was passed to it along the declared
+  * chain, never by a search, so a helper's own `else` cannot catch the `abort` its caller wrote: the caller's block
+  * holds the caller's frame. An exit through a frame that is not installed — its escape has returned, or what was
+  * passed is not a frame at all, as in an evaluation nothing threaded — stays **stuck** on its own name, loud at
+  * read-back, never a nearest-frame guess.
   *
-  * '''The instantiation is a type *value*, passed as the leading argument.''' The frame an operation reaches is the
-  * nearest one of *its instantiation*: `raise(msg)` at `E := String` inside an `else` at `E := Unit` (the ordinary
-  * `if(c) T else raise(msg)` guard) must pass through the inner frame to the outer one, exactly as the jvm's
-  * one-exception-class-per-instantiation does. The evaluator cannot read an instantiation off type arguments: the
-  * post-monomorphization [[com.vanillasource.eliot.eliotc.monomorphize.eval.MonomorphicEvaluator]] erases them, and
-  * every binding is looked up by FQN alone, so one native serves every instantiation. Types are values, so the overlay
-  * passes the instantiation itself — `escape(E, body)`, `exit(E, err)`, `withCell(S, s0, body)`, `read(S)`,
-  * `write(S, s)` — and a frame matches a key by definitional equality of concrete normal forms
-  * ([[ConcreteNormalForm]]). A key that is not concrete matches nothing, and a native that finds no frame (or is handed
-  * no concrete key) stays **stuck** on its own FQN rather than answering: a use the scope check did not cover is a loud
-  * read-back error, never a silently wrong value.
+  * '''Cell''' is still the earlier, type-keyed form: `withCell(S, s0, body)`, `read(S)` and `write(S, s)` reach the
+  * nearest enclosing cell whose key is definitionally equal ([[ConcreteNormalForm]]). No compile-track effect is
+  * written over it.
   *
   * '''Strictness at the frame.''' The evaluator applies a top-level definition lazily — the application only grows the
   * spine, and the body runs when the value is forced — so a thunk's *result* may still hold an application that would
-  * `exit` or `write` when forced. Every value that crosses a frame boundary is therefore **settled** inside the frame
-  * (forced, and its constructor and stuck-native spines with it — [[Evaluator.renormalize]]'s traversal, which stops
-  * at a lambda since a lambda's calls run later, at a rowless slot the scope check keeps away from these frames):
-  * the thunk's result before the frame is left, an `exit`'s payload before the exit is taken, a cell's initial and
-  * written content. Pending applications settle in that traversal's order (head, then arguments left to right), which
-  * is the one evaluation order the compile track has.
+  * exit or write when forced. Every value that crosses a frame boundary is therefore **settled** inside the frame
+  * (forced, and its constructor and stuck-native spines with it — [[Evaluator.renormalize]]'s traversal, which stops at
+  * a lambda since a lambda's calls run later): the body's result before the frame is left, an exit's payload before the
+  * exit is taken, a cell's initial and written content. Pending applications settle in that traversal's order (head,
+  * then arguments left to right), which is the one evaluation order the compile track has.
   *
   * '''What a caller must know.''' A nullary top-level definition's body is evaluated **once** per binding
   * ([[SemValue.Lazy]]), so a nullary def that `read`s a cell would answer its first read forever; a def that reaches a
-  * cell must take an argument (a thunk does), or its binding must not be memoised — a concern for the overlay that
-  * bodies the `State` implementation, recorded there.
+  * cell must take an argument (a thunk does), or its binding must not be memoised.
   *
-  * '''What the intrinsics answer is the overlay's data.''' `escape` answers `Left`/`Right` and `withCell` answers
-  * `Pair`, each the value constructor the compile-track overlay declares (`stdlib/eliot/compiler/eliot/lang/`), applied
-  * to exactly its fields — a `match` applies a handler to every spine entry — so the overlay's own `foldEither` and
-  * `foldPair` take them apart like any constructed value. A twin eliminator over a private normal form was tried and
-  * does not work: the deep escalation links a bodied definition *reduced at its instantiation* ahead of a raw native,
-  * so a borrowed `foldPair` body always won and could not read the private form.
+  * '''What the cell answers is the overlay's data.''' `withCell` answers `Pair`, the value constructor the
+  * compile-track overlay declares (`stdlib/eliot/compiler/eliot/lang/`), applied to exactly its fields, so the
+  * overlay's own `foldPair` takes it apart like any constructed value. The escape answers whatever its
+  * `onExit`/`onValue` make.
   */
 object EffectIntrinsics {
 
   /** The exact-FQN intrinsics, folded into [[SystemNativesProcessor]]'s system reductions. */
-  val bindings: Map[ValueFQN, SemValue] = Map(
-    escapeFQN    -> escapeNative,
-    exitFQN      -> exitNative,
-    withCellFQN  -> withCellNative,
-    cellReadFQN  -> readNative,
-    cellWriteFQN -> writeNative
-  )
+  val bindings: Map[ValueFQN, SemValue] =
+    escapeIntrinsicFQNs.map(fqn => fqn -> escapeNative(fqn)).toMap ++
+      exitIntrinsicFQNs.map(fqn => fqn -> exitNative(fqn)).toMap ++
+      Map(
+        withCellFQN  -> withCellNative,
+        cellReadFQN  -> readNative,
+        cellWriteFQN -> writeNative
+      )
 
   /** The declared type of every key parameter: the type `Type`, not [[VType]] itself — a native whose parameter is
     * `VType` models *every* written type argument, and a key must arrive as a value, never be taken from a type
@@ -83,31 +76,31 @@ object EffectIntrinsics {
     */
   private val keyType: SemValue = VTopDef(typeFQN, None, Spine.SNil)
 
-  private sealed trait Frame {
-    def key: SemValue
-  }
+  /** The declared type of every escape argument, for the same reason as [[keyType]]: anything but [[VType]], so a
+    * written type argument is never taken for a value argument.
+    */
+  private val argumentType: SemValue = keyType
 
-  private final class EscapeFrame(val key: SemValue) extends Frame
+  private final class CellFrame(val key: SemValue, var content: SemValue)
 
-  private final class CellFrame(val key: SemValue, var content: SemValue) extends Frame
-
-  /** The non-local exit in flight: names the one frame that catches it, so every frame between rethrows by not
+  /** The non-local exit in flight: names the one escape frame that catches it, so every frame between rethrows by not
     * matching. A control throwable — no stack trace, and not a `NonFatal` that a generic handler would swallow.
     */
-  private final case class Exiting(frame: EscapeFrame, value: SemValue) extends ControlThrowable
+  private final case class Exiting(frame: Long, value: SemValue) extends ControlThrowable
 
-  /** The active frames, innermost first. Dynamically scoped: a frame is on the stack exactly for the extent of its
-    * intrinsic's call, restored on return and on exit alike.
+  /** The installed escape frames, innermost first. Dynamically scoped: a frame is installed exactly for the extent of
+    * its escape, restored on return and on exit alike — which is what keeps an exit through a frame whose escape has
+    * returned stuck rather than unwinding past everything.
     */
-  private val frames: DynamicVariable[List[Frame]] = new DynamicVariable(Nil)
+  private val escapes: DynamicVariable[List[Long]] = new DynamicVariable(Nil)
 
-  private def inFrame[A](frame: Frame)(body: => A): A = frames.withValue(frame :: frames.value)(body)
+  /** The installed cells, innermost first, dynamically scoped like [[escapes]]. */
+  private val cells: DynamicVariable[List[CellFrame]] = new DynamicVariable(Nil)
 
-  private def nearestEscape(key: SemValue): Option[EscapeFrame] =
-    frames.value.collectFirst { case frame: EscapeFrame if ConcreteNormalForm.equal(frame.key, key) => frame }
+  private val frameIds: AtomicLong = new AtomicLong()
 
   private def nearestCell(key: SemValue): Option[CellFrame] =
-    frames.value.collectFirst { case frame: CellFrame if ConcreteNormalForm.equal(frame.key, key) => frame }
+    cells.value.find(frame => ConcreteNormalForm.equal(frame.key, key))
 
   /** Force a value that is about to cross a frame boundary, so every pending application inside it runs while the frame
     * is still installed — **natives included**, under the lookup the enclosing evaluation is running with
@@ -130,27 +123,53 @@ object EffectIntrinsics {
   // escape
   // ----------------------------------------------------------------------------------------------------------------
 
-  /** `escape(key, body)` — run the thunk under a frame keyed by `key`: `Right(result)`, or `Left(value)` for the
-    * `exit` that named this frame. Stuck while the key is not concrete.
+  /** `escapeIntrinsic(body, onExit, onValue)` — make a fresh frame, run `body` with it, and answer `onValue` of the
+    * result, or `onExit` of what an exit through this frame carried. Both handlers run after the frame is gone, as the
+    * caller's code.
     */
-  private def escapeNative: SemValue =
-    VNative(keyType, key => VNative(VType, body => escape(key, body)))
+  private def escapeNative(fqn: ValueFQN): SemValue =
+    VNative(
+      argumentType,
+      body => VNative(argumentType, onExit => VNative(argumentType, onValue => escape(fqn, body, onExit, onValue)))
+    )
 
-  private def escape(key: SemValue, body: SemValue): SemValue =
-    if (!ConcreteNormalForm.isConcrete(key)) VStuckNative.of(escapeFQN, key, body)
-    else {
-      val frame = new EscapeFrame(key)
+  private def escape(fqn: ValueFQN, body: SemValue, onExit: SemValue, onValue: SemValue): SemValue = {
+    val frame   = frameIds.incrementAndGet()
+    val outcome =
       try {
-        val result = inFrame(frame)(settle(Evaluator.applyValue(body, Evaluator.unitValue)))
+        val result = escapes.withValue(frame :: escapes.value)(settle(Evaluator.applyValue(body, frameValue(frame))))
         // A body that settles to a **neutral** decided nothing: it is waiting on a variable this evaluation has not
         // bound, which is what happens when a definition's own body is reduced before its arguments arrive. Answering
-        // `Right(neutral)` there consumes the frame — the escape is gone from the reduced body, and when the neutral is
-        // finally re-reduced at a concrete argument, an `exit` inside it has no frame to reach and either sticks or
-        // lands in whatever frame happens to be installed then. Staying stuck instead lets the whole escape re-fire
-        // once the argument is there, with its frame installed around the part that needs it.
-        if (isNeutral(result)) VStuckNative.of(escapeFQN, key, body) else right(result)
-      } catch { case Exiting(exited, value) if exited eq frame => left(value) }
+        // there consumes the frame — the escape is gone from the reduced body, and when the neutral is finally
+        // re-reduced at a concrete argument, an exit inside it has no frame to reach. Staying stuck instead lets the
+        // whole escape re-fire once the argument is there, with a frame installed around the part that needs it.
+        // Nor has a body decided anything whose result still holds an undispatched operation or a stuck escape or exit:
+        // it was evaluated read raw, with nothing dispatched or threaded, so an operation in it never ran. Answering
+        // would hand a handler a value the operation should have replaced, and a handler that ignores its argument
+        // (`_ -> false`) turns that into a plausible wrong answer.
+        if (isNeutral(result) || undecided(result)) None else Some(Right(result))
+      } catch { case Exiting(exited, value) if exited == frame => Some(Left(value)) }
+    outcome match {
+      case None               => VStuckNative.of(fqn, body, onExit, onValue)
+      case Some(Right(value)) => Evaluator.applyValue(onValue, value)
+      case Some(Left(value))  => Evaluator.applyValue(onExit, value)
     }
+  }
+
+  /** Whether a settled value holds, at its head or in a constructor's or a stuck native's arguments, an ability
+    * **method**'s call — an ability's marker is named after the ability itself and is not a call — or a stuck escape or
+    * exit.
+    */
+  private def undecided(v: SemValue): Boolean = v match {
+    case VTopDef(fqn, None, spine, _) =>
+      (fqn.name.qualifier match {
+        case Qualifier.Ability(ability) => fqn.name.name != ability
+        case _                          => false
+      }) || spine.toList.exists(undecided)
+    case VStuckNative(fqn, spine)     =>
+      escapeIntrinsicFQNs.contains(fqn) || exitIntrinsicFQNs.contains(fqn) || spine.toList.exists(undecided)
+    case _                            => false
+  }
 
   /** Whether a settled value is still waiting on a variable — a neutral head, or one under an application spine. */
   private def isNeutral(v: SemValue): Boolean = v match {
@@ -158,23 +177,41 @@ object EffectIntrinsics {
     case _                    => false
   }
 
-  /** `exit(key, value)` — leave to the nearest enclosing escape frame keyed by `key`, with `value` settled first (an
-    * exit pending inside the payload is taken before this one, as strict evaluation would). Stuck when no such frame
-    * is installed.
+  /** `exitIntrinsic(frame, payload)` — leave through `frame` with `payload` settled first (an exit pending inside the
+    * payload is taken before this one, as strict evaluation would). Stuck when `frame` is not an installed frame.
     */
-  private def exitNative: SemValue =
-    VNative(keyType, key => VNative(VType, value => exit(key, value)))
+  private def exitNative(fqn: ValueFQN): SemValue =
+    VNative(argumentType, frame => VNative(argumentType, payload => exit(fqn, frame, payload)))
 
-  private def exit(key: SemValue, value: SemValue): SemValue = {
-    val settled = settle(value)
-    nearestEscape(key) match {
-      case Some(frame) => throw Exiting(frame, settled)
-      case None        => VStuckNative.of(exitFQN, key, settled)
+  private def exit(fqn: ValueFQN, frame: SemValue, payload: SemValue): SemValue =
+    frameOf(frame).filter(escapes.value.contains) match {
+      case Some(installed) => throw Exiting(installed, settle(payload))
+      case None            => VStuckNative.of(fqn, frame, payload)
     }
-  }
 
-  private def left(value: SemValue): SemValue  = VTopDef(leftFQN, None, Spine.SNil :+ value)
-  private def right(value: SemValue): SemValue = VTopDef(rightFQN, None, Spine.SNil :+ value)
+  /** A frame as a value: stuck on a name nothing declares, carrying its identity. */
+  private def frameValue(frame: Long): SemValue =
+    VStuckNative.of(escapeFrameFQN, VConst(GroundValue.Direct(BigInt(frame), GroundValue.Type)))
+
+  /** The identity of a frame value, or [[None]] for anything else — `unit`, a neutral, a parameter nothing passed. */
+  private def frameOf(value: SemValue): Option[Long] =
+    Evaluator.force(value, MetaStore.empty) match {
+      case VStuckNative(fqn, Spine.SApp(Spine.SNil, VConst(GroundValue.Direct(Literal.IntegerValue(id), _))))
+          if fqn == escapeFrameFQN =>
+        Some(id.toLong)
+      case _ => None
+    }
+
+  /** Run `body` with `count` fresh frames installed and handed to it, as an escape runs its body: [[Right]] of what it
+    * answers, or [[Left]] of what an exit through one of them carried. The guarded-return read discharges a signature's
+    * own control effects with it (`docs/effects.md` §3.4), installing its frames around the read-back as well as the
+    * evaluation, since a signature's codomain is only evaluated when it is quoted.
+    */
+  def discharging(count: Int)(body: Seq[SemValue] => SemValue): Either[SemValue, SemValue] = {
+    val frames = Seq.fill(count)(frameIds.incrementAndGet())
+    try Right(escapes.withValue(frames.reverse.toList ++ escapes.value)(body(frames.map(frameValue))))
+    catch { case Exiting(exited, value) if frames.contains(exited) => Left(value) }
+  }
 
   // ----------------------------------------------------------------------------------------------------------------
   // cell
@@ -190,7 +227,7 @@ object EffectIntrinsics {
     if (!ConcreteNormalForm.isConcrete(key)) VStuckNative.of(withCellFQN, key, initial, body)
     else {
       val frame  = new CellFrame(key, settle(initial))
-      val result = inFrame(frame)(settle(Evaluator.applyValue(body, Evaluator.unitValue)))
+      val result = cells.withValue(frame :: cells.value)(settle(Evaluator.applyValue(body, Evaluator.unitValue)))
       pair(result, frame.content)
     }
 

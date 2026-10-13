@@ -158,30 +158,34 @@ object WellKnownTypes {
     */
   val pairConstructorFQN: ValueFQN = ValueFQN(pairModule, QualifiedName("Pair", Qualifier.Default))
 
-  /** The compiler platform's two control-flow primitives (effects v6, `docs/effects.md` §9.6 and §10.1 step 7) — the
-    * evaluator intrinsics the compile-track dischargers are bodied over at the flag day, replacing the `Either`-based
-    * `AbortCarrier` overlay. Compiler-owned like `Type` and `Meta`, so they live in the [[compilerPackage]]: never
-    * ambient, and declared only by the compile-track overlay that bodies the dischargers over them.
+  /** The compile track's non-local exit, one pair per control effect (`docs/effects.md` §3.4): each control effect's
+    * compile-track overlay module (`stdlib/eliot/compiler/eliot/effect/`) declares its own private, body-less
+    * `escapeIntrinsic` and `exitIntrinsic`, exactly as each jvm module declares its own
+    * `escapeInternal`/`exitInternal`, and [[com.vanillasource.eliot.eliotc.monomorphize.processor.EffectIntrinsics]]
+    * answers them by these FQNs.
     *
-    * '''Every one of them takes its instantiation as a leading type *value*.''' The frame an operation reaches is the
-    * nearest enclosing one *of its instantiation* — `exit` at `E := String` must pass through an `escape` at `E := Unit`
-    * (`if(c) T else raise(msg)` is exactly that nesting) — and the evaluator cannot read that instantiation off type
-    * arguments: the post-mono `MonomorphicEvaluator` erases them, and bindings are looked up by FQN alone. Types are
-    * values, so the overlay passes the type itself (`escape(E, body)`), and the intrinsic compares keys by definitional
-    * equality of concrete normal forms. See
-    * [[com.vanillasource.eliot.eliotc.monomorphize.processor.EffectIntrinsics]].
+    * A frame is a value with identity, made fresh by the escape and handed to the body it runs; the threading passes it
+    * along the declared chain to the operation that exits through it. The names differ from the jvm leaves' on purpose:
+    * an intrinsic serves both tracks' evaluators, and the runtime track's must keep finding no binding for a jvm leaf.
     */
-  private val escapeModule: ModuleName = ModuleName(compilerPackage, "Escape")
+  private val controlEffectModules: Seq[ModuleName] = Seq("Abort", "Throw").map(ModuleName(effectPackage, _))
 
-  /** `escape[E, A](key: Type, body: Unit => A): Either[E, A]` — installs an escape frame keyed by `key` (the
-    * instantiation `E`), runs the thunk, and answers `Right(a)`, or `Left(e)` if the body `exit`ed to this frame.
+  /** `escapeIntrinsic[K, A, R](body uses *, E: A, onExit uses *: K => R, onValue uses *: A => R) uses *: R` in each
+    * control effect's overlay module: runs `body` with a fresh frame and answers `onValue` of its result, or `onExit`
+    * of what an `exitIntrinsic` through that frame carried.
     */
-  val escapeFQN: ValueFQN = ValueFQN(escapeModule, QualifiedName("escape", Qualifier.Default))
+  val escapeIntrinsicFQNs: Seq[ValueFQN] =
+    controlEffectModules.map(ValueFQN(_, QualifiedName("escapeIntrinsic", Qualifier.Default)))
 
-  /** `exit[E, A](key: Type, e: E): A` — the abortive non-local exit to the nearest enclosing [[escapeFQN]] frame with an
-    * equal key; the only way a compile-track computation finishes early.
+  /** `exitIntrinsic[K, A](frame, payload: K): A` in each control effect's overlay module: leaves through `frame`. */
+  val exitIntrinsicFQNs: Seq[ValueFQN] =
+    controlEffectModules.map(ValueFQN(_, QualifiedName("exitIntrinsic", Qualifier.Default)))
+
+  /** The head of a compile-track frame *value*: a name nothing declares, so a frame never reduces, never quotes and
+    * never equals anything but itself.
     */
-  val exitFQN: ValueFQN = ValueFQN(escapeModule, QualifiedName("exit", Qualifier.Default))
+  val escapeFrameFQN: ValueFQN =
+    ValueFQN(ModuleName(compilerPackage, "Escape"), QualifiedName("$frame", Qualifier.Default))
 
   private val cellModule: ModuleName = ModuleName(compilerPackage, "Cell")
 

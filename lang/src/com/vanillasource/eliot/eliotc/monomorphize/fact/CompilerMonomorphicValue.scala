@@ -38,16 +38,23 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
   * @param reduced
   *   The optional reduced compile-time body — the compiler track's analogue of [[MonomorphicValue.runtime]]. It is not
   *   destined for a code generator; it is the reduced value the runtime track's evaluator plugs in as a native.
+  * @param effects
+  *   This specialisation's effect entries at their ground arguments, as [[MonomorphicValue.effects]]: what the
+  *   compile track's environment threading reads to pass a control effect's frame along the declared chain.
   */
 case class CompilerMonomorphicValue(
     vfqn: ValueFQN,
     typeArguments: Seq[GroundValue],
     name: Sourced[QualifiedName],
     signature: GroundValue,
-    reduced: Option[Sourced[MonomorphicExpression.Expression]]
+    reduced: Option[Sourced[MonomorphicExpression.Expression]],
+    effects: MonomorphicEffects = MonomorphicEffects.empty
 ) extends CompilerFact {
   override def key(): CompilerFactKey[CompilerMonomorphicValue] =
     CompilerMonomorphicValue.Key(vfqn, typeArguments)
+
+  /** The number of leading lambdas of the reduced body, as [[MonomorphicValue.naturalArity]]. */
+  def naturalArity: Option[Int] = reduced.map(body => MonomorphicValue.countLeadingLambdas(body.value, 0))
 }
 
 object CompilerMonomorphicValue {

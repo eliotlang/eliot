@@ -1,35 +1,19 @@
 package com.vanillasource.eliot.eliotc.jvm
 
-/** End-to-end coverage of effectful-signatures **G1**: a guarded return type — a return whose *type* is a compile-time
-  * computation that may reject — written with the **inline** guard vocabulary `if(cond, T) else raise(msg)` (plus a bare
-  * `raise(msg)` for an unconditional rejection) over the effect carrier, compiled through the real pipeline with the
-  * shipped `compiler`-layer `Either`/`Option`/`Abort` carriers.
+/** End-to-end coverage of a guarded return type — a return whose *type* is a compile-time computation that may reject
+  * — written with the inline guard vocabulary `if(cond, T) else raise(msg)` (plus a bare `raise(msg)` for an
+  * unconditional rejection), compiled through the real pipeline with the compile-track overlay's `Abort` and `Throw`.
   *
-  * The guard rides the `{Throw[String]}`/`{Abort}` effect: `raise` expresses rejection and the pure arm expresses
-  * acceptance, which the signature twin's compiler monomorphization reduces to `Left(msg)` / `Right(t)`. The consumer's
-  * twin read then discharges — accepting the payload type or rejecting with the author's message. So a satisfied guard
-  * compiles and runs as if the return were the bare type, and an unsatisfied one fails the build with the author
-  * message. (This replaces the retired `eliot.lang.Guard` `when`/`orError` combinator surface — the signature split
-  * Step 10; the inline form reduces through the same `if`/`else`/`fold`/`raise` machinery.)
-  *
-  * The checker's effect lift *does* elaborate the guard's branches, but the pure arm rides `if`'s own `{Abort}` return
-  * and the `else` discharger consumes it, so a satisfied guard collapses to `Right(t)` rather than an unconditional
-  * `Left`; that regression is what this suite guards against.
+  * The signature's control effects run on frames (`docs/effects.md` §3.4): an `else` catches the `abort` written inside
+  * it and nothing else, and a `raise` nothing in the signature discharges is performed on the frame the guarded-return
+  * read gives, which reads it as the rejection. So a satisfied guard compiles and runs as if the return were the bare
+  * type, an `else` arm is the guard's fallback type, and an unsatisfied guard fails the build with its author's
+  * message.
   */
 class GuardSignatureIntegrationTest extends FullIntegrationTest {
 
-  /** What a rejecting guard does now: it **fails the build at the use site**, and that is all this can assert.
-    *
-    * It used to say what the *author* wrote — `raise("greeting unavailable")` — and that went with the compile-track
-    * `Throw` (effects v6 F5; the reversal is recorded in `docs/effects.md` beside that deletion). With nothing
-    * implementing `raise` there, a rejection does not reduce to the `Left(msg)` the guarded-return discharge reads;
-    * it stays a stuck residue and surfaces as a type mismatch naming it. So the *safety* property is intact — a
-    * rejecting guard never produces a jar — and the *diagnostic* is not. Asserting the exact text would be asserting
-    * a residue's spelling, which is worse than asserting nothing; asserting the failure is the honest floor.
-    *
-    * The route back is a compile-track `Throw` keyed on a fixed marker the way `Abort` keys on `Aborted`.
-    */
-  private def rejects(errors: String): org.scalatest.Assertion = errors.trim should not be empty
+  /** A rejecting guard fails the build at the use site with the message its author wrote. */
+  private def rejectsWith(message: String)(errors: String): org.scalatest.Assertion = errors should include(message)
 
   "a satisfied inline `if..else..raise` guard" should "type as its payload and run as the bare type" in {
     compileAndRun(
@@ -43,7 +27,7 @@ class GuardSignatureIntegrationTest extends FullIntegrationTest {
     ).asserting(_ shouldBe "hello")
   }
 
-  "an unsatisfied inline `if..else..raise` guard" should "fail the build" in {
+  "an unsatisfied inline `if..else..raise` guard" should "fail the build with its author's message" in {
     compileForErrors(
       """import eliot.effect.Console
         |import eliot.effect.Throw
@@ -52,10 +36,10 @@ class GuardSignatureIntegrationTest extends FullIntegrationTest {
         |def greeting[COND: Bool]: if(COND, String[]) else raise("greeting unavailable") = "hello"
         |
         |def main uses Console: Unit = printLine(greeting[false])""".stripMargin
-    ).asserting(rejects)
+    ).asserting(rejectsWith("greeting unavailable"))
   }
 
-  "a bare `raise(msg)` guard" should "fail the build" in {
+  "a bare `raise(msg)` guard" should "fail the build with its author's message" in {
     compileForErrors(
       """import eliot.effect.Console
         |import eliot.effect.Throw
@@ -63,7 +47,7 @@ class GuardSignatureIntegrationTest extends FullIntegrationTest {
         |def unavailable: raise("not available") = "x"
         |
         |def main uses Console: Unit = printLine(unavailable)""".stripMargin
-    ).asserting(rejects)
+    ).asserting(rejectsWith("not available"))
   }
 
   // An `else` arm is the guard's fallback *type*. The raw read of a signature dispatches no ability, and it once
@@ -83,6 +67,41 @@ class GuardSignatureIntegrationTest extends FullIntegrationTest {
       """import eliot.effect.Console
         |
         |def pick[C: Bool]: if(C, String[]) else Bool[] = "payload"
+        |
+        |def main uses Console: Unit = printLine(pick[true])""".stripMargin
+    ).asserting(_ shouldBe "payload")
+  }
+
+  // A helper's own discharge catches only what is written inside it: `tryOr`'s `else` cannot see the `abort` its caller
+  // wrote at `body`, a `uses *` slot that lists nothing, so the caller's `else` takes it. Before the compile track
+  // threaded its frames this compiled with `pick[false]: Int` (`docs/effects.md` §8 item 26).
+  "a helper's own `else` in a signature" should "leave the `abort` its caller wrote to the caller's `else`" in {
+    compileAndRun(
+      """import eliot.effect.Console
+        |
+        |def tryOr[A](body uses *: A, fallback: A) uses *: A = body else fallback
+        |
+        |def pick[C: Bool]: tryOr(if(C, String[]), Int[]) else Bool[] = true
+        |
+        |def main uses Console: Unit = printLine(if(pick[false], "the caller's") else "the helper's")""".stripMargin
+    ).asserting(_ shouldBe "the caller's")
+  }
+
+  "an unsatisfied `if` guard with no `else`" should "fail the build" in {
+    compileForErrors(
+      """import eliot.effect.Console
+        |
+        |def pick[C: Bool]: if(C, String[]) = "payload"
+        |
+        |def main uses Console: Unit = printLine(pick[false])""".stripMargin
+    ).asserting(_.trim should not be empty)
+  }
+
+  "a satisfied `if` guard with no `else`" should "type as its payload" in {
+    compileAndRun(
+      """import eliot.effect.Console
+        |
+        |def pick[C: Bool]: if(C, String[]) = "payload"
         |
         |def main uses Console: Unit = printLine(pick[true])""".stripMargin
     ).asserting(_ shouldBe "payload")
@@ -119,9 +138,9 @@ class GuardSignatureIntegrationTest extends FullIntegrationTest {
       .asserting(_ shouldBe "hello")
   }
 
-  "an unsatisfied guard written through a user pipe" should "fail the build" in {
+  "an unsatisfied guard written through a user pipe" should "fail the build with its author's message" in {
     compileForErrors(pipedGuard + "\ndef main uses Console: Unit = printLine(greeting[false])")
-      .asserting(rejects)
+      .asserting(rejectsWith("greeting unavailable"))
   }
 
   // --- G2: the compile-time integer comparison inside an inline guard ---
@@ -144,7 +163,7 @@ class GuardSignatureIntegrationTest extends FullIntegrationTest {
     ).asserting(_ shouldBe "ok")
   }
 
-  "an unsatisfied `MIN > 0` inline guard" should "fail the build" in {
+  "an unsatisfied `MIN > 0` inline guard" should "fail the build with its author's message" in {
     compileForErrors(
       """import eliot.effect.Console
         |import eliot.effect.Throw
@@ -153,7 +172,7 @@ class GuardSignatureIntegrationTest extends FullIntegrationTest {
         |def positive[MIN: BigInteger]: if(MIN > 0, String[]) else raise("must be positive") = "ok"
         |
         |def main uses Console: Unit = printLine(positive[0])""".stripMargin
-    ).asserting(rejects)
+    ).asserting(rejectsWith("must be positive"))
   }
 
   "a satisfied `N < 10` inline guard" should "type as its payload and run as the bare type" in {
