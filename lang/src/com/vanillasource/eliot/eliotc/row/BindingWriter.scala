@@ -344,7 +344,8 @@ object BindingWriter {
   }
 
   /** The effects each row-typed parameter's block **rides** — entries of this definition's own row that its slot
-    * lists, or that the implementation its slot names with `with` performs. The block's code for them is the caller's
+    * lists without naming an implementation for them, or that the implementation its slot names with `with` performs.
+    * An entry the slot binds with `with` is handled by that implementation whatever this definition declares (D23). The block's code for them is the caller's
     * binding, but its frame is given where it runs (`docs/effects.md` D20c, decided (b)), so running it consumes this
     * definition's received binding: `describedAs` declares `Throw[AssertionError]` in order to run its body inside a
     * `catch` of it. An entry is compared whole — `Throw[E]` on a slot is not `Throw[AssertionError]` in the row — as the
@@ -357,12 +358,14 @@ object BindingWriter {
     val row        = orv.effectRow.returnEffects.map(spelled).toSet
     orv.effectRow.parameterEffects.flatMap { slot =>
       names.lift(slot.parameterIndex).map { name =>
-        val clauses = parameters
-          .lift(slot.parameterIndex)
-          .toSeq
-          .flatMap(tpe => slotBindings(tpe.value))
-          .flatMap(marker => universe.lookup(marker.value).toSeq.flatMap(_.effectRow.returnEffects))
-        name -> (slot.effects ++ clauses).map(spelled).filter(row.contains).map(_._1).toSet
+        val markers   = parameters.lift(slot.parameterIndex).toSeq.flatMap(tpe => slotBindings(tpe.value))
+        val withBound = markers.flatMap(marker => abilityOf(marker.value, universe)).toSet
+        val clauses   = markers.flatMap(marker => universe.lookup(marker.value).toSeq.flatMap(_.effectRow.returnEffects))
+        name -> (slot.effects.filterNot(entry => withBound.contains(entry.abilityFQN)) ++ clauses)
+          .map(spelled)
+          .filter(row.contains)
+          .map(_._1)
+          .toSet
       }
     }.toMap
   }
@@ -501,8 +504,15 @@ object BindingWriter {
     /** The abilities whose **received** binding some reference was written from ([[overDeclared]]). */
     val consumed: mutable.Set[AbilityFQN] = mutable.Set.empty
 
-    private def consume(binding: Binding): Unit =
+    /** The [[Binding.serial]]s of the bindings some reference was written from, so a body `with` that binds nothing is
+      * reported ([[unusedWith]]).
+      */
+    private val used: mutable.Set[Long] = mutable.Set.empty
+
+    private def consume(binding: Binding): Unit = {
+      used += binding.serial
       if (binding.received) consumed += binding.ability
+    }
 
     /** The definition's own leading binders — its generic binders and then its value parameters — are peeled without
       * shadowing, because they are what *put* the row-typed parameters in scope. Only a lambda inside the body proper
@@ -541,12 +551,12 @@ object BindingWriter {
               val clauses = bindingAbilities(implementation.value, universe).map(clause =>
                 clause -> scope.binding(clause).map(_.serial)
               )
-              walk(
-                subject,
-                scope.bind(
-                  Binding(ability, boundImplementation(implementation, scope), byWith = true, clauses = clauses.toMap)
-                )
-              )
+              val binding =
+                Binding(ability, boundImplementation(implementation, scope), byWith = true, clauses = clauses.toMap)
+              val written = walk(subject, scope.bind(binding))
+              if (!scope.uncoveredDefaults && !used.contains(binding.serial))
+                violations += unusedWith(subject, implementation, ability, scope)
+              written
             case None          =>
               violations += Violation(implementation.as("This name is not an implementation."))
               walk(subject, scope)
@@ -603,6 +613,7 @@ object BindingWriter {
     private def checkGiven(name: Sourced[String], scope: Scope): Unit =
       if (!scope.uncoveredDefaults)
         scope.thunkNeeds.getOrElse(name.value, Seq.empty).foreach { ability =>
+          scope.binding(ability).foreach(binding => used += binding.serial)
           scope.binding(ability) match {
             case Some(binding) if binding.bySlot && !binding.byWith => ()
             case Some(binding) if binding.bySlot                    =>
@@ -689,13 +700,14 @@ object BindingWriter {
         case None                             =>
           universe.lookup(callee).flatMap(orv => callback(orv, index).map(orv -> _)) match {
             case Some((calleeOrv, cb)) =>
-              val base = if (cb.closed) scope.enterClosed(rides(calleeOrv, cb.effects.map(_.abilityFQN))) else scope
+              val base =
+                if (cb.closed) scope.enterClosed(rides(calleeOrv, index, cb.effects.map(_.abilityFQN))) else scope
               walkCode(arg, base, cb.arity)
             case None                  => walk(arg, scope)
           }
         case Some((calleeOrv, slot))          =>
           val name    = thunkParameter
-          val base    = if (closedSlot(calleeOrv, index)) scope.enterClosed(rides(calleeOrv, slot)) else scope
+          val base    = if (closedSlot(calleeOrv, index)) scope.enterClosed(rides(calleeOrv, index, slot)) else scope
           val inside  = suppliedScope(calleeOrv, index, base, arg, substitution).shadow(name)
           arg.as(
             FunctionLiteral(
@@ -731,7 +743,8 @@ object BindingWriter {
         .flatMap(marker => abilityOf(marker.value, universe).map(_ -> marker))
         .toMap
       val entries  = calleeOrv.effectRow.parameterEffects.find(_.parameterIndex === index).toSeq.flatMap(_.effects)
-      entries.filterNot(rides).foldLeft(scope) { (acc, entry) =>
+      // An entry the slot binds with `with` is handled by that implementation, even one this callee also declares (D23).
+      entries.filterNot(entry => rides(entry) && !declared.contains(entry.abilityFQN)).foldLeft(scope) { (acc, entry) =>
         val ability   = entry.abilityFQN
         val arguments = knownArguments(entry.typeArgs, substitution)
         acc.bind(
@@ -805,11 +818,20 @@ object BindingWriter {
     private def closedSlot(orv: OperatorResolvedValue, index: Int): Boolean =
       orv.effectRow.parameterEffects.exists(pe => pe.parameterIndex === index && pe.closed)
 
-    /** The entries of a slot's row that **ride** — the callee's own declared row has them, so the walk continues to the
-      * caller's binding instead of the slot supplying one (§2.2).
+    /** The entries of a slot's row that **ride** — the callee's own declared row has them and the slot binds no
+      * implementation for them, so the walk continues to the caller's binding instead of the slot supplying one (§2.2).
       */
-    private def rides(orv: OperatorResolvedValue, slot: Seq[AbilityFQN]): Set[AbilityFQN] =
-      slot.toSet.intersect(orv.effectRow.returnEffects.map(_.abilityFQN).toSet)
+    private def rides(orv: OperatorResolvedValue, index: Int, slot: Seq[AbilityFQN]): Set[AbilityFQN] = {
+      val withBound = SignatureView
+        .of(orv.signature)
+        .parameters
+        .lift(index)
+        .toSeq
+        .flatMap(tpe => slotBindings(tpe.value))
+        .flatMap(marker => abilityOf(marker.value, universe))
+        .toSet
+      slot.toSet.intersect(orv.effectRow.returnEffects.map(_.abilityFQN).toSet) -- withBound
+    }
 
     /** The abilities a callee's parameter `index` declares, when that parameter is a row position at all. */
     private def rowSlot(orv: OperatorResolvedValue, index: Int): Option[Seq[AbilityFQN]] =
@@ -1041,6 +1063,7 @@ object BindingWriter {
     ): OperatorResolvedExpression =
       scope.binding(ability, arguments) match {
         case Some(binding) if isEffect && binding.beyondValue =>
+          used += binding.serial
           violations += capturedEffect(ability, at, scope)
           checkClauses(binding, at, scope)
           binding.term
@@ -1052,6 +1075,45 @@ object BindingWriter {
           if (isEffect) reportUncovered(ability, at, scope)
           defaultBinding(at)
       }
+
+    /** A body `with` that bound nothing: no reference in its subject was written from it. A `with` applies to what
+      * escapes its subject — what the subject's calls declare and its own code performs — and to nothing discharged
+      * further down, so a `with` nothing escapes to is a mistake, never a harmless no-op (`docs/effects.md` §4, D23).
+      */
+    private def unusedWith(
+        subject: Sourced[OperatorResolvedExpression],
+        implementation: Sourced[ValueFQN],
+        ability: AbilityFQN,
+        scope: Scope
+    ): Violation = {
+      def innermost(expr: OperatorResolvedExpression): OperatorResolvedExpression = expr match {
+        case WithBinding(inner, _) => innermost(inner.value)
+        case other                 => other
+      }
+      innermost(subject.value) match {
+        case ParameterReference(name) if scope.thunks.contains(name.value) || scope.callbacks.contains(name.value) =>
+          Violation(
+            implementation.as(
+              s"This `with` binds nothing: '${name.value}' is code its caller wrote, and its use of " +
+                s"'${ability.abilityName}' was bound where it was written."
+            ),
+            Seq(
+              s"To handle '${ability.abilityName}' for '${name.value}', list it in its `uses` clause " +
+                s"(`${name.value} uses *, ${ability.abilityName}: …`); a `with` around its runs then binds it."
+            )
+          )
+        case _                                                                                                  =>
+          Violation(
+            implementation.as(
+              s"This `with` binds nothing: no use of '${ability.abilityName}' in its subject escapes into it."
+            ),
+            Seq(
+              s"A `with` binds what its subject performs and does not discharge itself; remove it, or move it to where " +
+                s"'${ability.abilityName}' is performed."
+            )
+          )
+      }
+    }
 
     private def capturedEffect(ability: AbilityFQN, at: Sourced[?], scope: Scope): Violation =
       if (scope.closed)

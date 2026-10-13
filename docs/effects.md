@@ -2,12 +2,13 @@
 
 **Status (2026-10-13).** This is the effect system's single document. What the tree builds is effects v6 (2026-09-09)
 in D20/D21's `uses` surface (2026-10-09/10) with D20c option 5's environments and (b) (2026-10-12), and D22's reading
-of a listed effect (2026-10-13). An effect is an ability declared with the `effect` keyword. A definition's `uses`
-clause says what its caller hands it. An implementation has two halves: its **code**, a compile-time name written at
-every reference by a syntax-directed pass that reads declarations only, and its **environment** (an escape frame, a
-cell, its own parameters), a runtime value threaded after monomorphization and never searched for across calls. There
-is no carrier, no monad, no `Id`, and nothing to infer. Effects verify as a **channel** beside the type, the same
-architectural move as the `Int` refinement channel, and the NbE checker holds no effect rule at all.
+of a listed effect and D23's reading of `with` (2026-10-13). An effect is an ability declared with the `effect`
+keyword. A definition's `uses` clause says what its caller hands it. An implementation has two halves: its **code**, a
+compile-time name written at every reference by a syntax-directed pass that reads declarations only, and its
+**environment** (an escape frame, a cell, its own parameters), a runtime value threaded after monomorphization and
+never searched for across calls. There is no carrier, no monad, no `Id`, and nothing to infer. Effects verify as a
+**channel** beside the type, the same architectural move as the `Int` refinement channel, and the NbE checker holds no
+effect rule at all.
 
 **How to read it.** Part I is the design as built and is the authority for the tree: where code, a stdlib signature,
 an example or a test disagrees with it, the disagreement is either a defect in the artefact or an entry in §8, never
@@ -20,8 +21,7 @@ lives now.
 
 **Open, in order of severity.**
 
-- **Silent:** an unapplied reference to a `uses` definition passes as a value (§8 item 14); an unused `with` binds
-  nothing without complaint (§8 item 1).
+- **Silent:** an unapplied reference to a `uses` definition passes as a value (§8 item 14).
 - **Loud, at compile time:** an effectful ability method needs its ability's type arguments spelled (§8 item 15); a
   `catch` over a parameter spells its arguments (§7 item 2); a function-typed code parameter's own entries are never
   supplied (§7 item 1); the compile track still finds a frame by its type (§7 item 7).
@@ -33,6 +33,10 @@ lives now.
   eliot-build's `dep` lines and the docs site's install page wait on the next tag; the site's generated `apidoc/`
   pages predate effects v6; eliot-test's own notes still say a row cannot be closed and list `runThrow` spellings that
   are now redundant.
+- **eliot-build's pushed suite does not compile against this compiler** (measured 2026-10-13, identically before and
+  after D23): seven `with`s in its `CacheTests` are used below a nearer binding of `Throw` (option 5's check, §3.1), and
+  in that combination eliot-test's `Test.els` fails to resolve `Writer[List[TestResult]]`. eliot-test's own suite is
+  green (183).
 
 ---
 
@@ -81,7 +85,7 @@ lives now.
    family, so one rule covers the interpretation effects too. Swift's non-escaping closure parameters and Kotlin's
    inline-function parameters draw the same line.
 
-4. **A closed clause supplies and closes.** A clause without `*` — `body uses Throw[E]: A` — admits the argument's
+4. **A closed clause lists and closes.** A clause without `*` — `body uses Throw[E]: A` — admits the argument's
    text to what the slot lists (§2.2) and what it discharges itself, and to nothing from around
    it: *"This uses the effect 'X' inside an argument whose `uses` clause is closed"*, and the caller's own code
    passed there *"… cannot run it"*.
@@ -89,10 +93,12 @@ lives now.
 5. **An effect a code parameter lists is the definition's to handle or to declare** (D22). Running a code
    parameter is checked like a call to a definition with that signature. Each entry its clause lists the definition
    either **handles** where the code runs — passing the code on to a slot that discharges it (`catch` hands
-   `computation` to `runThrow`), or naming an implementation on the slot with `with` — or **declares** in its own
+   `computation` to `runThrow`), or binding an implementation with `with`, on the slot or around the code's runs —
+   or **declares** in its own
    clause, which passes it on to its caller; doing neither is *"'body' may perform the effect 'X' here, which this
    definition neither handles nor declares"*. Declaring does not prevent handling: `describedAs` declares
-   `Throw[AssertionError]` and still catches its body's failure, to raise a better one. An effect the code uses
+   `Throw[AssertionError]` because it raises one itself, and still catches its body's failure. Declaring an effect
+   the definition handles and never performs itself is the over-declaration error (§4). An effect the code uses
    through `*` without the clause listing it is invisible to the definition: bound where the code was written, it can
    be neither caught nor declared there (§2.2). **Only a body-less declaration gives an effect from nothing**, because
    that is where a frame comes from: the platform's primitives state what they give (§3.4), and the run boundary binds
@@ -148,7 +154,7 @@ def catch[E, A](computation uses *, Throw[E]: A, onError uses *: E => A): A
 | none | a parameter | a value, computed before the call; pure, keepable | its type |
 | `uses E, F` | a definition | what its caller hands it | one phantom binder per entry (§3.1) |
 | `uses *` | a parameter | the caller's code, open to the effects in scope where it is written | `Unit => A`, or its function type |
-| `uses *, E` | a parameter | the same, plus `E` given by the callee — a handler's slot | the same |
+| `uses *, E` | a parameter | the same, plus `E`, which the callee handles or declares — a handler's slot | the same |
 | `uses E` | a parameter | code that may use `E` and nothing from around it — a **closed** clause | the same |
 
 `*` comes first and at most once, and only on a parameter, since only an argument has a caller's text to be open
@@ -205,11 +211,15 @@ implement session: Terminal {                             -- a test's, in the te
 }
 ```
 
-**`with` binds a name for its subject**: infix, subject-first, at the loosest precedence, left-associative, so
-`xs.sort.render with reverseOrd` applies to the whole chain and `c with a with b` is `(c with a) with b`, an inner
-`with` for the same ability shadowing the outer within its subject. It works on an ability exactly as on an effect,
-and there are **two positions, one construct**: an expression in a body, and after an entry of a parameter's
-clause — the same split as `f(x)` and `List[Int]`, both application under the types-are-values cornerstone.
+**`with` binds a name for every effect that escapes its subject** (D23): infix, subject-first, at the loosest
+precedence, left-associative, so `xs.sort.render with reverseOrd` applies to the whole chain and `c with a with b` is
+`(c with a) with b`, an inner `with` for the same ability shadowing the outer within its subject. Since every
+definition declares what it performs and does not discharge, what *escapes* a subject is read off it: the effects its
+calls declare, and those its own code performs. A `with` binds exactly those, for its implementation's ability — an
+effect discharged further down never escapes, so no `with` reaches it — and a `with` that nothing escapes to is an
+error, never a no-op. It works on an ability exactly as on an effect, and there are **two positions, one construct**:
+an expression in a body, and after an entry of a parameter's clause — the same split as `f(x)` and `List[Int]`,
+both application under the types-are-values cornerstone.
 
 ```eliot
 def greetTranscript: String = runWriterToLog(greet with session)
@@ -220,9 +230,15 @@ def mocked(body uses *, Console with mockConsole, …, Mocking with recording, C
 ```
 
 The clause form reads *"this argument, run with `recordingConsole` for its `Console`"*: the actual delivered there
-has its binding applied by the callee's signature, and the caller writes nothing. It is the one way a callee decides
-the binding of calls it cannot see, since an actual's calls are bound in the caller. A `with` after a definition's
-own clause is rejected: it would be a second spelling of `with` around the body.
+has its binding applied by the callee's signature, and the caller writes nothing. It is how a callee handles a listed
+effect of code it cannot see, since an actual's calls are compiled in the caller — and so is a `with` **around a run
+of a code parameter**: `runWriterToLog(program with recordingConsole)` is the same declaration written where the code
+runs, and the compiler moves it onto the slot, because the caller compiles the code against the slot. It therefore
+holds for every run, and every run of that parameter must bind the same implementation. A `with` on a slot handles its
+entry even when the definition also declares that effect — the declaration then speaks only for what the definition
+performs itself. A `with` around a run binds only what the slot **lists**: an effect the code uses through `*`
+unlisted was bound where it was written, and a `with` for it binds nothing. A `with` after a definition's own clause
+is rejected: it would be a second spelling of `with` around the body.
 
 **`with` is written almost nowhere.** Most code fixes nothing: a def declaring `uses Console` receives its binding
 from its caller, up to `main`. That chain is what makes a fake possible — `greeting` never said which console, so a
@@ -257,11 +273,13 @@ leave purity unsayable.
 *"I run this code with this effect in hand"*, and the definition then does one of two things with it, read one level
 up, at the declaration:
 
-- **declares it** in its own clause, which passes it on to its caller: `if`'s `value uses *, Abort: T` under `if`'s
-  own `uses Abort`, whose body discharges nothing, so an `abort` in `value` reaches `if`'s caller. The walk calls such
-  an entry **ridden**: its implementation is the caller's, and the walk continues outward;
-- **handles it** where the code runs — it lacks the entry, so the slot **supplies** it, bound by the entry's own
-  `with` or, with none, by `Default`, and rule 5 holds the definition to running the code inside a discharger of it.
+- **declares it** in its own clause, binding no implementation for it on the slot, which passes it on to its caller:
+  `if`'s `value uses *, Abort: T` under `if`'s own `uses Abort`, whose body discharges nothing, so an `abort` in
+  `value` reaches `if`'s caller. The walk calls such an entry **ridden**: its implementation is the caller's, and the
+  walk continues outward;
+- **handles it** where the code runs — it lacks the entry, or names an implementation for it with `with`, so the slot
+  **supplies** it, bound by that `with` or, with none, by `Default`, and rule 5 holds the definition to running the
+  code inside a discharger of it.
 
 Which one an entry is, is decided as the declaration spells it, never at ground arguments:
 `raising[E](…, body uses *, Throw[E]: Unit) uses Throw[AssertionError]: Unit` supplies `Throw[E]` even at
@@ -307,12 +325,12 @@ against a frame it will not meet at runtime. Three shapes reach that rejection h
 may still discharge it around the code: the code runs on the innermost frame of that entry where the definition runs
 it ((b), §3.4). So `describedAs(body uses *, Throw[AssertionError]: Unit, newMessage: String) uses
 Throw[AssertionError]: Unit` catches its body's failure and re-raises a better one, declaring the effect because it
-raises it; and a `guarded(body uses Throw[String]: Unit) uses Throw[String], Console: Unit` that runs `body` inside a
-private `catch[String, …]` catches its caller's `raise` — which its signature, by listing `Throw[String]`, says it
-may. An effect the code uses through `*` and the slot does not list is **invisible** to the definition: it was bound
-where the code was written, so `guarded(body uses *: Unit)` can neither catch a `Throw` its caller's code performs nor
-needs to declare it, and its private `catch` intercepts nothing. A pass-through the definition cannot touch is
-therefore spelled by not listing, and a closed clause, which lists everything, has none.
+raises it; and a `guarded(body uses Throw[String]: Unit) uses Console: Unit` that runs `body` inside a private
+`catch[String, …]` catches its caller's `raise` — which its signature, by listing `Throw[String]` and not declaring
+it, says it does. An effect the code uses through `*` and the slot does not list is **invisible** to the definition:
+it was bound where the code was written, so `guarded(body uses *: Unit)` can neither catch a `Throw` its caller's code
+performs nor needs to declare it, and its private `catch` intercepts nothing. A pass-through the definition cannot
+touch is therefore spelled by not listing, and a closed clause, which lists everything, has none.
 
 ### 2.3 A field holds a value
 
@@ -504,8 +522,16 @@ inside is captured, the rule-3 error. An argument at a closed slot is walked in 
 with the slot's riding entries left reachable. A run of one of this definition's code parameters is held to what
 its caller's write promised (`BindingWriter.checkGiven`, rule 5): each entry the slot supplies must be bound there
 by a callee's slot that supplies it (a `Binding` marked `bySlot`) — a row of the definition's own is not a frame,
-nor is a `with` in the body. A body `with` whose named implementation performs an effect in its clauses may not be
-used below a nearer binding of that effect, the one shape whose frame would be intercepted (§3.4).
+nor is a `with` in the body, except around a run of the parameter, which is the slot's own (below). A body `with`
+whose named implementation performs an effect in its clauses may not be used below a nearer binding of that effect,
+the one shape whose frame would be intercepted (§3.4). A body `with` no reference in its subject is written from is
+*"This `with` binds nothing …"*, with the help naming the slot spelling when its subject is a code parameter.
+
+**A `with` around a run of a code parameter is moved onto the slot before anyone reads the declaration**
+(`operator/processor/RunWithHoister`, the last step of operator resolution, since `OperatorResolvedValue` is what
+every caller's write and the environment threading read). Only a nullary code parameter's listed abilities move; the
+runs must agree, and a slot already naming another implementation of that ability is an error. It reads the
+definition's own text and nothing else, so a binding is still written from declarations.
 
 **Effect-ness is read from one place only**: the callee's declaration. An ability appearing in
 `effectRow.returnEffects` is an effect at this reference — which for an `effect`'s member is what membership
@@ -626,7 +652,8 @@ main                           = …(runStateToFinalState(5, cell -> { increment
   ahead of its own parameters; a reference to it passes the frame in scope for each.
 - **A block takes what its slot lists.** A row-typed slot's thunk takes the frames of the entries its slot lists in
   place of `unit`, and running the block passes the frames in scope where it runs. For a **supplied** entry (one the
-  definition handles) the frame is at the slot's default or `with`; for a **ridden** entry (one it declares) the
+  definition handles) the frame is at the slot's default or `with`; for a **ridden** entry (one it declares and binds
+  no implementation for) the
   block's *code* is the caller's binding but its *frame* is still the run site's — **(b), "ride by code, give by
   frame"** — which is what lets a definition catch an effect it also declares (§2.2). Running such a block therefore
   consumes the entry it rides (§4).
@@ -759,9 +786,9 @@ write's own walk (§3.1), so this is a spec of `row/BindingWriter` rather than o
 - **a listed effect is handled or declared**: each entry the parameter's slot lists and the definition does not
   declare is bound at every run of the parameter by a slot that supplies it, as the caller's write promised; otherwise
   it is *"'body' may perform the effect 'X' here, which this definition neither handles nor declares"*.
-- **a `with`** binds its ability for its subject's text, and crosses a def boundary only through a
-  declaration. A `with` whose subject contains no covered use and no call to a declaring def is a hard error
-  naming the fix, never a silent no-op (not yet enforced: §8 item 1).
+- **a `with`** binds its ability for what escapes its subject, crossing a def boundary only through a declaration.
+  One that no reference in its subject is written from is *"This `with` binds nothing …"*, never a silent no-op;
+  one around a run of a code parameter is that slot's (§3.1).
 - **a clause on a named implementation is charged at the binding site**: `greeting("Bob") with recordingConsole`
   performs `Writer[String]` there, because the name's clauses declare it, and the binding for it comes from the same
   order.
@@ -783,7 +810,8 @@ write's own walk (§3.1), so this is a spec of `row/BindingWriter` rather than o
   its usual cause, and that callee's error is reported instead (`RowElaborationProcessor.calleesWritten`).
 
 **Suspension is row-neutral.** Whether a parameter is a value or code changes only *when* the effect runs and
-*whose* declarations bind it — never whether the caller must declare what it performs.
+*whose* declarations bind it. What the caller must declare changes only by what the callee **handles**: an effect
+its slot lists and it discharges or binds is not the caller's to declare; everything else the code performs is.
 
 **Two same-ability entries** at different arguments are two entries; at identical arguments they deduplicate.
 In one slot's clause they are the shape §2.2 requires the call to spell.
@@ -862,15 +890,15 @@ Four properties fall out of the design rather than being added for testing.
 
 **A discharge word binds doubles on its slot's entries**, so a faked case writes no fixture at all:
 `transcriptOf(program uses *, Console with recordingConsole: Unit)` in `examples/src/EffectsTestFramework.els`, and
-eliot-test's `mocked`, whose slot binds all seven of its doubles and recorders entry by entry
-(`body uses *, Console with mockConsole, …, Mocking with recording, Calls with journal, …`). Rule 5 is why
-`recording` and `journal` are named rather than anonymous: a definition with a body may give its slot only what it
-has, and a `with` is what it has. A case then reads `"…" should "…" in mocked { … }`, a suite's whole declaration is
-its return type — the row alias `type Test = {Writer[List[TestResult]]} Unit` — and a suite whose cases perform for
-real composes it with a clause, `def testCases uses Console: Test`. A case that must perform nothing beyond its
-assertions can say so with a closed slot (`body uses Throw[AssertionError]: Unit`, rule 4); whether eliot-test
-reinstates `pure { … }` is its call. `examples/src/EffectsNamedEffect.els` is the minimal version of the above, and
-`EffectsFakeConsole.els` does it for a stdlib effect.
+eliot-test's `mocked`, whose slot binds all seven of its doubles and recorders entry by entry (`body uses *, Console
+with mockConsole, …, Mocking with recording, Calls with journal, …`). Rule 5 is why `recording` and `journal` are
+named rather than anonymous: a definition with a body handles its slot's listed effects only with what it has, and a
+`with` is what it has. A case then reads `"…" should "…" in mocked { … }`, a suite's whole declaration is its return
+type — the row alias `type Test = {Writer[List[TestResult]]} Unit` — and a suite whose cases perform for real composes
+it with a clause, `def testCases uses Console: Test`. A case that must perform nothing beyond its assertions can say
+so with a closed slot (`body uses Throw[AssertionError]: Unit`, rule 4); whether eliot-test reinstates `pure { … }` is
+its call. `examples/src/EffectsNamedEffect.els` is the minimal version of the above, and `EffectsFakeConsole.els` does
+it for a stdlib effect.
 
 `Dep[X]` + `provide` remains available for a seam you want stated in the signature, and swapping the platform layer
 remains the whole-program integration answer.
@@ -914,26 +942,29 @@ items keep one line, and their full record is in git history (§13).
 
 **Open.**
 
-1. **An unused `with` is a silent no-op.** §4 says a `with` whose subject contains no covered use and no call to a
-   declaring def is a hard error naming the fix. No such check exists in `row/`. It needs to know whether a `with`'s
-   binding was ever *consumed* — what §4's check computes for a definition's own entries.
 4. **`runThrow("no failure")` is accepted** when the call spells the argument, although §2.2 lists an actual that
    raises nothing among the shapes rejected. Loud by construction (the argument is written by hand), so last.
-14. **An unapplied reference to a `uses` definition passes as a value** (rule 2's second half, unbuilt).
-    `data Holder(action: String => Unit)`, `def built uses Console: Holder = Holder(printLine)` and
-    `def runIt(h: Holder): Unit = action(h)("…")` compile, and `main uses Console: Unit = runIt(built)` prints from a
-    definition whose signature is pure — item 11 through a name instead of a lambda, and the silent family (standing
-    rule 8). The fix belongs beside `Scope.enterValue`: a reference whose callee declares a clause, standing at a value
-    position, is the rule-2 error, exactly as an η-expanded `s -> printLine(s)` there already is.
-15. **An effectful ability method needs its ability's type arguments spelled.** With
-    `ability Greeter[A] { def greetAs(a: A) uses Console: Unit }`, `greetAs(Bob(…))` is *"Cannot pass the
-    implementation of 'Console' … behind a type parameter this call does not determine"*, although the argument
-    determines `A`; `greetAs[Bob](…)` compiles. Loud; a usability gap. The cause is not yet traced.
+14. **An unapplied reference to a `uses` definition passes as a value** (rule 2's second half, unbuilt). `data
+    Holder(action: String => Unit)`, `def built uses Console: Holder = Holder(printLine)` and `def runIt(h: Holder):
+    Unit = action(h)("…")` compile, and `main uses Console: Unit = runIt(built)` prints from a definition whose
+    signature is pure — item 11 through a name instead of a lambda, and the silent family (standing rule 8). The fix
+    belongs beside `Scope.enterValue`: a reference whose callee declares a clause, standing at a value position, is
+    the rule-2 error, exactly as an η-expanded `s -> printLine(s)` there already is.
+15. **An effectful ability method needs its ability's type arguments spelled.** With `ability Greeter[A] { def
+    greetAs(a: A) uses Console: Unit }`, `greetAs(Bob(…))` is *"Cannot pass the implementation of 'Console' … behind a
+    type parameter this call does not determine"*, although the argument determines `A`; `greetAs[Bob](…)` compiles.
+    Loud; a usability gap. The cause is not yet traced.
+21. **A definition the effect check rejects is "Name not defined." at every caller.** Found 2026-10-13 probing D22: a
+    `guarded` rejected for over-declaring makes `catch[String, Unit](guarded(raise("boom")), …)` in `main` report
+    *"Name not defined."* at the call, beside the real error. Loud, and the real error is reported, but the second one
+    points at a name that is plainly defined. The cause is not traced; a caller should say nothing, or name the failed
+    definition.
 
 **Closed.**
 
 | # | defect | closed |
 | --- | --- | --- |
+| 1 | an unused `with` was a silent no-op — the likeliest case a `with` around a code parameter's run | 2026-10-13 by D23: an error, and a `with` around a run of a listed parameter is the slot's |
 | 2 | a dot-read of a row-typed field handed back the thunk | 2026-09-12; its subject (stored computations) deleted by D20 step 3 |
 | 3 | `val x = comp` then `x else …` failed | 2026-09-12 by D17 — the tree was right, §3.5 was wrong |
 | 5 | an undischarged control effect at `main` failed at runtime | 2026-10-12 by option 5 (D19): a compile error at the operation |
@@ -949,6 +980,7 @@ items keep one line, and their full record is in git history (§13).
 | 17 | a helper's own `State` received its caller's `putState` | 2026-10-12 by option 5, runtime track |
 | 18 | a slot's named implementation performed its clause effects into whatever frame enclosed the run | 2026-10-12: its clause effects are promised to the block (§2.2) |
 | 19 | two entries of one effect were one binding in the walk | 2026-10-12: entry-level keying (§3.1) and frames chosen by entry (§3.4) |
+| 20 | a slot `with` on an entry the definition also declares was silently dropped, and the code ran its caller's implementation | 2026-10-13 by D23: a slot `with` always handles its entry |
 
 Items 9–13 were found 2026-10-05 while designing D20 and share one cause: a row on a slot both *marked a block* and
 *minted bindings*, and nothing kept the block inside the call or checked that the callee had the binding it handed
@@ -1135,6 +1167,13 @@ Numbers are kept so citations resolve; the record of each is in git history (§1
   is closed, and purity is the absence of `uses`.
 - **D20c option 5 and (b)** (2026-10-12, built): an implementation's environment threaded after monomorphization;
   ride by code, give by frame (§3.4). D20c's open question remains, above.
+- **D23** (2026-10-13): *what does a `with` apply to?* **Every effect of its ability that escapes its subject** — what
+  the subject's calls declare and its own code performs, since every definition declares what it does not discharge —
+  and nothing discharged further down. So: a `with` nothing escapes to is an error (closing §8 item 1); a `with`
+  around a run of a code parameter binds what the slot lists, and is moved onto the slot, because the caller compiles
+  that code against the slot (every run must agree); and a slot `with` handles its entry even when the definition also
+  declares the effect (closing §8 item 20). An implementation stays a compile-time choice: each distinct one is its
+  own specialisation of every definition it reaches through declarations.
 - **D22** (2026-10-13): *a slot listing an entry its definition also declares — handler or pass-through?* Found by a
   review of the plan on the option-5 line (`1034c8db`, R1, there D21d): under (b) a `guarded(body uses Throw[String]:
   Unit) uses Throw[String], Console: Unit` that runs `body` inside a private `catch[String, …]` catches its caller's
@@ -1292,6 +1331,7 @@ each lives:
 | D20c option 5, "the `transcriptOf` spike", (iii) and 2(c), "Option 5 built" | §3.4 |
 | D20c (b), "decided (b)" | §3.4 and §2.2; what it means for a listed effect is D22 (§1 rule 5) |
 | D22 | §1 rule 5, §2.2; the record in §11's closed decisions |
+| D23 | §2's `with`, §3.1, §4; the record in §11's closed decisions |
 | D20c (the open question), option 4 | §11 D20c |
 | §8 items 14–17 in comments and tests written on the option-5 line | §8 items 16–19 |
 | §7 item 7 before 2026-10-13 (undischarged control effect at `main`) | closed, §8 item 5 |

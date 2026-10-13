@@ -491,15 +491,17 @@ object EnvironmentThreading {
 
     /** Every entry `slot` lists, as what the block is given for it: an entry it **supplies**, with the implementation
       * the slot names for it with `with`, read off the slot's declared type; or an entry it **rides**, with `value`'s
-      * own binding for it.
+      * own binding for it. An entry the slot names an implementation for is supplied even when `value` declares it too
+      * (`docs/effects.md` D23): the slot's `with` handles it.
       */
     private def listed(value: MonomorphicValue, slot: MonomorphicEffects.Slot): CompilerIO[Seq[Listed]] =
       for {
         named <- slotImplementations(value, slot.parameterIndex)
         rides <- ridingFlags(value, slot)
         listing <- slot.entries.zip(rides).traverse {
-                   case (entry, false) => (Listed.Supplied(entry, named.get(entry.ability)): Listed).pure[CompilerIO]
-                   case (entry, true)  =>
+                   case (entry, rides) if !rides || named.contains(entry.ability) =>
+                     (Listed.Supplied(entry, named.get(entry.ability)): Listed).pure[CompilerIO]
+                   case (entry, _)                                                 =>
                      value.effects.received.find(_.entry == entry) match {
                        case Some(received) =>
                          (Listed.Rides(

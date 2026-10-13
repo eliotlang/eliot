@@ -46,17 +46,6 @@ class GivenEffectIntegrationTest extends FullIntegrationTest {
     ).asserting(_ shouldBe "none")
   }
 
-  "a `with` in the body" should "not give the computation anything" in {
-    compileForErrors(
-      recording +
-        """
-          |def launder(body uses *, Console: Unit): String = runWriterToLog(body with recordingConsole)
-          |
-          |def main uses Console: Unit = printLine(launder(printLine("hi")))
-          |""".stripMargin
-    ).asserting(_ should include("'body' may perform the effect 'Console' here"))
-  }
-
   "a slot's named implementation" should "be given the effects its clauses perform" in {
     compileAndRun(
       recording +

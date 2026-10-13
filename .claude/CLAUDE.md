@@ -239,7 +239,8 @@ subset of its data.
    definition's return type hands it that alias's declared row: the same reading, of the declaration a resolved name
    resolved to, so an alias crosses files and is shadowed like any other name (`docs/effects.md` §2.4)
 7. **matchdesugar** — pattern matches into function applications; exhaustiveness, nested/constructor/wildcard patterns
-8. **operator** — infix operators by precedence and associativity, into structured applications
+8. **operator** — infix operators by precedence and associativity, into structured applications; its last step moves a
+   `with` around a run of a code parameter onto that parameter's slot (`RunWithHoister`, `docs/effects.md` D23)
 9. **termination** — the recursion gate (see the *Total by Default* cornerstone)
 10. *(There is no `effect` package. It held carrier identification and the `Effect`/`Suspend` machinery recognition,
     and effects v6 left nothing in it: nothing mints those abilities, no `.els` declares them and there is no
@@ -574,25 +575,28 @@ signature, an example or a test conflicts with them, the rule wins and the artef
    a value — is **not enforced yet** and fails silently (`docs/effects.md` §8 item 14).
 3. **Code is used, never kept.** A `uses` parameter can be called or passed on; anywhere else it is "code its caller
    wrote", and a value lambda cannot capture it. A pure function value may stand where code is expected.
-4. **A closed clause supplies and closes.** The argument at `body uses Throw[E]: A` may use what the slot lists and
+4. **A closed clause lists and closes.** The argument at `body uses Throw[E]: A` may use what the slot lists and
    what it discharges itself (`BindingWriter.Scope.enterClosed`).
 5. **A listed effect is the callee's to handle or to declare** (D22). An effect a code parameter's clause lists, the
-   definition either handles where the code runs (a `with` on the slot, or passing the code on to a discharger) or
-   declares in its own clause, passing it on; neither is "'body' may perform the effect 'X' here, which this
-   definition neither handles nor declares". An effect the code uses through `*` unlisted is invisible to it — it can
-   neither catch it nor declare it. An effect's default is handed out at `main` (the run boundary) and by the platform
-   primitives, which state what they give.
+   definition either handles where the code runs (a `with` on the slot or around its runs, or passing the code on to a
+   discharger) or declares in its own clause, passing it on; neither is "'body' may perform the effect 'X' here, which
+   this definition neither handles nor declares". An effect the code uses through `*` unlisted is invisible to it — it
+   can neither catch it nor declare it. An effect's default is handed out at `main` (the run boundary) and by the
+   platform primitives, which state what they give.
 6. **A field holds a value.** A `data` field takes no clause and no row; store data describing the work and perform
    it where the effects are in scope.
 
 **Three other constructs.** An **`effect`** is an ability with no carrier binder; a member's clause lists what it
 performs *beyond* the effect it belongs to (`uses Console` on a member of `effect Console` is not written). An
-**anonymous `implement`** in one of the two sites is the *default* for its pattern; a **named `implement`** is never
-a default — it may live anywhere, is never searched, is not checked for overlap, takes no parameters and closes over
-nothing, and its clauses may carry `uses`. **`with`** binds a name for its subject: infix, subject-first, loosest
-precedence, left-associative, as an expression in a body or after an entry of a parameter's clause. `with` on a
-definition's own clause is rejected. **`with` is written almost nowhere**: a def declaring `uses Console` receives its
-binding from its caller up to `main`, and a `with` in production code is the same mistake as a hard-coded dependency.
+**anonymous `implement`** in one of the two sites is the *default* for its pattern; a **named `implement`** is never a
+default — it may live anywhere, is never searched, is not checked for overlap, takes no parameters and closes over
+nothing, and its clauses may carry `uses`. **`with`** binds a name for every effect of its ability that **escapes its
+subject** (D23): infix, subject-first, loosest precedence, left-associative, as an expression in a body or after an
+entry of a parameter's clause. A `with` nothing escapes to is an error; one around a run of a code parameter binds
+what the slot lists and is moved onto the slot (`operator/processor/RunWithHoister`), since the caller compiles that
+code; a slot `with` handles its entry even when the definition declares the effect. `with` on a definition's own
+clause is rejected. **`with` is written almost nowhere**: a def declaring `uses Console` receives its binding from its
+caller up to `main`, and a `with` in production code is the same mistake as a hard-coded dependency.
 
 **The desugar writes the implementation; nothing solves for one.** `core/…/EffectSugarDesugarer` turns each entry and
 each `~` constraint into one phantom binder of kind `Type` that occurs in **no parameter or return type**, and thunks
