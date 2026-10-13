@@ -25,8 +25,8 @@ lives now.
    rule-2 error.
 2. ~~**Make eliot-build's suite compile again.**~~ — done 2026-10-13: the compiler's (§8 item 22). Its pushed suite
    passes (368) under this compiler with eliot-test's pushed master, which passes too (183).
-3. **Release the next `v0` tag**, the first carrying `uses`, then move eliot-test's and eliot-build's `dep` lines and
-   the docs site's install page to it.
+3. ~~**Release the next `v0` tag**~~ — `v0.9` released 2026-10-13, the first carrying `uses`. Left: move eliot-test's
+   and eliot-build's `dep` lines and the docs site's install page to it.
 4. **The loud usability gaps**: ~~§8 item 21~~ (closed 2026-10-13) and item 15 (an effectful ability method needs its
    type arguments spelled) — traced, and waiting on a choice between its two fixes (§8 item 15).
 5. **Compile-track frames**, the first of §11's "Decided, not built"; it also closes §7 items 4 and 7.
@@ -43,8 +43,9 @@ D20a, D20c and D3 stay open until decided; none blocks the steps above.
   compile-track frames (§11, "Decided, not built").
 - **Undecided:** naming a set of effects in a clause (D20a), storing an effectful computation (D20c), `~`/`&` in user
   space (D3).
-- **Outside this document:** no eliot release carries `uses` yet (`v0.8` is tagged before it), so eliot-test's and
-  eliot-build's `dep` lines and the docs site's install page wait on the next tag; the site's generated `apidoc/`
+- **Outside this document:** `v0.9` is the first release carrying `uses` (`v0.8` is tagged before it, and its release
+  workflow failed, so it publishes no assets); eliot-test's and eliot-build's `dep` lines and the docs site's install
+  page still name `v0.7` and move to `v0.9`; the site's generated `apidoc/`
   pages predate effects v6; eliot-test's own notes still say a row cannot be closed and list `runThrow` spellings that
   are now redundant.
 
