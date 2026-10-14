@@ -148,6 +148,11 @@ object BindingWriter {
     *   perform and the callee supplies, by implementation. The callee gives them where it runs the actual, so a run of
     *   this definition's code whose own slot names the same implementation is given them there
     *   ([[Writer.checkGiven]]).
+    * @param slotEntries
+    *   Per code parameter, each entry its slot lists that an implementation the slot names binds: that implementation,
+    *   and the entry's arguments as this definition spells them. A run of the code under a `with` supplying arguments
+    *   is bound by the slot ([[RunWithHoister]]), so these are the entries that `with` binds
+    *   ([[Writer.walkSupplied]]).
     */
   private case class Scope(
       bindings: Seq[Binding],
@@ -158,7 +163,8 @@ object BindingWriter {
       closed: Boolean = false,
       ridden: Map[String, Set[AbilityFQN]] = Map.empty,
       signature: Boolean = false,
-      clausesGiven: Seq[Need] = Seq.empty
+      clausesGiven: Seq[Need] = Seq.empty,
+      slotEntries: Map[String, Seq[(ValueFQN, Seq[OperatorResolvedExpression])]] = Map.empty
   ) {
     def bind(binding: Binding): Scope = copy(bindings = binding +: bindings)
     def shadow(name: String): Scope   =
@@ -229,7 +235,8 @@ object BindingWriter {
       thunkParameters(orv),
       callbackParameters(orv),
       thunkNeeds = thunkRequirements(orv, universe),
-      ridden = riddenEntries(orv, universe)
+      ridden = riddenEntries(orv, universe),
+      slotEntries = slotEntries(orv, universe)
     )
     val view       = SignatureView.of(orv.signature)
     val body       = Option
@@ -378,6 +385,28 @@ object BindingWriter {
             .map((ability, arguments) => Need(ability, arguments, Some(n.implementation.value)))
         )
         name -> (listed ++ clauses).filterNot(need => ridesOwn(own)(need.ability -> need.arguments)).distinct
+      }
+    }.toMap
+  }
+
+  /** Per code parameter, the entries its slot lists that an implementation the slot names binds, each with that
+    * implementation ([[Scope.slotEntries]]).
+    */
+  private def slotEntries(
+      orv: OperatorResolvedValue,
+      universe: RowChecker.Universe
+  ): Map[String, Seq[(ValueFQN, Seq[OperatorResolvedExpression])]] = {
+    val own        = ownEntries(orv, Map.empty)
+    val parameters = SignatureView.of(orv.signature).parameters
+    orv.effectRow.parameterEffects.flatMap { pe =>
+      valueParameterNames(orv).lift(pe.parameterIndex).map { name =>
+        val named = parameters.lift(pe.parameterIndex).toSeq.flatMap(p => SlotBindings.of(p.value))
+        name -> pe.effects.zipWithIndex.flatMap { (entry, index) =>
+          val declared = ridesOwn(own)(entry.abilityFQN -> knownArguments(entry.typeArgs, Map.empty))
+          SlotBindings
+            .forEntry(named, index, entry.abilityFQN, declared, abilityOf(_, universe))
+            .map(_.value -> entry.typeArgs)
+        }
       }
     }.toMap
   }
@@ -562,6 +591,32 @@ object BindingWriter {
     Option.when(written.forall(isGround))(written.map(_.render))
   }
 
+  /** An entry's type arguments as the caller **spells** them: the callee's declaration with what `substitution` writes
+    * for the callee's binders, and [[None]] when one of them is a binder the call leaves undetermined. Unlike
+    * [[knownArguments]], a spelled argument may name the caller's own binders (`Source[A]` in a definition generic in
+    * `A`), since it is read where the caller's binders are in scope.
+    */
+  private def spelledArguments(
+      arguments: Seq[OperatorResolvedExpression],
+      substitution: Map[String, OperatorResolvedExpression]
+  ): Option[Seq[OperatorResolvedExpression]] =
+    arguments.traverse(spelledArgument(_, substitution))
+
+  private def spelledArgument(
+      argument: OperatorResolvedExpression,
+      substitution: Map[String, OperatorResolvedExpression]
+  ): Option[OperatorResolvedExpression] = argument match {
+    case ParameterReference(name)              => substitution.get(name.value)
+    case ValueReference(name, typeArgs)        =>
+      typeArgs.traverse(typeArg => spelledArgument(typeArg.value, substitution).map(typeArg.as)).map(ValueReference(name, _))
+    case FunctionApplication(target, applied)  =>
+      (spelledArgument(target.value, substitution), spelledArgument(applied.value, substitution)).mapN(
+        (spelledTarget, spelledApplied) => FunctionApplication(target.as(spelledTarget), applied.as(spelledApplied))
+      )
+    case _: IntegerLiteral | _: StringLiteral  => Some(argument)
+    case _                                     => None
+  }
+
   private def isGround(expression: OperatorResolvedExpression): Boolean = expression match {
     case ValueReference(_, typeArgs)           => typeArgs.forall(argument => isGround(argument.value))
     case FunctionApplication(target, argument) => isGround(target.value) && isGround(argument.value)
@@ -609,8 +664,20 @@ object BindingWriter {
       */
     private val used: mutable.Set[Long] = mutable.Set.empty
 
-    private def consume(binding: Binding): Unit = {
+    /** Per [[Binding.serial]], the arguments of every entry a reference was written from it at, as this definition
+      * spells them ([[spelledArguments]]) — [[None]] for one it does not spell, or a use that is not a written
+      * reference. What a `with` supplying arguments reads its implementation's type parameters off
+      * ([[suppliedTypeArguments]]).
+      */
+    private val answered: mutable.Map[Long, Seq[Option[Seq[OperatorResolvedExpression]]]] = mutable.Map.empty
+
+    private def use(binding: Binding, spelled: Option[Seq[OperatorResolvedExpression]]): Unit = {
       used += binding.serial
+      answered(binding.serial) = answered.getOrElse(binding.serial, Seq.empty) :+ spelled
+    }
+
+    private def consume(binding: Binding, spelled: Option[Seq[OperatorResolvedExpression]] = None): Unit = {
+      use(binding, spelled)
       if (binding.received) consumed += binding.ability
     }
 
@@ -653,24 +720,7 @@ object BindingWriter {
         applied: Int = 0
     ): Sourced[OperatorResolvedExpression] =
       expr.value match {
-        // A `with` puts its implementation in scope for its subject, innermost first, and disappears.
-        case WithBinding(subject, implementation, _) =>
-          abilityOf(implementation.value, universe) match {
-            case Some(ability) =>
-              val perCall = perCallBinders(implementation.value, ability, universe)
-              val clauses = bindingEntries(implementation.value, universe, perCall).map { case (clause, arguments) =>
-                Binding.Clause(clause, arguments, scope.binding(clause, arguments).map(_.serial))
-              }
-              val binding =
-                Binding(ability, boundImplementation(implementation, scope, perCall), byWith = true, clauses = clauses)
-              val written = walk(subject, scope.bind(binding), applied)
-              if (!scope.signature && !used.contains(binding.serial))
-                violations += unusedWith(subject, implementation, ability, scope)
-              written
-            case None          =>
-              violations += Violation(implementation.as("This name is not an implementation."))
-              walk(subject, scope, applied)
-          }
+        case WithBinding(subject, implementation, _) => walkWith(subject, implementation, scope, applied)._1
 
         case ParameterReference(name) if scope.captured.contains(name.value) =>
           violations += capturedCode(name, scope)
@@ -679,7 +729,7 @@ object BindingWriter {
         // A reference to one of this definition's row-typed parameters is a thunk: running it is applying it.
         case ParameterReference(name) if scope.thunks.contains(name.value) =>
           checkGiven(name, scope)
-          scope.ridden.getOrElse(name.value, Set.empty).foreach(ability => scope.binding(ability).foreach(consume))
+          scope.ridden.getOrElse(name.value, Set.empty).foreach(ability => scope.binding(ability).foreach(consume(_)))
           expr.as(FunctionApplication(expr, unitValue(expr)))
 
         // A callback here is neither called nor passed on to code: whatever receives it may keep it.
@@ -715,11 +765,44 @@ object BindingWriter {
           }
       }
 
+    /** A `with` puts its implementation in scope for its subject, innermost first, and disappears. Returns the subject
+      * written, and the serial of the binding it put in scope, if it put one.
+      */
+    private def walkWith(
+        subject: Sourced[OperatorResolvedExpression],
+        implementation: Sourced[ValueFQN],
+        scope: Scope,
+        applied: Int
+    ): (Sourced[OperatorResolvedExpression], Option[Long]) =
+      abilityOf(implementation.value, universe) match {
+        case Some(ability) =>
+          val perCall = perCallBinders(implementation.value, ability, universe)
+          val clauses = bindingEntries(implementation.value, universe, perCall).map { case (clause, arguments) =>
+            Binding.Clause(clause, arguments, scope.binding(clause, arguments).map(_.serial))
+          }
+          val binding =
+            Binding(ability, boundImplementation(implementation, scope, perCall), byWith = true, clauses = clauses)
+          val written = walk(subject, scope.bind(binding), applied)
+          if (!scope.signature && !used.contains(binding.serial))
+            violations += unusedWith(subject, implementation, ability, scope)
+          (written, Some(binding.serial))
+        case None          =>
+          violations += Violation(implementation.as("This name is not an implementation."))
+          (walk(subject, scope, applied), None)
+      }
+
     /** A `with` supplying arguments, as the resolver lowers it: `scripted$with(List("Bob"), greet with scripted)`
       * ([[ImplementationParameters.binder]]). The arguments are values computed where the `with` is written, outside
       * its binding; the subject, the binder's last parameter, stands where the `with` stands and is walked exactly as
       * the `with` itself would be, so a lambda or an unapplied reference there is what it was before the arguments
       * were supplied.
+      *
+      * The binder's type parameters are the implementation's own, and the entries the `with` binds decide them where
+      * it runs (`docs/effects.md` §8 item 31): the subject is walked first, and what the entries it answered spell is
+      * written as the binder's type arguments ([[suppliedTypeArguments]]), so `pickInt(1) with mapping(x -> show(x))`
+      * types the lambda at `Int => String` rather than leaving `x` to its own body. An argument list the call spells
+      * itself is left alone. A `with` moved onto a code parameter's slot ([[RunWithHoister]]) leaves the binder's call at
+      * the run, and the entries it binds are the ones that slot lists ([[Scope.slotEntries]]).
       */
     private def walkSupplied(
         expr: Sourced[OperatorResolvedExpression],
@@ -731,14 +814,30 @@ object BindingWriter {
         applied: Int
     ): Sourced[OperatorResolvedExpression] = {
       val declared = universe.lookup(callee.value).fold(0)(orv => SignatureView.of(orv.signature).parameters.size - 1)
-      val written  = writeBindings(head, callee.value, existing, scope, args)
       // The resolver puts the `with` right after the arguments it supplies; what follows applies the subject's value.
       val position = args.indexWhere(_.value match {
         case WithBinding(_, named, _) => ImplementationParameters.binderOf(named.value) == callee.value
         case _                        => false
       })
-      if (position < 0) expr.as(applyChain(written, args.map(walk(_, scope))))
-      else {
+      def written(entries: Seq[Option[Seq[OperatorResolvedExpression]]], marker: Option[ValueFQN]) =
+        writeBindings(
+          head,
+          callee.value,
+          if (existing.isEmpty) marker.fold(Seq.empty)(suppliedTypeArguments(callee, _, entries)) else existing,
+          scope,
+          args
+        )
+      if (position < 0) {
+        val walked  = args.map(walk(_, scope))
+        val hoisted = args.lastOption.map(_.value) match {
+          case Some(ParameterReference(name)) if scope.thunks.contains(name.value) =>
+            scope.slotEntries
+              .getOrElse(name.value, Seq.empty)
+              .filter((marker, _) => ImplementationParameters.binderOf(marker) == callee.value)
+          case _                                                                  => Seq.empty
+        }
+        expr.as(applyChain(written(hoisted.map(entry => Some(entry._2)), hoisted.headOption.map(_._1)), walked))
+      } else {
         if (position != declared) {
           val name = callee.value.name.qualifier match {
             case Qualifier.AbilityImplementation(_, _, Some(name)) => name
@@ -751,15 +850,101 @@ object BindingWriter {
             )
           )
         }
-        val (supplied, rest) = args.splitAt(position)
+        val (supplied, rest)                        = args.splitAt(position)
+        val WithBinding(subject, implementation, _) = rest.head.value: @unchecked
+        // The subject first: the entries its references are written at decide the binder's type arguments.
+        val (bound, serial)                         = walkWith(subject, implementation, scope, applied + rest.size - 1)
+        val walkedSupplied                          = supplied.map(walk(_, scope))
+        val entries                                 = serial.flatMap(answered.get).getOrElse(Seq.empty)
         expr.as(
           applyChain(
-            written,
-            supplied.map(walk(_, scope)) ++ (walk(rest.head, scope, applied + rest.size - 1) +: rest.tail.map(walk(_, scope)))
+            written(entries, Some(implementation.value)),
+            walkedSupplied ++ (bound +: rest.tail.map(walk(_, scope)))
           )
         )
       }
     }
+
+    /** The type arguments of the binder `callee` of the implementation `marker` that the `entries` a `with` binds
+      * decide: the implementation's pattern matched against each entry's arguments, as the two-site search matches an
+      * anonymous implementation's — here on the arguments as spelled, before monomorphization. `implement[T]
+      * mapping(f: T => String): Source[T]` bound for `Source[Int]` runs at `T := Int`, so its binder is written
+      * `mapping$with[Int]`.
+      *
+      * Only the run of the binder's leading type parameters every entry decides alike is written; the rest are the
+      * checker's to infer from the arguments, as before. So nothing is written when an entry's arguments are not
+      * spelled here (`pick(1)`, whose `A` only the checker reads off `1`), when the entries disagree, or when the
+      * pattern does not match — which the environment threading reports where the implementation runs.
+      */
+    private def suppliedTypeArguments(
+        callee: Sourced[ValueFQN],
+        marker: ValueFQN,
+        entries: Seq[Option[Seq[OperatorResolvedExpression]]]
+    ): Seq[Sourced[OperatorResolvedExpression]] =
+      (for {
+        binder         <- universe.lookup(callee.value)
+        implementation <- universe.lookup(marker)
+        view            = SignatureView.of(implementation.signature)
+        parameters      = view.binders.map(_.name.value).toSet
+        pattern         = view.parameters.map(_.value)
+        spelled        <- entries.sequence.filter(_.nonEmpty)
+        solutions      <- spelled.traverse(arguments =>
+                            Option.when(arguments.size == pattern.size)(()).flatMap(_ =>
+                              matchPattern(pattern, arguments, parameters)
+                            )
+                          )
+        solution       <- solutions.foldLeftM(Map.empty[String, OperatorResolvedExpression])(mergeSolutions)
+      } yield {
+        val marked = phantoms(binder).map(_._1).toSet
+        SignatureView
+          .of(binder.signature)
+          .binders
+          .zipWithIndex
+          .collect { case (parameter, index) if !marked.contains(index) => parameter.name.value }
+          .map(solution.get)
+          .takeWhile(_.isDefined)
+          .flatten
+          .map(callee.as(_))
+      }).getOrElse(Seq.empty)
+
+    /** What matching a pattern's arguments against an entry's binds the implementation's `parameters` to, if they match. */
+    private def matchPattern(
+        pattern: Seq[OperatorResolvedExpression],
+        arguments: Seq[OperatorResolvedExpression],
+        parameters: Set[String]
+    ): Option[Map[String, OperatorResolvedExpression]] =
+      pattern
+        .zip(arguments)
+        .traverse((expected, actual) => matchArgument(expected, actual, parameters))
+        .flatMap(_.foldLeftM(Map.empty[String, OperatorResolvedExpression])(mergeSolutions))
+
+    private def matchArgument(
+        expected: OperatorResolvedExpression,
+        actual: OperatorResolvedExpression,
+        parameters: Set[String]
+    ): Option[Map[String, OperatorResolvedExpression]] =
+      (expected, actual) match {
+        case (ParameterReference(name), _) if parameters.contains(name.value)                      =>
+          Some(Map(name.value -> actual))
+        case (ValueReference(expectedName, expectedArguments), ValueReference(actualName, actualArguments))
+            if expectedName.value == actualName.value && expectedArguments.size == actualArguments.size =>
+          matchPattern(expectedArguments.map(_.value), actualArguments.map(_.value), parameters)
+        case (FunctionApplication(expectedTarget, expectedArgument), FunctionApplication(actualTarget, actualArgument)) =>
+          matchPattern(
+            Seq(expectedTarget.value, expectedArgument.value),
+            Seq(actualTarget.value, actualArgument.value),
+            parameters
+          )
+        case (_: IntegerLiteral | _: StringLiteral, _) if expected.render == actual.render         => Some(Map.empty)
+        case _                                                                                     => None
+      }
+
+    /** Two solutions of one match, when they agree on every parameter both bind. */
+    private def mergeSolutions(
+        left: Map[String, OperatorResolvedExpression],
+        right: Map[String, OperatorResolvedExpression]
+    ): Option[Map[String, OperatorResolvedExpression]] =
+      Option.when(right.forall((name, value) => left.get(name).forall(_.render == value.render)))(left ++ right)
 
     /** An effect a code parameter's clause lists is this definition's **to handle or to declare**
       * (`docs/effects.md` §1 rule 5, D22): every listed entry it does not declare ([[thunkRequirements]]) must be
@@ -773,7 +958,7 @@ object BindingWriter {
       if (!scope.signature)
         scope.thunkNeeds.getOrElse(name.value, Seq.empty).filterNot(givenBySlot(_, scope)).foreach { need =>
           val Need(ability, arguments, _) = need
-          scope.binding(ability, arguments).foreach(binding => used += binding.serial)
+          scope.binding(ability, arguments).foreach(use(_, None))
           scope.binding(ability, arguments) match {
             case Some(binding) if binding.bySlot && !binding.byWith => ()
             case Some(binding) if binding.bySlot                    =>
@@ -1098,6 +1283,7 @@ object BindingWriter {
                 bindingFor(
                   ability,
                   entries.get(index).flatMap(knownArguments(_, substitution)),
+                  entries.get(index).flatMap(spelledArguments(_, substitution)),
                   effects.contains(ability) && !perCall.contains(index),
                   reference,
                   scope
@@ -1294,18 +1480,19 @@ object BindingWriter {
     private def bindingFor(
         ability: AbilityFQN,
         arguments: Option[Seq[String]],
+        spelled: Option[Seq[OperatorResolvedExpression]],
         isEffect: Boolean,
         at: Sourced[?],
         scope: Scope
     ): OperatorResolvedExpression =
       scope.binding(ability, arguments) match {
         case Some(binding) if isEffect && binding.beyondValue =>
-          used += binding.serial
+          use(binding, spelled)
           violations += capturedEffect(ability, at, scope)
           checkClauses(binding, at, scope)
           binding.term
         case Some(binding)                                    =>
-          consume(binding)
+          consume(binding, spelled)
           checkClauses(binding, at, scope)
           binding.term
         case None                                             =>

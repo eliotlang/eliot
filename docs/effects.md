@@ -571,7 +571,11 @@ idempotence test is the same mark (`GenericParameter.isBinding`).
 `def scripted$with[Subject$](answer: String, subject$: Subject$): Subject$` (`ast/fact/ImplementationParameters`), so
 the checker types the arguments as any call's, and they stand outside the `with`, where they are computed. The row
 phase walks the subject exactly as it would walk the `with` alone (`BindingWriter.walkSupplied`), and checks the count.
-Nothing ever runs the binder: the environment threading replaces it (§3.4).
+The binder's type parameters are the implementation's own, which the entries the `with` binds decide where it runs
+(§2), so the same walk writes them: the implementation's pattern matched against those entries' arguments as the
+definition spells them, so `pickInt(1) with mapping(x -> show(x))`, for `implement[T] mapping(f: T => String):
+Source[T]`, is `mapping$with[Int](…)` and the lambda is typed at `Int => String`. Entries that disagree or that only the
+checker can read (§8 item 36) leave the arguments to type themselves. Nothing ever runs the binder: the environment threading replaces it (§3.4).
 
 A **row alias** (§2.4) adds no mechanism of its own: a definition naming one as its return type is handed the alias's
 row *entries* by `resolve/…/ValueResolver`, which mints them exactly as `EffectSugarDesugarer` mints entries written
@@ -1122,15 +1126,16 @@ items keep one line, and their full record is in git history (§13).
     performs `Console` then adds *"No ability implementation found for ability 'Console' with type arguments [Type]"*
     at that clause, and a `with` supplying the wrong number of arguments adds *"Not a function."* Loud, and only after a
     real error, which is reported first.
-31. **A `with`'s arguments are typed from themselves alone.** The resolver lowers `with mapping(x -> show(x))` to a
-    call of the binder `mapping$with[T, …](f: T => String, subject)`, so the checker infers `T` from the arguments and
-    nothing else; the entry the `with` binds, which decides `T` where the implementation runs (§2), is not consulted
-    until the environment threading. An argument whose type only the entry determines — a lambda with an unannotated
-    parameter, `None` — is therefore typed at `Type` and refused at the `with`: *"The implementation 'mapping' takes
-    (Int -> String) where it runs 'Source[Int]', but this `with` supplies (Type -> String)"* (measured 2026-10-14;
-    `(x: Int) -> show(x)` compiles). Loud, never wrong. The fix is the row phase writing the binder's type arguments
-    from the entries the `with` binds, matched against the implementation's pattern, wherever those entries'
-    arguments are spelled; parameterised ability implementations need it (`people.sort with byKey(p -> p.age)`).
+36. **A `with`'s arguments are typed from themselves where the entry it binds is not spelled.** Item 31's fix reads
+    the entries a `with` binds as the definition spells them, before monomorphization, so an entry whose arguments
+    only the checker determines — `pick(1) with mapping(x -> show(x))`, for `def pick[A](a: A) uses Source[A]`, whose
+    `A` is read off `1` — still leaves the binder's type parameters to the arguments alone, and an argument they do not
+    determine is the same *"… but this `with` supplies (Type -> String)"* at the `with` (loud, never wrong). Spelling
+    the call (`pick[Int](1)`) or the lambda (`(x: Int) -> show(x)`) compiles. It bears on §11's parameterised ability
+    implementations: in `people.sort with byKey(p -> p.age)` the entry's argument comes from `people`'s type, which
+    nothing spells, so that example needs one of those spellings unless the arguments are typed somewhere the entry is
+    ground. Found 2026-10-14 building item 31.
+
 **Closed.**
 
 | # | defect | closed |
@@ -1163,6 +1168,7 @@ items keep one line, and their full record is in git history (§13).
 | 27 | a guarded return's `else` arm never reduced: `if(C, String[]) else Bool[]` at `C := false` read back as `abort(Default)`, since the signature's raw read dispatches no ability and the escape answered `Right` of the undispatched call (present at `v0.0`; a fallback reached only through a nested discharge happened to work) | 2026-10-13: a type-level read-back treats a result holding an ability method's call as stuck (`EscalatingReducer.typeLevelStuck`), so the raw read falls through and the checked one escalates to the callee reduced at its instantiation |
 | 28 | a `where` over a control effect could not be evaluated: `where (if(c, true) else false)`, and even an inline `where rangeWithin[0, 255](range(x))`, reported *"Cannot evaluate the `where` precondition"* while the same predicate behind a helper worked (present at `v0.0`) | 2026-10-13 by compile-track frames (§3.4): the channel's reduction of the `^Where` companion is threaded and links its callees reduced at their instantiations. A failing precondition still leaves a runnable jar behind (exit 1) — the build-artifact invariant's, not this document's |
 | 30 | a named implementation's own type parameters were never solved for a binding: dispatch ran its clauses at `T := Type`, so `pick(42) with showing`, for `implement[T ~ Show[T]] showing: Source[T]`, lost `Show[Int]` (reported as *"This native value produces 'String' … states no meta transfer"* at `Show`), and one taking parameters as well was refused where it was bound | 2026-10-14 (D25 step 1): solved where the implementation runs, by matching its pattern against the entry's ground arguments as the two-site search does (`NamedImplementationArguments`), at dispatch and in the environment threading alike; a pattern that does not match is an error at the use, and arguments that do not fit are one at the `with` |
+| 31 | a `with`'s arguments were typed from themselves alone: `pickInt(1) with mapping(x -> show(x))`, for `implement[T] mapping(f: T => String): Source[T]`, typed the lambda at `Type -> String` and was refused at the `with` (*"The implementation 'mapping' takes (Int -> String) where it runs 'Source[Int]', but this `with` supplies (Type -> String)"*), as was `defaulting(None)` | 2026-10-14: the row phase writes the binder's type arguments from the entries the `with` binds, as the definition spells them — at the subject's references, or at the slot a hoisted `with` moved to — matched against the implementation's pattern (`BindingWriter.suppliedTypeArguments`); entries that disagree or are not spelled leave the arguments to type themselves, item 36 |
 | 32 | a slot naming a **constrained** named implementation was rejected: `shown(body uses *, Source[A] with showing: String) uses *: String = body`, for `implement[T ~ Show[T]] showing: Source[T]`, was *"'body' may perform the effect 'Show' here, which this definition neither handles nor declares"*, since the given-check read the implementation's `~` constraint, an ability, as one of the effects its clauses perform (found building D25 step 2, where a `with` around a run lands on the slot; Writer's `W ~ Combine[W]` implementation meets it at step 4) | 2026-10-14: the given-check reads only what the implementation's row lists, as the threading does (`BindingWriter.performedEntries`); a constraint's `Default` is the two-site search's wherever it is written |
 | 33 | a run passed to a callee's slot that names an implementation was compiled against the definition's own slot: `def passing(body uses *, Terminal with other: Unit) uses *: String = run(body)`, for `run(body uses *, Terminal with fixed: Unit)`, ran `other` and silently dropped `fixed` (found building D25 step 3) | 2026-10-14 (D25 step 3): the run is bound as the slot it is passed to binds, and a definition's slot naming another implementation is the hoisting's *"The slot of 'body' names another implementation of 'Terminal' than the `with` around its runs."* |
 | 34 | the compile track's raw read of an implementation's `where` guard answered a plausible wrong value once a discharger bound its implementation with arguments: `runThrow`'s body read raw settled to an unlowered `escaping$with(frame, …)` call, which the escape took for a decided value and handed to `onValue`, so `accepted("/api")` read `false` where the program says `true` (silent, found building D25 step 4) | 2026-10-14: an implementation's binder the threading did not lower counts as undecided (`EffectIntrinsics.undecided`), so the raw read stays stuck and the threaded one decides |
@@ -1316,7 +1322,7 @@ not a value, so an ability denotes no type of values.
 ### Decided, not built
 
 - **Parameterised ability implementations**: `people.sort with byKey(p -> p.age)`, by D25's mechanism, after §8 item
-  31 (the lambda is typed by the entry). Runtime track first. On its path: a *constrained* named implementation
+  31 (the lambda is typed by the entry; built 2026-10-14 for a spelled entry — the example's is not, §8 item 36). Runtime track first. On its path: a *constrained* named implementation
   (`implement[W ~ Combine[W]] writerByCell: Writer[W]`, abstract) once failed codegen undiagnosed — "Function not
   implemented." at `Combine`'s own marker, 2026-09-12; the bodied `writing` (D25 step 4) did not meet it.
 
