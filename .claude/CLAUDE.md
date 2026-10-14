@@ -656,8 +656,12 @@ row-typed slot's thunk takes the frames it supplies in place of `unit`; a frame 
 arguments**, and its binding must be the code's. The platform's control effects take a frame (`ThrowFrame`,
 `AbortFrame`, `StateCell`, `WriterCell`, `DepCell`) that their body-less primitives make and hand to the thunk they
 run, so a helper's own `catch` cannot intercept its caller's `raise`, and an undischarged control effect at `main` is
-a compile error (D19). The compile track threads its frames the same way, over its own intrinsics (§3.4). Not built:
-`with Ability(args)` (user defaults with parameters), parameterised ability implementations.
+a compile error (D19). The compile track threads its frames the same way, over its own intrinsics (§3.4). Decided,
+not built (**D25**, §11): an implementation with parameters is always **named** — never a default, since nothing that
+inserts a default has arguments — so the control effects become named implementations their platform dischargers bind
+with an ordinary `with` around the run (`obj with escaping(frame)`), a primitive gives no effect, and a run passed to a
+callee's slot is bound as that slot binds (how `catch` learns `runThrow`'s). `with Ability(args)` is rejected. Then
+parameterised ability implementations.
 
 **Three platform-private primitives, and nothing else.** A finishing clause is a non-local exit; a stateful
 implementation threads a value through calls that never mention it. Neither is expressible in a strict pure core, so

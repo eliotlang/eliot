@@ -1,6 +1,6 @@
 # Effects in Eliot — the design, and what is left to do
 
-**Status (2026-10-13).** This is the effect system's single document. What the tree builds is effects v6 (2026-09-09)
+**Status (2026-10-14).** This is the effect system's single document. What the tree builds is effects v6 (2026-09-09)
 in D20/D21's `uses` surface (2026-10-09/10) with D20c option 5's environments and (b) (2026-10-12), and D22's reading
 of a listed effect, D23's reading of `with`, D24's `uses *` on a definition, compile-track frames and named
 implementations with parameters (2026-10-13). An effect is an ability declared with the `effect`
@@ -20,7 +20,7 @@ decision changes Part I when it is *built*; until then it lives in §11. How the
 the option debate of D20c, the work-list logs — is in git history, and §13 maps every citation to where its content
 lives now.
 
-**Next, in order** (2026-10-13). The open items below say *what* is open; this says what to do first.
+**Next, in order** (2026-10-14). The open items below say *what* is open; this says what to do first.
 
 1. ~~**§8 item 14**~~ — closed 2026-10-13: an unapplied reference to a `uses` definition in a value position is the
    rule-2 error.
@@ -39,8 +39,13 @@ lives now.
 7. **Named implementations with parameters** — built 2026-10-13 (§2, §3.4): `greet with scripted("Bob")`. One
    named implementation with **type** parameters as well is refused where it is bound, since a named implementation's
    type parameters are never solved for a binding (§8 item 30); that is the next item's to lift. Every example jar is
-   byte-identical, and eliot-test (193) and eliot-build (368, and its launcher) pass unchanged. Next: user defaults
-   with parameters, then parameterised ability implementations, in that order.
+   byte-identical, and eliot-test (193) and eliot-build (368, and its launcher) pass unchanged.
+8. **D25** (decided 2026-10-14, §11): parameters only on a named implementation, and the platform's dischargers bind
+   theirs with an ordinary `with`. Its steps, in order: §8 item 30; a `with name(args)` around a run of a code
+   parameter; a slot's binding carried to the slot a run is passed from; the control effects moved to named
+   implementations; the anonymous parameter list and the giving primitives deleted. User dischargers such as
+   `withConfig` then need nothing of their own, and parameterised ability implementations follow by the same
+   mechanism.
 
 D20a, D20c and D3 stay open until decided; none blocks the steps above.
 
@@ -50,8 +55,9 @@ D20a, D20c and D3 stay open until decided; none blocks the steps above.
 - **Loud, at compile time:** a
   `catch` over a parameter spells its arguments (§7 item 2); a function-typed code parameter's own entries are never
   supplied (§7 item 1); `runThrow("no failure")` with its argument spelled is accepted (§8 item 4).
-- **Decided, not built:** parameterised ability implementations (which need a named implementation's type
-  parameters solved, §8 item 30), user defaults with parameters (§11, "Decided, not built").
+- **Decided, not built:** D25, parameters only on a named implementation and the platform's dischargers binding
+  theirs with `with` (which needs a named implementation's type parameters solved first, §8 item 30), then
+  parameterised ability implementations (§11, "Decided, not built").
 - **Undecided:** naming a set of effects in a clause (D20a), storing an effectful computation (D20c), `~`/`&` in user
   space (D3).
 - **Outside this document:** `v0.9` is the first release carrying `uses` (`v0.8` is tagged before it, and its release
@@ -1048,8 +1054,9 @@ items keep one line, and their full record is in git history (§13).
     arguments, so the clause runs at `T := Type` — which a body that never relies on `T` survives by erasure (measured
     2026-10-13). With parameters the types of its environment would be unknown where its frame is built, so a named
     implementation taking both is refused where it is bound (*"… takes both type parameters and parameters, which is
-    not supported yet"*). Solving them from the entry the binding answers is what parameterised ability
-    implementations (`byKey[T](key: T => Int): Ord[T]`, §11) need first.
+    not supported yet"*). Solving them from the entry the binding answers is what D25 needs first, since every
+    control effect but `Abort` is generic (`implement[E] escaping(frame: ThrowFrame[E]): Throw[E]`), and so do
+    parameterised ability implementations (`byKey[T](key: T => Int): Ord[T]`, §11).
 **Closed.**
 
 | # | defect | closed |
@@ -1229,17 +1236,93 @@ not a value, so an ability denotes no type of values.
 
 ### Decided, not built
 
-From D20c option 5's decisions of 2026-10-12, in the order they would be built:
+In the order they would be built:
 
-- **User defaults with parameters**: `implement Config(s: Settings) { … }`, given by
-  `def withConfig[A](s: Settings, body uses *, Config: A) uses *: A = body with Config(s)` — `with Ability(args)` names the
-  default by its ability and supplies its arguments, choosing nothing the declaration had not already chosen. This
-  **amends §1 rule 5** when built: *a body gives a default only by supplying its parameters*, judged on the merged
-  body, so an environment-free default (the platform's `Console`) is still given only at `main`.
-- **Parameterised ability implementations**: `people.sort with byKey(p -> p.age)`, by the same mechanism. Runtime track
-  first. On their path is an undiagnosed codegen failure — "Function not implemented." at `Combine`'s own marker —
-  measured 2026-09-12 with an abstract `implement[W ~ Combine[W]] writerByCell: Writer[W]` (a constrained named
-  implementation).
+- **D25** (2026-10-14): *parameters only on a named implementation, and the platform binds its control effects with
+  `with`.* **Reverses** D20c option 5's point 3 (decided 2026-10-12) as far as it reached a default — `with
+  Ability(args)`, `p with State(cell)` — and with it the planned "user defaults with parameters", which was to amend
+  §1 rule 5 by *a body gives a default only by supplying its parameters*. Raised from the spelling: `with Config(s)`
+  is capitalized, reads as a constructor or a type application, names the effect rather than an implementation, and
+  makes an implementation look like an object.
+
+  **The rule.** A default is what is inserted where nothing is written, and nothing that inserts one has arguments to
+  give: the two-site search finds an ability's instance by pattern, and the run boundary holds none. So an
+  implementation with parameters is never a default, and it is always **named**. One shape for every implementation:
+
+  ```eliot
+  implement Console { … }                                  -- no name: a default, never with parameters
+  implement session: Terminal { … }                        -- a name: never searched
+  implement scripted(answer: String): Terminal { … }       -- a name and parameters: given by `with scripted("Bob")`
+  ```
+
+  `implement [name[(params)]:] Pattern`, the colon written exactly when there is a name. An anonymous implementation
+  with a parameter list (`implement[S] State[S](cell: StateCell[S])` today) is a parse error naming the named form. A
+  member refers to a parameter by name, as today.
+
+  **The platform uses the user's mechanism.** A control effect's implementation is named, and the platform's body of
+  the base's body-less discharger binds it with an ordinary `with`, supplying the frame the primitive made:
+
+  ```eliot
+  implement[E] escaping(frame: ThrowFrame[E]): Throw[E] {
+     def raise[A](err: E): A = exitInternal(frame, err)
+  }
+
+  def runThrow[E, A](obj uses *, Throw[E]: A) uses *: Either[E, A] =
+     escapeInternal(frame -> obj with escaping(frame), err -> Left(err), a -> Right(a))
+
+  private def escapeInternal[K, A, R](body uses *: ThrowFrame[K] => A, onExit uses *: K => R, onValue uses *: A => R) uses *: R
+  ```
+
+  A primitive then gives no effect: it hands a frame to a function. **A `with` is the only thing that gives an
+  implementation**, and a default — always parameterless — is given only at `main`. That is §1 rule 5 shortened, not
+  amended: *"only a body-less declaration gives an effect from nothing"* goes, with §3.4's *"each platform primitive
+  says what it gives in its own clause"*. The base stays platform-independent: `runThrow` stays body-less there, the
+  `with escaping` lives in the jvm body, and a `with` around a run is moved onto the slot on the **merged** value, so
+  the base and jvm signatures stay textually equal and a caller reads `escaping` on the slot per platform (and the
+  overlay's own spelling on the compile track). A user discharger is the same code:
+  `def withConfig[A](s: Settings, body uses *, Config: A) uses *: A = body with fixed(s)` over
+  `implement fixed(s: Settings): Config`. An undischarged control effect at `main` stays a compile error, now because
+  the effect has no default at all.
+
+  **A run passed to a slot is bound as that slot binds** (the one new rule; Robert chose it 2026-10-14). The base's
+  pass-through dischargers — `catch` hands `computation` to `runThrow`, likewise `else`, `runStateToValue`,
+  `runStateToFinalState`, `runWriterToValue`, `runWriterToLog` — and every user discharger over them (eliot-test's
+  `mocked`, eliot-build's) write no `with`, and the base cannot name `escaping`. Their caller compiles the code, so it
+  must read the implementation off their declaration. So: **a run of a code parameter at a callee's slot that binds
+  `X` for an entry the run's slot supplies is a run under `with X`**, and D23's hoisting moves `X` onto the slot,
+  exactly as for a written `with` — `escaping` onto `catch`'s slot, then onto `mocked`'s. Runs that disagree are
+  D23's error. A slot entry the definition also declares rides (D22, (b)) and is not hoisted; its frame is the run
+  site's, its code the caller's. This is **not** §12's transitive `with`: each step reads one callee's declaration,
+  before monomorphization, and writes the result onto the definition's own slot, where every caller reads it; nothing
+  is summed over a monomorphized sub-graph and nothing is overridden.
+
+  **Steps**, each gated by byte-identity as an oracle (the specialisations' names change, so the jars will not be
+  identical; §10) and by eliot-test and eliot-build:
+  1. §8 item 30 — a named implementation's type parameters solved from the entry its binding answers.
+  2. A `with name(args)` around a run of a code parameter: the **code** moves onto the slot, the **arguments** stay at
+     the run, where the frame is built — refused today (§2, "A `with`'s arguments are values computed where it is
+     written"). A parameter's clause still cannot spell arguments; the slot carries code only.
+  3. A slot's binding carried to the slot a run is passed from. `RunWithHoister` then reads its callees' declarations
+     as well as the definition's own text (§3.1 says "nothing else" today), so a definition's declaration depends on
+     its callees'. That is acyclic only because nothing is recursive, while the recursion gate runs *after* the
+     hoisting (operator resolution's last step): the step goes after the gate, or must be safe against a cycle the
+     gate has not yet rejected.
+  4. The control effects — `Throw`, `Abort`, `State`, `Writer`, `Dep`, on both tracks — moved to named
+     implementations bound by their platform dischargers; the primitives' clauses lose the entry they give.
+  5. The anonymous parameter list, `ImplementationParameters`' anonymous route, and the giving primitives deleted; §1
+     rule 5, §2 and §3.4 rewritten. The first sign-off item of §3.4's "Decided in the code" (an anonymous
+     implementation's parameters as part of its pattern key) lapses.
+
+  **On its path:** `Writer[W]`'s `W ~ Combine[W]` makes its implementation a *constrained* named one, where an
+  undiagnosed codegen failure was measured — "Function not implemented." at `Combine`'s own marker, 2026-09-12, with
+  an abstract `implement[W ~ Combine[W]] writerByCell: Writer[W]`.
+
+  **Rejected:** `with Ability(args)` for a default (the reversed point); naming the platform's implementation on every
+  pass-through slot (`computation uses *, Throw[E] with escaping`, declared abstractly in the base), which leaks the
+  frame mechanism into every user discharger's signature; keeping parameters on the platform's anonymous
+  implementations alone, a construct no user could ever supply.
+- **Parameterised ability implementations**: `people.sort with byKey(p -> p.age)`, by D25's mechanism. Runtime track
+  first.
 
 **Awaiting sign-off:** the five choices made in the code while building option 5 (§3.4, "Decided in the code").
 
@@ -1336,6 +1419,10 @@ Numbers are kept so citations resolve; the record of each is in git history (§1
   declared type `Implementation[A]` (§9) is erased at `row`, before the checker sees it.
 - **Transitive `with` / summing abilities over a monomorphized sub-graph.** Dynamic scoping resolved at
   compile time; the carrier's third job in a new costume. Forwarding is by declaration only (§3.1).
+- **A default with parameters** — `with Ability(args)`, `implement Config(s: Settings)` given by a user body.
+  Reversed 2026-10-14 by D25 (§11): a default is what is inserted where nothing is written, and nothing that inserts
+  one has arguments; an implementation with parameters is named. Nor the platform's control effects as the one
+  exception, nor the platform's implementation's name written on every pass-through slot (D25, "Rejected").
 - **A bindings field on `ValueReference`, a scoping node, or a consulted-set component on the mono key** as
   the carrier of a binding. Decided 2026-09-08 against, for the phantom binder (§3.1): the key already
   carries one argument per binder, and transitivity is a ground-value tree.
@@ -1444,6 +1531,7 @@ each lives:
 | D22 | §1 rule 5, §2.2; the record in §11's closed decisions |
 | D23 | §2's `with`, §3.1, §4; the record in §11's closed decisions |
 | D24 | §2's table and the parser's refusals, §2.1; the record in §11's closed decisions |
+| D25 | §11's "Decided, not built" until built |
 | D20c (the open question), option 4 | §11 D20c |
 | §8 items 14–17 in comments and tests written on the option-5 line | §8 items 16–19 |
 | §7 item 7 before 2026-10-13 (undischarged control effect at `main`) | closed, §8 item 5 |
