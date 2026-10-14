@@ -165,22 +165,4 @@ class NamedImplementationParametersIntegrationTest extends FullIntegrationTest {
          |def main uses Console: Unit = greet with silent("a")""".stripMargin
     ).asserting(_ should include("The implementation 'silent' takes no parameters."))
   }
-
-  "an implementation with type parameters and parameters" should "be refused where it is bound" in {
-    compileForErrors(
-      """import eliot.effect.Console
-        |
-        |effect Source[T] {
-        |   def next: T
-        |}
-        |
-        |implement[T] constant(value: T): Source[T] {
-        |   def next: T = value
-        |}
-        |
-        |def pick uses Source[String]: String = next
-        |
-        |def main uses Console: Unit = printLine(pick with constant("v"))""".stripMargin
-    ).asserting(_ should include("takes both type parameters and parameters, which is not supported yet"))
-  }
 }

@@ -44,6 +44,22 @@ object AbilityMatcher {
       peeled = peelPattern(setup, markerSignature)
     } yield attemptMatch(peeled, queryArgs, markerSignature)
 
+  /** The type parameters an impl marker's **pattern** mentions — the ones [[matchImpl]] recovers from the query. A
+    * leading binder the pattern does not mention is a binding binder (a clause's, or a `~` constraint's): it occurs in
+    * no pattern argument, so the match has nothing to trace it from.
+    */
+  def patternParameters(markerSignature: Sourced[OperatorResolvedExpression]): Set[String] =
+    OperatorResolvedExpression.SignatureView.of(markerSignature).parameters.flatMap(p => mentioned(p.value)).toSet
+
+  private def mentioned(expr: OperatorResolvedExpression): Seq[String] = expr match {
+    case OperatorResolvedExpression.ParameterReference(name)     => Seq(name.value)
+    case OperatorResolvedExpression.FunctionApplication(t, a)    => mentioned(t.value) ++ mentioned(a.value)
+    case OperatorResolvedExpression.ValueReference(_, typeArgs)  => typeArgs.flatMap(ta => mentioned(ta.value))
+    case OperatorResolvedExpression.FunctionLiteral(_, pt, body) =>
+      pt.toSeq.flatMap(p => mentioned(p.value)) ++ mentioned(body.value)
+    case _                                                       => Seq.empty
+  }
+
   /** Do two impl marker patterns overlap — i.e. would some concrete query tuple match both? Used for
     * definition-time overlap detection on implementations of the same ability in the same module.
     *

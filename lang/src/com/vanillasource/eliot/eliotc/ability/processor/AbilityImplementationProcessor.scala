@@ -215,9 +215,9 @@ class AbilityImplementationProcessor extends SingleKeyTypeProcessor[AbilityImple
     * user did write.
     */
   private def withPhantomDefaults(marker: OperatorResolvedValue, matched: AbilityMatcher.Match): AbilityMatcher.Match = {
-    val view      = OperatorResolvedExpression.SignatureView.of(marker.signature)
-    val patternRefs = view.parameters.flatMap(p => referencedParameters(p.value)).toSet
-    val filled    = view.binders.map(_.name.value).zip(matched.groundArgs).map { case (binder, ground) =>
+    val view        = OperatorResolvedExpression.SignatureView.of(marker.signature)
+    val patternRefs = AbilityMatcher.patternParameters(marker.signature)
+    val filled      = view.binders.map(_.name.value).zip(matched.groundArgs).map { case (binder, ground) =>
       if (patternRefs.contains(binder)) ground else defaultBindingGround
     }
     matched.copy(groundArgs = filled)
@@ -229,17 +229,6 @@ class AbilityImplementationProcessor extends SingleKeyTypeProcessor[AbilityImple
     */
   private val defaultBindingGround: GroundValue =
     GroundValue.Structure(WellKnownTypes.defaultImplementationFQN, Seq.empty, GroundValue.Type)
-
-  /** Every type-parameter name a signature position mentions. */
-  private def referencedParameters(expr: OperatorResolvedExpression): Seq[String] = expr match {
-    case OperatorResolvedExpression.ParameterReference(name)       => Seq(name.value)
-    case OperatorResolvedExpression.FunctionApplication(t, a)      =>
-      referencedParameters(t.value) ++ referencedParameters(a.value)
-    case OperatorResolvedExpression.ValueReference(_, typeArgs)    => typeArgs.flatMap(ta => referencedParameters(ta.value))
-    case OperatorResolvedExpression.FunctionLiteral(_, pt, body)   =>
-      pt.toSeq.flatMap(p => referencedParameters(p.value)) ++ referencedParameters(body.value)
-    case _                                                         => Seq.empty
-  }
 
   /** One `~` constraint of a matched candidate: ground its ability arguments at the match's bindings, then ask whether
     * that ability is implemented there. Undecidable at any step ⤳ `true` (see [[constraintsSatisfied]]).

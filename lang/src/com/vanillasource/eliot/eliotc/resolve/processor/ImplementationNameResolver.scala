@@ -2,12 +2,10 @@ package com.vanillasource.eliot.eliotc.resolve.processor
 
 import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.ast.fact.ImplementationParameters
-import com.vanillasource.eliot.eliotc.core.fact.Expression
 import com.vanillasource.eliot.eliotc.module.fact.{
   ModuleAbilities,
   ModuleName,
   UnifiedModuleNames,
-  UnifiedModuleValue,
   ValueFQN
 }
 import com.vanillasource.eliot.eliotc.processor.CompilerIO.*
@@ -47,8 +45,7 @@ object ImplementationNameResolver {
     }
 
   /** What the implementation `marker` names takes: nothing, or parameters, read off its binder declaration
-    * ([[ImplementationParameters.binder]]), which only a named implementation with parameters has. Its type parameters
-    * are the binder's binders other than the subject's.
+    * ([[ImplementationParameters.binder]]), which only a named implementation with parameters has.
     */
   def parametersOf(marker: ValueFQN): ScopedIO[Parameters] =
     for {
@@ -56,21 +53,12 @@ object ImplementationNameResolver {
       binder    = ImplementationParameters.binderOf(marker)
       names    <- getFactOrAbort(UnifiedModuleNames.Key(marker.moduleName, platform)).liftToScoped
       result   <- if (!names.names.contains(binder.name)) Parameters.None.pure[ScopedIO]
-                  else
-                    getFactOrAbort(UnifiedModuleValue.Key(binder, platform)).liftToScoped.map(value =>
-                      if (binders(value.namedValue.signature.value) > 1) Parameters.WithTypeParameters
-                      else Parameters.Plain
-                    )
+                  else Parameters.Present.pure[ScopedIO]
     } yield result
 
   /** What an implementation takes, as a `with` must supply it. */
   enum Parameters {
-    case None, Plain, WithTypeParameters
-  }
-
-  private def binders(signature: Expression): Int = signature match {
-    case Expression.FunctionLiteral(_, Some(_), body) => 1 + binders(body.value)
-    case _                                            => 0
+    case None, Present
   }
 
   /** The implementation's real marker in `moduleName`, or the error at `name`. */

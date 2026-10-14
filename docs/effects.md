@@ -3,8 +3,8 @@
 **Status (2026-10-14).** This is the effect system's single document. What the tree builds is effects v6 (2026-09-09)
 in D20/D21's `uses` surface (2026-10-09/10) with D20c option 5's environments and (b) (2026-10-12), and D22's reading
 of a listed effect, D23's reading of `with`, D24's `uses *` on a definition, compile-track frames and named
-implementations with parameters (2026-10-13). An effect is an ability declared with the `effect`
-keyword. A definition's `uses` clause says what its caller hands it. An implementation has two halves: its **code**, a
+implementations with parameters (2026-10-13), their type parameters solved where they run (2026-10-14). An effect is
+an ability declared with the `effect` keyword. A definition's `uses` clause says what its caller hands it. An implementation has two halves: its **code**, a
 compile-time name written at every reference by a syntax-directed pass that reads declarations only, and its
 **environment** (an escape frame, a cell, its own parameters), a value threaded after monomorphization — on the
 compile track as on the runtime one — and never searched for across calls. There is no carrier, no monad, no `Id`, and nothing to infer. Effects verify as a
@@ -36,16 +36,15 @@ lives now.
    (193) and eliot-build (368) pass unchanged and eliot-build's launcher builds, so no dependent needs a change.
 6. ~~**Release the next `v0` tag**~~ — done 2026-10-13: `v0.12` carries step 5's two commits and the two non-effect
    fixes below. eliot-test (193) and eliot-build (368, and its launcher) were run against it; no dependent moved.
-7. **Named implementations with parameters** — built 2026-10-13 (§2, §3.4): `greet with scripted("Bob")`. One
-   named implementation with **type** parameters as well is refused where it is bound, since a named implementation's
-   type parameters are never solved for a binding (§8 item 30); that is the next item's to lift. Every example jar is
-   byte-identical, and eliot-test (193) and eliot-build (368, and its launcher) pass unchanged.
+7. **Named implementations with parameters** — built 2026-10-13 (§2, §3.4): `greet with scripted("Bob")`. One with
+   **type** parameters as well was refused where it was bound until D25's step 1 solved them (§8 item 30). Every
+   example jar is byte-identical, and eliot-test (193) and eliot-build (368, and its launcher) pass unchanged.
 8. **D25** (decided 2026-10-14, §11): parameters only on a named implementation, and the platform's dischargers bind
-   theirs with an ordinary `with`. Its steps, in order: §8 item 30; a `with name(args)` around a run of a code
-   parameter; a slot's binding carried to the slot a run is passed from; the control effects moved to named
-   implementations; the anonymous parameter list and the giving primitives deleted. User dischargers such as
-   `withConfig` then need nothing of their own, and parameterised ability implementations follow by the same
-   mechanism.
+   theirs with an ordinary `with`. Its steps, in order: ~~§8 item 30~~ (closed 2026-10-14); a `with name(args)`
+   around a run of a code parameter; a slot's binding carried to the slot a run is passed from; the control effects
+   moved to named implementations; the anonymous parameter list and the giving primitives deleted. User dischargers
+   such as `withConfig` then need nothing of their own, and parameterised ability implementations follow by the same
+   mechanism, after §8 item 31.
 
 D20a, D20c and D3 stay open until decided; none blocks the steps above.
 
@@ -54,10 +53,11 @@ D20a, D20c and D3 stay open until decided; none blocks the steps above.
 - **Silent:** none known (§8 items 14, 24 and 26 closed 2026-10-13).
 - **Loud, at compile time:** a
   `catch` over a parameter spells its arguments (§7 item 2); a function-typed code parameter's own entries are never
-  supplied (§7 item 1); `runThrow("no failure")` with its argument spelled is accepted (§8 item 4).
+  supplied (§7 item 1); `runThrow("no failure")` with its argument spelled is accepted (§8 item 4); a `with`'s
+  argument typed only by the entry it binds, an unannotated lambda, is refused (§8 item 31).
 - **Decided, not built:** D25, parameters only on a named implementation and the platform's dischargers binding
-  theirs with `with` (which needs a named implementation's type parameters solved first, §8 item 30), then
-  parameterised ability implementations (§11, "Decided, not built").
+  theirs with `with` (step 1, a named implementation's type parameters solved, built 2026-10-14), then parameterised
+  ability implementations (§11, "Decided, not built").
 - **Undecided:** naming a set of effects in a clause (D20a), storing an effectful computation (D20c), `~`/`&` in user
   space (D3).
 - **Outside this document:** `v0.9` is the first release carrying `uses` (`v0.8` is tagged before it, and its release
@@ -239,8 +239,13 @@ name is bound. It closes over nothing, but it may take **parameters**, written b
 definition's are (`implement scripted(answer: String): Terminal`) and supplied by the `with` that binds it
 (`greet with scripted("Bob")`): each clause receives them ahead of its own, as an anonymous implementation's do. They
 are its runtime environment, so one specialisation serves every argument. No keyword marks such an implementation —
-parameters are an ordinary parameter list, whether they hold a frame or a function. A named implementation with type
-parameters may not take parameters yet (§8 item 30).
+parameters are an ordinary parameter list, whether they hold a frame or a function. A named implementation's **type
+parameters** are what its pattern takes where it runs: `with showing`, for `implement[T ~ Show[T]] showing: Source[T]`,
+runs at `T := Int` for a `Source[Int]` and at `T := String` for a `Source[String]` under the same `with`, by the match
+the two-site search makes for an anonymous implementation, and a pattern that does not match the entry is *"This
+performs 'Source[Int]' on the implementation 'none', which does not implement it"* at that use. With parameters, the
+arguments must fit every entry the `with` binds: *"The implementation 'constant' takes (String) where it runs
+'Source[String]', but this `with` supplies (Int)"*, at the `with`.
 
 ```eliot
 implement Console {                                       -- the platform's default
@@ -1049,14 +1054,15 @@ items keep one line, and their full record is in git history (§13).
     performs `Console` then adds *"No ability implementation found for ability 'Console' with type arguments [Type]"*
     at that clause, and a `with` supplying the wrong number of arguments adds *"Not a function."* Loud, and only after a
     real error, which is reported first.
-30. **A named implementation's own type parameters are never solved for a binding.** `with none`, for
-    `implement[T] none: Source[Option[T]]`, is written `none[]`, and dispatch runs its methods at the binding's type
-    arguments, so the clause runs at `T := Type` — which a body that never relies on `T` survives by erasure (measured
-    2026-10-13). With parameters the types of its environment would be unknown where its frame is built, so a named
-    implementation taking both is refused where it is bound (*"… takes both type parameters and parameters, which is
-    not supported yet"*). Solving them from the entry the binding answers is what D25 needs first, since every
-    control effect but `Abort` is generic (`implement[E] escaping(frame: ThrowFrame[E]): Throw[E]`), and so do
-    parameterised ability implementations (`byKey[T](key: T => Int): Ord[T]`, §11).
+31. **A `with`'s arguments are typed from themselves alone.** The resolver lowers `with mapping(x -> show(x))` to a
+    call of the binder `mapping$with[T, …](f: T => String, subject)`, so the checker infers `T` from the arguments and
+    nothing else; the entry the `with` binds, which decides `T` where the implementation runs (§2), is not consulted
+    until the environment threading. An argument whose type only the entry determines — a lambda with an unannotated
+    parameter, `None` — is therefore typed at `Type` and refused at the `with`: *"The implementation 'mapping' takes
+    (Int -> String) where it runs 'Source[Int]', but this `with` supplies (Type -> String)"* (measured 2026-10-14;
+    `(x: Int) -> show(x)` compiles). Loud, never wrong. The fix is the row phase writing the binder's type arguments
+    from the entries the `with` binds, matched against the implementation's pattern, wherever those entries'
+    arguments are spelled; parameterised ability implementations need it (`people.sort with byKey(p -> p.age)`).
 **Closed.**
 
 | # | defect | closed |
@@ -1088,6 +1094,7 @@ items keep one line, and their full record is in git history (§13).
 | 26 | on the compile track a helper's own discharge caught its caller's effect: `tryOr(if(C, String[]), Int[]) else Bool[]`, with `def tryOr[A](body uses *: A, fallback: A) uses *: A = body else fallback`, compiled with `pick[false]: Int` — the compile track found a frame by its type. Nothing in the corpus met it (measured: no compile-track exit ever had two frames of one key installed) | 2026-10-13 by compile-track frames (§3.4): a frame is a value with identity, threaded along the declared chain |
 | 27 | a guarded return's `else` arm never reduced: `if(C, String[]) else Bool[]` at `C := false` read back as `abort(Default)`, since the signature's raw read dispatches no ability and the escape answered `Right` of the undispatched call (present at `v0.0`; a fallback reached only through a nested discharge happened to work) | 2026-10-13: a type-level read-back treats a result holding an ability method's call as stuck (`EscalatingReducer.typeLevelStuck`), so the raw read falls through and the checked one escalates to the callee reduced at its instantiation |
 | 28 | a `where` over a control effect could not be evaluated: `where (if(c, true) else false)`, and even an inline `where rangeWithin[0, 255](range(x))`, reported *"Cannot evaluate the `where` precondition"* while the same predicate behind a helper worked (present at `v0.0`) | 2026-10-13 by compile-track frames (§3.4): the channel's reduction of the `^Where` companion is threaded and links its callees reduced at their instantiations. A failing precondition still leaves a runnable jar behind (exit 1) — the build-artifact invariant's, not this document's |
+| 30 | a named implementation's own type parameters were never solved for a binding: dispatch ran its clauses at `T := Type`, so `pick(42) with showing`, for `implement[T ~ Show[T]] showing: Source[T]`, lost `Show[Int]` (reported as *"This native value produces 'String' … states no meta transfer"* at `Show`), and one taking parameters as well was refused where it was bound | 2026-10-14 (D25 step 1): solved where the implementation runs, by matching its pattern against the entry's ground arguments as the two-site search does (`NamedImplementationArguments`), at dispatch and in the environment threading alike; a pattern that does not match is an error at the use, and arguments that do not fit are one at the `with` |
 
 Items 9–13 were found 2026-10-05 while designing D20 and share one cause: a row on a slot both *marked a block* and
 *minted bindings*, and nothing kept the block inside the call or checked that the callee had the binding it handed
@@ -1298,7 +1305,8 @@ In the order they would be built:
 
   **Steps**, each gated by byte-identity as an oracle (the specialisations' names change, so the jars will not be
   identical; §10) and by eliot-test and eliot-build:
-  1. §8 item 30 — a named implementation's type parameters solved from the entry its binding answers.
+  1. ~~§8 item 30~~ — built 2026-10-14: a named implementation's type parameters are what its pattern takes at the
+     entry's ground arguments, at dispatch and in the threading (`NamedImplementationArguments`).
   2. A `with name(args)` around a run of a code parameter: the **code** moves onto the slot, the **arguments** stay at
      the run, where the frame is built — refused today (§2, "A `with`'s arguments are values computed where it is
      written"). A parameter's clause still cannot spell arguments; the slot carries code only.
@@ -1321,8 +1329,8 @@ In the order they would be built:
   pass-through slot (`computation uses *, Throw[E] with escaping`, declared abstractly in the base), which leaks the
   frame mechanism into every user discharger's signature; keeping parameters on the platform's anonymous
   implementations alone, a construct no user could ever supply.
-- **Parameterised ability implementations**: `people.sort with byKey(p -> p.age)`, by D25's mechanism. Runtime track
-  first.
+- **Parameterised ability implementations**: `people.sort with byKey(p -> p.age)`, by D25's mechanism, after §8 item
+  31 (the lambda is typed by the entry). Runtime track first.
 
 **Awaiting sign-off:** the five choices made in the code while building option 5 (§3.4, "Decided in the code").
 
@@ -1347,7 +1355,7 @@ Numbers are kept so citations resolve; the record of each is in git history (§1
   ride by code, give by frame (§3.4). D20c's open question remains, above.
 - **Named implementations with parameters** (decided 2026-10-12, built 2026-10-13): supplied at the `with`,
   `greet with scripted("Bob")`; one construct chooses code and supplies arguments, and no keyword marks such an
-  implementation (§2, §3.4). Built without type parameters on the same implementation (§8 item 30).
+  implementation (§2, §3.4). Type parameters on the same implementation since 2026-10-14 (§8 item 30).
 - **Compile-track frames** (decided 2026-10-12, built 2026-10-13): the compile track threads its frames as the runtime
   track does, after monomorphization, and the guarded-return read gives a signature's own control effects (§3.4).
 - **D23** (2026-10-13): *what does a `with` apply to?* **Every effect of its ability that escapes its subject** — what

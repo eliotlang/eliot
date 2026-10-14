@@ -655,18 +655,7 @@ class ValueResolver
                 ),
                 Seq(s"Bind it with `with ${implementationName.value}(…)` in the body, where its arguments are computed.")
               ).liftToScoped
-            // Not built: a named implementation's own type parameters are not solved for a binding (its methods run
-            // at the binding's type arguments, which name none), so its parameters' types would be unknown where its
-            // environment is threaded (`docs/effects.md` §11, parameterised ability implementations).
-            case ImplementationNameResolver.Parameters.WithTypeParameters         =>
-              compilerAbort[Expression](
-                implementationName.as(
-                  s"The implementation '${implementationName.value}' takes both type parameters and parameters, " +
-                    "which is not supported yet."
-                ),
-                Seq("Give the implementation concrete types, or drop its parameters.")
-              ).liftToScoped
-            case ImplementationNameResolver.Parameters.Plain                      =>
+            case ImplementationNameResolver.Parameters.Present                    =>
               arguments.traverse(argument => resolveExpression(argument.value, runtime).map(argument.as)).map {
                 resolvedArguments =>
                   (resolvedArguments :+ implementationName.as(bound)).foldLeft[Sourced[Expression]](

@@ -88,8 +88,10 @@ class AbilityResolver(
     *   - Otherwise the ref's own type arguments are used.
     *   - Quoting failure (still-unsolved metas) leaves the ref pending for the next iteration.
     *   - The ground ability-level arguments may end in a **binding** ([[ImplementationBinding]], effects v6 §9.4 step
-    *     4): an implementation named there is recorded **directly** — its method of this reference's name, at the
-    *     binding's own type arguments — with no search, no `where` filter and no coherence question, since `with`
+    *     4): an implementation named there is recorded **directly** — its method of this reference's name, at the type
+    *     arguments its pattern takes at this reference's pattern arguments ([[NamedImplementationArguments]]), an
+    *     implementation whose pattern does not match them being an error here — with no search, no `where` filter and
+    *     no coherence question, since `with`
     *     *replaces* the search rather than parameterising it; the `Default` marker (and no binding at all, the whole
     *     tree today) goes to the two-site search at the pattern arguments. The resolution is keyed under the full
     *     sliced arguments, binding included, so one span referenced under two bindings records two entries — exactly
@@ -139,9 +141,14 @@ class AbilityResolver(
                           case Right(_) if state.abilityResolutions.contains(key) => pure(false)
                           case Right(groundArgs)                                  =>
                             ImplementationBinding.split(groundArgs) match {
-                              case (_, Some(impl: ImplementationBinding.Implementation)) =>
-                                val method = impl.method(abilityVfqn.value.name.name)
-                                record(abilityVfqn.value, key, (method, impl.typeArguments)).as(true)
+                              case (patternArgs, Some(impl: ImplementationBinding.Implementation)) =>
+                                liftF(NamedImplementationArguments.solve(impl, patternArgs, platform)).flatMap {
+                                  case Some(typeArguments) =>
+                                    val method = impl.method(abilityVfqn.value.name.name)
+                                    record(abilityVfqn.value, key, (method, typeArguments)).as(true)
+                                  case None                =>
+                                    reportUnmatchedBinding(abilityVfqn, abilityName, impl, patternArgs)
+                                }
                               case (patternArgs, _)                                      =>
                                 searchAndRecord(abilityVfqn, abilityName, key, patternArgs)
                             }
@@ -179,6 +186,30 @@ class AbilityResolver(
       forwards <- liftF(bindingForwards(member, impl._1))
       _        <- modify(_.recordAbilityResolution(key, impl).recordBindingForwards(member, impl._1, forwards))
     } yield ()
+
+  /** A `with` bound an implementation for an entry its pattern does not match: `with none`, for `implement[T] none:
+    * Source[Option[T]]`, where the reference performs `Source[Int]`. Reported at the reference, which is where the
+    * entry's arguments are known — inside whatever definition the `with`'s subject reached.
+    */
+  private def reportUnmatchedBinding(
+      ref: Sourced[ValueFQN],
+      abilityName: String,
+      impl: ImplementationBinding.Implementation,
+      patternArgs: Seq[GroundValue]
+  ): CheckIO[Boolean] = {
+    val name    = impl.head.name.qualifier match {
+      case Qualifier.AbilityImplementation(_, _, Some(name)) => name
+      case _                                                 => abilityName
+    }
+    val entry   =
+      if (patternArgs.isEmpty) abilityName else patternArgs.map(GroundValueRenderer.render).mkString(s"$abilityName[", ", ", "]")
+    liftF(
+      compilerError(
+        ref.as(s"This performs '$entry' on the implementation '$name', which does not implement it."),
+        Seq(s"A `with` around a use of this definition binds '$name'; bind one that implements '$entry' instead.")
+      ) >> abort[Boolean]
+    )
+  }
 
   /** A ground-argument demand did not resolve. The producer
     * ([[com.vanillasource.eliot.eliotc.ability.processor.AbilityImplementationProcessor]]) registers the failed

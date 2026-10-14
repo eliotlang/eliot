@@ -11,11 +11,12 @@ import com.vanillasource.eliot.eliotc.module.fact.{
   ValueFQN,
   WellKnownTypes
 }
-import com.vanillasource.eliot.eliotc.monomorphize.check.{DeclaredEntries, ImplementationBinding}
+import com.vanillasource.eliot.eliotc.monomorphize.check.{DeclaredEntries, ImplementationBinding, NamedImplementationArguments}
 import com.vanillasource.eliot.eliotc.monomorphize.fact.MonomorphicEffects.Entry
 import com.vanillasource.eliot.eliotc.monomorphize.fact.{
   CompilerMonomorphicValue,
   GroundValue,
+  GroundValueRenderer,
   MonomorphicEffects,
   MonomorphicExpression,
   MonomorphicValue
@@ -139,8 +140,10 @@ object EnvironmentThreading {
   /** One part of an environment: a parameter in scope holding it, and its type. */
   private case class Part(name: String, tpe: GroundValue)
 
-  /** The arguments a `with` supplied to the implementation `marker` names, held by parameters around its subject. */
-  private case class Supplied(marker: ValueFQN, own: Seq[Part], level: Int)
+  /** The arguments the `with` at `at` supplied to the implementation `marker` names, held by parameters around its
+    * subject.
+    */
+  private case class Supplied(marker: ValueFQN, own: Seq[Part], level: Int, at: Sourced[?])
 
   /** A frame in scope: the entry it answers, the binding its code was written with, the frames its implementation's
     * clauses perform on, and the implementation's own parameters.
@@ -279,8 +282,8 @@ object EnvironmentThreading {
       def push(more: Seq[Frame]): Context =
         copy(frames = more.map(_.copy(level = depth + 1)) ++ frames, depth = depth + 1)
 
-      def supply(marker: ValueFQN, own: Seq[Part]): Context =
-        copy(supplied = Supplied(marker, own, depth + 1) +: supplied, depth = depth + 1)
+      def supply(marker: ValueFQN, own: Seq[Part], at: Sourced[?]): Context =
+        copy(supplied = Supplied(marker, own, depth + 1, at) +: supplied, depth = depth + 1)
 
       def shadow(name: String): Context  = copy(types = types - name, runs = runs - name)
 
@@ -390,7 +393,7 @@ object EnvironmentThreading {
         supplied = args.take(count)
         parts    = parameterTypes(head.value.expressionType, count).map(tpe => Part(fresh(), tpe))
         walked  <- supplied.traverse(walk(_, context))
-        subject <- walk(args(count), context.supply(marker, parts))
+        subject <- walk(args(count), context.supply(marker, parts, reference.valueName))
         rest    <- args.drop(count + 1).traverse(walk(_, context))
       } yield {
         val bound = parts.foldRight(subject) { (part, inner) =>
@@ -759,7 +762,7 @@ object EnvironmentThreading {
       nearest(context.frames, entry, at).flatMap { frame =>
         (frame, suppliedFor(context, binding)) match {
           case (_, Some(supplied)) if frame.forall(_.level < supplied.level)   =>
-            built(context, entry, binding, at, Some(supplied.own))
+            built(context, entry, binding, at, Some(supplied))
           case (Some(frame), _) if sameImplementation(frame.binding, binding) => frame.pure[CompilerIO]
           case (Some(frame), _) if !isNamed(binding)                          =>
             compilerAbort(
@@ -806,32 +809,51 @@ object EnvironmentThreading {
         entry: Entry,
         binding: GroundValue,
         at: Sourced[?],
-        supplied: Option[Seq[Part]]
+        supplied: Option[Supplied]
     ): CompilerIO[Frame] =
       shapeOf(entry, binding).flatMap { shape =>
-        if (supplied.exists(_.map(_.tpe) != shape.own))
-          compilerAbort(at.as("Internal: the arguments a `with` supplied do not match its implementation's parameters."))
-        else if (supplied.isDefined)
-          shape.clauses
-            .traverse { case (clauseEntry, clauseBinding, _) => lookup(context, clauseEntry, clauseBinding, at) }
-            .map(clauses => Frame(entry, binding, clauses, supplied.getOrElse(Seq.empty)))
-        else if (shape.own.nonEmpty && guarded)
-          guards
-            .find(guard => guard.entry == entry && sameImplementation(guard.binding, binding))
-            .getOrElse(held(entry, binding, shape).tap(guards += _))
-            .pure[CompilerIO]
-        else if (shape.own.nonEmpty)
-          compilerAbort(
-            at.as(
-              s"The effect '${entry.ability.abilityName}' is performed here with nothing to discharge it: its " +
-                "implementation needs a frame, and only a discharger installs one."
+        supplied match {
+          case Some(supplied) if supplied.own.map(_.tpe) != shape.own => unfitArguments(entry, binding, shape, supplied)
+          case Some(supplied)                                         =>
+            shape.clauses
+              .traverse { case (clauseEntry, clauseBinding, _) => lookup(context, clauseEntry, clauseBinding, at) }
+              .map(clauses => Frame(entry, binding, clauses, supplied.own))
+          case None if shape.own.nonEmpty && guarded                  =>
+            guards
+              .find(guard => guard.entry == entry && sameImplementation(guard.binding, binding))
+              .getOrElse(held(entry, binding, shape).tap(guards += _))
+              .pure[CompilerIO]
+          case None if shape.own.nonEmpty                             =>
+            compilerAbort(
+              at.as(
+                s"The effect '${entry.ability.abilityName}' is performed here with nothing to discharge it: its " +
+                  "implementation needs a frame, and only a discharger installs one."
+              )
             )
-          )
-        else
-          shape.clauses
-            .traverse { case (clauseEntry, clauseBinding, _) => lookup(context, clauseEntry, clauseBinding, at) }
-            .map(clauses => Frame(entry, binding, clauses, Seq.empty))
+          case None                                                   =>
+            shape.clauses
+              .traverse { case (clauseEntry, clauseBinding, _) => lookup(context, clauseEntry, clauseBinding, at) }
+              .map(clauses => Frame(entry, binding, clauses, Seq.empty))
+        }
       }
+
+    /** A `with` supplied arguments its implementation does not take where it runs `entry`: a named implementation's type
+      * parameters are what its pattern takes at the entry ([[NamedImplementationArguments]]), and a `with` binds every
+      * use of its ability in its subject, so the arguments must fit each.
+      */
+    private def unfitArguments(entry: Entry, binding: GroundValue, shape: Shape, supplied: Supplied): CompilerIO[Frame] = {
+      def shown(types: Seq[GroundValue]): String = types.map(GroundValueRenderer.render).mkString("(", ", ", ")")
+      val performed =
+        if (entry.arguments.isEmpty) entry.ability.abilityName
+        else entry.arguments.map(GroundValueRenderer.render).mkString(s"${entry.ability.abilityName}[", ", ", "]")
+      compilerAbort(
+        supplied.at.as(
+          s"${describe(binding).capitalize} takes ${shown(shape.own)} where it runs '$performed', but this `with` " +
+            s"supplies ${shown(supplied.own.map(_.tpe))}."
+        ),
+        Seq(s"A `with` binds every use of '${entry.ability.abilityName}' in its subject, so its arguments must fit each.")
+      )
+    }
 
     private def sameImplementation(left: GroundValue, right: GroundValue): Boolean =
       (ImplementationBinding.fromGround(left), ImplementationBinding.fromGround(right)) match {
@@ -882,11 +904,14 @@ object EnvironmentThreading {
           } yield Shape(shaped, own)
       }
 
-    /** The implementation `binding` runs on for `entry`, as its marker and type arguments. */
+    /** The implementation `binding` runs on for `entry`, as its marker and type arguments: a named one at what its
+      * pattern takes at the entry's arguments ([[NamedImplementationArguments]]), as its dispatched methods run.
+      */
     private def implementationOf(entry: Entry, binding: GroundValue): CompilerIO[Option[(ValueFQN, Seq[GroundValue])]] =
       ImplementationBinding.fromGround(binding) match {
-        case Some(ImplementationBinding.Implementation(head, typeArguments)) => Some((head, typeArguments)).pure[CompilerIO]
-        case _                                                               =>
+        case Some(named: ImplementationBinding.Implementation) =>
+          NamedImplementationArguments.solve(named, entry.arguments, track.platform).map(_.map(named.head -> _))
+        case _                                                 =>
           val abilityMarker = ValueFQN(
             entry.ability.moduleName,
             QualifiedName(entry.ability.abilityName, Qualifier.Ability(entry.ability.abilityName))
