@@ -3,7 +3,8 @@ package com.vanillasource.eliot.eliotc.row
 import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.ast.fact.{EffectRow, ImplementationParameters}
 import com.vanillasource.eliot.eliotc.core.fact.RoleHint
-import com.vanillasource.eliot.eliotc.module.fact.{Qualifier, Role, ValueFQN, WellKnownTypes}
+import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, Qualifier, Role, ValueFQN, WellKnownTypes}
+import com.vanillasource.eliot.eliotc.monomorphize.check.DeclaredEntries
 import com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedExpression.*
 import com.vanillasource.eliot.eliotc.operator.fact.{OperatorResolvedExpression, OperatorResolvedValue}
 import com.vanillasource.eliot.eliotc.resolve.fact.{AbilityConstraint, AbilityFQN, Qualifier as ResolveQualifier}
@@ -67,7 +68,7 @@ object BindingWriter {
     *   The definition with its body written and its signature stripped of slot `with`s.
     * @param violations
     *   What the walk could not answer, each at its own position. A violation aborts the definition: an unwritten
-    *   binding would silently run on the platform's default.
+    *   binding would leave the checker to ground it.
     * @param overDeclarations
     *   The declared effects the body never performs ([[overDeclared]]). Kept apart from [[violations]] because their
     *   usual cause is somewhere else — a callee performing an effect it does not declare leaves its caller's
@@ -83,7 +84,8 @@ object BindingWriter {
     *   Whether a `with` **chose** this implementation here — in a body, or on a slot's type, the construct's two
     *   positions. False for a binding this definition merely *forwards*: its own received binder, and the `Default` a
     *   slot supplies. The difference matters in exactly one place, [[Writer.checkGiven]]: a computation this
-    *   definition was handed was promised the default, so a slot that binds another implementation breaks the promise.
+    *   definition was handed was written for whatever its own slot names, so a slot that binds another implementation
+    *   breaks the promise.
     * @param bySlot
     *   Whether a callee's row slot **supplies** this binding to the actual written there — resolution-order step 3.
     *   This is what a frame looks like from the outside, and the one thing a definition may hand to a computation it
@@ -135,14 +137,12 @@ object BindingWriter {
   /** The lexical environment at one point. `bindings` is innermost-first, so a nearer `with` shadows an outer one for
     * the same ability; `thunks` are the row-typed parameters in scope, whose references apply.
     *
-    * @param uncoveredDefaults
-    *   Whether an **effect** with nothing in scope binds `Default` instead of being reported. True in exactly two
-    *   regions, and both because something other than this definition's row answers for the effect: a platform **run
-    *   boundary**, where every effect's chain ends (§9.5), and a **signature**, whose `raise`/`abort` is the guard
-    *   channel's vocabulary and is discharged by the guarded-return read, not performed at runtime at all.
     * @param signature
-    *   Whether this is a signature, whose references are evaluated rather than checked, so a type-argument list there
-    *   may not hold the checker's hole ([[Writer.mergeTypeArguments]]).
+    *   Whether this is a signature. Its effects are the guard channel's vocabulary, discharged by the guarded-return
+    *   read rather than performed at runtime, so an uncovered one is bound as its discharger's slot binds instead of
+    *   being reported ([[Writer.guardDischarge]]), and the scope check's other cuts do not apply. Its references are
+    *   evaluated rather than checked, so a type-argument list there may not hold the checker's hole
+    *   ([[Writer.mergeTypeArguments]]).
     * @param clausesGiven
     *   Inside an actual at a slot that names an implementation with `with`: each entry that implementation's clauses
     *   perform and the callee supplies, by implementation. The callee gives them where it runs the actual, so a run of
@@ -152,7 +152,6 @@ object BindingWriter {
   private case class Scope(
       bindings: Seq[Binding],
       thunks: Set[String],
-      uncoveredDefaults: Boolean = false,
       callbacks: Set[String] = Set.empty,
       captured: Set[String] = Set.empty,
       thunkNeeds: Map[String, Seq[Need]] = Map.empty,
@@ -167,11 +166,11 @@ object BindingWriter {
 
     /** The scope inside a lambda written in a **value** position. Every binding in scope so far is outside the value,
       * so an effect may no longer be taken from it ([[Writer.bindingFor]]); and every code parameter in scope would be
-      * carried off by the value, so a reference to one is a capture. A region whose uncovered effects default — a
-      * signature, a run boundary — is not checked: its effects are not performed at runtime by this body.
+      * carried off by the value, so a reference to one is a capture. A signature is not checked: its effects are not
+      * performed at runtime.
       */
     def enterValue: Scope =
-      if (uncoveredDefaults) this
+      if (signature) this
       else
         copy(
           bindings = bindings.map(_.copy(beyondValue = true)),
@@ -188,7 +187,7 @@ object BindingWriter {
       * by the caller of this, exactly as at an open slot.
       */
     def enterClosed(rides: Set[AbilityFQN]): Scope =
-      if (uncoveredDefaults) this
+      if (signature) this
       else
         enterValue.copy(
           bindings = bindings.map(b => if (rides.contains(b.ability)) b else b.copy(beyondValue = true)),
@@ -217,22 +216,17 @@ object BindingWriter {
     * is compile-time code in type position, and its `if`/`else`/`raise` are ordinary calls with row-typed slots and
     * phantom binders — so the same thunking and the same binding write are needed there, or the guard reaches the
     * checker as a bare `Type` at a `Unit -> Type` slot. What differs is only the scope check: a signature's effects
-    * are the guard channel's, discharged by the guarded-return read rather than performed, so an uncovered one
-    * defaults instead of being reported ([[Scope.uncoveredDefaults]]).
-    *
-    * @param atBoundary
-    *   True for a platform **run boundary** ([[RunBoundaryFunctions]]) — the synthesized entry point. It is where every
-    *   effect's chain ends (§9.5), so an uncovered effect is bound to the two-site `Default` there instead of being
-    *   reported undeclared. Everywhere else an uncovered effect in a *body* is the error, which is the whole of the
-    *   scope check.
+    * are the guard channel's, discharged by the guarded-return read rather than performed, so an uncovered one is bound
+    * as its discharger's slot binds instead of being reported ([[Scope.signature]]). In a *body* an uncovered effect
+    * is the error, which is the whole of the scope check — the synthesized entry point included, which binds every
+    * effect of `main`'s clause with `with` ([[EntryPoint]]).
     */
-  def write(orv: OperatorResolvedValue, universe: RowChecker.Universe, atBoundary: Boolean = false): Written = {
+  def write(orv: OperatorResolvedValue, universe: RowChecker.Universe): Written = {
     val writer     = new Writer(universe)
     val received   = receivedBindings(orv, universe)
     val scope      = Scope(
       received,
       thunkParameters(orv),
-      atBoundary,
       callbackParameters(orv),
       thunkNeeds = thunkRequirements(orv, universe),
       ridden = riddenEntries(orv, universe)
@@ -242,11 +236,11 @@ object BindingWriter {
       .when(writableBody(orv))(orv.runtime)
       .flatten
       .map(writer.walkDefinition(_, scope, view.binders.size + view.parameters.size))
-    val overstated = body.filterNot(_ => atBoundary).toSeq.flatMap(_ => overDeclared(orv, writer.consumed.toSet))
+    val overstated = body.toSeq.flatMap(_ => overDeclared(orv, writer.consumed.toSet))
     val signature  =
       writer.walkDefinition(
         orv.signature,
-        Scope(received, Set.empty, uncoveredDefaults = true, signature = true),
+        Scope(received, Set.empty, signature = true),
         view.binders.size
       )
     Written(
@@ -269,8 +263,8 @@ object BindingWriter {
     * would.
     *
     * Only the declared row is checked, never a `~` constraint's binder, which binds an ability the body may well reach
-    * only through a callee's own constraint. A body-less value has nothing to check — its row is a contract, stated where a later layer supplies the body — and
-    * a run boundary performs `main`'s whole row by definition. An `implement` clause is held only to the entries it
+    * only through a callee's own constraint. A body-less value has nothing to check — its row is a contract, stated
+    * where a later layer supplies the body. An `implement` clause is held only to the entries it
     * [[wrote]]: it declares the union of its block's clause rows, and an entry a sibling wrote is the sibling's to
     * perform.
     */
@@ -346,10 +340,12 @@ object BindingWriter {
 
   /** What each of this definition's row-typed parameters must be **given** when it runs (`docs/effects.md` D20 rule
     * 5): its slot's caller wrote the actual's bindings from this definition's declaration, so every entry the slot
-    * *supplies* by `Default` — one this definition's own row does not have, and the slot's `with` does not name — was
-    * written as a promise that a frame for it is entered before the actual runs. So is every effect a slot's named
-    * implementation performs in its own clauses, which the caller also wrote as `Default`
-    * ([[Writer.slotImplementation]]). An entry the definition's own row has — the slot's, or one its named
+    * *supplies* without naming an implementation — one this definition's own row does not have, and the slot's `with`
+    * does not name — was written as a promise that a frame for it is entered before the actual runs. So is every effect
+    * a slot's named implementation performs in its own clauses that the slot names nothing for
+    * ([[Writer.slotImplementation]]). Such an entry is written as `Default`, which an effect never resolves to
+    * (`docs/effects.md` D26): only a run inside a callee's slot supplying the same entry keeps the promise, and that
+    * callee is held to it in turn, up to a slot that names the implementation. An entry the definition's own row has — the slot's, or one its named
     * implementation's clauses perform — rides the caller's binding and needs nothing here. Entries are compared at
     * their known arguments ([[ridesOwn]]), as the caller's write compared them. A named implementation's `~`
     * constraint is an ability, not an effect: its declaration's row does not list it, its `Default` is the two-site
@@ -449,14 +445,40 @@ object BindingWriter {
     */
   private def bindingEntries(
       marker: ValueFQN,
-      universe: RowChecker.Universe
+      universe: RowChecker.Universe,
+      excluding: Set[Int] = Set.empty
   ): Seq[(AbilityFQN, Option[Seq[String]])] =
     universe.lookup(marker).toSeq.flatMap { orv =>
       val entries = entryArguments(orv)
-      phantoms(orv).map { case (index, ability) =>
+      phantoms(orv).filterNot((index, _) => excluding.contains(index)).map { case (index, ability) =>
         ability -> entries.get(index).flatMap(knownArguments(_, Map.empty))
       }
     }
+
+  /** The binders of the implementation `marker` whose entry is **per call**: every clause performing it implements a
+    * member that declares it too (`FileSystem.readFile`'s `Throw[IoError]`, repeated by `standardFileSystem`'s
+    * `readFile`). Dispatch hands such a clause the call's binding (`DeclaredEntries.forwarded`, `docs/effects.md`
+    * §3.4), so the binding a `with` writes there is never run on, and nothing at the `with` need answer it — the
+    * entry point binding `main`'s `FileSystem` holds no `Throw[IoError]`. The rest are the implementation's
+    * **environment** ([[DeclaredEntries.environment]]), which the `with` must answer.
+    *
+    * Empty — every entry answered at the `with`, as before — when any declaration it reads is unknown.
+    */
+  private def perCallBinders(marker: ValueFQN, ability: AbilityFQN, universe: RowChecker.Universe): Set[Int] =
+    (for {
+      orv         <- universe.lookup(marker)
+      clauses     <- universe.clausesOf(marker)
+      performing   = clauses.flatMap(universe.lookup).filter(clause => DeclaredEntries.of(clause).nonEmpty)
+      implemented <- performing.traverse(clause => universe.lookup(memberOf(clause.vfqn, ability)).map(clause -> _))
+      _           <- Option.when(clauses.forall(universe.values.contains))(())
+    } yield {
+      val environment = DeclaredEntries.environment(implemented)
+      DeclaredEntries.of(orv).collect { case (index, entry) if !environment.contains(entry) => index }.toSet
+    }).getOrElse(Set.empty)
+
+  /** The ability member an implementation's clause implements. */
+  private def memberOf(clause: ValueFQN, ability: AbilityFQN): ValueFQN =
+    ValueFQN(ability.moduleName, QualifiedName(clause.name.name, Qualifier.Ability(ability.abilityName)))
 
   /** The names of this definition's **callback** parameters — function-typed, with a row in the codomain: code, which
     * may be called or passed on and never kept.
@@ -635,13 +657,14 @@ object BindingWriter {
         case WithBinding(subject, implementation, _) =>
           abilityOf(implementation.value, universe) match {
             case Some(ability) =>
-              val clauses = bindingEntries(implementation.value, universe).map { case (clause, arguments) =>
+              val perCall = perCallBinders(implementation.value, ability, universe)
+              val clauses = bindingEntries(implementation.value, universe, perCall).map { case (clause, arguments) =>
                 Binding.Clause(clause, arguments, scope.binding(clause, arguments).map(_.serial))
               }
               val binding =
-                Binding(ability, boundImplementation(implementation, scope), byWith = true, clauses = clauses)
+                Binding(ability, boundImplementation(implementation, scope, perCall), byWith = true, clauses = clauses)
               val written = walk(subject, scope.bind(binding), applied)
-              if (!scope.uncoveredDefaults && !used.contains(binding.serial))
+              if (!scope.signature && !used.contains(binding.serial))
                 violations += unusedWith(subject, implementation, ability, scope)
               written
             case None          =>
@@ -741,14 +764,13 @@ object BindingWriter {
     /** An effect a code parameter's clause lists is this definition's **to handle or to declare**
       * (`docs/effects.md` §1 rule 5, D22): every listed entry it does not declare ([[thunkRequirements]]) must be
       * handled where the code runs — bound by a callee's slot that supplies it, the frame of a discharger the code is
-      * passed on to — and handled the way the caller was promised, by `Default`. Nothing else handles it: no `with` in
-      * the body, which cannot rebind bindings the caller already wrote. An entry the definition declares is passed on
-      * to its caller instead, and needs nothing here. Only a body-less declaration — a platform primitive — gives an
-      * effect from nothing, and it has no body to check, so an effect's default is handed out at `main` and by the
-      * primitives, nowhere else.
+      * passed on to — and handled the way the caller was promised. Nothing else handles it: no `with` in the body,
+      * which cannot rebind bindings the caller already wrote. An entry the definition declares is passed on to its
+      * caller instead, and needs nothing here. Nothing gives an effect from nothing (`docs/effects.md` D26): every
+      * binding of one is a `with`, a slot that names one, or a binder the caller filled.
       */
     private def checkGiven(name: Sourced[String], scope: Scope): Unit =
-      if (!scope.uncoveredDefaults)
+      if (!scope.signature)
         scope.thunkNeeds.getOrElse(name.value, Seq.empty).filterNot(givenBySlot(_, scope)).foreach { need =>
           val Need(ability, arguments, _) = need
           scope.binding(ability, arguments).foreach(binding => used += binding.serial)
@@ -757,8 +779,8 @@ object BindingWriter {
             case Some(binding) if binding.bySlot                    =>
               violations += Violation(
                 name.as(
-                  s"'${name.value}' was promised the default '${ability.abilityName}', but runs where a slot binds " +
-                    "another implementation for it."
+                  s"'${name.value}' runs where a slot binds an implementation of '${ability.abilityName}', but its own " +
+                    "slot names none, so its caller wrote it for another."
                 ),
                 Seq(s"Name the same implementation on '${name.value}'s own slot with `with`, or pass it elsewhere.")
               )
@@ -823,7 +845,7 @@ object BindingWriter {
     private def unappliedEffectful(callee: Sourced[ValueFQN], arguments: Int, scope: Scope): Option[Violation] =
       universe
         .lookup(callee.value)
-        .filter(orv => !scope.uncoveredDefaults && arguments < orv.effectRow.returnArity)
+        .filter(orv => !scope.signature && arguments < orv.effectRow.returnArity)
         .flatMap(_.effectRow.returnEffects.headOption)
         .map { effect =>
           Violation(
@@ -953,17 +975,22 @@ object BindingWriter {
       * more than this being an ordinary written reference: whatever the scope holds for those abilities was written
       * the same way when *it* was bound. An implementation with no clause row writes as the bare marker, exactly as
       * before.
+      *
+      * A binder in `perCall` is one the dispatch replaces with the call's binding ([[perCallBinders]]), so nothing in
+      * scope need answer it: one with nothing in scope is written as `Default`, which nothing runs on.
       */
     private def boundImplementation(
         implementation: Sourced[ValueFQN],
-        scope: Scope
+        scope: Scope,
+        perCall: Set[Int] = Set.empty
     ): OperatorResolvedExpression =
       writeBindings(
         implementation.as(ValueReference(implementation)),
         implementation.value,
         Seq.empty,
         scope,
-        Seq.empty
+        Seq.empty,
+        perCall
       ).value
 
     /** The term a **slot's** `with` binds (`program uses *, Console with recordingConsole: Unit`). Its clause-row
@@ -1043,14 +1070,15 @@ object BindingWriter {
       * fills. In a body a gap before a binding is written as the checker's hole ([[mergeTypeArguments]]), so every
       * binding is reached; a binder past the last one is left to the checker, which is always the fail-safe direction.
       * In a signature, which has no hole, a binding behind a gap is reported ([[unreachableBinding]]): the checker has
-      * no way to solve a binding and would silently ground it to the platform's default.
+      * no way to solve a binding and would silently ground it.
       */
     private def writeBindings(
         reference: Sourced[OperatorResolvedExpression],
         callee: ValueFQN,
         existing: Seq[Sourced[OperatorResolvedExpression]],
         scope: Scope,
-        args: Seq[Sourced[OperatorResolvedExpression]]
+        args: Seq[Sourced[OperatorResolvedExpression]],
+        perCall: Set[Int] = Set.empty
     ): Sourced[OperatorResolvedExpression] =
       universe.lookup(callee) match {
         case None      => reference
@@ -1070,7 +1098,7 @@ object BindingWriter {
                 bindingFor(
                   ability,
                   entries.get(index).flatMap(knownArguments(_, substitution)),
-                  effects.contains(ability),
+                  effects.contains(ability) && !perCall.contains(index),
                   reference,
                   scope
                 )
@@ -1124,7 +1152,7 @@ object BindingWriter {
       * The shape is a member of a **parameterised** ability declaring effects of its own
       * (`ability Show[T] { def show(t: T) uses Log: String }`): the block's `T` stands between the two bindings.
       * Spelling the reference's type arguments (`show[String](x)`) reaches past it; nothing else does, so writing the
-      * short prefix silently would leave the second binding on the platform's default. In a body the same call needs
+      * short prefix silently would leave the second binding unwritten. In a body the same call needs
       * nothing spelled.
       */
     private def unreachableBinding(
@@ -1390,7 +1418,7 @@ object BindingWriter {
       }
 
     private def reportUncovered(ability: AbilityFQN, at: Sourced[?], scope: Scope): Unit =
-      if (!scope.uncoveredDefaults)
+      if (!scope.signature)
         violations += Violation(
           at.as(
             s"This value performs the effect '${ability.abilityName}' but does not declare it; " +

@@ -4,8 +4,9 @@
 in D20/D21's `uses` surface (2026-10-09/10) with D20c option 5's environments and (b) (2026-10-12), and D22's reading
 of a listed effect, D23's reading of `with`, D24's `uses *` on a definition, compile-track frames and named
 implementations with parameters (2026-10-13), their type parameters solved where they run, their `with` around a
-run of a code parameter, a run bound as the slot it is passed to binds, and the control effects as named
-implementations their dischargers bind with `with` (2026-10-14). An effect is
+run of a code parameter, a run bound as the slot it is passed to binds, the control effects as named
+implementations their dischargers bind with `with`, and D26's explicit passing — no effect has a default, every effect
+implementation is named, and `main` is run with a `with` per entry (2026-10-14). An effect is
 an ability declared with the `effect` keyword. A definition's `uses` clause says what its caller hands it. An implementation has two halves: its **code**, a
 compile-time name written at every reference by a syntax-directed pass that reads declarations only, and its
 **environment** (an escape frame, a cell, its own parameters), a value threaded after monomorphization — on the
@@ -45,14 +46,14 @@ lives now.
    theirs with an ordinary `with`. Its steps, in order: ~~§8 item 30~~ (closed 2026-10-14); ~~a `with name(args)`
    around a run of a code parameter~~ (built 2026-10-14, closing §8 item 32 on the way); ~~a slot's binding carried
    to the slot a run is passed from~~ (built 2026-10-14, closing §8 item 33); ~~the control effects
-   moved to named implementations~~ (built 2026-10-14, closing §8 items 34 and 35); the anonymous parameter list and
-   the giving primitives deleted. User dischargers
+   moved to named implementations~~ (built 2026-10-14, closing §8 items 34 and 35); ~~the anonymous parameter list and
+   the giving primitives deleted~~ (built 2026-10-14, as D26's step 3). User dischargers
    such as `withConfig` then need nothing of their own, and parameterised ability implementations follow by the same
    mechanism, after §8 item 31.
-9. **D26** (decided 2026-10-14, §11): no effect has a default. Every effect implementation is named, the platform runs
-   `main` by generating a `with` per entry, naming the base's body-less `standard…` implementations, and a guarded
-   signature is bound as its discharger's slot binds. Its first step is D25's step 4 (built 2026-10-14), its second
-   the `standard…` implementations and the generated `with`s (built 2026-10-14); its last folds in D25's step 5.
+9. ~~**D26**~~ (decided and built 2026-10-14, §11): no effect has a default. Every effect implementation is named, the
+   platform runs `main` by generating a `with` per entry, naming the base's body-less `standard…` implementations, and
+   a guarded signature is bound as its discharger's slot binds. Its first step was D25's step 4, its second the
+   `standard…` implementations and the generated `with`s, and its third the deletions, D25's step 5 with them.
 
 D20a, D20c and D3 stay open until decided; none blocks the steps above.
 
@@ -63,13 +64,7 @@ D20a, D20c and D3 stay open until decided; none blocks the steps above.
   `catch` over a parameter spells its arguments (§7 item 2); a function-typed code parameter's own entries are never
   supplied (§7 item 1); `runThrow("no failure")` with its argument spelled is accepted (§8 item 4); a `with`'s
   argument typed only by the entry it binds, an unannotated lambda, is refused (§8 item 31).
-- **Decided, not built:** D25, parameters only on a named implementation and the platform's dischargers binding
-  theirs with `with` (steps 1–4 built 2026-10-14: a named implementation's type parameters solved, its `with`
-  around a run of a code parameter, a run bound as the slot it is passed to binds, and the control effects named);
-  D26, no effect defaults,
-  every effect implementation named and `main` run by explicit passing (steps 1–2 built 2026-10-14; the deletions
-  left); then parameterised ability implementations
-  (§11, "Decided, not built").
+- **Decided, not built:** parameterised ability implementations, by D25's mechanism (§11, "Decided, not built").
 - **Undecided:** naming a set of effects in a clause (D20a), storing an effectful computation (D20c), `~`/`&` in user
   space (D3).
 - **Outside this document:** `v0.9` is the first release carrying `uses` (`v0.8` is tagged before it, and its release
@@ -146,11 +141,12 @@ D20a, D20c and D3 stay open until decided; none blocks the steps above.
    `Throw[AssertionError]` because it raises one itself, and still catches its body's failure. Declaring an effect
    the definition handles and never performs itself is the over-declaration error (§4). An effect the code uses
    through `*` without the clause listing it is invisible to the definition: bound where the code was written, it can
-   be neither caught nor declared there (§2.2). **A `with` is the only thing that gives an implementation**: a
-   platform's discharger binds its control effect's named implementation with one, over the frame its primitive made
-   (§3.4), and the synthesized entry point binds `main`'s entries with one `with` each, naming the platform's
-   `standard…` implementation of the effect (`app::main with eliot.effect.Console::standardConsole`, D26). So no
-   effect is handed a default anywhere; what is left of the run boundary's exemption is deleted by D26 step 3.
+   be neither caught nor declared there (§2.2). **An effect has no default** (D26): every binding of one is passed — a
+   `with`, a slot that names an implementation, or a binder the caller filled. A platform's discharger binds its
+   control effect's named implementation with a `with`, over the frame its primitive made (§3.4), and the synthesized
+   entry point is an ordinary definition binding each of `main`'s entries with one `with`, naming the platform's
+   `standard…` implementation of the effect (`app::main with eliot.effect.Console::standardConsole`). Nothing is
+   exempt from this rule, the entry point included.
 
 6. **A field holds a value.** A `data` field takes no clause and no row, and there is no stored computation: store
    data describing the work, and perform it where the effects are in scope (§2.3).
@@ -243,16 +239,21 @@ effect FileSystem {
 }
 ```
 
-**An anonymous `implement` is a default; a named one never is.** An anonymous block in one of the **two sites** —
-the ability's module or the type's module — is the default for its pattern, subject to the existing coherence and
-`where` rules, and is what a declaration with no named implementation binds. It may still be written with
-**parameters** after its pattern, which nothing can supply, and which D25 step 5 makes a parse error; no
-implementation in the tree has any since the control effects became named (§3.4). A **named** `implement` may live anywhere, is never searched, is not checked for
-overlap, and its clauses may carry `uses` — what the implementation performs beyond its ability, charged wherever the
-name is bound. It closes over nothing, but it may take **parameters**, written between its name and its ability as a
-definition's are (`implement scripted(answer: String): Terminal`) and supplied by the `with` that binds it
-(`greet with scripted("Bob")`): each clause receives them ahead of its own, as an anonymous implementation's do. They
-are its runtime environment, so one specialisation serves every argument. No keyword marks such an implementation —
+**An anonymous `implement` is an ability's default; an effect has none.** An anonymous block in one of the **two
+sites** — the ability's module or the type's module — is the default for its pattern, subject to the existing
+coherence and `where` rules, and is what a reference naming no implementation of the **ability** binds (`Show[Int]`,
+`Eq[Path]`). It takes no parameters, since nothing that inserts a default has arguments to give it: a parameter list
+there is *"Expected `{`: an implementation with parameters is named, and a `with` supplies them …"* (D25). An anonymous
+`implement` of an **effect** is *"An implementation of the effect 'Console' must be named, since an effect has no
+default"*, at the block (D26): an effect's binding is always passed, so a default would never be reached. A **named**
+`implement` may live anywhere, is never searched, is not checked for overlap, and its clauses may carry `uses` — what
+the implementation performs beyond its ability, charged wherever the name is bound. An entry a clause only repeats from
+its member (`standardFileSystem`'s `readFile` and its `Throw[IoError]`, which `FileSystem.readFile` declares) is not
+the implementation's: each call hands it (§3.4), so the `with` binding the implementation answers nothing for it. A
+named implementation closes over nothing, but it may take **parameters**, written between its name and its ability as
+a definition's are (`implement scripted(answer: String): Terminal`) and supplied by the `with` that binds it
+(`greet with scripted("Bob")`): each clause receives them ahead of its own. They are its runtime environment, so one
+specialisation serves every argument. No keyword marks such an implementation —
 parameters are an ordinary parameter list, whether they hold a frame or a function. A named implementation's **type
 parameters** are what its pattern takes where it runs: `with showing`, for `implement[T ~ Show[T]] showing: Source[T]`,
 runs at `T := Int` for a `Source[Int]` and at `T := String` for a `Source[String]` under the same `with`, by the match
@@ -262,7 +263,8 @@ arguments must fit every entry the `with` binds: *"The implementation 'constant'
 'Source[String]', but this `with` supplies (Int)"*, at the `with`.
 
 ```eliot
-implement Console {                                       -- the platform's default
+implement standardConsole: Console                        -- the base: body-less, beside the effect
+implement standardConsole: Console {                      -- the jvm layer: the same name, bodied (the layer merge)
    def printLine(s: String): Unit = printLineInternal(s)
    def readLine: Option[String] = lineOrNone(readLineInternal)
 }
@@ -324,7 +326,8 @@ A `with` naming an implementation that takes parameters must supply exactly them
 without parameters supplies none.
 
 **`with` is written almost nowhere.** Most code fixes nothing: a def declaring `uses Console` receives its binding
-from its caller, up to `main`. That chain is what makes a fake possible — `greeting` never said which console, so a
+from its caller, up to `main`, which the platform runs with a `with` per entry naming its `standard…` implementation.
+That chain is what makes a fake possible — `greeting` never said which console, so a
 test may say. A `with` in production code is the same mistake as a hard-coded dependency.
 
 ### 2.1 `uses *` — the caller's code
@@ -384,9 +387,9 @@ there is not supplied by the callee (§7 item 1).
 `computation` to `runAbort`, `catch` to `runThrow`, and a `with` on a slot's entry is a chosen implementation. The
 platform's dischargers are no exception: `runThrow` binds `escaping` with a `with` around its run (§3.4). Doing
 neither is *"'body' may perform the effect 'Console' here, which this definition neither handles nor declares"*, at
-the run, with the help naming both fixes; where a slot binds another implementation than the default the caller
-wrote, it is *"'body' was promised the default 'Console', but runs where a slot binds another implementation for
-it"*. So a slot cannot launder an interpretation effect into a pure signature. The same applies to the effects a
+the run, with the help naming both fixes; where a slot binds an implementation the definition's own slot does not
+name, it is *"'body' runs where a slot binds an implementation of 'Console', but its own slot names none, so its caller
+wrote it for another"*. So a slot cannot launder an interpretation effect into a pure signature. The same applies to the effects a
 slot's **named implementation** performs in its own clauses: `transcriptOf`'s body must run `program` where the
 `Writer[String]` that `recordingConsole` performs is handled, or declare it. "Lacks" and "declares" compare whole
 **entries**, the slot's and the clauses' alike: eliot-test's `mocked` declares `Throw[AssertionError]`, so the
@@ -594,11 +597,15 @@ binders stands for. Three jobs, one walk:
 1. the nearest enclosing `with` for that ability;
 2. this definition's own phantom binder for it — a **received** binding, filled by its caller. There is no
    graph to sum: forwarding is the enclosing signature, read once;
-3. for an actual at a code slot, the entries that slot **supplies** (§2.2) — bound by the entry's own `with`, or by
-   `Default` with none, which rule 5 then holds the callee to giving;
+3. for an actual at a code slot, the entries that slot **supplies** (§2.2) — bound by the entry's own `with`, or, where
+   the slot names none, by `Default`, which rule 5 then holds the callee to running the code inside a slot that
+   supplies the entry, up to one that names its implementation;
 4. `Default`, "search at the ground arguments" — the two-site resolution — for an ordinary **ability**. For an
-   **effect** there is no default: an uncovered one is *"This value performs the effect 'X' but does not declare it;
-   add it to its `uses` clause"*, reported here at the reference.
+   **effect** there is no default (D26): an uncovered one is *"This value performs the effect 'X' but does not declare
+   it; add it to its `uses` clause"*, reported here at the reference. The search is an ability's alone, so a `Default`
+   that still reaches an effect's operation — handed down by a slot naming nothing, which only a body-less discharger
+   whose platform layer is not on the path has — is *"Nothing binds an implementation of the effect 'X' here, and an
+   effect has no default"* at monomorphization (`AbilityResolver`), never a search.
 
 **A binding is for an entry, not only an ability.** Each step above looks for a binding of the reference's ability
 that **answers its entry**: one is passed over only when both sides know their type arguments and they differ —
@@ -625,7 +632,11 @@ as the definition was. A body `with`
 whose named implementation performs an effect in its clauses may not be used below a nearer binding of that effect,
 the one shape whose frame would be intercepted (§3.4); "that effect" is the clause's **entry**, looked up at its own
 arguments as a frame is chosen, so a nearer `Throw[NotFetched]` does not stand between a `with` and the use of an
-implementation performing `Throw[GitError]`. A body `with` no reference in its subject is written from is
+implementation performing `Throw[GitError]`. An entry the implementation's clauses only repeat from their members is
+none of this: dispatch hands such a clause the call's binding (§3.4), so the `with` answers nothing for it
+(`BindingWriter.perCallBinders`, which reads the clauses and their members off `ModuleAbilities` exactly as the
+threading's environment does). That is what lets the entry point bind `main`'s `FileSystem` with no `Throw[IoError]` in
+scope. A body `with` no reference in its subject is written from is
 *"This `with` binds nothing …"*, with the help naming the slot spelling when its subject is a code parameter.
 
 **A run's binding is moved onto its slot before anyone reads the declaration** (`row/RunWithHoister`, run by
@@ -665,10 +676,9 @@ its `if`/`else`/`raise` are ordinary calls with code slots and phantom binders. 
 check: a signature's effects are the guard channel's vocabulary, discharged by the guarded-return read rather than
 performed, so an uncovered one is not reported, and the value and closed cuts do not apply. An uncovered `raise` or
 `abort` is bound as its platform discharger's slot binds — `runThrow`'s, `runAbort`'s (`WellKnownTypes.guardDischargers`)
-— because the guarded-return read *is* that discharge, run by the compiler (D26); any other uncovered effect there
-still defaults. The platform **run boundary** (`row/RunBoundaryFunctions`), which is where every effect's chain ends,
-is exempt the same way, and binds `Default` — which since D26 step 2 it never reaches for an effect, because the
-entry point it is generated as writes a `with` per entry of `main`'s clause (`row/EntryPoint`).
+— because the guarded-return read *is* that discharge, run by the compiler (D26); any other uncovered effect there is
+written `Default`, which monomorphization refuses. Nothing else is exempt: the synthesized entry point is an ordinary
+definition writing a `with` per entry of `main`'s clause (`row/EntryPoint`), so there is no run boundary.
 
 **Pure code is untouched**, and so is code that only forwards: a definition with no clauses, no constraints and
 no callee with one is returned unchanged.
@@ -679,15 +689,16 @@ Two mechanical invariants of the pass, both of which cost real bugs to learn:
   spine re-attributes it to per-argument positions, silently moving every diagnostic anchored at a call and
   duplicating LSP hover hints.
 - **The universe is built by demand, not guessed.** `RowChecker.Universe.onMiss` reports every name consulted
-  but absent; the processor fetches exactly those and repeats until a round misses nothing new. Guessing would
-  fall back to unknown-callee approximations, and an unwritten binder silently runs on the platform's default.
+  but absent, and `onMissClauses` every implementation whose clauses were asked for; the processor fetches exactly
+  those and repeats until a round misses nothing new. Guessing would fall back to unknown-callee approximations, and
+  an unwritten binder would be left for the checker to ground.
 
 ### 3.2 What the write may consult
 
 Declarations, and nothing else: the callee's declared parameter and return types, its declared row and which of
 its parameters are code (with their arity and whether closed), its membership in an `effect`/`ability` block, the
-implementation names a `with` resolved to, the run-boundary registry, and one level of type-alias expansion inside
-those signatures.
+implementation names a `with` resolved to with their clauses and the members those implement, and one level of
+type-alias expansion inside those signatures.
 
 There is **no classification left to approximate** — v5's elaborator had to classify each slot as carrier-headed or
 payload, pinned or open, and needed a written whitelist to keep those approximations from accreting. A parameter
@@ -696,7 +707,7 @@ declaration. A rule that inspects a *sibling argument's expression shape* is inf
 prohibited; a decision that cannot be made from a declaration is a gap to close **in the declarations**.
 
 The fail-safe direction is built in: a missing write is an aborted definition with a violation at its own
-position, never a binding silently taken from the platform's default.
+position, never a binding silently left to the checker.
 
 ### 3.3 One verifier, and one precondition
 
@@ -781,7 +792,7 @@ main                           = …(runStateToFinalState(5, cell -> { increment
   ahead of its own parameters; a reference to it passes the frame in scope for each.
 - **A block takes what its slot lists.** A row-typed slot's thunk takes the frames of the entries its slot lists in
   place of `unit`, and running the block passes the frames in scope where it runs. For a **supplied** entry (one the
-  definition handles) the frame is at the slot's default or `with`; for a **ridden** entry (one it declares and binds
+  definition handles) the frame is at the implementation the slot names; for a **ridden** entry (one it declares and binds
   no implementation for) the
   block's *code* is the caller's binding but its *frame* is still the run site's — **(b), "ride by code, give by
   frame"** — which is what lets a definition catch an effect it also declares (§2.2). Running such a block therefore
@@ -796,9 +807,10 @@ every enclosing block; a reference takes the **innermost frame of its entry at g
 `uses Throw[IoError], Throw[GitError]` is two frames, and two entries that coincide at one instantiation at the same
 depth are a use-site error. The frame's binding must be the binding the reference was written with — code and
 environment from the same place — and a disagreement is an error, never a silent pick. An entry with no frame in scope
-is given its default only when that default has no parameters (the platform's `Console`, an ability's instance); a
-default needing parameters with nothing to give them is *"The effect 'Throw' is performed here with nothing to
-discharge it"*, at the operation — which is how an undischarged control effect at `main` became a compile error. A
+has its frame built where it is used: an ability's default, which takes no parameters, or a named implementation,
+whose parameters a `with` supplied. One taking parameters that reaches there without them is an error at the
+operation, which nothing written can produce: a `with` naming such an implementation supplies them where it is
+written, and an undischarged control effect at `main` is the entry point's error (§1 rule 5). A
 named implementation bound by a body `with` is not a frame in scope (the walk erased the `with`), so its frame is
 built at the reference from the frames there, which the walk's check in §3.1 guarantees are the frames at the `with`.
 Its own parameters are the `with`'s arguments: the threading turns `scripted$with(xs, subject)` into
@@ -822,10 +834,6 @@ as in Koka. That is the decided meaning of listing (D22): a listed effect is the
 
 **Decided in the code while building, recorded for sign-off** (§11):
 
-- an implementation's **parameters are part of its identity** (its pattern key), and on the compile track a
-  parameterised implementation gives way to the overlay's parameterless one of the same pattern, so the jvm `Abort`
-  (with a frame) and the overlay's (without) never merge into one value. Where the overlay has none (`Throw`), the
-  borrowed one stays resolvable and running it on the compile track is stuck — loud;
 - an `implement` clause gets **no frame for an entry it only carries** for a sibling (`ImplementationRows`' union):
   its binder keeps its positional slot but no constraint (`FunctionDefinition.carriedEffects`);
 - an effect a **member declares** (`FileSystem.readFile`'s `uses Throw[IoError]`) is per call: its frame comes from the
@@ -892,12 +900,12 @@ it unchanged: `val x = lookupConfig("db.url")` *runs* the lookup there, charges 
 right-hand side; the discharge belongs there (`val x = lookupConfig("db.url") else "gave up!"`). A `val`-bound lambda
 is a value, so it may use no effect from around it.
 
-**Two families, and only one is rebindable.** The **control effects** — `Throw`, `Abort`, `State`, `Writer`,
-`Dep`, `Inf` — have exactly one implementation per platform, over the private primitives; `with` has nothing
-to choose there. The **interpretation effects** — `Console`, `Log`, `FileSystem`, `Process`, `Environment` —
-and every ability are what `with` and a naming slot are for. The families are a description, not a bit in the
-language: nothing keys on it. Whether an implementation needs an environment is decided per binding by how it is
-written, never by which family its effect is in.
+**Every effect is bound the same way, and only what is bound differs** (D26). A control effect — `Throw`, `Abort`,
+`State`, `Writer`, `Dep` — has one named implementation per platform, taking the frame its discharger's primitive made
+and bound by that discharger's `with`; `Inf` and the interpretation effects — `Console`, `Log`, `FileSystem`,
+`Process`, `Environment` — have the base's `standard…` ones, which the entry point binds and a test replaces with its
+own. That is a description of what the platform ships, not a distinction in the language: nothing keys on it, and
+whether an implementation needs an environment is decided per binding by how it is written.
 
 ### 3.6 An effect is declared, never read off a shape
 
@@ -958,11 +966,10 @@ write's own walk (§3.1), so this is a spec of `row/BindingWriter` rather than o
   one around a run of a code parameter is that slot's (§3.1).
 - **a clause on a named implementation is charged at the binding site**: `greeting("Bob") with recordingConsole`
   performs `Writer[String]` there, because the name's clauses declare it, and the binding for it comes from the same
-  order.
-- **two exemptions, both because something else answers**: a **signature**, whose `raise`/`abort` is the guard
-  channel's vocabulary and is discharged by the guarded-return read; and a platform **run boundary**, where
-  every effect's chain ends and each of `main`'s entries is bound to the two-site `Default`. Neither is cut into
-  value or closed regions.
+  order. An entry a clause only repeats from its member is the call's, not the binding site's.
+- **one exemption, because something else answers**: a **signature**, whose `raise`/`abort` is the guard channel's
+  vocabulary and is bound as its discharger's slot binds, discharged by the guarded-return read. It is not cut into
+  value or closed regions. The synthesized entry point is not exempt: it binds each of `main`'s entries with a `with`.
 - **a declared entry must be consumed**: an entry of a definition's own clause that no reference in its **body** is
   written from is *"This value declares the effect 'X' but does not perform it"*, at the entry, with the help
   *"Remove 'X' from its `uses` clause"*. A clause says *my caller hands me an implementation of these*; one nothing
@@ -971,7 +978,7 @@ write's own walk (§3.1), so this is a spec of `row/BindingWriter` rather than o
   consumes `Abort` whatever `ok` is. Running a code parameter consumes exactly the entries its slot **rides**, since
   the block runs on the definition's received frame ((b), §3.4): `def passThrough[A](v uses *, Console: A) uses *,
   Console: A = v` is accepted, while its twin over `v uses *: A` lists nothing, consumes nothing and is the error. Exempt: a
-  body-less value (its clause is a contract a later layer bodies), a run boundary, and a signature's own references.
+  body-less value (its clause is a contract a later layer bodies) and a signature's own references.
   An `implement` clause declares the union of its block's clause entries (`ImplementationRows`), so it is held only to
   the entries it wrote. The error waits for the definition's callees: a callee performing the effect *undeclared* is
   its usual cause, and that callee's error is reported instead (`RowElaborationProcessor.calleesWritten`).
@@ -998,7 +1005,7 @@ These bind every future change to the effect system.
    forced", "narrowed to ~nothing", "a small local concession", "keeps the shipped idiom", "it usually
    holds". A conflict is a decision for Robert, not a judgement call in flight.
 3. **There is nothing to infer.** A phantom binder is written by a `with`, by the enclosing declaration, by a
-   supplying slot, or as `Default`, in that order — never left to a metavariable, a join, a lattice, an
+   supplying slot, or — for an ability — as `Default`, in that order — never left to a metavariable, a join, a lattice, an
    ordering-sensitive slot decision, a row variable unified across arguments, or a sum over a monomorphized
    sub-graph. Carrier inference was the historical bug class (carrier theft, premature commitment); binding
    inference would be the same bug in the new vocabulary, and **dynamic scoping resolved at compile time** is its
@@ -1043,7 +1050,7 @@ def greetTranscript: String = runWriterToLog(greet with session)
 Four properties fall out of the design rather than being added for testing.
 
 - **A double is one declaration.** It needs no type to hang on, no colocation, and no coherence question: a named
-  implementation is never searched, so it may freely overlap a default. *Never searched* is enforced rather than
+  implementation is never searched, so it may freely overlap another. *Never searched* is enforced rather than
   assumed: the two-site search and both coherence checks read `ModuleAbilities.anonymousImplementationMethodsOf` /
   `anonymousMarkersOf`. Colocation is allowed, so it had to be safe.
 - **A double cannot cheat.** A user module cannot declare a native, and the platform's natives and primitives
@@ -1054,7 +1061,8 @@ Four properties fall out of the design rather than being added for testing.
   A double may also take parameters (`greet with scripted("Bob")`), which configure it per binding without a
   specialisation per value. They are values: state that changes as the code runs is still an effect's.
 - **Interpretation is per effect, not per program.** `body with mockConsole with mockFileSystem` binds two
-  doubles and leaves everything else at its default.
+  doubles and leaves everything else bound as its caller binds it — at `main`, the platform's `standard…`
+  implementations.
 
 **A discharge word binds doubles on its slot's entries**, so a faked case writes no fixture at all:
 `transcriptOf(program uses *, Console with recordingConsole: Unit)` in `examples/src/EffectsTestFramework.els`, and
@@ -1307,150 +1315,13 @@ not a value, so an ability denotes no type of values.
 
 ### Decided, not built
 
-In the order they would be built:
-
-- **D25** (2026-10-14): *parameters only on a named implementation, and the platform binds its control effects with
-  `with`.* **Reverses** D20c option 5's point 3 (decided 2026-10-12) as far as it reached a default — `with
-  Ability(args)`, `p with State(cell)` — and with it the planned "user defaults with parameters", which was to amend
-  §1 rule 5 by *a body gives a default only by supplying its parameters*. Raised from the spelling: `with Config(s)`
-  is capitalized, reads as a constructor or a type application, names the effect rather than an implementation, and
-  makes an implementation look like an object.
-
-  **The rule.** A default is what is inserted where nothing is written, and nothing that inserts one has arguments to
-  give: the two-site search finds an ability's instance by pattern, and the run boundary holds none. So an
-  implementation with parameters is never a default, and it is always **named**. One shape for every implementation:
-
-  ```eliot
-  implement Console { … }                                  -- no name: a default, never with parameters
-  implement session: Terminal { … }                        -- a name: never searched
-  implement scripted(answer: String): Terminal { … }       -- a name and parameters: given by `with scripted("Bob")`
-  ```
-
-  `implement [name[(params)]:] Pattern`, the colon written exactly when there is a name. An anonymous implementation
-  with a parameter list (`implement[S] State[S](cell: StateCell[S])` today) is a parse error naming the named form. A
-  member refers to a parameter by name, as today.
-
-  **The platform uses the user's mechanism.** A control effect's implementation is named, and the platform's body of
-  the base's body-less discharger binds it with an ordinary `with`, supplying the frame the primitive made:
-
-  ```eliot
-  implement[E] escaping(frame: ThrowFrame[E]): Throw[E] {
-     def raise[A](err: E): A = exitInternal(frame, err)
-  }
-
-  def runThrow[E, A](obj uses *, Throw[E]: A) uses *: Either[E, A] =
-     escapeInternal(frame -> obj with escaping(frame), err -> Left(err), a -> Right(a))
-
-  private def escapeInternal[K, A, R](body uses *: ThrowFrame[K] => A, onExit uses *: K => R, onValue uses *: A => R) uses *: R
-  ```
-
-  A primitive then gives no effect: it hands a frame to a function. **A `with` is the only thing that gives an
-  implementation**, and a default — always parameterless — is given only at `main`. That is §1 rule 5 shortened, not
-  amended: *"only a body-less declaration gives an effect from nothing"* goes, with §3.4's *"each platform primitive
-  says what it gives in its own clause"*. The base stays platform-independent: `runThrow` stays body-less there, the
-  `with escaping` lives in the jvm body, and a `with` around a run is moved onto the slot on the **merged** value, so
-  the base and jvm signatures stay textually equal and a caller reads `escaping` on the slot per platform (and the
-  overlay's own spelling on the compile track). A user discharger is the same code:
-  `def withConfig[A](s: Settings, body uses *, Config: A) uses *: A = body with fixed(s)` over
-  `implement fixed(s: Settings): Config`. An undischarged control effect at `main` stays a compile error, now because
-  the effect has no default at all.
-
-  **A run passed to a slot is bound as that slot binds** (the one new rule; Robert chose it 2026-10-14). The base's
-  pass-through dischargers — `catch` hands `computation` to `runThrow`, likewise `else`, `runStateToValue`,
-  `runStateToFinalState`, `runWriterToValue`, `runWriterToLog` — and every user discharger over them (eliot-test's
-  `mocked`, eliot-build's) write no `with`, and the base cannot name `escaping`. Their caller compiles the code, so it
-  must read the implementation off their declaration. So: **a run of a code parameter at a callee's slot that binds
-  `X` for an entry the run's slot supplies is a run under `with X`**, and D23's hoisting moves `X` onto the slot,
-  exactly as for a written `with` — `escaping` onto `catch`'s slot, then onto `mocked`'s. Runs that disagree are
-  D23's error. A slot entry the definition also declares rides (D22, (b)) and is not hoisted; its frame is the run
-  site's, its code the caller's. This is **not** §12's transitive `with`: each step reads one callee's declaration,
-  before monomorphization, and writes the result onto the definition's own slot, where every caller reads it; nothing
-  is summed over a monomorphized sub-graph and nothing is overridden.
-
-  **Steps**, each gated by byte-identity as an oracle (the specialisations' names change, so the jars will not be
-  identical; §10) and by eliot-test and eliot-build:
-  1. ~~§8 item 30~~ — built 2026-10-14: a named implementation's type parameters are what its pattern takes at the
-     entry's ground arguments, at dispatch and in the threading (`NamedImplementationArguments`).
-  2. ~~A `with name(args)` around a run of a code parameter~~ — built 2026-10-14: the **code** moves onto the slot,
-     the **arguments** stay at the run, where the frame is built (§2, §3.4). A parameter's clause still cannot spell
-     arguments; the slot carries code only. It found and closed §8 item 32.
-  3. ~~A slot's binding carried to the slot a run is passed from~~ — built 2026-10-14: the hoisting moved out of
-     operator resolution to its own fact after the recursion gate (`SlotBoundValue`, §3.1), where reading a callee's
-     declaration cannot lead back. A decision on the engine's in-progress chain (`activeFactKeys`) was the
-     alternative and was not taken: the cached fact would depend on demand order and miss the edge it declined to
-     read.
-  4. ~~The control effects moved to named implementations~~ — built 2026-10-14: `escaping`, `aborting` (both tracks),
-     `holding`, `writing`, `providing`, each bound by its discharger's `with` around the run; the primitives' clauses
-     lost the entry they gave (§3.4). It needed the carry to reach a run nested inside an actual and the clause
-     entries of a slot's implementations, and a slot `with` bound per entry (§3.1), and found §8 items 34 and 35.
-     Example behaviour is identical; 20 jars grow by one wrapper lambda per discharger instantiation (+2.9% size).
-     eliot-test (193) and eliot-build (368, and its launcher) pass unchanged.
-  5. The anonymous parameter list, `ImplementationParameters`' anonymous route, and the giving primitives deleted; §1
-     rule 5, §2 and §3.4 rewritten. The first sign-off item of §3.4's "Decided in the code" (an anonymous
-     implementation's parameters as part of its pattern key) lapses.
-
-  **On its path:** `Writer[W]`'s `W ~ Combine[W]` makes its implementation a *constrained* named one, where an
-  undiagnosed codegen failure was measured — "Function not implemented." at `Combine`'s own marker, 2026-09-12, with
-  an abstract `implement[W ~ Combine[W]] writerByCell: Writer[W]`. Step 4's bodied `writing` did not meet it.
-
-  **Rejected:** `with Ability(args)` for a default (the reversed point); naming the platform's implementation on every
-  pass-through slot (`computation uses *, Throw[E] with escaping`, declared abstractly in the base), which leaks the
-  frame mechanism into every user discharger's signature; keeping parameters on the platform's anonymous
-  implementations alone, a construct no user could ever supply.
-- **D26** (2026-10-14): *no effect has a default; every effect implementation is named, and every effect binding is
-  written.* **Amends** D25's *"a default — always parameterless — is given only at `main`"*: after D25 a default
-  reached an effect only at the run boundary and in a guarded signature, and both become explicit passing. Raised from
-  the observation that every discharger already binds with `with` once D25 step 4 is built, so the run boundary was the
-  last place an effect's implementation was searched for.
-
-  **The rule.** The compiler only passes effect implementations explicitly: a `with`, a slot naming one, or a binder
-  the caller filled. `Default` — the two-site search — is an **ability**'s and nothing else's. An anonymous `implement`
-  of an `effect` is an error naming the named form; an ability's anonymous implementation stays its default.
-
-  **The platform runs `main` by explicit passing.** The synthesized entry point (`SyntheticMainSourceProcessor`, and
-  the LSP's wrapper) writes one `with` per entry of `main`'s clause, naming the platform's implementation of it:
-
-  ```eliot
-  implement standardConsole: Console               -- the base: body-less, platform-independent (stdlib)
-  implement standardConsole: Console { … }         -- the jvm layer: the same name, bodied (the layer merge)
-
-  def main = userMain with standardConsole with standardLog    -- what the entry point is generated as
-  ```
-
-  The names are the **base's**, declared body-less beside each interpretation effect and `Inf` and bodied per
-  platform (option (b), chosen over a table of jvm names in the plugin): the generator is platform-independent, and a
-  test can bind the real implementation portably (`body with standardConsole`). They are spelled per effect so one file
-  can name several. The generator maps an effect to its name; an entry with none — a control effect at `main`
-  (`uses Throw[String]`) — is its error, naming the effect and saying it must be discharged, which is D19's rejection
-  with its own message instead of the threading's.
-
-  **A signature is passed explicitly too.** A guarded return's uncovered `raise`/`abort` is bound as the platform
-  discharger's slot binds — `runThrow`'s and `runAbort`'s merged declarations, per platform — because the
-  guarded-return read *is* that discharge, run by the compiler, exactly as the entry point is `main`'s. The read already
-  names `Left` and the intrinsics; it gains the map from `Throw` and `Abort` to their dischargers.
-
-  **What it deletes:** the run boundary's exemption in the write (`BindingWriter`'s `atBoundary`, and
-  `uncoveredDefaults` with it once the signature binds explicitly), the effect half of the two-site search, the
-  threading's "a default needing parameters with nothing to give them" path, the giving primitives (D25 step 5), and
-  the control/interpretation family distinction of §3.5 — every effect is bound the same way, and only what is bound
-  differs.
-
-  **Steps:** 1. ~~D25 step 4, with a signature bound as its discharger's slot binds~~ (built 2026-10-14). 2. ~~The base's
-  body-less `standard…` implementations, the jvm layer's anonymous ones renamed to them, and the entry point and the
-  LSP wrapper generating the `with`s~~ (built 2026-10-14: `row/EntryPoint` writes the source for both, reading `main`'s
-  declared clause; the jvm entry point learns *which* main from an edge-less leaf, `EntryPointTarget`, since its
-  source is no longer one and the main is a demand-scoped key; `standardProcess` and `standardFileSystem` declare their
-  clauses body-less in the base, because what an implementation performs (`Throw[IoError]`) is part of its marker's
-  signature and the layer merge must see it agree; a reference bound to an implementation with no clause for it on
-  the path — `standardConsole` in a library package's closure, which no platform bodies — is now reported at the
-  reference, where the read used to abort silently; example behaviour and instructions are identical, and eliot-test
-  (193) and eliot-build (368, and its launcher) pass unchanged). 3. The deletions above, D25 step 5 folded in, and Part I rewritten (§1 rule 5, §2, §3.4,
-  §3.5, §6). Measure first whether eliot-test or eliot-build lean on the boundary's default (the `runMain` injection
-  point).
 - **Parameterised ability implementations**: `people.sort with byKey(p -> p.age)`, by D25's mechanism, after §8 item
-  31 (the lambda is typed by the entry). Runtime track first.
+  31 (the lambda is typed by the entry). Runtime track first. On its path: a *constrained* named implementation
+  (`implement[W ~ Combine[W]] writerByCell: Writer[W]`, abstract) once failed codegen undiagnosed — "Function not
+  implemented." at `Combine`'s own marker, 2026-09-12; the bodied `writing` (D25 step 4) did not meet it.
 
-**Awaiting sign-off:** the five choices made in the code while building option 5 (§3.4, "Decided in the code").
+**Awaiting sign-off:** the four choices made in the code while building option 5 (§3.4, "Decided in the code"). A
+fifth, an anonymous implementation's parameters as part of its pattern key, lapsed with D25's step 5.
 
 ### Closed decisions
 
@@ -1506,6 +1377,40 @@ Numbers are kept so citations resolve; the record of each is in git history (§1
   "`uses *` on a definition has no spelling" (there because it repeats what the parameters state; the repetition is
   now the point, where the reader looks). Optional was rejected, since then its absence would say nothing; Koka's
   spelling — a named effect variable in both places — remains closed (§2.6), since nothing here is unified.
+
+- **D25** (decided and built 2026-10-14): *parameters only on a named implementation, and the platform binds its
+  control effects with `with`.* **Reversed** D20c option 5's point 3 as far as it reached a default (`with
+  Ability(args)`, `p with State(cell)`): a default is what is inserted where nothing is written, and nothing that
+  inserts one has arguments to give, so an implementation with parameters is always named — `implement [name[(params)]:]
+  Pattern`, and an anonymous parameter list is a parse error naming the named form. A control effect's implementation
+  is named (`escaping`, `aborting`, `holding`, `writing`, `providing`) and its platform discharger binds it with an
+  ordinary `with` over the frame its primitive made, so a primitive gives no effect. Its one new rule: **a run passed
+  to a callee's slot is bound as that slot binds**, and the binding moves onto the definition's slot as a written
+  `with` around the run would (§3.1) — each step reads one callee's declaration, so it is not §12's transitive `with`.
+  Steps: a named implementation's type parameters solved (§8 item 30); a `with name(args)` around a run of a code
+  parameter; a slot's binding carried to the slot a run is passed from; the control effects named; the anonymous
+  parameter list deleted (with D26's step 3). Rejected: `with Ability(args)` for a default; the platform's
+  implementation's name on every pass-through slot, which leaks the frame mechanism into every user discharger's
+  signature; parameters kept on the platform's anonymous implementations alone, a construct no user could supply.
+- **D26** (decided and built 2026-10-14): *no effect has a default; every effect implementation is named, and every
+  effect binding is written.* **Amended** D25's *"a default — always parameterless — is given only at `main`"*: the
+  run boundary was the last place an effect's implementation was searched for. The compiler only passes an effect's
+  implementation explicitly — a `with`, a slot naming one, or a binder the caller filled — and `Default`, the two-site
+  search, is an ability's alone (§3.1): an anonymous `implement` of an `effect` is an error naming the named form, and
+  a `Default` reaching an effect's operation is refused at monomorphization. **The platform runs `main` by explicit
+  passing**: the base declares a body-less `implement standardConsole: Console` beside each effect a program may run,
+  the platform bodies it under the same name (the layer merge), and `row/EntryPoint` writes the jvm entry point and
+  the LSP's wrapper as `app::main with eliot.effect.Console::standardConsole …`, one `with` per entry, an entry with
+  none being the error at `main` (option (b), the base's names, chosen over a table of jvm names in the plugin: the
+  generator names no platform and a test binds the real implementation portably). **A guarded signature is passed
+  explicitly too**: its uncovered `raise`/`abort` is bound as `runThrow`'s/`runAbort`'s slot binds. Built in three
+  steps: D25's step 4 with the signature binding; the `standard…` implementations and the generated `with`s; the
+  deletions — the run boundary (`RunBoundaryFunctions` and the write's exemption), the effect half of the search, the
+  threading's default-needing-parameters path, D25's step 5, and §3.5's family distinction. Building the deletions
+  found that a `with` demanded a binding for an entry its implementation's clauses only repeat from their members
+  (`standardFileSystem`'s `Throw[IoError]`), which the boundary's default had hidden at `main`; such an entry is the
+  call's, and the `with` now answers nothing for it (§3.1). Measured first: neither eliot-test nor eliot-build names a
+  boundary value (`runMain` went with the carrier), and both suites pass unchanged on the deletions.
 
 ---
 
@@ -1657,8 +1562,8 @@ each lives:
 | D22 | §1 rule 5, §2.2; the record in §11's closed decisions |
 | D23 | §2's `with`, §3.1, §4; the record in §11's closed decisions |
 | D24 | §2's table and the parser's refusals, §2.1; the record in §11's closed decisions |
-| D25 | §11's "Decided, not built" until built |
-| D26 | §11's "Decided, not built" until built |
+| D25, and its steps 1–5 | §2's `implement` and `with`, §3.1, §3.4; the record in §11's closed decisions |
+| D26, and its steps 1–3 | §1 rule 5, §2, §3.1, §3.4, §3.5; the record in §11's closed decisions |
 | D20c (the open question), option 4 | §11 D20c |
 | §8 items 14–17 in comments and tests written on the option-5 line | §8 items 16–19 |
 | §7 item 7 before 2026-10-13 (undischarged control effect at `main`) | closed, §8 item 5 |

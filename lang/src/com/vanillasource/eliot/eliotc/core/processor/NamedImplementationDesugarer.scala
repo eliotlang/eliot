@@ -43,8 +43,8 @@ import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, Qualifier}
   *     real marker flows onward.
   *
   * A named implementation that takes **parameters** (`implement scripted(lines: List[String]): Terminal`) adds two
-  * declarations, as [[ImplementationParameters]] describes: the parameters declaration an anonymous one has too, and
-  * the binder a `with` supplying arguments is lowered to. Each clause receives the parameters ahead of its own.
+  * declarations, as [[ImplementationParameters]] describes: the parameters declaration, and the binder a `with`
+  * supplying arguments is lowered to. Each clause receives the parameters ahead of its own.
   *
   * A named implementation is always public: it exists to be named from elsewhere.
   */

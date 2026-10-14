@@ -114,6 +114,18 @@ object Parser {
         case _                           => ParserResult(NotConsumed, ParserError.noError, None)
     }
 
+    /** Recognise a match of this parser and **accept** it, yielding the error `expected` at the position it starts: for a
+      * retired spelling the parse can carry on past, so it is reported as itself rather than failing its item and
+      * leaving recovery to resynchronise somewhere inside it. [[None]], consuming nothing, where it does not match.
+      */
+    def reportedAs(expected: String): Parser[I, Option[ParserError]] = StateT { input =>
+      p.run(input) match
+        case ParserResult(consume, error, Some((next, _))) =>
+          ParserResult(consume, error, Some((next, Some(ParserError(input.pos, Set(expected))))))
+        case ParserResult(NotConsumed, error, None)        => ParserResult(NotConsumed, error, Some((input, None)))
+        case ParserResult(Consumed, error, None)           => ParserResult(Consumed, error, None)
+    }
+
     /** Skip to this parser.
       */
     def skipTo(): Parser[I, O] =

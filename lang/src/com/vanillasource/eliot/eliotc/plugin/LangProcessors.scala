@@ -9,7 +9,7 @@ import com.vanillasource.eliot.eliotc.ast.processor.ASTParser
 import com.vanillasource.eliot.eliotc.block.processor.BlockDesugaringProcessor
 import com.vanillasource.eliot.eliotc.core.processor.CoreProcessor
 import com.vanillasource.eliot.eliotc.matchdesugar.processor.MatchDesugaringProcessor
-import com.vanillasource.eliot.eliotc.module.fact.{ModuleName, ValueFQN}
+import com.vanillasource.eliot.eliotc.module.fact.ModuleName
 import com.vanillasource.eliot.eliotc.module.processor.{
   ModuleAbilitiesProcessor,
   ModuleConstructorsProcessor,
@@ -73,18 +73,12 @@ import com.vanillasource.eliot.eliotc.used.UsedNamesProcessor
   *     extra native processor onto this list passes that processor's label here so the [[BindingMergerProcessor]]
   *     consults it. The base labels ([[ContributedBinding.langNativeLabels]]) are always included — the contributors
   *     that own them are always in this list.
-  *   - `isRunBoundary` — whether a value is a platform **run boundary**, the place where every effect's chain ends, so
-  *     the write binds an uncovered effect to the two-site default instead of reporting it
-  *     ([[com.vanillasource.eliot.eliotc.row.RunBoundaryFunctions]]). `LangPlugin` passes the disjunction of what the
-  *     platform plugins registered through [[com.vanillasource.eliot.eliotc.row.RunBoundaryFunctions.configKey]];
-  *     constantly false in a lang-only build (and in tests), where no value is a boundary.
   */
 object LangProcessors {
   def apply(
       systemModules: Seq[ModuleName] = ModuleName.defaultSystemModules,
       maxNestedRepeats: Int = UsedNamesProcessor.DefaultMaxNestedRepeats,
-      extraNativeBindingLabels: Seq[String] = Seq.empty,
-      isRunBoundary: ValueFQN => Boolean = _ => false
+      extraNativeBindingLabels: Seq[String] = Seq.empty
   ): Seq[CompilerProcessor] = Seq(
     Tokenizer(),
     ASTParser(),
@@ -103,7 +97,7 @@ object LangProcessors {
     NamedValuesRewriteProcessor(),
     RecursionCheckProcessor(),
     SlotBindingProcessor(),
-    RowElaborationProcessor(isRunBoundary),
+    RowElaborationProcessor(),
     SaturatedValueProcessor(),
     AbilityImplementationProcessor(),
     AbilityImplementationCheckProcessor(),

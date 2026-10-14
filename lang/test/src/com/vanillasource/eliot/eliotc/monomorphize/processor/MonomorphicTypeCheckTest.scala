@@ -8,6 +8,7 @@ import com.vanillasource.eliot.eliotc.module.fact.{ModuleName, ValueFQN}
 import com.vanillasource.eliot.eliotc.monomorphize.fact.{GroundValue, MonomorphicExpression, MonomorphicValue}
 import com.vanillasource.eliot.eliotc.plugin.LangProcessors
 import com.vanillasource.eliot.eliotc.pos.PositionRange
+import com.vanillasource.eliot.eliotc.row.fact.RowElaboratedValue
 import com.vanillasource.eliot.eliotc.source.content.Sourced
 import com.vanillasource.eliot.eliotc.stdlib.plugin.StdlibNativesProcessor
 
@@ -923,6 +924,35 @@ class MonomorphicTypeCheckTest
       )
   }
 
+  // --- An effect has no default (docs/effects.md D26) ---
+
+  // An anonymous implementation is its ability's default, and an effect has none, so one of an effect is refused at its
+  // marker — where the LSP, which checks every value, reports it. A jvm build never demands it: nothing can name it.
+  "an anonymous implementation of an effect" should "be refused, naming the named form" in {
+    runGenerator(
+      "effect Terminal {\ndef read: String\n}\nimplement Terminal {\ndef read: String = \"x\"\n}",
+      RowElaboratedValue.Key(
+        ValueFQN(testModuleName, QualifiedName("Terminal", Qualifier.AbilityImplementation("Terminal", "", None)))
+      ),
+      systemImports
+    ).map(result => toTestErrors(result._1))
+      .asserting(
+        _ shouldBe Seq(
+          "An implementation of the effect 'Terminal' must be named, since an effect has no default." at "Terminal"
+        )
+      )
+  }
+
+  // A slot that supplies an effect and names no implementation for it promises a binding nothing makes: a body-less
+  // discharger whose platform layer, which would name one, is not on the path. The two-site search is an ability's
+  // alone, so the operation is the error, never a search.
+  "an effect reaching monomorphization unbound" should "be reported at the operation" in {
+    runForErrors(
+      "effect Terminal {\ndef read: String\n}\ndef runIt(body uses *, Terminal: String) uses *: String\ndef f: String = runIt(read)"
+    ).asserting(
+      _ shouldBe Seq(
+        "Nothing binds an implementation of the effect 'Terminal' here, and an effect has no default." at "read"
+      )
+    )
+  }
 }
-
-

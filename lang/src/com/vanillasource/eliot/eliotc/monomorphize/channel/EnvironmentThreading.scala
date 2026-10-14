@@ -60,9 +60,9 @@ import scala.util.chaining.*
   *
   * **A frame is found by entry, at ground arguments** (2(c)), so `{Throw[IoError], Throw[GitError]}` is two frames. The
   * binding the reference was written with must be the frame's — the code and the environment come from the same
-  * place — and a disagreement is an error, never a silent pick. An entry with no frame in scope is given its default,
-  * which works only for a default with no parameters: the platform's `Console`, an ability's instance. A default that
-  * needs parameters, with nothing in scope to give them, is the error D19 asked for — an undischarged control effect.
+  * place — and a disagreement is an error, never a silent pick. An entry with no frame in scope has its frame built
+  * where it is used: an ability's default, which never takes parameters (`docs/effects.md` D25), or a named
+  * implementation, whose parameters a `with` supplied.
   *
   * A **named implementation bound by a body `with`** is not in scope as a frame, because the row phase erases the
   * `with`. Its frame is built at the reference from the frames in scope there, which are the frames at the `with`:
@@ -481,18 +481,7 @@ object EnvironmentThreading {
         case Some(declared) => declared.pure[CompilerIO]
         case None           =>
           getFactIfProduced(OperatorResolvedValue.Key(member, track.platform))
-            .map(
-              _.toSeq
-                .flatMap(_.effectRow.returnEffects)
-                .map(entry => (entry.abilityFQN, entry.typeArgs.map(_.render)))
-                .toSet
-            )
-            .map(declared =>
-              member.name.qualifier match {
-                case Qualifier.Ability(name) => declared.filterNot(_._1 == AbilityFQN(member.moduleName, name))
-                case _                       => declared
-              }
-            )
+            .map(_.fold(Set.empty[Declared])(DeclaredEntries.ofMember))
             .flatTap(declared => memberRows.update(member, declared).pure[CompilerIO])
       }
 
@@ -877,10 +866,11 @@ object EnvironmentThreading {
           matching.headOption.pure[CompilerIO]
       }
 
-    /** A frame nothing in scope holds: a default, or a named implementation a body `with` bound, built from the frames in
-      * scope for its clauses. Its own parameters are the arguments its `with` supplied, if it supplied any; otherwise they
-      * have nothing to come from, which is the error for a default that needs them — a control effect nothing
-      * discharges.
+    /** A frame nothing in scope holds: an ability's default, or a named implementation a body `with` bound, built from
+      * the frames in scope for its clauses. Its own parameters are the arguments its `with` supplied, or a guarded
+      * signature's frame the guarded-return read installs. Nothing else can supply them — a `with` naming an
+      * implementation that takes parameters supplies them where it is written, and a default takes none — so one
+      * reaching here without them is reported rather than run on nothing.
       */
     private def built(
         context: Context,
@@ -904,8 +894,8 @@ object EnvironmentThreading {
           case None if shape.own.nonEmpty                             =>
             compilerAbort(
               at.as(
-                s"The effect '${entry.ability.abilityName}' is performed here with nothing to discharge it: its " +
-                  "implementation needs a frame, and only a discharger installs one."
+                s"${describe(binding).capitalize} performs '${entry.ability.abilityName}' here, and nothing supplies " +
+                  "the parameters it takes."
               )
             )
           case None                                                   =>

@@ -66,10 +66,9 @@ class EffectSyntaxParserTest extends ProcessorTest(new Tokenizer(), new ASTParse
       .asserting(_.namedImplementations.flatMap(_.parameters) shouldBe empty)
   }
 
-  "an anonymous implementation with parameters" should "give each clause the parameters ahead of its own" in {
-    ast("implement[S] State[S](cell: Cell[S]) {\n  def putState(s: S): Unit = write(cell, s)\n}")
-      .asserting(_.functionDefinitions.map(f => (f.name.value.name, f.args.map(_.name.value))) shouldBe
-        Seq(("putState", Seq("cell", "s")), ("$parameters", Seq("cell")), ("State", Seq("arg0"))))
+  "an anonymous implementation with parameters" should "be refused, naming the named form" in {
+    runEngineForErrors("implement[S] State[S](cell: Cell[S]) {\n  def putState(s: S): Unit = write(cell, s)\n}")
+      .asserting(_.mkString should include("an implementation with parameters is named"))
   }
 
   "an anonymous implementation without parameters" should "declare no parameters" in {

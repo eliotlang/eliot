@@ -17,7 +17,6 @@ import com.vanillasource.eliot.eliotc.jvm.jargen.{
 }
 import com.vanillasource.eliot.eliotc.compiler.Compiler
 import com.vanillasource.eliot.eliotc.compiler.cache.OutputFileStatProcessor
-import com.vanillasource.eliot.eliotc.row.RunBoundaryFunctions
 import com.vanillasource.eliot.eliotc.jvm.classgen.processor.JvmClassGenerator
 import com.vanillasource.eliot.eliotc.module.fact.{ModuleName, ValueFQN}
 import com.vanillasource.eliot.eliotc.plugin.Configuration.{demandScopedKey, diagnosticKey}
@@ -91,12 +90,9 @@ class JvmPlugin extends CompilerPlugin {
         IO.blocking(ProgressMeasure(jar.getFileName.toString, Files.size(jar), ProgressMeasure.Quantity.Bytes))
       )
 
-  /** Mount the synthesized `main.els` entry-point module into the runtime scan pool, and register the platform run
-    * boundary `runMain` as a carrier capture ([[com.vanillasource.eliot.eliotc.row.RunBoundaryFunctions]], carrier
-    * recognition source (ii)): the synthesized entry calls `runMain(main)`, whose `io: IO[A]` parameter hosts the user
-    * `main`'s computation, and this registration lets the row elaborator treat that slot as a capture without ever
-    * naming the jvm-owned `IO`. All `configure()`s run before any `initialize`, so `LangPlugin` sees both
-    * contributions when it builds the pipeline.
+  /** Mount the synthesized `main.els` entry-point module into the runtime scan pool. It runs the user's `main` with a
+    * `with` per effect of its clause ([[com.vanillasource.eliot.eliotc.row.EntryPoint]]), so it is an ordinary
+    * definition: nothing about it is exempt from the scope check.
     */
   override def configure(): StateT[IO, Configuration, Unit] =
     StateT.modify(configuration =>
@@ -105,11 +101,6 @@ class JvmPlugin extends CompilerPlugin {
           .updatedWith(
             PathScanner.extraRuntimeMountsKey,
             mounts => (mounts.getOrElse(Seq.empty) :+ new SyntheticMainMount).some
-          )
-          .updatedWith(
-            RunBoundaryFunctions.configKey,
-            boundaries =>
-              (boundaries.getOrElse(Seq.empty) :+ ((_: ValueFQN) == SyntheticMainSourceProcessor.syntheticMainVfqn)).some
           )
       else configuration)
         .updatedWith(

@@ -3,7 +3,6 @@ package com.vanillasource.eliot.eliotc.ability.processor
 import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.ability.fact.{AbilityImplementationCheck, ModuleAbilityOverlapCheck}
 import com.vanillasource.eliot.eliotc.ability.util.AbilityMatcher
-import com.vanillasource.eliot.eliotc.ast.fact.ImplementationParameters
 import com.vanillasource.eliot.eliotc.module.fact.{
   ModuleAbilities,
   ModuleName,
@@ -161,10 +160,9 @@ class AbilityImplementationCheckProcessor
       .traverse_ { case (abstractMethod, implMethod) =>
         for {
           implMarkerSig <- loadMarkerSignature(implMethod.vfqn, abilityFQN.abilityName, platform)
-          parameters    <- implementationParameterCount(implMethod, platform)
           compatible    <- AbilityMatcher.signaturesCompatible(
                              abstractMethod.methodSig,
-                             withoutLeadingParameters(implMethod.methodSig, parameters),
+                             implMethod.methodSig,
                              implMarkerSig
                            )
           _             <- if (!compatible)
@@ -175,31 +173,6 @@ class AbilityImplementationCheckProcessor
         } yield ()
       }
   }
-
-  /** How many parameters the implementation `method` belongs to takes ([[ImplementationParameters]]): each clause
-    * receives them ahead of the ability member's own, so they are not part of the contract compared here. Zero when
-    * the implementation declares none, which is when it has no parameters declaration at all.
-    */
-  private def implementationParameterCount(method: ResolvedMethod, platform: Platform): CompilerIO[Int] = {
-    val declaration = ImplementationParameters.of(method.vfqn)
-    getFactOrAbort(UnifiedModuleNames.Key(method.vfqn.moduleName, platform)).flatMap { names =>
-      if (names.names.contains(declaration.name))
-        getFactOrAbort(OperatorResolvedValue.Key(declaration, platform)).map(declared =>
-          SignatureView.of(declared.signature).parameters.size
-        )
-      else 0.pure[CompilerIO]
-    }
-  }
-
-  private def withoutLeadingParameters(
-      signature: Sourced[OperatorResolvedExpression],
-      count: Int
-  ): Sourced[OperatorResolvedExpression] =
-    if (count === 0) signature
-    else {
-      val view = SignatureView.of(signature)
-      signature.as(view.copy(parameters = view.parameters.drop(count)).toExpression)
-    }
 
   private def loadMarkerSignature(
       methodVfqn: ValueFQN,

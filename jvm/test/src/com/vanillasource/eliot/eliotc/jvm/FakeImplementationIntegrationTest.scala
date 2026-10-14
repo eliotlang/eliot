@@ -176,4 +176,26 @@ class FakeImplementationIntegrationTest extends FullIntegrationTest {
          |""".stripMargin
     ).asserting(_ shouldBe "hi;")
   }
+
+  // An effect a member declares is the call's (`docs/effects.md` §3.4): dispatch hands the clause the binding at the
+  // call, so the `with` binding the implementation answers nothing for it. Here the `Throw[String]` is `catch`'s, inside
+  // the `with`'s subject, and nothing outside it has one — exactly the entry point binding `main`'s `FileSystem`.
+  it should "need nothing around its `with` for an effect its member declares" in {
+    compileAndRun(
+      """import eliot.effect.Console
+        |
+        |effect Source {
+        |   def next uses Throw[String]: String
+        |}
+        |
+        |implement exhausted: Source {
+        |   def next uses Throw[String]: String = raise("exhausted")
+        |}
+        |
+        |def read uses Source, Throw[String]: String = next
+        |
+        |def main uses Console: Unit = printLine(catch(read, e -> "caught " ++ e) with exhausted)
+        |""".stripMargin
+    ).asserting(_ shouldBe "caught exhausted")
+  }
 }

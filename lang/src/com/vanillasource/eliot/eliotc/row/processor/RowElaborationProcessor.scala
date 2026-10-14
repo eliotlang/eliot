@@ -2,12 +2,13 @@ package com.vanillasource.eliot.eliotc.row.processor
 
 import cats.Id
 import cats.syntax.all.*
-import com.vanillasource.eliot.eliotc.module.fact.{Qualifier, Role, ValueFQN}
+import com.vanillasource.eliot.eliotc.module.fact.{ModuleAbilities, Qualifier, ValueFQN}
 import com.vanillasource.eliot.eliotc.operator.fact.{OperatorResolvedExpression, OperatorResolvedValue}
 import com.vanillasource.eliot.eliotc.platform.Platform
 import com.vanillasource.eliot.eliotc.processor.CompilerIO.*
 import com.vanillasource.eliot.eliotc.processor.common.TransformationProcessor
 import com.vanillasource.eliot.eliotc.row.fact.{RowElaboratedValue, SlotBoundValue}
+import com.vanillasource.eliot.eliotc.resolve.fact.Qualifier as ResolveQualifier
 import com.vanillasource.eliot.eliotc.row.{BindingWriter, RowChecker}
 import com.vanillasource.eliot.eliotc.source.content.Sourced.compilerError
 
@@ -29,16 +30,12 @@ import scala.collection.mutable
   * a [[RowChecker.Universe]] that *reports* every name it misses, fetches exactly those, and repeats until a round
   * misses nothing new; the last round's universe is complete for this value by construction.
   *
-  * @param runBoundaryFunctions
-  *   The platform-contributed values at which every effect's chain ends ([[com.vanillasource.eliot.eliotc.row.RunBoundaryFunctions]]) —
-  *   the synthesized entry point. Only the platform knows which value that is.
-  *
   * Every name is read as its [[SlotBoundValue]], the declaration whose slots name what their runs are bound by. The
   * fetch is [[getFactIfProduced]] by design: a referenced name legitimately has none when its own definition aborted
   * upstream or was rejected by the recursion gate, and a reference the write cannot read is simply left alone — the
   * fail-safe direction, since an unwritten binder is caught by the checker rather than silently defaulted.
   */
-class RowElaborationProcessor(isRunBoundary: ValueFQN => Boolean = _ => false)
+class RowElaborationProcessor
     extends TransformationProcessor[SlotBoundValue.Key, RowElaboratedValue.Key](key =>
       SlotBoundValue.Key(key.vfqn, key.platform)
     ) {
@@ -50,10 +47,43 @@ class RowElaborationProcessor(isRunBoundary: ValueFQN => Boolean = _ => false)
     val value = slotBound.value
     for {
       universe <- universeFor(value, key.platform)
-      written   = BindingWriter.write(value, universe, isRunBoundary(value.vfqn))
-      _        <- report(written, value, key.platform).whenA(key.platform == Platform.Runtime)
+      written   = BindingWriter.write(value, universe)
+      _        <- (defaultOfEffect(value, key.platform) >> report(written, value, key.platform))
+                    .whenA(key.platform == Platform.Runtime)
     } yield RowElaboratedValue(written.value)
   }
+
+  /** An anonymous `implement` of an **effect** is an error at its marker (`docs/effects.md` D26). An anonymous
+    * implementation is its ability's default, found by the two-site search, and an effect has none: every binding of
+    * an effect is passed explicitly, so a default would never be reached and would only look like it is used.
+    *
+    * Effect-ness is read where it is recorded: the members' declared clauses, which membership in an `effect` block
+    * fills with the effect itself.
+    */
+  private def defaultOfEffect(value: OperatorResolvedValue, platform: Platform): CompilerIO[Unit] =
+    value.name.value.qualifier match {
+      case ResolveQualifier.AbilityImplementation(ability, _, None) if value.vfqn.name.name == ability.abilityName =>
+        for {
+          abilities <- getFactOrAbort(ModuleAbilities.Key(ability.moduleName, platform))
+          members   <- abilities
+                         .declaredMethodsOf(ability.abilityName)
+                         .filterNot(_.name.name == ability.abilityName)
+                         .traverse(member => getFactIfProduced(OperatorResolvedValue.Key(member, platform)))
+          _         <- (compilerError(
+                         value.name.as(
+                           s"An implementation of the effect '${ability.abilityName}' must be named, since an effect " +
+                             "has no default."
+                         ),
+                         Seq(
+                           s"Name it (`implement name: ${ability.abilityName} { … }`) and bind it with `with` where it " +
+                             "is used."
+                         )
+                       ) >> abort[Unit]).whenA(
+                         members.flatten.exists(_.effectRow.returnEffects.exists(_.abilityFQN == ability))
+                       )
+        } yield ()
+      case _                                                                                              => ().pure[CompilerIO]
+    }
 
   /** A binding the write could not answer aborts this value: nothing downstream runs for it, so the user gets one
     * located error in effect vocabulary rather than the machinery's downstream symptoms — and, crucially, no body is
@@ -94,26 +124,45 @@ class RowElaborationProcessor(isRunBoundary: ValueFQN => Boolean = _ => false)
   /** The complete declared world for writing this one value: fetch what the write misses, re-run, repeat. Terminates
     * because each round strictly grows the set of names already attempted, over the finite set reachable from the
     * body.
+    *
+    * An implementation's clauses are read off its module's [[ModuleAbilities]]: the values in the marker's namespace,
+    * but the marker. The write asks for them only once it has read the marker, so its module is there to read.
     */
   private def universeFor(value: OperatorResolvedValue, platform: Platform): CompilerIO[RowChecker.Universe] = {
-    def loop(
-        known: Map[ValueFQN, OperatorResolvedValue],
-        attempted: Set[ValueFQN]
-    ): CompilerIO[RowChecker.Universe] = {
-      val missed    = mutable.Set.empty[ValueFQN]
-      val reporting = RowChecker.Universe(known, Set.empty, fqn => { missed += fqn; () })
-      BindingWriter.write(value, reporting, isRunBoundary(value.vfqn))
-      val fresh     = missed.toSet -- attempted
-      if (fresh.isEmpty) RowChecker.Universe(known).pure[CompilerIO]
+    def loop(universe: RowChecker.Universe, attempted: Set[ValueFQN], attemptedClauses: Set[ValueFQN])
+        : CompilerIO[RowChecker.Universe] = {
+      val missed        = mutable.Set.empty[ValueFQN]
+      val missedClauses = mutable.Set.empty[ValueFQN]
+      BindingWriter.write(
+        value,
+        universe.copy(onMiss = fqn => { missed += fqn; () }, onMissClauses = fqn => { missedClauses += fqn; () })
+      )
+      val fresh         = missed.toSet -- attempted
+      val freshClauses  = missedClauses.toSet -- attemptedClauses
+      if (fresh.isEmpty && freshClauses.isEmpty) universe.pure[CompilerIO]
       else
-        fresh.toSeq
-          .traverse(fqn => getFactIfProduced(SlotBoundValue.Key(fqn, platform)).map(fqn -> _))
-          .flatMap(fetched =>
-            loop(known ++ fetched.collect { case (fqn, Some(bound)) => fqn -> bound.value }, attempted ++ fresh)
-          )
+        for {
+          fetched <- fresh.toSeq.traverse(fqn => getFactIfProduced(SlotBoundValue.Key(fqn, platform)).map(fqn -> _))
+          clauses <- freshClauses.toSeq.traverse(marker => clausesOf(marker, platform).map(marker -> _))
+          result  <- loop(
+                       universe.copy(
+                         values = universe.values ++ fetched.collect { case (fqn, Some(bound)) => fqn -> bound.value },
+                         clauses = universe.clauses ++ clauses
+                       ),
+                       attempted ++ fresh,
+                       attemptedClauses ++ freshClauses
+                     )
+        } yield result
     }
 
     // The value itself is part of its own universe: the write reads its own declaration for the bindings it receives.
-    loop(Map(value.vfqn -> value), Set.empty)
+    loop(RowChecker.Universe(Map(value.vfqn -> value)), Set.empty, Set.empty)
   }
+
+  private def clausesOf(marker: ValueFQN, platform: Platform): CompilerIO[Seq[ValueFQN]] =
+    getFactOrAbort(ModuleAbilities.Key(marker.moduleName, platform)).map(
+      _.implementations
+        .filter(impl => impl.vfqn.name.qualifier == marker.name.qualifier && impl.vfqn != marker)
+        .map(_.vfqn)
+    )
 }

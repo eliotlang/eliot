@@ -10,7 +10,7 @@ import com.vanillasource.eliot.eliotc.monomorphize.fact.{GroundValue, GroundValu
 import com.vanillasource.eliot.eliotc.operator.fact.{OperatorResolvedExpression, OperatorResolvedValue}
 import com.vanillasource.eliot.eliotc.platform.Platform
 import com.vanillasource.eliot.eliotc.processor.CompilerIO.*
-import com.vanillasource.eliot.eliotc.resolve.fact.AbilityConstraint
+import com.vanillasource.eliot.eliotc.resolve.fact.{AbilityConstraint, AbilityFQN}
 import com.vanillasource.eliot.eliotc.source.content.Sourced
 import com.vanillasource.eliot.eliotc.source.content.Sourced.compilerError
 
@@ -92,8 +92,9 @@ class AbilityResolver(
     *     arguments its pattern takes at this reference's pattern arguments ([[NamedImplementationArguments]]), an
     *     implementation whose pattern does not match them being an error here — with no search, no `where` filter and
     *     no coherence question, since `with`
-    *     *replaces* the search rather than parameterising it; the `Default` marker (and no binding at all, the whole
-    *     tree today) goes to the two-site search at the pattern arguments. The resolution is keyed under the full
+    *     *replaces* the search rather than parameterising it; the `Default` marker (and no binding at all) goes to the
+    *     two-site search at the pattern arguments — for an **ability**. An effect has no default (`docs/effects.md`
+    *     D26), so a `Default` reaching one of its members is an error here ([[reportUnboundEffect]]). The resolution is keyed under the full
     *     sliced arguments, binding included, so one span referenced under two bindings records two entries — exactly
     *     as two carriers at one span do — and the post-drain quoter re-derives the same slice.
     *   - `resolveAbility` returning `None` at *ground* arguments is a failed **demand**: the [[AbilityImplementation]]
@@ -155,7 +156,10 @@ class AbilityResolver(
                                     reportUnmatchedBinding(abilityVfqn, abilityName, impl, patternArgs)
                                 }
                               case (patternArgs, _)                                      =>
-                                searchAndRecord(abilityVfqn, abilityName, key, patternArgs)
+                                liftF(isEffect(abilityVfqn.value, abilityName)).flatMap {
+                                  case true  => reportUnboundEffect(abilityVfqn, abilityName)
+                                  case false => searchAndRecord(abilityVfqn, abilityName, key, patternArgs)
+                                }
                             }
                           case Left(_)                                            => pure(false)
                         }
@@ -177,6 +181,29 @@ class AbilityResolver(
       case Some(impl) => record(abilityVfqn.value, key, impl).as(true)
       case None       => reportFailedDemand(abilityVfqn, abilityName, patternArgs)
     }
+
+  /** Whether the ability `member` belongs to is an **effect**, read where effect-ness is recorded: the member's own
+    * declared clause, which membership in an `effect` block fills with the effect itself.
+    */
+  private def isEffect(member: ValueFQN, abilityName: String): CompilerIO[Boolean] =
+    getFactIfProduced(OperatorResolvedValue.Key(member, platform)).map(
+      _.exists(_.effectRow.returnEffects.exists(_.abilityFQN == AbilityFQN(member.moduleName, abilityName)))
+    )
+
+  /** A member of an effect reached with `Default`: nothing bound an implementation of it. The write reports an
+    * uncovered effect in a body, so what reaches here is a binding promised by a slot that names no implementation — a
+    * body-less discharger whose platform layer, which would name one, is not on the path.
+    */
+  private def reportUnboundEffect(ref: Sourced[ValueFQN], abilityName: String): CheckIO[Boolean] =
+    liftF(
+      compilerError(
+        ref.as(s"Nothing binds an implementation of the effect '$abilityName' here, and an effect has no default."),
+        Seq(
+          "An effect is bound by a `with`, by a parameter's slot that names an implementation, or by the caller of a " +
+            "definition declaring it; a body-less discharger's slot names one only where a platform layer bodies it."
+        )
+      ) >> abort[Boolean]
+    )
 
   /** Record a resolution, and which of the implementation method's binders take the call's binding instead of the
     * implementation's ([[DeclaredEntries.forwarded]]): the entries the member declares are the call's to bind

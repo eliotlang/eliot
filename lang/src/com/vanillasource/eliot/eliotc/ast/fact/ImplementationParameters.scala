@@ -4,17 +4,18 @@ import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, Qualifier, ValueFQN}
 import com.vanillasource.eliot.eliotc.source.content.Sourced
 
-/** The **parameters** of an implementation — its runtime environment (effects D20c option 5, `docs/effects.md` §11):
+/** The **parameters** of a named implementation — its runtime environment (effects D20c option 5, `docs/effects.md`
+  * §3.4). Only a named implementation takes them (D25): nothing that inserts a default has arguments to give one.
   *
   * {{{
-  * implement[S] State[S](cell: Cell[S]) {
+  * implement[S] holding(cell: StateCell[S]): State[S] {
   *    def state: S = readCellInternal(cell)
   *    def putState(s: S): Unit = writeCellInternal(cell, s)
   * }
   * }}}
   *
   * Every clause receives them as **leading value parameters**, so a clause body names them like any other parameter and
-  * the checker types them like any other: `state` lowers to `state[S](cell: Cell[S]): S`. What runs a clause is the
+  * the checker types them like any other: `state` lowers to `state[S](cell: StateCell[S]): S`. What runs a clause is the
   * environment threading at the `WovenValue` seam, which passes the parameters ahead of the ability member's own
   * arguments — the checker never sees them supplied.
   *
@@ -25,8 +26,7 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
   * looked up, never referenced, so it is never monomorphized for code. Its return type carries the clause row, so it
   * declares the same phantom binders as every clause and as the marker, and accepts the same type arguments.
   *
-  * A **named** implementation with parameters has a second declaration, its **binder** ([[binder]]): what a `with`
-  * supplying arguments is lowered to, so the checker types the arguments against the parameters like any call's.
+  * It has a second declaration, its **binder** ([[binder]]): what a `with` supplying arguments is lowered to, so the checker types the arguments against the parameters like any call's.
   *
   * {{{
   * implement scripted(lines: List[String]): Terminal { … }
@@ -108,13 +108,6 @@ object ImplementationParameters {
 
   /** Whether `name` is the local name of one of an implementation's own declarations rather than of a clause. */
   def isAuxiliary(name: String): Boolean = name == this.name || name == binderName
-
-  /** What the parameters add to an implementation's pattern key: nothing when there are none, so every existing
-    * implementation keeps its identity.
-    */
-  def identity(parameters: Seq[ArgumentDefinition]): String =
-    if (parameters.isEmpty) ""
-    else parameters.map(parameter => s"${parameter.name.value}: ${parameter.typeExpression.value.render}").mkString("(", ", ", ")")
 
   /** The parameters declaration of the implementation `member` belongs to — any value in its namespace. */
   def of(member: ValueFQN): ValueFQN =

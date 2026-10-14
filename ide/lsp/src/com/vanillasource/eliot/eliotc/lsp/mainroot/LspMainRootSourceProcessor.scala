@@ -56,7 +56,7 @@ object LspMainRootSourceProcessor {
 
   /** The module a wrapper `main` wraps — the inverse of [[wrapperVfqn]] — or `None` for any other value. */
   def wrappedModule(vfqn: ValueFQN): Option[ModuleName] =
-    Option.when(isRunBoundary(vfqn))(ModuleName(vfqn.moduleName.packages.tail, vfqn.moduleName.name))
+    Option.when(isWrapperMain(vfqn))(ModuleName(vfqn.moduleName.packages.tail, vfqn.moduleName.name))
 
   /** Whether a module-relative scan path names a wrapper module (`lspmain/.../M.els`). */
   def isWrapperPath(path: Path): Boolean =
@@ -74,10 +74,7 @@ object LspMainRootSourceProcessor {
     )
   }
 
-  /** The run boundary is the wrapper's **own** `main`, per wrapped module: it is where every effect's chain ends.
-    * Registered by [[com.vanillasource.eliot.eliotc.lsp.plugin.LspPlugin]] exactly as the jvm plugin registers its
-    * synthesized entry.
-    */
-  def isRunBoundary(vfqn: ValueFQN): Boolean =
+  /** Whether `vfqn` is a wrapper's **own** `main`, the one per wrapped module. */
+  def isWrapperMain(vfqn: ValueFQN): Boolean =
     vfqn.name.name == "main" && vfqn.moduleName.packages.headOption.contains(reservedPackage)
 }

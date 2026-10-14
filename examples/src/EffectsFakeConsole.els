@@ -4,11 +4,11 @@
  *
  * The whole mechanism is a **named implementation** plus a `with`. `recordingConsole` is an ordinary declaration in
  * this module: it needs no type of its own, no colocation with `Console`, and it is never searched for or checked
- * against the platform's default, because a named implementation is never a default. `with` binds it for the calls
- * lexically inside its subject, and nothing else in the program changes.
+ * against the platform's `standardConsole`, because no effect implementation is ever searched for. `with` binds it for
+ * the calls lexically inside its subject, and nothing else in the program changes.
  *
  * `EffectsNamedEffect` shows the same thing for an *application-owned* effect; the only difference there is that
- * nothing ships a default at all.
+ * nothing ships a standard implementation at all.
  *
  * ```sh
  * ./mill examples.run jvm exe-jar examples/src/ -m EffectsFakeConsole

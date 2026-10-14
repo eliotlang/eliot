@@ -3,13 +3,19 @@ package com.vanillasource.eliot.eliotc.ast.fact
 import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.ast.fact.ASTComponent.component
 import com.vanillasource.eliot.eliotc.ast.fact.Primitives.*
-import com.vanillasource.eliot.eliotc.ast.parser.Parser.{acceptIfAll, between, optional, or, recoveringAtLeastOnce}
+import com.vanillasource.eliot.eliotc.ast.parser.Parser.{acceptIfAll, between, optional, or, recoveringAtLeastOnce, reportedAs}
 import com.vanillasource.eliot.eliotc.ast.parser.{Parser, ParserError}
 import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, Qualifier}
 import com.vanillasource.eliot.eliotc.source.content.Sourced
 import com.vanillasource.eliot.eliotc.token.Token
 
 object ImplementBlock {
+
+  /** What an anonymous implementation's parameter list is refused with: the named form, which is where parameters go. */
+  private val anonymousParametersExpected: String =
+    "`{`: an implementation with parameters is named, and a `with` supplies them " +
+      "(`implement[S] holding(cell: StateCell[S]): State[S]`, bound as `body with holding(cell)`)"
+
   val implementBlock: ASTComponent[(Seq[ParserError], Seq[FunctionDefinition])] =
     new ASTComponent[(Seq[ParserError], Seq[FunctionDefinition])] {
       override val parser: Parser[Sourced[Token], (Seq[ParserError], Seq[FunctionDefinition])] =
@@ -22,11 +28,10 @@ object ImplementBlock {
           // No source in the tree writes a pattern-less `implement` today, so accepting one changes nothing until the
           // flag day; the named form (`NamedImplementation`) has always read its pattern optionally.
           pattern             <- optionalBracketedCommaSeparatedItems("[", sourced(Expression.typeRunParser), "]")
-          // The implementation's **parameters** (effects D20c option 5, `docs/effects.md` §11): its runtime
-          // environment, `implement[S] State[S](cell: Cell[S]) { … }`. Each clause receives them as leading value
-          // parameters, and [[ImplementationParameters]] records them for the readers that must tell them apart from
-          // the ability member's own.
-          parameters          <- optionalArgumentListOf(component[ArgumentDefinition])
+          // An implementation with parameters is always **named** (`docs/effects.md` D25): nothing that inserts a
+          // default has arguments to give it, so a parameter list here is reported as itself, naming the named form.
+          parameters          <- bracketedCommaSeparatedItems("(", component[ArgumentDefinition], ")")
+                                   .reportedAs(anonymousParametersExpected)
           // Optional `where <guard>` clause (ability-guards Stage 1). `where` is a hard keyword (so a `def`'s
           // greedily-parsed return-type run stops cleanly at it, just as it stops at `infix`/`def` — the same reason
           // `where`-on-defs needs it hard). The guard is parsed with `typeRunParser` — the same parser as a return
@@ -57,17 +62,11 @@ object ImplementBlock {
           // from an otherwise same-pattern sibling. `Show[Expression]` drops
           // source positions, so the key is stable across layers that spell the pattern identically (the same
           // character-exact discipline the layer merge already requires).
-          //
-          // An implementation's **parameters** are part of its identity too, which keeps a platform's control-effect
-          // implementation (`implement Abort(frame: EscapeFrame[Unit])`) apart from the compiler overlay's
-          // parameterless one of the same pattern: the compile track borrows the platform's sources, and the two must not
-          // merge into one value with two signatures.
           patternKey           = pattern.map(_.value.render).mkString(", ") +
-                                   guard.map(g => s" where ${g.value.render}").getOrElse("") +
-                                   ImplementationParameters.identity(parameters)
+                                   guard.map(g => s" where ${g.value.render}").getOrElse("")
         } yield (
-          errors,
-          functions.map((f, isClause) =>
+          parameters.toSeq ++ errors,
+          functions.map((f, _) =>
             // Transform the function into an "implement" function via `f.copy` — only the three deliberate overrides are
             // spelled out (name → implement qualifier including the instantiation type parameters, prepend the common
             // generic parameters, always-public visibility); everything else forwards by default. A *positional* rebuild
@@ -79,19 +78,9 @@ object ImplementBlock {
               name =
                 f.name.map(n => QualifiedName(n.name, Qualifier.AbilityImplementation(name.value.content, patternKey, None))),
               genericParameters = genericParameters ++ f.genericParameters,
-              args = (if (isClause) parameters else Seq.empty) ++ f.args,
               visibility = Visibility.Public
             )
-          ) ++
-            ImplementationParameters
-              .declaration(
-                name,
-                Qualifier.AbilityImplementation(name.value.content, patternKey, None),
-                genericParameters,
-                parameters,
-                clauseRow
-              )
-              .toSeq :+
+          ) :+
             // We add the implementation to the default method as a marker, that this type implements the marker.
             // The marker takes one argument per pattern element so its signature fully encodes the pattern,
             // which is what drives implementation selection during dispatch.
