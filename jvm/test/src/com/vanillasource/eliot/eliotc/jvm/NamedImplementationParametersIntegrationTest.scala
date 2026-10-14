@@ -117,6 +117,68 @@ class NamedImplementationParametersIntegrationTest extends FullIntegrationTest {
     ).asserting(_ shouldBe "refused nope")
   }
 
+  "a `with` supplying arguments around a run of a code parameter" should "bind the code its caller wrote" in {
+    compileAndRun(
+      s"""$terminal
+         |def run(body uses *, Terminal: Unit) uses *: String = runWriterToLog(body with scripted("a"))
+         |def main uses Console: Unit = printLine(run(greet))""".stripMargin
+    ).asserting(_ shouldBe "Hello, a!;")
+  }
+
+  it should "supply arguments computed where the definition runs the code" in {
+    compileAndRun(
+      s"""$terminal
+         |def answering(name: String, body uses *, Terminal: Unit) uses *: String = runWriterToLog(body with scripted(name))
+         |def main uses Console: Unit = printLine(answering("Bob", greet) ++ answering("Eve", greet))""".stripMargin
+    ).asserting(_ shouldBe "Hello, Bob!;Hello, Eve!;")
+  }
+
+  it should "let each run supply its own arguments" in {
+    compileAndRun(
+      s"""$terminal
+         |def both(body uses *, Terminal: Unit) uses *: String = runWriterToLog({
+         |   body with scripted("a")
+         |   body with scripted("b")
+         |})
+         |def main uses Console: Unit = printLine(both(greet))""".stripMargin
+    ).asserting(_ shouldBe "Hello, a!;Hello, b!;")
+  }
+
+  it should "give the implementation's clauses their frames where the code runs" in {
+    compileAndRun(
+      s"""$terminal
+         |implement shouting(lead: String, loud: String => String): Terminal {
+         |   def write(line: String) uses Console: Unit = printLine(lead ++ loud(line))
+         |   def read: String = "Eve"
+         |}
+         |
+         |def loudly(body uses *, Terminal: Unit) uses *, Console: Unit = body with shouting("> ", s -> s ++ "!!")
+         |def main uses Console: Unit = loudly(greet)""".stripMargin
+    ).asserting(_ shouldBe "> Hello, Eve!!!")
+  }
+
+  it should "handle the entry even where the definition declares it" in {
+    compileAndRun(
+      s"""$terminal
+         |def framed(body uses *, Terminal: Unit) uses *, Terminal, Writer[String]: Unit = {
+         |   write("[")
+         |   body with scripted("inner")
+         |}
+         |def main uses Console: Unit = printLine(runWriterToLog(framed(greet) with scripted("outer")))""".stripMargin
+    ).asserting(_ shouldBe "[;Hello, inner!;")
+  }
+
+  it should "bind the same implementation at every run" in {
+    compileForErrors(
+      s"""$terminal
+         |def both(body uses *, Terminal: Unit) uses *: String = runWriterToLog({
+         |   body with scripted("a")
+         |   body
+         |})
+         |def main uses Console: Unit = printLine(both(greet))""".stripMargin
+    ).asserting(_ should include("'body' runs here with a different implementation of 'Terminal' than at its other runs."))
+  }
+
   "a `with` naming an implementation that takes parameters" should "supply them" in {
     compileForErrors(
       s"""$terminal
@@ -144,14 +206,6 @@ class NamedImplementationParametersIntegrationTest extends FullIntegrationTest {
          |def run(body uses *, Terminal with scripted("a"): Unit) uses *: String = runWriterToLog(body)
          |def main uses Console: Unit = printLine(run(greet))""".stripMargin
     ).asserting(_ should include("The implementation 'scripted' takes parameters, which a parameter's clause cannot supply."))
-  }
-
-  it should "not stand around a run of a code parameter that lists its effect" in {
-    compileForErrors(
-      s"""$terminal
-         |def run(body uses *, Terminal: Unit) uses *: String = runWriterToLog(body with scripted("a"))
-         |def main uses Console: Unit = printLine(run(greet))""".stripMargin
-    ).asserting(_ should include("and a slot cannot supply arguments"))
   }
 
   "a `with` supplying arguments" should "name an implementation that takes parameters" in {

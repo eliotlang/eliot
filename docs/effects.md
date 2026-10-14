@@ -3,7 +3,8 @@
 **Status (2026-10-14).** This is the effect system's single document. What the tree builds is effects v6 (2026-09-09)
 in D20/D21's `uses` surface (2026-10-09/10) with D20c option 5's environments and (b) (2026-10-12), and D22's reading
 of a listed effect, D23's reading of `with`, D24's `uses *` on a definition, compile-track frames and named
-implementations with parameters (2026-10-13), their type parameters solved where they run (2026-10-14). An effect is
+implementations with parameters (2026-10-13), their type parameters solved where they run and their `with` around a
+run of a code parameter (2026-10-14). An effect is
 an ability declared with the `effect` keyword. A definition's `uses` clause says what its caller hands it. An implementation has two halves: its **code**, a
 compile-time name written at every reference by a syntax-directed pass that reads declarations only, and its
 **environment** (an escape frame, a cell, its own parameters), a value threaded after monomorphization — on the
@@ -40,8 +41,9 @@ lives now.
    **type** parameters as well was refused where it was bound until D25's step 1 solved them (§8 item 30). Every
    example jar is byte-identical, and eliot-test (193) and eliot-build (368, and its launcher) pass unchanged.
 8. **D25** (decided 2026-10-14, §11): parameters only on a named implementation, and the platform's dischargers bind
-   theirs with an ordinary `with`. Its steps, in order: ~~§8 item 30~~ (closed 2026-10-14); a `with name(args)`
-   around a run of a code parameter; a slot's binding carried to the slot a run is passed from; the control effects
+   theirs with an ordinary `with`. Its steps, in order: ~~§8 item 30~~ (closed 2026-10-14); ~~a `with name(args)`
+   around a run of a code parameter~~ (built 2026-10-14, closing §8 item 32 on the way); a slot's binding carried to
+   the slot a run is passed from; the control effects
    moved to named implementations; the anonymous parameter list and the giving primitives deleted. User dischargers
    such as `withConfig` then need nothing of their own, and parameterised ability implementations follow by the same
    mechanism, after §8 item 31.
@@ -56,7 +58,8 @@ D20a, D20c and D3 stay open until decided; none blocks the steps above.
   supplied (§7 item 1); `runThrow("no failure")` with its argument spelled is accepted (§8 item 4); a `with`'s
   argument typed only by the entry it binds, an unannotated lambda, is refused (§8 item 31).
 - **Decided, not built:** D25, parameters only on a named implementation and the platform's dischargers binding
-  theirs with `with` (step 1, a named implementation's type parameters solved, built 2026-10-14), then parameterised
+  theirs with `with` (steps 1 and 2 built 2026-10-14: a named implementation's type parameters solved, and its `with`
+  around a run of a code parameter), then parameterised
   ability implementations (§11, "Decided, not built").
 - **Undecided:** naming a set of effects in a clause (D20a), storing an effectful computation (D20c), `~`/`&` in user
   space (D3).
@@ -297,9 +300,17 @@ is rejected: it would be a second spelling of `with` around the body.
 **A `with`'s arguments are values computed where it is written**, outside its binding: in
 `greet with scripted(answer) with scripted("outer")` the inner `answer` reads from `scripted("outer")`. Only a body
 `with` supplies them. A parameter's clause cannot (*"… takes parameters, which a parameter's clause cannot supply"*),
-since a signature has no arguments to compute, and so a `with` supplying arguments around a run of a code parameter
-whose slot lists its effect is an error rather than moved onto the slot. A `with` naming an implementation that takes
-parameters must supply exactly them, and one naming an implementation without parameters supplies none.
+since a signature has no arguments to compute. Around a run of a code parameter whose slot lists its effect, only the
+`with`'s **code** moves onto the slot: its arguments stay at the run, computed there, and the frame is built there and
+handed to the code (D25's step 2). So a definition can bind an implementation its own parameters configure, and each
+run may supply its own arguments, while every run still names the one implementation:
+
+```eliot
+def answering(name: String, body uses *, Terminal: Unit) uses *: String = runWriterToLog(body with scripted(name))
+```
+
+A `with` naming an implementation that takes parameters must supply exactly them, and one naming an implementation
+without parameters supplies none.
 
 **`with` is written almost nowhere.** Most code fixes nothing: a def declaring `uses Console` receives its binding
 from its caller, up to `main`. That chain is what makes a fake possible — `greeting` never said which console, so a
@@ -751,7 +762,10 @@ built at the reference from the frames there, which the walk's check in §3.1 gu
 Its own parameters are the `with`'s arguments: the threading turns `scripted$with(xs, subject)` into
 `(answer -> subject)(xs)` and walks the subject with `answer` supplied to `scripted`, so a frame built for `scripted`
 there holds it, unless a frame of the entry is nearer — a block whose slot rides the entry is given its frame where it
-runs, as (b) says.
+runs, as (b) says. A slot naming such an implementation — moved there from a `with` around a run of its code — gives
+the block the implementation's parameters too, after its clauses' frames, and a run passes the arguments the `with`
+around it supplied: the hoisting left the binder's call `scripted$with(name, body)` at the run, so the threading
+treats it as any other, and the run finds them there.
 
 **What that does and does not remove.** There is no search across calls: a frame reaches a definition only as a value
 passed to it, so a helper's own `catch` or `State` cannot intercept the effects of a block its caller wrote with
@@ -1095,6 +1109,7 @@ items keep one line, and their full record is in git history (§13).
 | 27 | a guarded return's `else` arm never reduced: `if(C, String[]) else Bool[]` at `C := false` read back as `abort(Default)`, since the signature's raw read dispatches no ability and the escape answered `Right` of the undispatched call (present at `v0.0`; a fallback reached only through a nested discharge happened to work) | 2026-10-13: a type-level read-back treats a result holding an ability method's call as stuck (`EscalatingReducer.typeLevelStuck`), so the raw read falls through and the checked one escalates to the callee reduced at its instantiation |
 | 28 | a `where` over a control effect could not be evaluated: `where (if(c, true) else false)`, and even an inline `where rangeWithin[0, 255](range(x))`, reported *"Cannot evaluate the `where` precondition"* while the same predicate behind a helper worked (present at `v0.0`) | 2026-10-13 by compile-track frames (§3.4): the channel's reduction of the `^Where` companion is threaded and links its callees reduced at their instantiations. A failing precondition still leaves a runnable jar behind (exit 1) — the build-artifact invariant's, not this document's |
 | 30 | a named implementation's own type parameters were never solved for a binding: dispatch ran its clauses at `T := Type`, so `pick(42) with showing`, for `implement[T ~ Show[T]] showing: Source[T]`, lost `Show[Int]` (reported as *"This native value produces 'String' … states no meta transfer"* at `Show`), and one taking parameters as well was refused where it was bound | 2026-10-14 (D25 step 1): solved where the implementation runs, by matching its pattern against the entry's ground arguments as the two-site search does (`NamedImplementationArguments`), at dispatch and in the environment threading alike; a pattern that does not match is an error at the use, and arguments that do not fit are one at the `with` |
+| 32 | a slot naming a **constrained** named implementation was rejected: `shown(body uses *, Source[A] with showing: String) uses *: String = body`, for `implement[T ~ Show[T]] showing: Source[T]`, was *"'body' may perform the effect 'Show' here, which this definition neither handles nor declares"*, since the given-check read the implementation's `~` constraint, an ability, as one of the effects its clauses perform (found building D25 step 2, where a `with` around a run lands on the slot; Writer's `W ~ Combine[W]` implementation meets it at step 4) | 2026-10-14: the given-check reads only what the implementation's row lists, as the threading does (`BindingWriter.performedEntries`); a constraint's `Default` is the two-site search's wherever it is written |
 
 Items 9–13 were found 2026-10-05 while designing D20 and share one cause: a row on a slot both *marked a block* and
 *minted bindings*, and nothing kept the block inside the call or checked that the callee had the binding it handed
@@ -1307,9 +1322,9 @@ In the order they would be built:
   identical; §10) and by eliot-test and eliot-build:
   1. ~~§8 item 30~~ — built 2026-10-14: a named implementation's type parameters are what its pattern takes at the
      entry's ground arguments, at dispatch and in the threading (`NamedImplementationArguments`).
-  2. A `with name(args)` around a run of a code parameter: the **code** moves onto the slot, the **arguments** stay at
-     the run, where the frame is built — refused today (§2, "A `with`'s arguments are values computed where it is
-     written"). A parameter's clause still cannot spell arguments; the slot carries code only.
+  2. ~~A `with name(args)` around a run of a code parameter~~ — built 2026-10-14: the **code** moves onto the slot,
+     the **arguments** stay at the run, where the frame is built (§2, §3.4). A parameter's clause still cannot spell
+     arguments; the slot carries code only. It found and closed §8 item 32.
   3. A slot's binding carried to the slot a run is passed from. `RunWithHoister` then reads its callees' declarations
      as well as the definition's own text (§3.1 says "nothing else" today), so a definition's declaration depends on
      its callees'. That is acyclic only because nothing is recursive, while the recursion gate runs *after* the

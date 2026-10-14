@@ -73,6 +73,22 @@ class NamedImplementationTypeParametersIntegrationTest extends FullIntegrationTe
     ).asserting(_ shouldBe "7\n> 7")
   }
 
+  it should "be solved on a slot, whose implementation's constraint is an ability and needs nothing given" in {
+    compileAndRun(
+      s"""$source
+         |def shown[A](body uses *, Source[A] with showing: String) uses *: String = body
+         |def main uses Console: Unit = printLine(shown[Int](pick(1)) ++ " " ++ shown[String](pick("a")))""".stripMargin
+    ).asserting(_ shouldBe "1 a")
+  }
+
+  it should "type the parameters a `with` supplies around a run of a code parameter" in {
+    compileAndRun(
+      s"""$source
+         |def against[A](other: A, body uses *, Source[A]: String) uses *: String = body with constant(other)
+         |def main uses Console: Unit = printLine(against(2, pick(1)) ++ " " ++ against("b", pick("a")))""".stripMargin
+    ).asserting(_ shouldBe "1/2 a/b")
+  }
+
   "a named implementation bound for an entry its pattern does not match" should "be an error at the use" in {
     compileForErrors(
       s"""$source

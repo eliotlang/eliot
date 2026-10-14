@@ -340,7 +340,9 @@ object BindingWriter {
     * implementation performs in its own clauses, which the caller also wrote as `Default`
     * ([[Writer.slotImplementation]]). An entry the definition's own row has — the slot's, or one its named
     * implementation's clauses perform — rides the caller's binding and needs nothing here. Entries are compared at
-    * their known arguments ([[ridesOwn]]), as the caller's write compared them.
+    * their known arguments ([[ridesOwn]]), as the caller's write compared them. A named implementation's `~`
+    * constraint is an ability, not an effect: its declaration's row does not list it, its `Default` is the two-site
+    * search's wherever it is written, and so it needs no frame and nothing gives it.
     */
   private def thunkRequirements(
       orv: OperatorResolvedValue,
@@ -355,7 +357,7 @@ object BindingWriter {
         val listed    = pe.effects
           .map(entry => entry.abilityFQN -> knownArguments(entry.typeArgs, Map.empty))
           .filterNot(entry => withBound.contains(entry._1))
-        val clauses   = markers.flatMap(marker => bindingEntries(marker.value, universe))
+        val clauses   = markers.flatMap(marker => performedEntries(marker.value, universe))
         name -> (listed ++ clauses).filterNot(ridesOwn(own)).distinct
       }
     }.toMap
@@ -400,6 +402,17 @@ object BindingWriter {
           .toSet
       }
     }.toMap
+  }
+
+  /** The [[bindingEntries]] of `marker` that are **effects** — its declaration's row lists them — leaving out its `~`
+    * constraints, which are abilities.
+    */
+  private def performedEntries(
+      marker: ValueFQN,
+      universe: RowChecker.Universe
+  ): Seq[(AbilityFQN, Option[Seq[String]])] = {
+    val effects = universe.lookup(marker).toSeq.flatMap(_.effectRow.returnEffects.map(_.abilityFQN)).toSet
+    bindingEntries(marker, universe).filter(entry => effects.contains(entry._1))
   }
 
   /** Every entry the implementation `marker` is parameterised by — its phantom binders' abilities, each with the

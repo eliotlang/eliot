@@ -548,7 +548,8 @@ object EnvironmentThreading {
     /** The frames a block at `slot` of `callee` is given, and the parts the block now takes as its parameters: one frame
       * per entry the slot lists, held by fresh parameters. An entry the slot **supplies** (one the callee's own row
       * lacks) is held at its default, or at the implementation the slot names with `with`, whose clauses' frames are
-      * held the same way ([[clauseBinding]]). An entry the slot **rides** is held at the caller's binding, which is the
+      * held the same way ([[clauseBinding]]) and whose own parameters follow them, given at each run
+      * ([[runArguments]]). An entry the slot **rides** is held at the caller's binding, which is the
       * block's code for it: the code rides, the frame is given where the block runs (`docs/effects.md` D20c, (b)).
       */
     private def givenFrames(
@@ -570,24 +571,24 @@ object EnvironmentThreading {
               (frame, frame.parts)
             }
           case Listed.Supplied(entry, Some(marker)) =>
-            namedClauses(marker).flatMap { clauses =>
-              clauses
-                .traverse { clauseEntry =>
-                  val binding = clauseBinding(callee, clauseEntry)
-                  shapeOf(clauseEntry, binding).map { shape =>
-                    val frame = held(clauseEntry, binding, shape)
-                    (frame, frame.parts)
-                  }
-                }
-                .map(clauseFrames =>
-                  (Frame(entry, namedBinding(marker), clauseFrames.map(_._1), Seq.empty), clauseFrames.flatMap(_._2))
-                )
+            for {
+              clauses      <- namedClauses(marker)
+              clauseFrames <- clauses.traverse { clauseEntry =>
+                                val binding = clauseBinding(callee, clauseEntry)
+                                shapeOf(clauseEntry, binding).map(shape => held(clauseEntry, binding, shape))
+                              }
+              own          <- namedOwn(entry, marker)
+            } yield {
+              val frame = Frame(entry, namedBinding(marker), clauseFrames, own.map(tpe => Part(fresh(), tpe)))
+              (frame, frame.parts)
             }
         })
         .map(offered => (offered.map(_._1), offered.flatMap(_._2)))
 
     /** Running one of this definition's row-typed parameters passes the frames of the entries its slot lists, found
-      * where it runs — a ridden entry's at this definition's own binding for it, which is the block's code.
+      * where it runs — a ridden entry's at this definition's own binding for it, which is the block's code. An
+      * implementation the slot names that takes parameters is given the arguments the `with` around this run supplied
+      * ([[runArguments]]).
       */
     private def runBlock(
         head: Sourced[MonomorphicExpression],
@@ -602,9 +603,12 @@ object EnvironmentThreading {
                     case Listed.Rides(entry, binding)         => lookup(context, entry, binding, name)
                     case Listed.Supplied(entry, None)         => lookup(context, entry, defaultBinding, name)
                     case Listed.Supplied(entry, Some(marker)) =>
-                      namedClauses(marker).flatMap(
-                        _.traverse(clause => lookup(context, clause, clauseBinding(mv, clause), name))
-                      ).map(clauseFrames => Frame(entry, namedBinding(marker), clauseFrames, Seq.empty))
+                      for {
+                        clauseFrames <- namedClauses(marker).flatMap(
+                                          _.traverse(clause => lookup(context, clause, clauseBinding(mv, clause), name))
+                                        )
+                        own          <- runArguments(context, entry, marker, name)
+                      } yield Frame(entry, namedBinding(marker), clauseFrames, own)
                   })
         parts   = frames.flatMap(_.parts)
         retyped = context.types.get(name.value).fold(head)(tpe => head.as(head.value.copy(expressionType = tpe)))
@@ -612,6 +616,34 @@ object EnvironmentThreading {
         if (parts.isEmpty) applyAll(retyped, Seq(unit), keepTypes = None)
         else applyAll(retyped, parts.map(partReference(name, _)), keepTypes = None)
     }
+
+    /** The arguments of the implementation `marker` a slot names, where a run of its code performs `entry`: those the
+      * `with` around the run supplied, which the hoisting left there when it moved the implementation onto the slot
+      * (`docs/effects.md` D25, step 2). An implementation without parameters takes none.
+      */
+    private def runArguments(context: Context, entry: Entry, marker: ValueFQN, at: Sourced[String]): CompilerIO[Seq[Part]] =
+      namedOwn(entry, marker).flatMap { own =>
+        context.supplied.find(_.marker == marker) match {
+          case _ if own.isEmpty                                => Seq.empty.pure[CompilerIO]
+          case Some(supplied) if supplied.own.map(_.tpe) == own => supplied.own.pure[CompilerIO]
+          case Some(supplied)                                  =>
+            unfitArguments(entry, namedBinding(marker), own, supplied).map(_ => Seq.empty)
+          case None                                            =>
+            compilerAbort(
+              at.as(
+                s"'${at.value}' runs here on ${describe(namedBinding(marker))}, which takes parameters, but no `with` " +
+                  "around this run supplies them."
+              )
+            )
+        }
+      }
+
+    /** The types of the parameters of the named implementation `marker`, where it runs `entry`. */
+    private def namedOwn(entry: Entry, marker: ValueFQN): CompilerIO[Seq[GroundValue]] =
+      implementationOf(entry, namedBinding(marker)).flatMap {
+        case Some((head, typeArguments)) => ownParameterTypes(head, typeArguments)
+        case None                        => Seq.empty.pure[CompilerIO]
+      }
 
     /** Every entry `slot` lists, as what the block is given for it: an entry it **supplies**, with the implementation
       * the slot names for it with `with`, read off the slot's declared type; or an entry it **rides**, with `value`'s
@@ -711,9 +743,12 @@ object EnvironmentThreading {
         case Listed.Rides(entry, binding)         => shapeOf(entry, binding).map(_.types)
         case Listed.Supplied(entry, None)         => shapeOf(entry, defaultBinding).map(_.types)
         case Listed.Supplied(entry, Some(marker)) =>
-          namedClauses(marker).flatMap(
-            _.flatTraverse(clause => shapeOf(clause, clauseBinding(value, clause)).map(_.types))
-          )
+          for {
+            clauses <- namedClauses(marker).flatMap(
+                         _.flatTraverse(clause => shapeOf(clause, clauseBinding(value, clause)).map(_.types))
+                       )
+            own     <- namedOwn(entry, marker)
+          } yield clauses ++ own
       })
 
     /** A value's woven signature: the parts of the frames it receives, then its own parameters with each row-typed one
@@ -813,7 +848,7 @@ object EnvironmentThreading {
     ): CompilerIO[Frame] =
       shapeOf(entry, binding).flatMap { shape =>
         supplied match {
-          case Some(supplied) if supplied.own.map(_.tpe) != shape.own => unfitArguments(entry, binding, shape, supplied)
+          case Some(supplied) if supplied.own.map(_.tpe) != shape.own => unfitArguments(entry, binding, shape.own, supplied)
           case Some(supplied)                                         =>
             shape.clauses
               .traverse { case (clauseEntry, clauseBinding, _) => lookup(context, clauseEntry, clauseBinding, at) }
@@ -841,14 +876,19 @@ object EnvironmentThreading {
       * parameters are what its pattern takes at the entry ([[NamedImplementationArguments]]), and a `with` binds every
       * use of its ability in its subject, so the arguments must fit each.
       */
-    private def unfitArguments(entry: Entry, binding: GroundValue, shape: Shape, supplied: Supplied): CompilerIO[Frame] = {
+    private def unfitArguments(
+        entry: Entry,
+        binding: GroundValue,
+        own: Seq[GroundValue],
+        supplied: Supplied
+    ): CompilerIO[Frame] = {
       def shown(types: Seq[GroundValue]): String = types.map(GroundValueRenderer.render).mkString("(", ", ", ")")
       val performed =
         if (entry.arguments.isEmpty) entry.ability.abilityName
         else entry.arguments.map(GroundValueRenderer.render).mkString(s"${entry.ability.abilityName}[", ", ", "]")
       compilerAbort(
         supplied.at.as(
-          s"${describe(binding).capitalize} takes ${shown(shape.own)} where it runs '$performed', but this `with` " +
+          s"${describe(binding).capitalize} takes ${shown(own)} where it runs '$performed', but this `with` " +
             s"supplies ${shown(supplied.own.map(_.tpe))}."
         ),
         Seq(s"A `with` binds every use of '${entry.ability.abilityName}' in its subject, so its arguments must fit each.")

@@ -604,7 +604,9 @@ the threading alike, so one `with showing` serves `Source[Int]` and `Source[Stri
 subject** (D23): infix, subject-first, loosest precedence, left-associative, as an expression in a body or after an
 entry of a parameter's clause. A `with` nothing escapes to is an error; one around a run of a code parameter binds
 what the slot lists and is moved onto the slot (`operator/processor/RunWithHoister`), since the caller compiles that
-code; a slot `with` handles its entry even when the definition declares the effect. `with` on a definition's own
+code — one supplying arguments moves only its code, and its `scripted$with(args…, run)` call stays at the run, where
+the threading builds the frame and hands it to the code (D25 step 2); a slot `with` handles its entry even when the
+definition declares the effect. `with` on a definition's own
 clause is rejected. **`with` is written almost nowhere**: a def declaring `uses Console` receives its binding from its
 caller up to `main`, and a `with` in production code is the same mistake as a hard-coded dependency.
 
