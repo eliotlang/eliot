@@ -23,10 +23,10 @@ data ProcessResult(exitCode: Int, standardOutput: String, standardError: String)
 type ProcessOutcome
 
 /**
- * The JVM `Process` implementation, and the default one. Sharing `eliot.file`'s error type is deliberate: a program
+ * The JVM `standardProcess`, the body of the base's declaration. Sharing `eliot.file`'s error type is deliberate: a program
  * that reads files *and* runs programs — every build tool — then has one failure channel to discharge instead of two.
  */
-implement Process {
+implement standardProcess: Process {
    def run(command: List[String], workingDirectory: Path) uses Throw[IoError]: ProcessResult = {
       val outcome = runInternal(command, workingDirectory)
 

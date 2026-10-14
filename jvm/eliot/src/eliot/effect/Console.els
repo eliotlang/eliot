@@ -6,14 +6,13 @@ effect Console {
 }
 
 /**
- * The JVM `Console` implementation: each operation calls a `private` impure leaf native. It is anonymous and lives in
- * the effect's own module, so it is the **default** — the implementation a `uses Console` declaration binds when no `with`
- * names another one, and what the synthesized entry point binds at the run boundary.
+ * The JVM `standardConsole`, the body of the base's declaration: each operation calls a `private` impure leaf native.
+ * The entry point binds it for a `main` that declares `uses Console`, with `with standardConsole`.
  *
  * A test does not have to replace it in place: it declares its own named `implement` anywhere it likes and binds it
  * with `with`, which is why nothing here is generic, registered or configured.
  */
-implement Console {
+implement standardConsole: Console {
    def printLine(s: String): Unit = printLineInternal(s)
 
    def readLine: Option[String] = lineOrNone(readLineInternal)

@@ -106,8 +106,8 @@ class FakeImplementationIntegrationTest extends FullIntegrationTest {
   }
 
   // An effect with no implementation at all is the honest state of one a program has not decided how to run: reaching
-  // the run boundary, it fails there naming the effect rather than silently picking something.
-  it should "fail at the run boundary for an effect nothing implements" in {
+  // the entry point, it fails at `main` naming the effect rather than silently picking something.
+  it should "fail at the entry point for an effect nothing implements" in {
     compileForErrors(
       """import eliot.effect.Console
         |
@@ -119,7 +119,7 @@ class FakeImplementationIntegrationTest extends FullIntegrationTest {
         |
         |def main uses Terminal: Unit = greet
         |""".stripMargin
-    ).asserting(_ should include("No ability implementation found for ability 'Terminal'"))
+    ).asserting(_ should include("'main' uses the effect 'Terminal', which the platform has no standard implementation of."))
   }
 
   // And a use that does not declare it at all is rejected earlier still, at the reference — the ordinary scope check,
@@ -140,8 +140,9 @@ class FakeImplementationIntegrationTest extends FullIntegrationTest {
   }
 
   /** A named implementation colocated with its ability sits exactly where the two-site search looks, and must still
-    * not answer it: `with` is the only way to reach one (§2). The search reads anonymous implementations only, so this
-    * program reaches the run boundary with nothing bound and fails there — as if the double were not written at all.
+    * not answer it: `with` is the only way to reach one (§2). Nor is it what the entry point binds, which is the
+    * effect's `standard…` implementation alone (D26), so this program fails at `main` — as if the double were not
+    * written at all.
     * Until this was measured the search collected *every* implementation in a candidate module, so a `{Terminal}` row
     * silently picked the double up and the "never searched" rule held only by the accident of where doubles usually
     * live.
@@ -158,13 +159,13 @@ class FakeImplementationIntegrationTest extends FullIntegrationTest {
       |def greet uses Terminal: Unit = write("hi")
       |""".stripMargin
 
-  it should "not answer the default search, even colocated with its own ability" in {
+  it should "not be bound at the entry point, even colocated with its own ability" in {
     compileForErrors(
       s"""import eliot.effect.Console
          |$colocatedDouble
          |def main uses Terminal: Unit = greet
          |""".stripMargin
-    ).asserting(_ should include("No ability implementation found for ability 'Terminal'"))
+    ).asserting(_ should include("'main' uses the effect 'Terminal', which the platform has no standard implementation of."))
   }
 
   it should "bind that same colocated double where a `with` names it" in {

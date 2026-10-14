@@ -12,3 +12,10 @@ effect Log {
     */
    def log(s: String): Unit
 }
+
+/**
+ * The platform's own `Log`, over the platform's log: what the entry point binds for a `main` that declares `uses Log`.
+ * Declared here and bodied by each platform, so code can be run on the real implementation portably, with `with
+ * standardLog`.
+ */
+implement standardLog: Log

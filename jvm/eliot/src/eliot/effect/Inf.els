@@ -5,11 +5,11 @@ effect Inf {
 }
 
 /**
- * The JVM `Inf` implementation: the unbounded loop itself. `Inf` is *run, not discharged*, so this is what the
- * synthesized entry point binds when `Inf` reaches `main` — a deliberately non-terminating program. `step` arrives
- * suspended, so each iteration re-runs it and its effects repeat.
+ * The JVM `standardInf`, the body of the base's declaration: the unbounded loop itself. `Inf` is *run, not discharged*,
+ * so this is what the entry point binds when `Inf` reaches `main` — a deliberately non-terminating program. `step`
+ * arrives suspended, so each iteration re-runs it and its effects repeat.
  */
-implement Inf {
+implement standardInf: Inf {
    def forever(step uses *: Unit) uses *: Unit = foreverInternal(step)
 }
 

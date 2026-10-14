@@ -10,10 +10,10 @@ effect Environment {
 }
 
 /**
- * The JVM `Environment` implementation, and the default one: each operation calls its `private` leaf native directly.
+ * The JVM `standardEnvironment`, the body of the base's declaration: each operation calls its `private` leaf native.
  * None of them can fail, so none declares a row — an absent variable is an `Option`, not an error.
  */
-implement Environment {
+implement standardEnvironment: Environment {
    def arguments: List[String] = argumentsInternal
 
    def environmentVariable(name: String): Option[String] = valueOrNone(environmentVariableInternal(name))

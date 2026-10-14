@@ -33,14 +33,14 @@ def ioError(message: String): IoError = IoError(message)
 type IoResult
 
 /**
- * The JVM `FileSystem` implementation, and the default one: anonymous, in the effect's own module. Each operation calls
- * its `private` impure leaf native directly — there is no carrier to reify into and nothing to lift — and then
- * `raiseError`s the native's error-or-value holder into `Throw[IoError]`, which every member declares.
+ * The JVM `standardFileSystem`, the body of the base's declaration. Each operation calls its `private` impure leaf
+ * native directly and then `raiseError`s the native's error-or-value holder into `Throw[IoError]`, which every member
+ * declares.
  *
  * A test does not replace this: it declares its own named `implement` of `FileSystem` wherever it likes and binds it
  * with `with`, so a faked filesystem needs no type of its own and no colocation.
  */
-implement FileSystem {
+implement standardFileSystem: FileSystem {
    def readFile(path: Path) uses Throw[IoError]: String = {
       val r = readFileInternal(path)
       raiseError(r)

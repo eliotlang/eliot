@@ -38,8 +38,8 @@ def standardError(result: ProcessResult): String
  * never as a string to be re-split — quoting rules are the one part of process spawning that is
  * different on every platform and wrong in every hand-rolled implementation.
  *
- * A target with no process model simply ships no default `implement Process`, so a `uses Process`
- * program fails at the run boundary there — the layer system is the capability, exactly as it is
+ * A target with no process model simply ships no body for `standardProcess`, so a `uses Process`
+ * program fails at the entry point there — the layer system is the capability, exactly as it is
  * for `Environment` and `FileSystem`. That is also why an exit code may be named here at all: a
  * platform that has no notion of one is a platform on which none of this effect exists.
  *
@@ -116,6 +116,20 @@ effect Process {
     * }
     * ```
     */
+   def registerExitCode(code: Int): Unit
+}
+
+/**
+ * The platform's own `Process`, over the operating system's processes: what the entry point binds for a `main` that
+ * declares `uses Process`. Declared here and bodied by each platform, so code can be run on the real implementation
+ * portably, with `with standardProcess`.
+ *
+ * Its clauses are declared here, without bodies, because some perform `Throw[IoError]`: a `with standardProcess`
+ * binds that too, so what the implementation performs is part of its declaration, not of a platform's body.
+ */
+implement standardProcess: Process {
+   def run(command: List[String], workingDirectory: Path) uses Throw[IoError]: ProcessResult
+   def runInheritingIo(command: List[String], workingDirectory: Path) uses Throw[IoError]: Int
    def registerExitCode(code: Int): Unit
 }
 

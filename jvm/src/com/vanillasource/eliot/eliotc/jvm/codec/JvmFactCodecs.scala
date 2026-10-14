@@ -10,6 +10,10 @@ object JvmFactCodecs {
       : FactCodec[com.vanillasource.eliot.eliotc.jvm.jargen.GenerateExecutableJar] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_jvm_jargen_GenerateExecutableJar_Key
       : FactCodec[com.vanillasource.eliot.eliotc.jvm.jargen.GenerateExecutableJar.Key] = FactCodec.derived
+  given codec_com_vanillasource_eliot_eliotc_jvm_jargen_EntryPointTarget
+      : FactCodec[com.vanillasource.eliot.eliotc.jvm.jargen.EntryPointTarget] = FactCodec.derived
+  given codec_com_vanillasource_eliot_eliotc_jvm_jargen_EntryPointTarget_Key
+      : FactCodec[com.vanillasource.eliot.eliotc.jvm.jargen.EntryPointTarget.Key] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_jvm_classgen_fact_GeneratedModule
       : FactCodec[com.vanillasource.eliot.eliotc.jvm.classgen.fact.GeneratedModule] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_jvm_classgen_fact_GeneratedModule_Key
@@ -45,10 +49,13 @@ object JvmFactCodecs {
     codec_com_vanillasource_eliot_eliotc_jvm_classgen_fact_GeneratedModule
   val generateExecutableJarCodec: FactCodec[com.vanillasource.eliot.eliotc.jvm.jargen.GenerateExecutableJar] =
     codec_com_vanillasource_eliot_eliotc_jvm_jargen_GenerateExecutableJar
+  val entryPointTargetCodec: FactCodec[com.vanillasource.eliot.eliotc.jvm.jargen.EntryPointTarget]           =
+    codec_com_vanillasource_eliot_eliotc_jvm_jargen_EntryPointTarget
 
   /** This layer's contribution to the key tag table; see [[FactKeyCodecs]]. */
   val keyCodecs: FactKeyCodecs.Registry = Map(
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_jvm_jargen_GenerateExecutableJar_Key),
+    FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_jvm_jargen_EntryPointTarget_Key),
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_jvm_classgen_fact_GeneratedModule_Key)
   )
 }

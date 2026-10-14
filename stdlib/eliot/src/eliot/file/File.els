@@ -34,8 +34,8 @@ implement Show[IoError] {
  * lists what it uses *beyond* the effect it belongs to, and membership already says `FileSystem`. So a filesystem
  * program declares `uses FileSystem, Throw[IoError]`: failure and access are separate entries, and `catch`
  * discharges the `Throw[IoError]` while `FileSystem` keeps riding to `main` (just as `Console` does). A target
- * without a filesystem simply ships no default `implement FileSystem`, so any program using `FileSystem` fails at the
- * run boundary for that target — the layer system is the capability, and a test binds a double with `with`.
+ * without a filesystem simply ships no body for `standardFileSystem`, so any program using `FileSystem` fails at the
+ * entry point for that target — the layer system is the capability, and a test binds a double with `with`.
  *
  * There are no file handles and no `open`/`close`: the whole surface is whole-file and fold operations that open and
  * close internally, so nothing can leak.
@@ -113,6 +113,29 @@ effect FileSystem {
    /**
     * Delete the file or empty directory at `path`.
     */
+   def delete(path: Path) uses Throw[IoError]: Unit
+}
+
+/**
+ * The platform's own `FileSystem`, over the platform's file system: what the entry point binds for a `main` that
+ * declares `uses FileSystem`. Declared here and bodied by each platform, so code can be run on the real implementation
+ * portably, with `with standardFileSystem`.
+ *
+ * Its clauses are declared here, without bodies, because some perform `Throw[IoError]`: a `with standardFileSystem`
+ * binds that too, so what the implementation performs is part of its declaration, not of a platform's body.
+ */
+implement standardFileSystem: FileSystem {
+   def readFile(path: Path) uses Throw[IoError]: String
+   def writeFile(content: String, path: Path) uses Throw[IoError]: Unit
+   def appendFile(content: String, path: Path) uses Throw[IoError]: Unit
+   def foldLines[B](initial: B, step: B => String => B, path: Path) uses Throw[IoError]: B
+   def foldCodePoints[B](initial: B, step: B => Int => B, path: Path) uses Throw[IoError]: B
+   def readLines(path: Path) uses Throw[IoError]: List[String]
+   def exists(path: Path) uses Throw[IoError]: Bool
+   def isDirectory(path: Path) uses Throw[IoError]: Bool
+   def listDirectory(path: Path) uses Throw[IoError]: List[Path]
+   def walk(path: Path) uses Throw[IoError]: List[Path]
+   def createDirectories(path: Path) uses Throw[IoError]: Unit
    def delete(path: Path) uses Throw[IoError]: Unit
 }
 

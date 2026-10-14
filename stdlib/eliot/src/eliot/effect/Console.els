@@ -2,8 +2,8 @@
  * The console effect: reading lines from and writing lines to the standard text streams.
  *
  * The everyday I/O effect — declare `uses Console` and call `printLine`/`readLine`. Nothing here says *how* a line
- * is printed: the platform layer's `implement Console` is the default a program binds, and a test binds its own
- * named implementation with `with`, without the code under test knowing.
+ * is printed: the platform layer bodies `standardConsole`, which the entry point binds for `main`, and a test binds
+ * its own named implementation with `with`, without the code under test knowing.
  *
  * ```eliot
  * def greet uses Console: Unit = printLine("hello")
@@ -41,3 +41,10 @@ effect Console {
     */
    def readLine: Option[String]
 }
+
+/**
+ * The platform's own `Console`, over the standard text streams: what the entry point binds for a `main` that declares
+ * `uses Console`. Declared here and bodied by each platform, so code can be run on the real implementation portably,
+ * with `with standardConsole`.
+ */
+implement standardConsole: Console

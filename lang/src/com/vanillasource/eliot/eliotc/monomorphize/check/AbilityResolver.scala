@@ -2,7 +2,7 @@ package com.vanillasource.eliot.eliotc.monomorphize.check
 
 import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.ability.fact.AbilityImplementation
-import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, Qualifier, ValueFQN, WellKnownTypes}
+import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, Qualifier, UnifiedModuleNames, ValueFQN, WellKnownTypes}
 import com.vanillasource.eliot.eliotc.monomorphize.check.CheckIO.*
 import com.vanillasource.eliot.eliotc.monomorphize.domain.*
 import com.vanillasource.eliot.eliotc.monomorphize.eval.Quoter
@@ -145,7 +145,12 @@ class AbilityResolver(
                                 liftF(NamedImplementationArguments.solve(impl, patternArgs, platform)).flatMap {
                                   case Some(typeArguments) =>
                                     val method = impl.method(abilityVfqn.value.name.name)
-                                    record(abilityVfqn.value, key, (method, typeArguments)).as(true)
+                                    liftF(getFactOrAbort(UnifiedModuleNames.Key(method.moduleName, platform))).flatMap {
+                                      case names if names.names.contains(method.name) =>
+                                        record(abilityVfqn.value, key, (method, typeArguments)).as(true)
+                                      case _                                         =>
+                                        reportMissingClause(abilityVfqn, abilityName, impl)
+                                    }
                                   case None                =>
                                     reportUnmatchedBinding(abilityVfqn, abilityName, impl, patternArgs)
                                 }
@@ -197,10 +202,7 @@ class AbilityResolver(
       impl: ImplementationBinding.Implementation,
       patternArgs: Seq[GroundValue]
   ): CheckIO[Boolean] = {
-    val name    = impl.head.name.qualifier match {
-      case Qualifier.AbilityImplementation(_, _, Some(name)) => name
-      case _                                                 => abilityName
-    }
+    val name    = implementationName(impl, abilityName)
     val entry   =
       if (patternArgs.isEmpty) abilityName else patternArgs.map(GroundValueRenderer.render).mkString(s"$abilityName[", ", ", "]")
     liftF(
@@ -210,6 +212,31 @@ class AbilityResolver(
       ) >> abort[Boolean]
     )
   }
+
+  /** A `with` bound an implementation with no clause for this reference's method on the path: the base's body-less
+    * `implement standardConsole: Console` where no platform layer bodies it (a library package's closure), which the
+    * entry point binds all the same (`docs/effects.md` D26). Reading the missing method would abort with no error, so
+    * the gap is reported here, at the reference.
+    */
+  private def reportMissingClause(
+      ref: Sourced[ValueFQN],
+      abilityName: String,
+      impl: ImplementationBinding.Implementation
+  ): CheckIO[Boolean] = {
+    val name = implementationName(impl, abilityName)
+    liftF(
+      compilerError(
+        ref.as(s"The implementation '$name' has no '${ref.value.name.name}' here."),
+        Seq(s"No layer on the path declares that clause of '$name'; a platform layer is what bodies it.")
+      ) >> abort[Boolean]
+    )
+  }
+
+  private def implementationName(impl: ImplementationBinding.Implementation, abilityName: String): String =
+    impl.head.name.qualifier match {
+      case Qualifier.AbilityImplementation(_, _, Some(name)) => name
+      case _                                                 => abilityName
+    }
 
   /** A ground-argument demand did not resolve. The producer
     * ([[com.vanillasource.eliot.eliotc.ability.processor.AbilityImplementationProcessor]]) registers the failed

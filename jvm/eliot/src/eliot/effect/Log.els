@@ -5,10 +5,11 @@ effect Log {
 }
 
 /**
- * The JVM `Log` implementation, the default this platform ships: it calls a `private` impure leaf native, exactly like
- * `Console`. A test that wants to see what was logged declares its own named `implement` and binds it with `with`.
+ * The JVM `standardLog`, the body of the base's declaration: it calls a `private` impure leaf native, exactly like
+ * `standardConsole`. A test that wants to see what was logged declares its own named `implement` and binds it with
+ * `with`.
  */
-implement Log {
+implement standardLog: Log {
    def log(s: String): Unit = logInternal(s)
 }
 

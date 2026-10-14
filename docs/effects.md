@@ -51,8 +51,8 @@ lives now.
    mechanism, after §8 item 31.
 9. **D26** (decided 2026-10-14, §11): no effect has a default. Every effect implementation is named, the platform runs
    `main` by generating a `with` per entry, naming the base's body-less `standard…` implementations, and a guarded
-   signature is bound as its discharger's slot binds. Its first step is D25's step 4 (built 2026-10-14); its last
-   folds in D25's step 5.
+   signature is bound as its discharger's slot binds. Its first step is D25's step 4 (built 2026-10-14), its second
+   the `standard…` implementations and the generated `with`s (built 2026-10-14); its last folds in D25's step 5.
 
 D20a, D20c and D3 stay open until decided; none blocks the steps above.
 
@@ -67,7 +67,8 @@ D20a, D20c and D3 stay open until decided; none blocks the steps above.
   theirs with `with` (steps 1–4 built 2026-10-14: a named implementation's type parameters solved, its `with`
   around a run of a code parameter, a run bound as the slot it is passed to binds, and the control effects named);
   D26, no effect defaults,
-  every effect implementation named and `main` run by explicit passing; then parameterised ability implementations
+  every effect implementation named and `main` run by explicit passing (steps 1–2 built 2026-10-14; the deletions
+  left); then parameterised ability implementations
   (§11, "Decided, not built").
 - **Undecided:** naming a set of effects in a clause (D20a), storing an effectful computation (D20c), `~`/`&` in user
   space (D3).
@@ -147,8 +148,9 @@ D20a, D20c and D3 stay open until decided; none blocks the steps above.
    through `*` without the clause listing it is invisible to the definition: bound where the code was written, it can
    be neither caught nor declared there (§2.2). **A `with` is the only thing that gives an implementation**: a
    platform's discharger binds its control effect's named implementation with one, over the frame its primitive made
-   (§3.4), and the run boundary binds `main`'s entries. So **an effect's default is handed out at `main`, nowhere
-   else** — and D26 (§11, decided) removes that one too.
+   (§3.4), and the synthesized entry point binds `main`'s entries with one `with` each, naming the platform's
+   `standard…` implementation of the effect (`app::main with eliot.effect.Console::standardConsole`, D26). So no
+   effect is handed a default anywhere; what is left of the run boundary's exemption is deleted by D26 step 3.
 
 6. **A field holds a value.** A `data` field takes no clause and no row, and there is no stored computation: store
    data describing the work, and perform it where the effects are in scope (§2.3).
@@ -665,7 +667,8 @@ performed, so an uncovered one is not reported, and the value and closed cuts do
 `abort` is bound as its platform discharger's slot binds — `runThrow`'s, `runAbort`'s (`WellKnownTypes.guardDischargers`)
 — because the guarded-return read *is* that discharge, run by the compiler (D26); any other uncovered effect there
 still defaults. The platform **run boundary** (`row/RunBoundaryFunctions`), which is where every effect's chain ends,
-is exempt the same way, and binds `Default`.
+is exempt the same way, and binds `Default` — which since D26 step 2 it never reaches for an effect, because the
+entry point it is generated as writes a `with` per entry of `main`'s clause (`row/EntryPoint`).
 
 **Pure code is untouched**, and so is code that only forwards: a definition with no clauses, no constraints and
 no callee with one is returned unchanged.
@@ -1016,7 +1019,7 @@ These bind every future change to the effect system.
 
 Production code that declares a clause commits to no interpretation: it names no implementation, so whoever runs
 it decides. In production that is the synthesized entry point binding each of `main`'s entries to the platform's
-default; in a test it is one `with`.
+`standard…` implementation of it, with a `with` it writes; in a test it is one `with`.
 
 ```eliot
 effect Terminal {                                  -- the application's own effect
@@ -1432,9 +1435,16 @@ In the order they would be built:
   the control/interpretation family distinction of §3.5 — every effect is bound the same way, and only what is bound
   differs.
 
-  **Steps:** 1. ~~D25 step 4, with a signature bound as its discharger's slot binds~~ (built 2026-10-14). 2. The base's body-less
-  `standard…` implementations, the jvm layer's anonymous ones renamed to them, and the entry point and the LSP wrapper
-  generating the `with`s. 3. The deletions above, D25 step 5 folded in, and Part I rewritten (§1 rule 5, §2, §3.4,
+  **Steps:** 1. ~~D25 step 4, with a signature bound as its discharger's slot binds~~ (built 2026-10-14). 2. ~~The base's
+  body-less `standard…` implementations, the jvm layer's anonymous ones renamed to them, and the entry point and the
+  LSP wrapper generating the `with`s~~ (built 2026-10-14: `row/EntryPoint` writes the source for both, reading `main`'s
+  declared clause; the jvm entry point learns *which* main from an edge-less leaf, `EntryPointTarget`, since its
+  source is no longer one and the main is a demand-scoped key; `standardProcess` and `standardFileSystem` declare their
+  clauses body-less in the base, because what an implementation performs (`Throw[IoError]`) is part of its marker's
+  signature and the layer merge must see it agree; a reference bound to an implementation with no clause for it on
+  the path — `standardConsole` in a library package's closure, which no platform bodies — is now reported at the
+  reference, where the read used to abort silently; example behaviour and instructions are identical, and eliot-test
+  (193) and eliot-build (368, and its launcher) pass unchanged). 3. The deletions above, D25 step 5 folded in, and Part I rewritten (§1 rule 5, §2, §3.4,
   §3.5, §6). Measure first whether eliot-test or eliot-build lean on the boundary's default (the `runMain` injection
   point).
 - **Parameterised ability implementations**: `people.sort with byKey(p -> p.age)`, by D25's mechanism, after §8 item

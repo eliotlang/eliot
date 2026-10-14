@@ -25,3 +25,10 @@ effect Inf {
     */
    def forever(step uses *: Unit) uses *: Unit
 }
+
+/**
+ * The platform's own `Inf`, over an unbounded loop: what the entry point binds for a `main` that declares `uses Inf`.
+ * Declared here and bodied by each platform, so code can be run on the real implementation portably, with `with
+ * standardInf`.
+ */
+implement standardInf: Inf

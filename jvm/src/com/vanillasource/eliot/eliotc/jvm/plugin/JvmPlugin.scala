@@ -11,6 +11,7 @@ import com.vanillasource.eliot.eliotc.stdlib.plugin.StdlibPlugin
 import com.vanillasource.eliot.eliotc.jvm.jargen.{
   GenerateExecutableJar,
   JvmProgramGenerator,
+  EntryPointTargetProcessor,
   SyntheticMainMount,
   SyntheticMainSourceProcessor
 }
@@ -35,8 +36,8 @@ class JvmPlugin extends CompilerPlugin {
 
   // Demand-scoped, not contributing: `-m` selects the monomorphization root, so two examples over the same roots and
   // backend compute identical values for every shared fact and may share one accumulating cache file. The main enters
-  // the fact graph only through the synthetic-entry `SourceContent` leaf (SyntheticMainSourceProcessor), which is
-  // always regenerated and equality-checked, so a shared cache self-heals per main (see Configuration.demandScopedKey).
+  // the fact graph only through the `EntryPointTarget` leaf, which is always regenerated and equality-checked, so a
+  // shared cache self-heals per main (see Configuration.demandScopedKey).
   private val mainKey = demandScopedKey[ValueFQN]("mainFunction")
 
   // Diagnostic in the key's sense — it steers what happens *after* the jar exists and changes no fact — so `run` and
@@ -128,8 +129,8 @@ class JvmPlugin extends CompilerPlugin {
             JvmProgramGenerator(configuration.get(Compiler.targetPathKey).get)
           ) ++ configuration
             .get(mainKey)
-            .map(SyntheticMainSourceProcessor(_))
             .toSeq
+            .flatMap(main => Seq(EntryPointTargetProcessor(main), SyntheticMainSourceProcessor()))
         )
       )
 

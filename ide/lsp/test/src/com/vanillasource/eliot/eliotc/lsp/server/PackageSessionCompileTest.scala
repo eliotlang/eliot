@@ -23,12 +23,16 @@ class PackageSessionCompileTest extends AsyncFlatSpec with AsyncIOSpec with Matc
   private val program = """import eliot.effect.Console
                           |def main uses Console: Unit = printLine("Hello World!")""".stripMargin
 
+  private val unrunnable =
+    "The implementation 'standardConsole' has no 'printLine' here.\n" +
+      "No layer on the path declares that clause of 'standardConsole'; a platform layer is what bodies it."
+
   private val broken = """def broken: String = nosuch"""
 
   "a package session" should "fail a main that nothing in its closure can run" in {
     compiled(Seq(library))(program).asserting(sessions =>
       sessions.map(session => (session.diagnostics.values.flatten.map(_.getMessage).toSeq, monomorphized(session))) shouldBe
-        Seq((Seq("No ability implementation found for ability 'Console' with type arguments []."), Some(false)))
+        Seq((Seq(unrunnable), Some(false)))
     )
   }
 
@@ -57,7 +61,7 @@ class PackageSessionCompileTest extends AsyncFlatSpec with AsyncIOSpec with Matc
         .values
         .flatten
         .map(_.getMessage)
-        .toSeq shouldBe Seq("No ability implementation found for ability 'Console' with type arguments [].")
+        .toSeq shouldBe Seq(unrunnable)
     )
   }
 
