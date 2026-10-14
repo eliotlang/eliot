@@ -47,6 +47,9 @@ lives now.
    moved to named implementations; the anonymous parameter list and the giving primitives deleted. User dischargers
    such as `withConfig` then need nothing of their own, and parameterised ability implementations follow by the same
    mechanism, after §8 item 31.
+9. **D26** (decided 2026-10-14, §11): no effect has a default. Every effect implementation is named, the platform runs
+   `main` by generating a `with` per entry, naming the base's body-less `standard…` implementations, and a guarded
+   signature is bound as its discharger's slot binds. Its first step is D25's step 4; its last folds in D25's step 5.
 
 D20a, D20c and D3 stay open until decided; none blocks the steps above.
 
@@ -59,8 +62,9 @@ D20a, D20c and D3 stay open until decided; none blocks the steps above.
   argument typed only by the entry it binds, an unannotated lambda, is refused (§8 item 31).
 - **Decided, not built:** D25, parameters only on a named implementation and the platform's dischargers binding
   theirs with `with` (steps 1–3 built 2026-10-14: a named implementation's type parameters solved, its `with`
-  around a run of a code parameter, and a run bound as the slot it is passed to binds), then parameterised
-  ability implementations (§11, "Decided, not built").
+  around a run of a code parameter, and a run bound as the slot it is passed to binds); D26, no effect defaults,
+  every effect implementation named and `main` run by explicit passing; then parameterised ability implementations
+  (§11, "Decided, not built").
 - **Undecided:** naming a set of effects in a clause (D20a), storing an effectful computation (D20c), `~`/`&` in user
   space (D3).
 - **Outside this document:** `v0.9` is the first release carrying `uses` (`v0.8` is tagged before it, and its release
@@ -1357,6 +1361,49 @@ In the order they would be built:
   pass-through slot (`computation uses *, Throw[E] with escaping`, declared abstractly in the base), which leaks the
   frame mechanism into every user discharger's signature; keeping parameters on the platform's anonymous
   implementations alone, a construct no user could ever supply.
+- **D26** (2026-10-14): *no effect has a default; every effect implementation is named, and every effect binding is
+  written.* **Amends** D25's *"a default — always parameterless — is given only at `main`"*: after D25 a default
+  reached an effect only at the run boundary and in a guarded signature, and both become explicit passing. Raised from
+  the observation that every discharger already binds with `with` once D25 step 4 is built, so the run boundary was the
+  last place an effect's implementation was searched for.
+
+  **The rule.** The compiler only passes effect implementations explicitly: a `with`, a slot naming one, or a binder
+  the caller filled. `Default` — the two-site search — is an **ability**'s and nothing else's. An anonymous `implement`
+  of an `effect` is an error naming the named form; an ability's anonymous implementation stays its default.
+
+  **The platform runs `main` by explicit passing.** The synthesized entry point (`SyntheticMainSourceProcessor`, and
+  the LSP's wrapper) writes one `with` per entry of `main`'s clause, naming the platform's implementation of it:
+
+  ```eliot
+  implement standardConsole: Console               -- the base: body-less, platform-independent (stdlib)
+  implement standardConsole: Console { … }         -- the jvm layer: the same name, bodied (the layer merge)
+
+  def main = userMain with standardConsole with standardLog    -- what the entry point is generated as
+  ```
+
+  The names are the **base's**, declared body-less beside each interpretation effect and `Inf` and bodied per
+  platform (option (b), chosen over a table of jvm names in the plugin): the generator is platform-independent, and a
+  test can bind the real implementation portably (`body with standardConsole`). They are spelled per effect so one file
+  can name several. The generator maps an effect to its name; an entry with none — a control effect at `main`
+  (`uses Throw[String]`) — is its error, naming the effect and saying it must be discharged, which is D19's rejection
+  with its own message instead of the threading's.
+
+  **A signature is passed explicitly too.** A guarded return's uncovered `raise`/`abort` is bound as the platform
+  discharger's slot binds — `runThrow`'s and `runAbort`'s merged declarations, per platform — because the
+  guarded-return read *is* that discharge, run by the compiler, exactly as the entry point is `main`'s. The read already
+  names `Left` and the intrinsics; it gains the map from `Throw` and `Abort` to their dischargers.
+
+  **What it deletes:** the run boundary's exemption in the write (`BindingWriter`'s `atBoundary`, and
+  `uncoveredDefaults` with it once the signature binds explicitly), the effect half of the two-site search, the
+  threading's "a default needing parameters with nothing to give them" path, the giving primitives (D25 step 5), and
+  the control/interpretation family distinction of §3.5 — every effect is bound the same way, and only what is bound
+  differs.
+
+  **Steps:** 1. D25 step 4, with a signature bound as its discharger's slot binds. 2. The base's body-less
+  `standard…` implementations, the jvm layer's anonymous ones renamed to them, and the entry point and the LSP wrapper
+  generating the `with`s. 3. The deletions above, D25 step 5 folded in, and Part I rewritten (§1 rule 5, §2, §3.4,
+  §3.5, §6). Measure first whether eliot-test or eliot-build lean on the boundary's default (the `runMain` injection
+  point).
 - **Parameterised ability implementations**: `people.sort with byKey(p -> p.age)`, by D25's mechanism, after §8 item
   31 (the lambda is typed by the entry). Runtime track first.
 
@@ -1568,6 +1615,7 @@ each lives:
 | D23 | §2's `with`, §3.1, §4; the record in §11's closed decisions |
 | D24 | §2's table and the parser's refusals, §2.1; the record in §11's closed decisions |
 | D25 | §11's "Decided, not built" until built |
+| D26 | §11's "Decided, not built" until built |
 | D20c (the open question), option 4 | §11 D20c |
 | §8 items 14–17 in comments and tests written on the option-5 line | §8 items 16–19 |
 | §7 item 7 before 2026-10-13 (undischarged control effect at `main`) | closed, §8 item 5 |
