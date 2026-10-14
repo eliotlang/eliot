@@ -4,7 +4,8 @@
 in D20/D21's `uses` surface (2026-10-09/10) with D20c option 5's environments and (b) (2026-10-12), and D22's reading
 of a listed effect, D23's reading of `with`, D24's `uses *` on a definition, compile-track frames and named
 implementations with parameters (2026-10-13), their type parameters solved where they run, their `with` around a
-run of a code parameter, and a run bound as the slot it is passed to binds (2026-10-14). An effect is
+run of a code parameter, a run bound as the slot it is passed to binds, and the control effects as named
+implementations their dischargers bind with `with` (2026-10-14). An effect is
 an ability declared with the `effect` keyword. A definition's `uses` clause says what its caller hands it. An implementation has two halves: its **code**, a
 compile-time name written at every reference by a syntax-directed pass that reads declarations only, and its
 **environment** (an escape frame, a cell, its own parameters), a value threaded after monomorphization — on the
@@ -43,26 +44,29 @@ lives now.
 8. **D25** (decided 2026-10-14, §11): parameters only on a named implementation, and the platform's dischargers bind
    theirs with an ordinary `with`. Its steps, in order: ~~§8 item 30~~ (closed 2026-10-14); ~~a `with name(args)`
    around a run of a code parameter~~ (built 2026-10-14, closing §8 item 32 on the way); ~~a slot's binding carried
-   to the slot a run is passed from~~ (built 2026-10-14, closing §8 item 33); the control effects
-   moved to named implementations; the anonymous parameter list and the giving primitives deleted. User dischargers
+   to the slot a run is passed from~~ (built 2026-10-14, closing §8 item 33); ~~the control effects
+   moved to named implementations~~ (built 2026-10-14, closing §8 items 34 and 35); the anonymous parameter list and
+   the giving primitives deleted. User dischargers
    such as `withConfig` then need nothing of their own, and parameterised ability implementations follow by the same
    mechanism, after §8 item 31.
 9. **D26** (decided 2026-10-14, §11): no effect has a default. Every effect implementation is named, the platform runs
    `main` by generating a `with` per entry, naming the base's body-less `standard…` implementations, and a guarded
-   signature is bound as its discharger's slot binds. Its first step is D25's step 4; its last folds in D25's step 5.
+   signature is bound as its discharger's slot binds. Its first step is D25's step 4 (built 2026-10-14); its last
+   folds in D25's step 5.
 
 D20a, D20c and D3 stay open until decided; none blocks the steps above.
 
 **Open, in order of severity.**
 
-- **Silent:** none known (§8 items 14, 24 and 26 closed 2026-10-13, item 33 on 2026-10-14).
+- **Silent:** none known (§8 items 14, 24 and 26 closed 2026-10-13, items 33 and 34 on 2026-10-14).
 - **Loud, at compile time:** a
   `catch` over a parameter spells its arguments (§7 item 2); a function-typed code parameter's own entries are never
   supplied (§7 item 1); `runThrow("no failure")` with its argument spelled is accepted (§8 item 4); a `with`'s
   argument typed only by the entry it binds, an unannotated lambda, is refused (§8 item 31).
 - **Decided, not built:** D25, parameters only on a named implementation and the platform's dischargers binding
-  theirs with `with` (steps 1–3 built 2026-10-14: a named implementation's type parameters solved, its `with`
-  around a run of a code parameter, and a run bound as the slot it is passed to binds); D26, no effect defaults,
+  theirs with `with` (steps 1–4 built 2026-10-14: a named implementation's type parameters solved, its `with`
+  around a run of a code parameter, a run bound as the slot it is passed to binds, and the control effects named);
+  D26, no effect defaults,
   every effect implementation named and `main` run by explicit passing; then parameterised ability implementations
   (§11, "Decided, not built").
 - **Undecided:** naming a set of effects in a clause (D20a), storing an effectful computation (D20c), `~`/`&` in user
@@ -141,9 +145,10 @@ D20a, D20c and D3 stay open until decided; none blocks the steps above.
    `Throw[AssertionError]` because it raises one itself, and still catches its body's failure. Declaring an effect
    the definition handles and never performs itself is the over-declaration error (§4). An effect the code uses
    through `*` without the clause listing it is invisible to the definition: bound where the code was written, it can
-   be neither caught nor declared there (§2.2). **Only a body-less declaration gives an effect from nothing**, because
-   that is where a frame comes from: the platform's primitives state what they give (§3.4), and the run boundary binds
-   `main`'s entries. So **an effect's default is handed out at `main`, and by platform primitives, nowhere else.**
+   be neither caught nor declared there (§2.2). **A `with` is the only thing that gives an implementation**: a
+   platform's discharger binds its control effect's named implementation with one, over the frame its primitive made
+   (§3.4), and the run boundary binds `main`'s entries. So **an effect's default is handed out at `main`, nowhere
+   else** — and D26 (§11, decided) removes that one too.
 
 6. **A field holds a value.** A `data` field takes no clause and no row, and there is no stored computation: store
    data describing the work, and perform it where the effects are in scope (§2.3).
@@ -238,9 +243,9 @@ effect FileSystem {
 
 **An anonymous `implement` is a default; a named one never is.** An anonymous block in one of the **two sites** —
 the ability's module or the type's module — is the default for its pattern, subject to the existing coherence and
-`where` rules, and is what a declaration with no named implementation binds. It may take **parameters** after its
-pattern (`implement[S] State[S](cell: StateCell[S])`), which are its runtime environment; only a platform primitive
-can supply them today (§3.4). A **named** `implement` may live anywhere, is never searched, is not checked for
+`where` rules, and is what a declaration with no named implementation binds. It may still be written with
+**parameters** after its pattern, which nothing can supply, and which D25 step 5 makes a parse error; no
+implementation in the tree has any since the control effects became named (§3.4). A **named** `implement` may live anywhere, is never searched, is not checked for
 overlap, and its clauses may carry `uses` — what the implementation performs beyond its ability, charged wherever the
 name is bound. It closes over nothing, but it may take **parameters**, written between its name and its ability as a
 definition's are (`implement scripted(answer: String): Terminal`) and supplied by the `with` that binds it
@@ -374,8 +379,8 @@ clause is the callback's own scope (`onError uses *: E => A`), bound where the c
 there is not supplied by the callee (§7 item 1).
 
 **How a listed entry is handled** is rule 5. A definition with a body handles only with what it has: `else` hands
-`computation` to `runAbort`, `catch` to `runThrow`, and a `with` on a slot's entry is a chosen implementation. A
-body-less declaration gives from nothing, and each platform primitive says what in its own clause (§3.4). Doing
+`computation` to `runAbort`, `catch` to `runThrow`, and a `with` on a slot's entry is a chosen implementation. The
+platform's dischargers are no exception: `runThrow` binds `escaping` with a `with` around its run (§3.4). Doing
 neither is *"'body' may perform the effect 'Console' here, which this definition neither handles nor declares"*, at
 the run, with the help naming both fixes; where a slot binds another implementation than the default the caller
 wrote, it is *"'body' was promised the default 'Console', but runs where a slot binds another implementation for
@@ -623,12 +628,25 @@ implementation performing `Throw[GitError]`. A body `with` no reference in its s
 
 **A run's binding is moved onto its slot before anyone reads the declaration** (`row/RunWithHoister`, run by
 `row/processor/SlotBindingProcessor` into `SlotBoundValue`, which is what every caller's write and the environment
-threading read as a declaration). A run is bound by a `with` directly around it, or by being **passed** to a callee's
-slot that names an implementation of a listed entry with `with` (D25 step 3): `catch`'s `computation`, handed to
-`runThrow`'s slot, is bound as that slot binds, and so is the code of every discharger written over `catch`. The
-nearer wins, so a `with` around the run shadows the callee's slot. Only a nullary code parameter's listed abilities
-move, and a callee's slot is not carried for an entry the definition also declares, spelled the same: that entry
-rides (D22, (b)). The runs must agree, and a slot already naming another implementation of that ability is an error.
+threading read as a declaration). A run is bound by a `with` directly around it, or by standing in an actual at a
+callee's slot that names an implementation of a listed entry with `with` (D25 step 3): `catch`'s `computation`, handed
+to `runThrow`'s slot, is bound as that slot binds, and so is the code of every discharger written over `catch`. The run
+need not be the actual itself — `catch({ body; "done" }, …)` binds `body` as a `with` around the whole actual would —
+and the nearest enclosing slot that decides the entry wins: one naming an implementation carries it, one supplying the
+entry with nothing named stops the search, and one riding it passes the search outward, as the binding itself passes
+(a `with` for it around an enclosing block stops it too). A `with` directly around the run is nearer than any slot.
+Only a nullary code parameter's listed abilities move, and a callee's slot is not carried for an entry the definition
+also declares, spelled the same: that entry rides (D22, (b)). What a callee supplies includes the **clause entries** of
+the implementations the slot names: `mocked`'s `Mocking with recording` performs `State[Recording]` in its clauses,
+and `mocked` discharges it with `runStateToValue`, so `State with holding` is carried onto `mocked`'s slot too, and the
+caller writes `recording`'s clause binding as `holding` (D26: an effect's binding is always written). The runs must
+agree, and a slot already naming another implementation for the same entries is an error.
+
+**A slot's `with` binds an entry, not an ability** (`row/SlotBindings`). One written after a clause entry binds that
+entry, even one the definition declares (D23); the parser records its index on the node. One carried from a callee's
+slot names no entry and binds every entry of its ability the definition does **not** declare, and the slot's named
+implementations' clause entries of it — exactly what that callee supplies. So `mocked`'s carried `Throw with escaping`
+binds its `Throw[IoError]`, while its declared `Throw[AssertionError]` keeps riding.
 It reads the definition's own text and the declarations of the callees its runs are passed to, never a body, so a
 binding is still written from declarations. Reading a callee's declaration is what puts it after the recursion gate:
 a value reaches it only when its body cannot reach itself, so no callee it reads reads it back, and a callee the gate
@@ -643,9 +661,11 @@ so it defaults. Nothing keys on a name or a shape.
 (`def head[COND: Bool]: if(COND, String[]) else raise("empty")`) is compile-time code in type position, and
 its `if`/`else`/`raise` are ordinary calls with code slots and phantom binders. What differs is only the scope
 check: a signature's effects are the guard channel's vocabulary, discharged by the guarded-return read rather than
-performed, so an uncovered one defaults instead of being reported, and the value and closed cuts do not apply. The
-same exemption covers the platform **run boundary** (`row/RunBoundaryFunctions`), which is where every effect's
-chain ends.
+performed, so an uncovered one is not reported, and the value and closed cuts do not apply. An uncovered `raise` or
+`abort` is bound as its platform discharger's slot binds — `runThrow`'s, `runAbort`'s (`WellKnownTypes.guardDischargers`)
+— because the guarded-return read *is* that discharge, run by the compiler (D26); any other uncovered effect there
+still defaults. The platform **run boundary** (`row/RunBoundaryFunctions`), which is where every effect's chain ends,
+is exempt the same way, and binds `Default`.
 
 **Pure code is untouched**, and so is code that only forwards: a definition with no clauses, no constraints and
 no callee with one is returned unchanged.
@@ -713,28 +733,33 @@ the carrier existed. They are now three **platform-private leaves**, one per tar
 
 | primitive | shape | jvm | microcontroller (hypothetical) | compile track |
 | --- | --- | --- | --- | --- |
-| escape | `escapeInternal[K, A, R](body uses *, Throw[K]: A, onExit uses *: K => R, onValue uses *: A => R): R` — abortive, never re-entered | a fresh frame object handed to `body`; `exitInternal(frame, err)` leaves through it by identity, and any other frame's exit passes through | a jump buffer (`setjmp`/`longjmp`), or a status flag and a jump (§13's A2) | an evaluator intrinsic, `escapeIntrinsic`/`exitIntrinsic`, the same shape: a fresh frame handed to `body`, exited by identity |
-| cell | `withCellInternal[S, A, R](initial: S, body uses *, State[S]: A, combine uses *: A => S => R): R` — scoped to one call | a one-slot array made per call and handed to `body` | a slot in the primitive's own stack frame | an evaluator intrinsic still keyed by type (`eliot.compiler.Cell`); no compile-track effect is written over it |
+| escape | `escapeInternal[K, A, R](body uses *: ThrowFrame[K] => A, onExit uses *: K => R, onValue uses *: A => R): R` — abortive, never re-entered | a fresh frame object handed to `body`; `exitInternal(frame, err)` leaves through it by identity, and any other frame's exit passes through | a jump buffer (`setjmp`/`longjmp`), or a status flag and a jump (§13's A2) | an evaluator intrinsic, `escapeIntrinsic`/`exitIntrinsic`, the same shape: a fresh frame handed to `body`, exited by identity |
+| cell | `withCellInternal[S, A, R](initial: S, body uses *: StateCell[S] => A, combine uses *: A => S => R): R` — scoped to one call | a one-slot array made per call and handed to `body` | a slot in the primitive's own stack frame | an evaluator intrinsic still keyed by type (`eliot.compiler.Cell`); no compile-track effect is written over it |
 | loop | `foreverInternal` | `while(true)` | the super-loop | never runs (`Inf` is stuck) |
 
-**The control effects' single implementations are anonymous, written over them, and take the frame as a
-parameter** — the frame is their environment:
+**The control effects' single implementations are named, written over them, and take the frame as a parameter** —
+the frame is their environment — and **the platform's discharger binds one with an ordinary `with`**, supplying the
+frame its primitive made (D25 step 4, built 2026-10-14):
 
 ```eliot
-implement[E] Throw[E](frame: ThrowFrame[E]) {           -- jvm layer
+implement[E] escaping(frame: ThrowFrame[E]): Throw[E] {     -- jvm layer
    def raise[A](err: E): A = exitInternal(frame, err)
 }
 
 def runThrow[E, A](obj uses *, Throw[E]: A) uses *: Either[E, A] =
-   escapeInternal(obj, (err: E) -> Left(err), a -> Right(a))
+   escapeInternal((frame: ThrowFrame[E]) -> obj with escaping(frame), (err: E) -> Left(err), a -> Right(a))
 ```
 
-`Abort(frame: AbortFrame[Unit])` likewise over `escapeInternal`; `State[S](cell: StateCell[S])`,
-`Writer[W](cell: WriterCell[W])` and `Dep[X](cell: DepCell[X])` over `withCellInternal`. **Each primitive copy states
-in its own clause what it gives its `body`** (rule 5): `Throw`'s `escapeInternal` gives `Throw[K]`, `Abort`'s gives
-`Abort`, the cell copies give `State[S]`, `Writer[S]` and `Dep[S]`. Being body-less, a primitive gives that default
-from nothing, and **it gives the default's environment too, by handing the thunk a fresh frame**. Every discharger
-hands its code to one of them; the dischargers themselves name nothing.
+`aborting(frame: AbortFrame[Unit]): Abort` likewise over `escapeInternal`; `holding(cell: StateCell[S]): State[S]`,
+`writing(cell: WriterCell[W]): Writer[W]` and `providing(cell: DepCell[X]): Dep[X]` over `withCellInternal`. **A
+primitive gives no effect**: it hands a fresh frame to a function, and what runs on that frame is the `with` its
+caller writes. The `with` around the run of `obj` is moved onto `runThrow`'s slot of the **merged** value (§3.1), so
+the base's body-less signature and the jvm body stay textually equal and a caller reads `escaping` off the slot per
+platform — the overlay's own on the compile track. Every other discharger (`catch`, `else`, `runStateToValue`, …, and
+every user discharger over them) writes no `with` and names nothing: its code is bound as the slot it is run in binds
+it (§3.1), so `escaping` reaches `catch`'s slot, then `mocked`'s. That costs one wrapper lambda per discharger
+instantiation, `frame -> obj(frame)` where the primitive was handed `obj` itself (+2.9% jar size over the examples); an
+η-reduction in the backend would remove it.
 
 **An implementation is code plus an environment** (D20c option 5, decided (iii) and 2(c), built 2026-10-12). The code
 is the binding, as above — a compile-time name, specialised on by monomorphization. The environment is threaded
@@ -781,7 +806,9 @@ the block the implementation's parameters too, after its clauses' frames, and a 
 around it supplied: the hoisting left the binder's call `scripted$with(name, body)` at the run, so the threading
 treats it as any other, and the run finds them there. A run whose binding was carried from the slot it is passed to
 runs on the frame that slot gives the block it stands in (a `Frame` marked `bySlot`), clauses and parameters alike,
-since that is where the callee built them; a received frame is never taken this way, as its clauses are the caller's.
+since that is where the callee built them — a frame for an entry the slot supplies, or for one it rides, which the
+callee hands on from its own receipt; a frame this definition received is never taken this way, as its clauses are
+the caller's.
 
 **What that does and does not remove.** There is no search across calls: a frame reaches a definition only as a value
 passed to it, so a helper's own `catch` or `State` cannot intercept the effects of a block its caller wrote with
@@ -815,11 +842,11 @@ out — so `withCell` may not be a base name, and `escape` follows for uniformit
 `catch`, `else`, `runStateToValue`, `runStateToFinalState`, `runWriterToValue` and `runWriterToLog` are ordinary
 platform-independent bodies over those and stay in the base. Eliot has no *layer*-private visibility — `private` is
 module-scoped — so each jvm module needing a primitive declares its own copy: five copies of two shapes, which also
-separates the frames for free and lets each copy name the one effect it gives.
+separates the frames for free and lets each copy name the frame type it makes.
 
 **The compile track is threaded too** (built 2026-10-13). Its control effects — `Abort` and `Throw`, the only ones that
 run at compile time — are the compile-track overlay's (`stdlib/eliot/compiler/eliot/effect/`), spelled exactly as the
-jvm layer's (`implement Abort(frame: AbortFrame[Unit])`, so the two are one implementation and the overlay's supersedes
+jvm layer's (`implement aborting(frame: AbortFrame[Unit]): Abort`, so the two are one implementation and the overlay's supersedes
 on that track) over the evaluator's own `escapeIntrinsic`/`exitIntrinsic` (`EffectIntrinsics`): a fresh frame with
 identity is handed to the body, and an exit leaves through exactly the frame it was given. The names differ from the
 jvm leaves' on purpose — an intrinsic serves both tracks' evaluators, and the runtime track must keep finding no binding
@@ -1127,6 +1154,8 @@ items keep one line, and their full record is in git history (§13).
 | 30 | a named implementation's own type parameters were never solved for a binding: dispatch ran its clauses at `T := Type`, so `pick(42) with showing`, for `implement[T ~ Show[T]] showing: Source[T]`, lost `Show[Int]` (reported as *"This native value produces 'String' … states no meta transfer"* at `Show`), and one taking parameters as well was refused where it was bound | 2026-10-14 (D25 step 1): solved where the implementation runs, by matching its pattern against the entry's ground arguments as the two-site search does (`NamedImplementationArguments`), at dispatch and in the environment threading alike; a pattern that does not match is an error at the use, and arguments that do not fit are one at the `with` |
 | 32 | a slot naming a **constrained** named implementation was rejected: `shown(body uses *, Source[A] with showing: String) uses *: String = body`, for `implement[T ~ Show[T]] showing: Source[T]`, was *"'body' may perform the effect 'Show' here, which this definition neither handles nor declares"*, since the given-check read the implementation's `~` constraint, an ability, as one of the effects its clauses perform (found building D25 step 2, where a `with` around a run lands on the slot; Writer's `W ~ Combine[W]` implementation meets it at step 4) | 2026-10-14: the given-check reads only what the implementation's row lists, as the threading does (`BindingWriter.performedEntries`); a constraint's `Default` is the two-site search's wherever it is written |
 | 33 | a run passed to a callee's slot that names an implementation was compiled against the definition's own slot: `def passing(body uses *, Terminal with other: Unit) uses *: String = run(body)`, for `run(body uses *, Terminal with fixed: Unit)`, ran `other` and silently dropped `fixed` (found building D25 step 3) | 2026-10-14 (D25 step 3): the run is bound as the slot it is passed to binds, and a definition's slot naming another implementation is the hoisting's *"The slot of 'body' names another implementation of 'Terminal' than the `with` around its runs."* |
+| 34 | the compile track's raw read of an implementation's `where` guard answered a plausible wrong value once a discharger bound its implementation with arguments: `runThrow`'s body read raw settled to an unlowered `escaping$with(frame, …)` call, which the escape took for a decided value and handed to `onValue`, so `accepted("/api")` read `false` where the program says `true` (silent, found building D25 step 4) | 2026-10-14: an implementation's binder the threading did not lower counts as undecided (`EffectIntrinsics.undecided`), so the raw read stays stuck and the threaded one decides |
+| 35 | a slot's `with` bound an ability, not an entry: carrying `escaping` onto `mocked`'s slot for its supplied `Throw[IoError]` also captured its declared `Throw[AssertionError]`, which must ride, and the run asked for arguments no `with` supplied (loud, found building D25 step 4) | 2026-10-14: a slot `with` records the clause entry it was written after, and a carried one binds only the entries the definition does not declare (`row/SlotBindings`) |
 
 Items 9–13 were found 2026-10-05 while designing D20 and share one cause: a row on a slot both *marked a block* and
 *minted bindings*, and nothing kept the block inside the call or checked that the callee had the binding it handed
@@ -1347,15 +1376,19 @@ In the order they would be built:
      declaration cannot lead back. A decision on the engine's in-progress chain (`activeFactKeys`) was the
      alternative and was not taken: the cached fact would depend on demand order and miss the edge it declined to
      read.
-  4. The control effects — `Throw`, `Abort`, `State`, `Writer`, `Dep`, on both tracks — moved to named
-     implementations bound by their platform dischargers; the primitives' clauses lose the entry they give.
+  4. ~~The control effects moved to named implementations~~ — built 2026-10-14: `escaping`, `aborting` (both tracks),
+     `holding`, `writing`, `providing`, each bound by its discharger's `with` around the run; the primitives' clauses
+     lost the entry they gave (§3.4). It needed the carry to reach a run nested inside an actual and the clause
+     entries of a slot's implementations, and a slot `with` bound per entry (§3.1), and found §8 items 34 and 35.
+     Example behaviour is identical; 20 jars grow by one wrapper lambda per discharger instantiation (+2.9% size).
+     eliot-test (193) and eliot-build (368, and its launcher) pass unchanged.
   5. The anonymous parameter list, `ImplementationParameters`' anonymous route, and the giving primitives deleted; §1
      rule 5, §2 and §3.4 rewritten. The first sign-off item of §3.4's "Decided in the code" (an anonymous
      implementation's parameters as part of its pattern key) lapses.
 
   **On its path:** `Writer[W]`'s `W ~ Combine[W]` makes its implementation a *constrained* named one, where an
   undiagnosed codegen failure was measured — "Function not implemented." at `Combine`'s own marker, 2026-09-12, with
-  an abstract `implement[W ~ Combine[W]] writerByCell: Writer[W]`.
+  an abstract `implement[W ~ Combine[W]] writerByCell: Writer[W]`. Step 4's bodied `writing` did not meet it.
 
   **Rejected:** `with Ability(args)` for a default (the reversed point); naming the platform's implementation on every
   pass-through slot (`computation uses *, Throw[E] with escaping`, declared abstractly in the base), which leaks the
@@ -1399,7 +1432,7 @@ In the order they would be built:
   the control/interpretation family distinction of §3.5 — every effect is bound the same way, and only what is bound
   differs.
 
-  **Steps:** 1. D25 step 4, with a signature bound as its discharger's slot binds. 2. The base's body-less
+  **Steps:** 1. ~~D25 step 4, with a signature bound as its discharger's slot binds~~ (built 2026-10-14). 2. The base's body-less
   `standard…` implementations, the jvm layer's anonymous ones renamed to them, and the entry point and the LSP wrapper
   generating the `with`s. 3. The deletions above, D25 step 5 folded in, and Part I rewritten (§1 rule 5, §2, §3.4,
   §3.5, §6). Measure first whether eliot-test or eliot-build lean on the boundary's default (the `runMain` injection

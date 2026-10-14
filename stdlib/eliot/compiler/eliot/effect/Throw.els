@@ -9,21 +9,22 @@ effect Throw[E] {
 /**
  * The compile-time `Throw[E]` implementation: `raise` leaves through the frame its `runThrow` made, carrying the error.
  *
- * Its parameter is that frame, handed along the declared chain by the environment threading (`docs/effects.md` §3.4).
- * A signature's `raise` is discharged by the guarded-return read, which gives the signature that frame and reads what
- * left through it as the rejection, with its author's message. Spelled exactly as the jvm layer spells it, so the two
- * are one implementation and this one supersedes the borrowed one on the compile track.
+ * Named, as every effect implementation is (`docs/effects.md` D26): `runThrow` binds it with `with`, supplying the
+ * frame, which the environment threading hands along the declared chain (§3.4). A signature's `raise` is bound as
+ * `runThrow`'s slot binds it, and discharged by the guarded-return read, which installs the frame and reads what left
+ * through it as the rejection, with its author's message. Spelled exactly as the jvm layer spells it, so the two are one
+ * implementation and this one supersedes the borrowed one on the compile track.
  */
-implement[E] Throw[E](frame: ThrowFrame[E]) {
+implement[E] escaping(frame: ThrowFrame[E]): Throw[E] {
    def raise[A](err: E): A = exitIntrinsic(frame, err)
 }
 
 /**
- * Discharge `Throw[E]` on the compile track: `Right(a)` if the computation finished, `Left(err)` if it left. The
- * platform body of the base's body-less signature.
+ * Discharge `Throw[E]` on the compile track by running the computation bound to `escaping` over a fresh frame:
+ * `Right(a)` if it finished, `Left(err)` if it left. The platform body of the base's body-less signature.
  */
 def runThrow[E, A](obj uses *, Throw[E]: A) uses *: Either[E, A] =
-   escapeIntrinsic(obj, (err: E) -> Left(err), a -> Right(a))
+   escapeIntrinsic((frame: ThrowFrame[E]) -> obj with escaping(frame), (err: E) -> Left(err), a -> Right(a))
 
 /**
  * The frame a `raise` leaves through: made by `escapeIntrinsic`. It has no constructor, so nothing else can make one.
@@ -31,11 +32,11 @@ def runThrow[E, A](obj uses *, Throw[E]: A) uses *: Either[E, A] =
 type ThrowFrame[K]
 
 /**
- * Make a fresh frame, run `body` with it, and answer `onValue` of its result, or `onExit` of what an `exitIntrinsic`
- * through that frame carried. Answered by the evaluator (`monomorphize/processor/EffectIntrinsics`); `body` is given
- * `Throw[K]` and its frame. Named apart from the jvm layer's `escapeInternal`, as `eliot.effect.Abort`'s is.
+ * Make a fresh frame, hand it to `body`, and answer `onValue` of its result, or `onExit` of what an `exitIntrinsic`
+ * through that frame carried. Answered by the evaluator (`monomorphize/processor/EffectIntrinsics`); it gives no
+ * effect. Named apart from the jvm layer's `escapeInternal`, as `eliot.effect.Abort`'s is.
  */
-private def escapeIntrinsic[K, A, R](body uses *, Throw[K]: A, onExit uses *: K => R, onValue uses *: A => R) uses *: R
+private def escapeIntrinsic[K, A, R](body uses *: ThrowFrame[K] => A, onExit uses *: K => R, onValue uses *: A => R) uses *: R
 
 /**
  * Leave through `frame`, carrying `err`. Answered by the evaluator; stuck when `frame` is not an installed frame.

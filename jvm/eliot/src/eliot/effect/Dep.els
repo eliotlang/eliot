@@ -6,18 +6,19 @@ effect Dep[X] {
 
 /**
  * The JVM `Dep[X]` implementation — the single one for this platform, the reader's `ask`: `dependency` reads the cell
- * its `provide` made and handed to exactly the computation it provides for.
+ * its `provide` made and bound to exactly the computation it provides for with `with`. Named, as every effect
+ * implementation is (`docs/effects.md` D26).
  */
-implement[X] Dep[X](cell: DepCell[X]) {
+implement[X] providing(cell: DepCell[X]): Dep[X] {
    def dependency: X = readCellInternal(cell)
 }
 
 /**
- * Discharge `Dep[X]` by installing a cell for `X` holding `x` and running the computation inside it, keeping only its
- * result — nothing writes this cell, so its final content is `x` again. The platform body of the base's body-less
- * signature.
+ * Discharge `Dep[X]` by installing a cell for `X` holding `x` and running the computation bound to `providing` over it,
+ * keeping only its result — nothing writes this cell, so its final content is `x` again. The platform body of the base's
+ * body-less signature.
  */
-def provide[X, A](x: X, computation uses *, Dep[X]: A) uses *: A = withCellInternal(x, computation, a -> _ -> a)
+def provide[X, A](x: X, computation uses *, Dep[X]: A) uses *: A = withCellInternal(x, (cell: DepCell[X]) -> computation with providing(cell), a -> _ -> a)
 
 /**
  * The cell `dependency` reads: made by `withCellInternal`. It has no constructor, so nothing else
@@ -26,11 +27,11 @@ def provide[X, A](x: X, computation uses *, Dep[X]: A) uses *: A = withCellInter
 type DepCell[S]
 
 /**
- * Make a fresh cell holding `initial`, run `body` with it, and answer the result paired with the cell's final content.
+ * Make a fresh cell holding `initial`, hand it to `body`, and combine the result with the cell's final content.
  * `eliot.effect.State`'s leaf of the same shape and purpose; per-module `private` means each module declares its own.
- * Implemented by the backend. `body` is given `Dep[S]` and the cell, as `State`'s copy gives `State[S]` (D20 rule 5).
+ * Implemented by the backend; it gives no effect.
  */
-private def withCellInternal[S, A, R](initial: S, body uses *, Dep[S]: A, combine uses *: A => S => R) uses *: R
+private def withCellInternal[S, A, R](initial: S, body uses *: DepCell[S] => A, combine uses *: A => S => R) uses *: R
 
 /**
  * The content of `cell`. Implemented by the backend.

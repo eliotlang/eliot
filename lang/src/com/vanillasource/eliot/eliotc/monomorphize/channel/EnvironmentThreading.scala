@@ -22,6 +22,7 @@ import com.vanillasource.eliot.eliotc.monomorphize.fact.{
   MonomorphicValue
 }
 import com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedExpression.SignatureView
+import com.vanillasource.eliot.eliotc.row.SlotBindings
 import com.vanillasource.eliot.eliotc.row.fact.SlotBoundValue
 import com.vanillasource.eliot.eliotc.operator.fact.{OperatorResolvedExpression, OperatorResolvedValue}
 import com.vanillasource.eliot.eliotc.platform.Platform
@@ -570,9 +571,11 @@ object EnvironmentThreading {
     ): CompilerIO[(Seq[Frame], Seq[Part])] =
       listed(callee, slot)
         .flatMap(_.traverse {
+          // Given where the callee runs the block, as a supplied entry's frame is: a run of this definition's code
+          // carried from the slot may take it ([[slotGiven]]).
           case Listed.Rides(entry, binding) =>
             shapeOf(entry, binding).map { shape =>
-              val frame = held(entry, binding, shape)
+              val frame = held(entry, binding, shape).copy(bySlot = true)
               (frame, frame.parts)
             }
           case Listed.Supplied(entry, None) =>
@@ -583,8 +586,9 @@ object EnvironmentThreading {
           case Listed.Supplied(entry, Some(marker)) =>
             for {
               clauses      <- namedClauses(marker)
+              named        <- slotImplementations(callee, slot.parameterIndex)
               clauseFrames <- clauses.traverse { clauseEntry =>
-                                val binding = clauseBinding(callee, clauseEntry)
+                                val binding = clauseBinding(callee, clauseEntry, named, marker)
                                 shapeOf(clauseEntry, binding).map(shape => held(clauseEntry, binding, shape))
                               }
               own          <- namedOwn(entry, marker)
@@ -619,8 +623,11 @@ object EnvironmentThreading {
                         case Some(frame) => frame.pure[CompilerIO]
                         case None        =>
                           for {
+                            named        <- slotImplementations(mv, index)
                             clauseFrames <- namedClauses(marker).flatMap(
-                                              _.traverse(clause => lookup(context, clause, clauseBinding(mv, clause), name))
+                                              _.traverse(clause =>
+                                                lookup(context, clause, clauseBinding(mv, clause, named, marker), name)
+                                              )
                                             )
                             own          <- runArguments(context, entry, marker, name)
                           } yield Frame(entry, namedBinding(marker), clauseFrames, own)
@@ -684,10 +691,10 @@ object EnvironmentThreading {
       for {
         named <- slotImplementations(value, slot.parameterIndex)
         rides <- ridingFlags(value, slot)
-        listing <- slot.entries.zip(rides).traverse {
-                   case (entry, rides) if !rides || named.contains(entry.ability) =>
-                     (Listed.Supplied(entry, named.get(entry.ability)): Listed).pure[CompilerIO]
-                   case (entry, _)                                                 =>
+        listing <- slot.entries.zip(rides).zipWithIndex.traverse {
+                   case ((entry, rides), index) if !rides || named.forEntry(index, entry.ability, rides).isDefined =>
+                     (Listed.Supplied(entry, named.forEntry(index, entry.ability, rides)): Listed).pure[CompilerIO]
+                   case ((entry, _), _)                                                                            =>
                      value.effects.received.find(_.entry == entry) match {
                        case Some(received) =>
                          (Listed.Rides(
@@ -700,15 +707,22 @@ object EnvironmentThreading {
                  }
       } yield listing
 
-    /** The binding a slot's named implementation performs `clause` on: the definition's own, where its row has the
-      * entry — the caller writes its binding there, which it also hands the definition — and the default otherwise,
-      * which is what the caller writes for a clause the slot supplies. Either way the frame is given where the block runs
-      * (`docs/effects.md` D20c, decided (b)).
+    /** The binding the implementation `marker` a slot names performs `clause` on: the definition's own, where its row
+      * has the entry — the caller writes its binding there, which it also hands the definition — and otherwise what the
+      * slot binds the clause's ability to, which is what the caller writes for a clause the slot supplies: another
+      * implementation the slot `named`, or the default (`docs/effects.md` D26). Either way the frame is given where the
+      * block runs (D20c, decided (b)).
       */
-    private def clauseBinding(value: Specialisation, clause: Entry): GroundValue =
+    private def clauseBinding(
+        value: Specialisation,
+        clause: Entry,
+        named: SlotNamed,
+        marker: ValueFQN
+    ): GroundValue =
       value.effects.received
         .find(_.entry == clause)
         .flatMap(received => value.typeArguments.lift(received.binderIndex))
+        .orElse(named.forClause(marker, clause.ability).map(namedBinding))
         .getOrElse(defaultBinding)
 
     /** Whether each entry of `slot` **rides** the definition's own row rather than being supplied by the slot (§2.2) —
@@ -728,21 +742,21 @@ object EnvironmentThreading {
     /** The implementations a slot's declared type names with `with`, by ability. The row phase strips them from the
       * signature it hands on, so they are read off the bound declaration, as the row phase read them.
       */
-    private def slotImplementations(value: Specialisation, index: Int): CompilerIO[Map[AbilityFQN, ValueFQN]] =
+    private def slotImplementations(value: Specialisation, index: Int): CompilerIO[SlotNamed] =
       getFactOrAbort(SlotBoundValue.Key(value.vfqn, track.platform)).flatMap { bound =>
-        SignatureView
-          .of(bound.value.signature)
-          .parameters
-          .lift(index)
-          .toSeq
-          .flatMap(tpe => slotMarkers(tpe.value))
-          .traverse(marker => abilityOfMarker(marker).map(_.map(_ -> marker)))
-          .map(_.flatten.toMap)
+        val named = SignatureView.of(bound.value.signature).parameters.lift(index).toSeq.flatMap(tpe => SlotBindings.of(tpe.value))
+        named
+          .traverse(n => abilityOfMarker(n.implementation.value).map(_.map(n.implementation.value -> _)))
+          .map(abilities => SlotNamed(named, abilities.flatten.toMap))
       }
 
-    private def slotMarkers(tpe: OperatorResolvedExpression): Seq[ValueFQN] = tpe match {
-      case OperatorResolvedExpression.WithBinding(subject, implementation) => slotMarkers(subject.value) :+ implementation.value
-      case _                                                               => Seq.empty
+    /** The implementations a slot names, and which entries each binds ([[SlotBindings]]). */
+    private case class SlotNamed(named: Seq[SlotBindings.Named], abilities: Map[ValueFQN, AbilityFQN]) {
+      def forEntry(index: Int, ability: AbilityFQN, declared: Boolean): Option[ValueFQN] =
+        SlotBindings.forEntry(named, index, ability, declared, abilities.get).map(_.value)
+
+      def forClause(implementation: ValueFQN, ability: AbilityFQN): Option[ValueFQN] =
+        SlotBindings.forClause(named, implementation, ability, abilities.get).map(_.value)
     }
 
     private def abilityOfMarker(marker: ValueFQN): CompilerIO[Option[AbilityFQN]] =
@@ -772,8 +786,9 @@ object EnvironmentThreading {
         case Listed.Supplied(entry, None)         => shapeOf(entry, defaultBinding).map(_.types)
         case Listed.Supplied(entry, Some(marker)) =>
           for {
+            named   <- slotImplementations(value, slot.parameterIndex)
             clauses <- namedClauses(marker).flatMap(
-                         _.flatTraverse(clause => shapeOf(clause, clauseBinding(value, clause)).map(_.types))
+                         _.flatTraverse(clause => shapeOf(clause, clauseBinding(value, clause, named, marker)).map(_.types))
                        )
             own     <- namedOwn(entry, marker)
           } yield clauses ++ own

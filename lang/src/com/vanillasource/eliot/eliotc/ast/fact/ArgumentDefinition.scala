@@ -109,7 +109,10 @@ object ArgumentDefinition {
       * every named implementation as a `with` after it, in the order written.
       */
     def applyTo(typed: Sourced[Expression]): Sourced[Expression] =
-      Expression.applyWithBindings(rowed(typed), entries.flatMap(_._2))
+      Expression.applyEntryBindings(
+        rowed(typed),
+        entries.zipWithIndex.flatMap { case ((_, bindings), index) => bindings.map(_ -> Some(index)) }
+      )
 
     /** The row goes on the final codomain of the run as written, never inside it: `String => (String => Unit)` is code
       * taking one argument and handing back a function value, so it is `String => {} (String => Unit)`. A nested run

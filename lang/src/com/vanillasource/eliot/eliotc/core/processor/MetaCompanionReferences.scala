@@ -43,7 +43,7 @@ object MetaCompanionReferences {
     case SourceExpression.BlockExpression(lines)                                            =>
       lines.flatMap(line => namesOf(line.expression.value))
     case SourceExpression.EffectfulType(_, resultType)                                      => namesOf(resultType.value)
-    case SourceExpression.WithBinding(subject, _)                                           => namesOf(subject.value)
+    case SourceExpression.WithBinding(subject, _, _)                                        => namesOf(subject.value)
     case _                                                                                  => Seq.empty
   }
 }

@@ -363,13 +363,23 @@ object BindingWriter {
     val parameters = SignatureView.of(orv.signature).parameters
     orv.effectRow.parameterEffects.flatMap { pe =>
       valueParameterNames(orv).lift(pe.parameterIndex).map { name =>
-        val markers   = parameters.lift(pe.parameterIndex).toSeq.flatMap(p => slotBindings(p.value))
-        val withBound = markers.flatMap(marker => abilityOf(marker.value, universe)).toSet
-        val listed    = pe.effects
-          .map(entry => Need(entry.abilityFQN, knownArguments(entry.typeArgs, Map.empty)))
-          .filterNot(need => withBound.contains(need.ability))
-        val clauses   = markers.flatMap(marker =>
-          performedEntries(marker.value, universe).map((ability, arguments) => Need(ability, arguments, Some(marker.value)))
+        val named   = parameters.lift(pe.parameterIndex).toSeq.flatMap(p => SlotBindings.of(p.value))
+        val listed  = pe.effects.zipWithIndex
+          .map((entry, index) => (index, Need(entry.abilityFQN, knownArguments(entry.typeArgs, Map.empty))))
+          .filterNot((index, need) =>
+            SlotBindings
+              .forEntry(named, index, need.ability, ridesOwn(own)(need.ability -> need.arguments), abilityOf(_, universe))
+              .isDefined
+          )
+          .map(_._2)
+        // A clause entry the slot names another implementation for is bound to that one (D26), and the slot's `with` is
+        // what the runs are held to, as for a listed entry it names.
+        val clauses = named.flatMap(n =>
+          performedEntries(n.implementation.value, universe)
+            .filterNot((ability, _) =>
+              SlotBindings.forClause(named, n.implementation.value, ability, abilityOf(_, universe)).isDefined
+            )
+            .map((ability, arguments) => Need(ability, arguments, Some(n.implementation.value)))
         )
         name -> (listed ++ clauses).filterNot(need => ridesOwn(own)(need.ability -> need.arguments)).distinct
       }
@@ -405,10 +415,15 @@ object BindingWriter {
     val row        = orv.effectRow.returnEffects.map(spelled).toSet
     orv.effectRow.parameterEffects.flatMap { slot =>
       names.lift(slot.parameterIndex).map { name =>
-        val markers   = parameters.lift(slot.parameterIndex).toSeq.flatMap(tpe => slotBindings(tpe.value))
-        val withBound = markers.flatMap(marker => abilityOf(marker.value, universe)).toSet
-        val clauses   = markers.flatMap(marker => universe.lookup(marker.value).toSeq.flatMap(_.effectRow.returnEffects))
-        name -> (slot.effects.filterNot(entry => withBound.contains(entry.abilityFQN)) ++ clauses)
+        val named   = parameters.lift(slot.parameterIndex).toSeq.flatMap(tpe => SlotBindings.of(tpe.value))
+        val clauses =
+          named.flatMap(n => universe.lookup(n.implementation.value).toSeq.flatMap(_.effectRow.returnEffects))
+        val unbound = slot.effects.zipWithIndex.collect {
+          case (entry, index)
+              if SlotBindings.forEntry(named, index, entry.abilityFQN, declared = true, abilityOf(_, universe)).isEmpty =>
+            entry
+        }
+        name -> (unbound ++ clauses)
           .map(spelled)
           .filter(row.contains)
           .map(_._1)
@@ -554,12 +569,6 @@ object BindingWriter {
       case _                                                                                              => None
     }
 
-  /** The implementations a slot's type binds, outermost `with` last, as written. */
-  private def slotBindings(tpe: OperatorResolvedExpression): Seq[Sourced[ValueFQN]] = tpe match {
-    case WithBinding(subject, implementation) => slotBindings(subject.value) :+ implementation
-    case _                                    => Seq.empty
-  }
-
   /** The ability an implementation marker implements, read off its **resolved qualifier** — never off its name. */
   private def abilityOf(marker: ValueFQN, universe: RowChecker.Universe): Option[AbilityFQN] =
     universe.lookup(marker).flatMap(_.name.value.qualifier match {
@@ -623,7 +632,7 @@ object BindingWriter {
     ): Sourced[OperatorResolvedExpression] =
       expr.value match {
         // A `with` puts its implementation in scope for its subject, innermost first, and disappears.
-        case WithBinding(subject, implementation) =>
+        case WithBinding(subject, implementation, _) =>
           abilityOf(implementation.value, universe) match {
             case Some(ability) =>
               val clauses = bindingEntries(implementation.value, universe).map { case (clause, arguments) =>
@@ -702,8 +711,8 @@ object BindingWriter {
       val written  = writeBindings(head, callee.value, existing, scope, args)
       // The resolver puts the `with` right after the arguments it supplies; what follows applies the subject's value.
       val position = args.indexWhere(_.value match {
-        case WithBinding(_, named) => ImplementationParameters.binderOf(named.value) == callee.value
-        case _                     => false
+        case WithBinding(_, named, _) => ImplementationParameters.binderOf(named.value) == callee.value
+        case _                        => false
       })
       if (position < 0) expr.as(applyChain(written, args.map(walk(_, scope))))
       else {
@@ -908,33 +917,32 @@ object BindingWriter {
       val own      = ownEntries(calleeOrv, substitution)
       val rides    = (entry: AbilityConstraint[OperatorResolvedExpression]) =>
         ridesOwn(own)(entry.abilityFQN -> knownArguments(entry.typeArgs, substitution))
-      val declared    = slotBindings(SignatureView.of(calleeOrv.signature).parameters(index).value)
-        .flatMap(marker => abilityOf(marker.value, universe).map(_ -> marker))
-        .toMap
+      val named    = SlotBindings.of(SignatureView.of(calleeOrv.signature).parameters(index).value)
       val entries  = calleeOrv.effectRow.parameterEffects.find(_.parameterIndex === index).toSeq.flatMap(_.effects)
-      val clauses  = declared.values.toSeq.flatMap(marker =>
-        performedEntries(marker.value, universe)
+      val clauses  = named.flatMap(n =>
+        performedEntries(n.implementation.value, universe)
           .filterNot(ridesOwn(own))
-          .map((ability, arguments) => Need(ability, arguments, Some(marker.value)))
+          .map((ability, arguments) => Need(ability, arguments, Some(n.implementation.value)))
+      )
+      val bound    = entries.zipWithIndex.map((entry, position) =>
+        entry -> SlotBindings.forEntry(named, position, entry.abilityFQN, rides(entry), abilityOf(_, universe))
       )
       // An entry the slot binds with `with` is handled by that implementation, even one this callee also declares (D23).
-      entries.filterNot(entry => rides(entry) && !declared.contains(entry.abilityFQN)).foldLeft(
+      bound.filterNot((entry, marker) => rides(entry) && marker.isEmpty).foldLeft(
         scope.copy(clausesGiven = clauses ++ scope.clausesGiven)
-      ) { (acc, entry) =>
+      ) { case (acc, (entry, marker)) =>
         val ability   = entry.abilityFQN
         val arguments = knownArguments(entry.typeArgs, substitution)
         acc.bind(
-          declared
-            .get(ability)
-            .fold(Binding(ability, defaultBinding(anchor), bySlot = true, arguments = arguments))(marker =>
-              Binding(
-                ability,
-                slotImplementation(marker, acc, ridesOwn(own)),
-                byWith = true,
-                bySlot = true,
-                arguments = arguments
-              )
+          marker.fold(Binding(ability, defaultBinding(anchor), bySlot = true, arguments = arguments))(marker =>
+            Binding(
+              ability,
+              slotImplementation(marker, acc, ridesOwn(own), named),
+              byWith = true,
+              bySlot = true,
+              arguments = arguments
             )
+          )
         )
       }
     }
@@ -963,20 +971,33 @@ object BindingWriter {
       * **supplies** — an ability its own declared row lacks — is performed inside the *callee*, which is the whole point
       * of a slot `with`: `transcriptOf`'s `runWriterToLog` gives the double its `Writer[String]`, and the caller writing
       * the actual can neither see nor name it. "Lacks" is by entry: `mocked`'s own `Throw[AssertionError]` does not make
-      * `mockFileSystem`'s `Throw[IoError]` ride. So it is written `Default`, "search at the ground arguments", and the
-      * callee's body is held to giving it where it runs the block ([[thunkRequirements]]). One the callee **rides** is
-      * the caller's own binding, handed on as the callee's received one, so it is written from this scope like any
-      * other reference.
+      * `mockFileSystem`'s `Throw[IoError]` ride. So it is written as the slot binds that ability — the implementation the
+      * slot `named` for it (`docs/effects.md` D26), or else `Default`, "search at the ground arguments" — and the callee's
+      * body is held to giving it where it runs the block ([[thunkRequirements]]). One the callee **rides** is the
+      * caller's own binding, handed on as the callee's received one, so it is written from this scope like any other
+      * reference.
       */
     private def slotImplementation(
         implementation: Sourced[ValueFQN],
         scope: Scope,
-        rides: ((AbilityFQN, Option[Seq[String]])) => Boolean
-    ): OperatorResolvedExpression =
+        rides: ((AbilityFQN, Option[Seq[String]])) => Boolean,
+        named: Seq[SlotBindings.Named]
+    ): OperatorResolvedExpression = {
+      val others            = named.filterNot(_.implementation.value == implementation.value)
+      val supplied          = bindingEntries(implementation.value, universe)
+        .filterNot(rides)
+        .map((ability, arguments) =>
+          (ability, arguments, SlotBindings.forClause(others, implementation.value, ability, abilityOf(_, universe)))
+        )
+      val (byName, default) = supplied.partition(_._3.isDefined)
       boundImplementation(
         implementation,
-        scope.defaulting(bindingEntries(implementation.value, universe).filterNot(rides), implementation)
+        byName.foldLeft(scope.defaulting(default.map((ability, arguments, _) => ability -> arguments), implementation)) {
+          case (acc, (ability, arguments, marker)) =>
+            acc.bind(Binding(ability, slotImplementation(marker.get, scope, rides, others), arguments = arguments))
+        }
       )
+    }
 
     /** How many arguments a callee calls its parameter `index` with, when that parameter is a **callback** — code of
       * function type. A value constructor's parameters are fields, and a field holds a value (D20 rule 6), so it takes
@@ -999,15 +1020,14 @@ object BindingWriter {
       * implementation for them, so the walk continues to the caller's binding instead of the slot supplying one (§2.2).
       */
     private def rides(orv: OperatorResolvedValue, index: Int, slot: Seq[AbilityFQN]): Set[AbilityFQN] = {
-      val withBound = SignatureView
-        .of(orv.signature)
-        .parameters
-        .lift(index)
-        .toSeq
-        .flatMap(tpe => slotBindings(tpe.value))
-        .flatMap(marker => abilityOf(marker.value, universe))
-        .toSet
-      slot.toSet.intersect(orv.effectRow.returnEffects.map(_.abilityFQN).toSet) -- withBound
+      val named = SignatureView.of(orv.signature).parameters.lift(index).toSeq.flatMap(tpe => SlotBindings.of(tpe.value))
+      val row   = orv.effectRow.returnEffects.map(_.abilityFQN).toSet
+      slot.zipWithIndex.collect {
+        case (ability, position)
+            if row.contains(ability) &&
+              SlotBindings.forEntry(named, position, ability, declared = true, abilityOf(_, universe)).isEmpty =>
+          ability
+      }.toSet
     }
 
     /** The abilities a callee's parameter `index` declares, when that parameter is a row position at all. */
@@ -1262,8 +1282,30 @@ object BindingWriter {
           binding.term
         case None                                             =>
           if (isEffect) reportUncovered(ability, at, scope)
-          defaultBinding(at)
+          Option
+            .when(isEffect && scope.signature)(guardDischarge(ability, at, scope))
+            .flatten
+            .getOrElse(defaultBinding(at))
       }
+
+    /** A guarded signature's uncovered control effect, bound as its platform discharger's slot binds
+      * (`docs/effects.md` D26): the guarded-return read is that discharge, run by the compiler. [[None]] for an effect
+      * with no such discharger, or one whose slot names no implementation.
+      */
+    private def guardDischarge(ability: AbilityFQN, at: Sourced[?], scope: Scope): Option[OperatorResolvedExpression] =
+      for {
+        discharger <- WellKnownTypes.guardDischargers.get((ability.moduleName, ability.abilityName))
+        orv        <- universe.lookup(discharger)
+        slot       <- orv.effectRow.parameterEffects.find(_.effects.exists(_.abilityFQN == ability))
+        position    = slot.effects.indexWhere(_.abilityFQN == ability)
+        marker     <- SlotBindings.forEntry(
+                        SignatureView.of(orv.signature).parameters.lift(slot.parameterIndex).toSeq.flatMap(tpe => SlotBindings.of(tpe.value)),
+                        position,
+                        ability,
+                        declared = false,
+                        abilityOf(_, universe)
+                      )
+      } yield slotImplementation(at.as(marker.value), scope, _ => false, Seq.empty)
 
     /** A body `with` that bound nothing: no reference in its subject was written from it. A `with` applies to what
       * escapes its subject — what the subject's calls declare and its own code performs — and to nothing discharged
@@ -1276,7 +1318,7 @@ object BindingWriter {
         scope: Scope
     ): Violation = {
       def innermost(expr: OperatorResolvedExpression): OperatorResolvedExpression = expr match {
-        case WithBinding(inner, _) => innermost(inner.value)
+        case WithBinding(inner, _, _) => innermost(inner.value)
         case other                 => other
       }
       innermost(subject.value) match {

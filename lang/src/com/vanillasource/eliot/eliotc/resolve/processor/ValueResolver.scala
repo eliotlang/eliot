@@ -627,12 +627,12 @@ class ValueResolver
       // lowered here to a call of that implementation's binder declaration around the resolved `with`
       // (`scripted$with(List("Bob"), greet with scripted)`, [[ImplementationParameters]]): the checker types the
       // arguments as any call's, and they stand outside the `with`, so they see none of its bindings.
-      case WithBinding(subject, implementationName, moduleName, arguments) =>
+      case WithBinding(subject, implementationName, moduleName, arguments, entry) =>
         for {
           resolvedSubject <- resolveExpression(subject.value, runtime).map(subject.as)
           marker          <- ImplementationNameResolver.resolve(implementationName, moduleName)
           parameters      <- ImplementationNameResolver.parametersOf(marker)
-          bound            = Expression.WithBinding(resolvedSubject, implementationName.as(marker))
+          bound            = Expression.WithBinding(resolvedSubject, implementationName.as(marker), entry)
           lowered         <- parameters match {
             case ImplementationNameResolver.Parameters.None if arguments.isEmpty =>
               bound.pure[ScopedIO]

@@ -34,15 +34,21 @@ class SlotBindingProcessor
                      getFactIfProduced(SlotBoundValue.Key(callee, key.platform)).map(_.map(callee -> _.value))
                    }
       known      = callees.flatten.toMap
-      abilities <- RunWithHoister.candidates(value, known).toSeq.traverse { marker =>
-                     getFactIfProduced(OperatorResolvedValue.Key(marker, key.platform)).map(_.flatMap {
-                       _.name.value.qualifier match {
-                         case ResolveQualifier.AbilityImplementation(ability, _, _) => Some(marker -> ability)
+      named     <- RunWithHoister.candidates(value, known).toSeq.traverse { marker =>
+                     getFactIfProduced(OperatorResolvedValue.Key(marker, key.platform)).map(_.flatMap { orv =>
+                       orv.name.value.qualifier match {
+                         case ResolveQualifier.AbilityImplementation(ability, _, _) =>
+                           Some((marker, ability, orv.effectRow.returnEffects))
                          case _                                                    => None
                        }
                      })
                    }
-      hoisted    = RunWithHoister.hoist(value, known, abilities.flatten.toMap)
+      hoisted    = RunWithHoister.hoist(
+                     value,
+                     known,
+                     named.flatten.map((marker, ability, _) => marker -> ability).toMap,
+                     named.flatten.map((marker, _, clauses) => marker -> clauses).toMap
+                   )
       _         <- hoisted.errors match {
                      case Seq()  => ().pure[CompilerIO]
                      case errors =>

@@ -66,9 +66,11 @@ object Expression {
     * (`body: {Console} Unit with mockConsole`); a `with` on a def's own return type or inside a row is a parse error by
     * construction, since neither parser admits it. `implementation` is a bare, optionally module-qualified name.
     *
-    * Landed dark (§10.1 step 4): parsed here, rejected at core as not supported yet.
+    * `entry` is the index of the `uses` clause entry a slot's `with` was written after, which is the one entry it binds
+    * (`docs/effects.md` D23); [[None]] in an expression.
     */
-  case class WithBinding(subject: Sourced[Expression], implementation: Sourced[Expression]) extends Expression
+  case class WithBinding(subject: Sourced[Expression], implementation: Sourced[Expression], entry: Option[Int] = None)
+      extends Expression
 
   case class MatchCase(pattern: Sourced[Pattern], body: Sourced[Expression])
 
@@ -116,7 +118,7 @@ object Expression {
         s"{${effects.map(renderAbilityConstraint).mkString(", ")}} ${resultType.value.render}"
       case BlockExpression(lines)                                                               =>
         lines.map(renderBlockLine).mkString("{ ", "; ", " }")
-      case WithBinding(subject, implementation)                                                 =>
+      case WithBinding(subject, implementation, _)                                              =>
         s"${subject.value.render} with ${implementation.value.render}"
     }
 
@@ -255,8 +257,15 @@ object Expression {
 
   /** Fold a `with` chain onto its subject left-associatively: `c with a with b` is `(c with a) with b`. */
   def applyWithBindings(subject: Sourced[Expression], bindings: Seq[Sourced[Expression]]): Sourced[Expression] =
-    bindings.foldLeft(subject) { (acc, implementation) =>
-      Sourced.outline(Seq(acc, implementation)).as(WithBinding(acc, implementation))
+    applyEntryBindings(subject, bindings.map(_ -> None))
+
+  /** [[applyWithBindings]] with each `with` marked by the clause entry it binds, if it binds one. */
+  def applyEntryBindings(
+      subject: Sourced[Expression],
+      bindings: Seq[(Sourced[Expression], Option[Int])]
+  ): Sourced[Expression] =
+    bindings.foldLeft(subject) { case (acc, (implementation, entry)) =>
+      Sourced.outline(Seq(acc, implementation)).as(WithBinding(acc, implementation, entry))
     }
 
   /** The `with name` chain on its own, for a `uses` clause entry (`body uses *, Console with fake: Unit`). */

@@ -73,7 +73,7 @@ object StrictPositivityChecker {
     case Expression.EffectfulType(effects, result)       =>
       effects.flatMap(_.typeArgs.flatMap(negativeOccurrences(dataName, _, positive))) ++
         negativeOccurrences(dataName, result, positive)
-    case Expression.WithBinding(subject, _)              => negativeOccurrences(dataName, subject, positive)
+    case Expression.WithBinding(subject, _, _)           => negativeOccurrences(dataName, subject, positive)
     case Expression.IntegerLiteral(_)                    => Seq.empty
     case Expression.StringLiteral(_)                     => Seq.empty
     case Expression.BlockExpression(_)                   => Seq.empty // blocks are runtime values, never type expressions

@@ -147,7 +147,7 @@ class EnvironmentIntegrationTest extends FullIntegrationTest {
         |   printLine("start")
         |   raise("never caught")
         |}""".stripMargin
-    ).asserting(_ should include("The effect 'Throw' is performed here with nothing to discharge it"))
+    ).asserting(_ should include("No ability implementation found for ability 'Throw' with type arguments [String]."))
   }
 
   "a definition running its block inside its own discharger of an effect it also declares" should

@@ -5,20 +5,23 @@ effect Abort {
 
 /**
  * The JVM `Abort` implementation — the single one for this platform, `Throw` without a reason: `abort` leaves through
- * the frame its `runAbort` made, carrying nothing.
+ * the frame its `runAbort` made, carrying nothing. Named, as every effect implementation is (`docs/effects.md` D26):
+ * `runAbort` binds it with `with`, supplying that frame.
  */
-implement Abort(frame: AbortFrame[Unit]) {
+implement aborting(frame: AbortFrame[Unit]): Abort {
    def abort[A]: A = exitInternal(frame, unit)
 }
 
 /**
- * Discharge `Abort` by installing the frame `abort` leaves through: `Some(a)` if the computation finished, `None` if it
- * short-circuited. The platform body of the base's body-less signature.
+ * Discharge `Abort` by installing the frame `abort` leaves through and running the computation bound to `aborting` over
+ * it: `Some(a)` if the computation finished, `None` if it short-circuited. The platform body of the base's body-less
+ * signature.
  *
  * Its frame is this module's own `escapeInternal`, so it can never be confused with a `Throw[Unit]` frame: the two are
  * different names and the backend keys a frame class on the name it was installed by.
  */
-def runAbort[A](obj uses *, Abort: A) uses *: Option[A] = escapeInternal(obj, (nothing: Unit) -> None, a -> Some(a))
+def runAbort[A](obj uses *, Abort: A) uses *: Option[A] =
+   escapeInternal((frame: AbortFrame[Unit]) -> obj with aborting(frame), (nothing: Unit) -> None, a -> Some(a))
 
 /**
  * The frame an `abort` leaves through: made by `escapeInternal`. It has no constructor, so nothing else
@@ -27,12 +30,12 @@ def runAbort[A](obj uses *, Abort: A) uses *: Option[A] = escapeInternal(obj, (n
 type AbortFrame[K]
 
 /**
- * Make a fresh escape frame, run `body` with it, and answer `Right` of its result or `Left(unit)` if it left through that
+ * Make a fresh escape frame, hand it to `body`, and answer `onValue` of its result or `onExit` of what left through that
  * frame. `eliot.effect.Throw`'s leaf of the same shape and purpose; per-module `private` means each module declares its
- * own, which is also what keeps the two frames apart. Implemented by the backend. `body` is given `Abort` and its frame,
- * as `Throw`'s copy gives `Throw[K]` (D20 rule 5).
+ * own, which is also what keeps the two frames apart. Implemented by the backend. It gives no effect: what runs on the
+ * frame is the `with` its caller writes.
  */
-private def escapeInternal[K, A, R](body uses *, Abort: A, onExit uses *: K => R, onValue uses *: A => R) uses *: R
+private def escapeInternal[K, A, R](body uses *: AbortFrame[K] => A, onExit uses *: K => R, onValue uses *: A => R) uses *: R
 
 /**
  * Leave through `frame`. Implemented by the backend.

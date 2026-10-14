@@ -88,7 +88,7 @@ class EffectSyntaxParserTest extends ProcessorTest(new Tokenizer(), new ASTParse
 
   it should "nest as a whole under an outer binding" in {
     bodyNode("def a: X = c with a with b").asserting {
-      case Some(Expression.WithBinding(Sourced(_, _, Expression.WithBinding(_, inner)), outer)) =>
+      case Some(Expression.WithBinding(Sourced(_, _, Expression.WithBinding(_, inner, _)), outer, _)) =>
         (inner.value.render, outer.value.render) shouldBe ("a", "b")
       case other                                                                                => fail(s"unexpected: $other")
     }
@@ -101,7 +101,7 @@ class EffectSyntaxParserTest extends ProcessorTest(new Tokenizer(), new ASTParse
 
   it should "supply arguments to an implementation that takes parameters" in {
     bodyNode("def a: X = greet with scripted(name, 1)").asserting {
-      case Some(Expression.WithBinding(_, Sourced(_, _, Expression.FunctionApplication(None, name, None, arguments)))) =>
+      case Some(Expression.WithBinding(_, Sourced(_, _, Expression.FunctionApplication(None, name, None, arguments)), _)) =>
         (name.value, arguments.map(_.value.render)) shouldBe ("scripted", Seq("name", "1"))
       case other                                                                                                    => fail(s"unexpected: $other")
     }

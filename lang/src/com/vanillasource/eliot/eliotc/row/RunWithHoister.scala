@@ -26,6 +26,12 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
   * rides the caller's binding (D22, decided (b)), and its frame is given where it runs. A `with` around the run is
   * nearer than the callee's slot and wins.
   *
+  * A run need not be the argument itself: one written anywhere inside an actual at such a slot — `catch({ body;
+  * "done" }, …)` — is bound by that slot as a `with` around the whole actual would bind it. The nearest enclosing slot
+  * that decides the entry wins: one naming an implementation of it carries that implementation, one supplying it with
+  * nothing named stops the search (the run is promised the default there), and one riding it passes the search
+  * outward, as the binding itself passes. A `with` for the entry written around an enclosing block stops it too.
+  *
   * Reading a callee's slots is reading its declaration, never its body — each step is one callee's declaration, read
   * before monomorphization, and the result is written onto the definition's own slot, where its callers read it. It
   * is safe only after the recursion gate: the callees are read as *their* bound declarations, which reach this one
@@ -46,33 +52,39 @@ object RunWithHoister {
   /** What a definition looks like with its runs' bindings moved to their slots, and the runs that disagree. */
   case class Hoisted(value: OperatorResolvedValue, errors: Seq[(Sourced[String], Seq[String])])
 
-  /** The values a run of one of `orv`'s code parameters is passed to directly — the only callees whose bound
-    * declarations [[hoist]] needs.
+  /** The values a run of one of `orv`'s code parameters is written at a slot of, directly or inside the actual — the
+    * only callees whose bound declarations [[hoist]] needs.
     */
   def passedTo(orv: OperatorResolvedValue): Set[ValueFQN] =
-    codeParameters(orv).fold(Set.empty)(parameters => runsIn(orv, parameters).flatMap(_.passedTo.map(_._1)).toSet)
+    codeParameters(orv).fold(Set.empty)(parameters =>
+      runsIn(orv, parameters).flatMap(_.enclosing.collect { case Enclosing.Slot(callee, _) => callee }).toSet
+    )
 
-  /** The implementations a `with` directly around a run of one of `orv`'s code parameters names, those its slots
-    * already name, and those the slots its runs are passed to name — the only ones whose ability [[hoist]] needs to
-    * know. `callees` holds the bound declarations of [[passedTo]].
+  /** The implementations a `with` around a run of one of `orv`'s code parameters or around a block holding it names,
+    * those its slots already name, and those the slots its runs are written at name — the only ones whose ability
+    * [[hoist]] needs to know. `callees` holds the bound declarations of [[passedTo]].
     */
   def candidates(orv: OperatorResolvedValue, callees: Map[ValueFQN, OperatorResolvedValue]): Set[ValueFQN] =
     codeParameters(orv).fold(Set.empty) { parameters =>
       val slots = SignatureView.of(orv.signature).parameters
       val runs  = runsIn(orv, parameters)
-      (runs.flatMap(_.withs) ++ runs.flatMap(calleeSlot(_, callees)) ++
-        parameters.values.flatMap((index, _) => slots.lift(index).toSeq.flatMap(tpe => slotImplementations(tpe.value))))
+      (runs.flatMap(_.withs) ++ runs.flatMap(_.enclosing.flatMap(enclosingImplementations(_, callees))) ++
+        parameters.values.flatMap((index, _) =>
+          slots.lift(index).toSeq.flatMap(tpe => SlotBindings.of(tpe.value).map(_.implementation))
+        ))
         .map(_.value)
         .toSet
     }
 
   /** Move every binding of a run of a code parameter onto its slot. `callees` holds the bound declarations of
-    * [[passedTo]] that exist, and `abilityOf` the ability of each of [[candidates]].
+    * [[passedTo]] that exist, `abilityOf` the ability of each of [[candidates]], and `clauseRows` the entries each of
+    * them performs in its clauses, as its declaration spells them.
     */
   def hoist(
       orv: OperatorResolvedValue,
       callees: Map[ValueFQN, OperatorResolvedValue],
-      abilityOf: Map[ValueFQN, AbilityFQN]
+      abilityOf: Map[ValueFQN, AbilityFQN],
+      clauseRows: Map[ValueFQN, Seq[AbilityConstraint[OperatorResolvedExpression]]]
   ): Hoisted =
     codeParameters(orv) match {
       case None             => Hoisted(orv, Seq.empty)
@@ -82,39 +94,71 @@ object RunWithHoister {
         val own       = orv.effectRow.returnEffects.map(spelled).toSet
         // Per parameter, the implementation each hoisted ability is bound to, and the runs that disagree.
         val decided   = parameters.toSeq.map { case (name, (index, entries)) =>
+          val declared  = entries.map(entry => own.contains(spelled(entry)))
           val listed    = entries.map(_.abilityFQN).toSet
-          val carriable = entries.filterNot(entry => own.contains(spelled(entry))).map(_.abilityFQN).toSet
-          val bindings  = runs
-            .filter(_.parameter.value == name)
-            .map(run => run -> bound(run, listed, carriable, callees, abilityOf))
-          val slotNamed = slotTypes.lift(index).toSeq.flatMap(tpe => slotImplementations(tpe.value))
+          val slotNamed = slotTypes.lift(index).toSeq.flatMap(tpe => SlotBindings.of(tpe.value))
+          val bindings0 = runs.filter(_.parameter.value == name)
+          // What the callee supplies: the listed entries this definition does not declare, and the clause entries of the
+          // implementations the slot names or a `with` around a run names (D26).
+          // An implementation carried here brings its own clause entries, so the set grows until it is closed.
+          def supplied(implementations: Seq[ValueFQN]): Set[AbilityFQN] =
+            (entries ++ implementations.distinct.flatMap(clauseRows.getOrElse(_, Seq.empty)))
+              .filterNot(entry => own.contains(spelled(entry)))
+              .map(_.abilityFQN)
+              .toSet
+          val written0  = slotNamed.map(_.implementation.value) ++ bindings0.flatMap(_.withs.map(_.value))
+          def closed(carriable: Set[AbilityFQN]): Set[AbilityFQN] = {
+            val reached = bindings0.flatMap(run => bound(run, listed, carriable, callees, abilityOf).values)
+            val next    = supplied(written0 ++ reached.map(_.implementation.value))
+            if (next == carriable) carriable else closed(next)
+          }
+          val carriable = closed(supplied(written0))
+          val bindings  = bindings0.map(run => run -> bound(run, listed, carriable, callees, abilityOf))
           val abilities = bindings.flatMap(_._2.keys).distinct
           val chosen    = abilities.flatMap { ability =>
             bindings.flatMap(_._2.get(ability)).headOption.map(ability -> _)
           }.toMap
+          // The entries a binding covers: every listed entry of its ability for a `with` around a run, as written after
+          // each; only those this definition does not declare for a carried one, which names no entry.
+          def covered(ability: AbilityFQN, carried: Boolean): Seq[Int] =
+            entries.indices.filter(i => entries(i).abilityFQN == ability && !(carried && declared(i)))
+          def covers(named: SlotBindings.Named, index: Int): Boolean =
+            named.entry.fold(!declared(index))(_ == index)
           val errors    = abilities.flatMap { ability =>
-            val implementation = chosen(ability).implementation
+            val chosenBound    = chosen(ability)
+            val implementation = chosenBound.implementation
             val disagreeing    = bindings.filterNot(
               _._2.get(ability).map(_.implementation.value).contains(implementation.value)
             )
             val onSlot         = slotNamed
-              .filter(named => abilityOf.get(named.value).contains(ability))
-              .filterNot(_.value == implementation.value)
+              .filter(named => abilityOf.get(named.implementation.value).contains(ability))
+              .filterNot(_.implementation.value == implementation.value)
+              .filter(named => covered(ability, chosenBound.carried).exists(covers(named, _)))
             val carried        = bindings.exists(_._2.get(ability).exists(_.carried))
             disagreeing.map((run, _) => disagreement(run.parameter, ability, carried)) ++
-              onSlot.map(named => slotDisagreement(named, name, ability))
+              onSlot.map(named => slotDisagreement(named.implementation, name, ability))
           }
-          (name, index, chosen.view.mapValues(_.implementation).toMap, errors)
+          val written   = chosen.toSeq.flatMap { (ability, chosenBound) =>
+            val implementation = chosenBound.implementation
+            if (chosenBound.carried)
+              Option
+                .unless(slotNamed.exists(n => n.entry.isEmpty && n.implementation.value == implementation.value))(
+                  SlotBindings.Named(implementation, None)
+                )
+                .toSeq
+            else
+              covered(ability, carried = false)
+                .filterNot(i => slotNamed.exists(n => n.implementation.value == implementation.value && covers(n, i)))
+                .map(i => SlotBindings.Named(implementation, Some(i)))
+          }
+          (name, index, chosen.view.mapValues(_.implementation).toMap, errors, written)
         }
-        val hoisted   = decided.map { case (name, _, chosen, _) => name -> chosen.values.map(_.value).toSet }.toMap
+        val hoisted   = decided.map { case (name, _, chosen, _, _) => name -> chosen.values.map(_.value).toSet }.toMap
         val signature = SignatureView
           .of(orv.signature)
           .withParameters(slotTypes.zipWithIndex.map { case (tpe, index) =>
-            decided.find(_._2 == index).fold(tpe) { case (_, _, chosen, _) =>
-              val present = slotImplementations(tpe.value).map(_.value).toSet
-              chosen.values.filterNot(named => present.contains(named.value)).foldLeft(tpe) { (acc, named) =>
-                acc.as(WithBinding(acc, named))
-              }
+            decided.find(_._2 == index).fold(tpe) { case (_, _, _, _, written) =>
+              written.foldLeft(tpe)((acc, named) => acc.as(WithBinding(acc, named.implementation, named.entry)))
             }
           })
           .toExpression
@@ -128,13 +172,23 @@ object RunWithHoister {
     }
 
   /** One run of a code parameter: the reference, the implementations the `with`s directly around it name, innermost
-    * first, and the callee and parameter index it is passed to as an argument, if it is.
+    * first, and what encloses it, innermost first.
     */
   private case class Run(
       parameter: Sourced[String],
       withs: Seq[Sourced[ValueFQN]],
-      passedTo: Option[(ValueFQN, Int)]
+      enclosing: Seq[Enclosing]
   )
+
+  /** What a run is written inside of that may bind one of its entries. */
+  private enum Enclosing {
+
+    /** The actual at parameter `index` of `callee`, which is the run or holds it. */
+    case Slot(callee: ValueFQN, index: Int)
+
+    /** A `with` naming `implementation` around a block that holds the run. */
+    case Around(implementation: Sourced[ValueFQN])
+  }
 
   /** The implementation a run is bound to for one ability, and whether it was carried from a callee's slot. */
   private case class Bound(implementation: Sourced[ValueFQN], carried: Boolean)
@@ -174,34 +228,44 @@ object RunWithHoister {
   private def runsIn(orv: OperatorResolvedValue, parameters: Map[String, ?]): Seq[Run] =
     orv.runtime.toSeq.flatMap(body => runs(body, parameters.keySet, parameterCount(orv)))
 
-  private def runs(expr: Sourced[OperatorResolvedExpression], inScope: Set[String], skip: Int): Seq[Run] =
+  private def runs(
+      expr: Sourced[OperatorResolvedExpression],
+      inScope: Set[String],
+      skip: Int,
+      enclosing: Seq[Enclosing] = Seq.empty
+  ): Seq[Run] =
     expr.value match {
       case FunctionLiteral(_, _, body) if skip > 0 => runs(body, inScope, skip - 1)
-      case WithBinding(_, _)                       => run(expr, inScope, None).fold(runs(unwrap(expr)._1, inScope, 0))(Seq(_))
-      case ParameterReference(_)                   => run(expr, inScope, None).toSeq
-      case FunctionLiteral(name, _, body)          => runs(body, inScope - name.value, 0)
+      case WithBinding(_, _, _)                    =>
+        run(expr, inScope, enclosing).fold {
+          val (subject, withs) = unwrap(expr)
+          runs(subject, inScope, 0, withs.map(Enclosing.Around(_)) ++ enclosing)
+        }(Seq(_))
+      case ParameterReference(_)                   => run(expr, inScope, enclosing).toSeq
+      case FunctionLiteral(name, _, body)          => runs(body, inScope - name.value, 0, enclosing)
       case FunctionApplication(_, _)               =>
         spine(expr) match {
           case (Sourced(_, _, ValueReference(callee, typeArgs)), arguments) =>
-            typeArgs.flatMap(runs(_, inScope, 0)) ++ arguments.zipWithIndex.flatMap { (argument, index) =>
-              run(argument, inScope, Some(callee.value -> index)).fold(runs(argument, inScope, 0))(Seq(_))
+            typeArgs.flatMap(runs(_, inScope, 0, enclosing)) ++ arguments.zipWithIndex.flatMap { (argument, index) =>
+              val atSlot = Enclosing.Slot(callee.value, index) +: enclosing
+              run(argument, inScope, atSlot).fold(runs(argument, inScope, 0, atSlot))(Seq(_))
             }
           case (head, arguments)                                            =>
-            runs(head, inScope, 0) ++ arguments.flatMap(runs(_, inScope, 0))
+            runs(head, inScope, 0, enclosing) ++ arguments.flatMap(runs(_, inScope, 0, enclosing))
         }
-      case ValueReference(_, typeArgs)             => typeArgs.flatMap(runs(_, inScope, 0))
+      case ValueReference(_, typeArgs)             => typeArgs.flatMap(runs(_, inScope, 0, enclosing))
       case _: IntegerLiteral | _: StringLiteral    => Seq.empty
     }
 
-  /** `expr` as a run of a code parameter in scope — the parameter, possibly under `with`s — passed to `passedTo`. */
+  /** `expr` as a run of a code parameter in scope — the parameter, possibly under `with`s — inside `enclosing`. */
   private def run(
       expr: Sourced[OperatorResolvedExpression],
       inScope: Set[String],
-      passedTo: Option[(ValueFQN, Int)]
+      enclosing: Seq[Enclosing]
   ): Option[Run] = {
     val (subject, withs) = unwrap(expr)
     subject.value match {
-      case ParameterReference(name) if inScope.contains(name.value) => Some(Run(name, withs, passedTo))
+      case ParameterReference(name) if inScope.contains(name.value) => Some(Run(name, withs, enclosing))
       case _                                                         => None
     }
   }
@@ -222,22 +286,63 @@ object RunWithHoister {
       expr: Sourced[OperatorResolvedExpression]
   ): (Sourced[OperatorResolvedExpression], Seq[Sourced[ValueFQN]]) =
     expr.value match {
-      case WithBinding(subject, implementation) =>
+      case WithBinding(subject, implementation, _) =>
         val (inner, withs) = unwrap(subject)
         (inner, withs :+ implementation)
       case _                                    => (expr, Seq.empty)
     }
 
-  /** The implementations the bound slot a run is passed to names, each located at the run, where it binds. */
-  private def calleeSlot(run: Run, callees: Map[ValueFQN, OperatorResolvedValue]): Seq[Sourced[ValueFQN]] =
-    run.passedTo.toSeq.flatMap { (callee, index) =>
-      callees.get(callee).toSeq.flatMap(orv =>
-        SignatureView.of(orv.signature).parameters.lift(index).toSeq.flatMap(tpe => slotImplementations(tpe.value))
-      ).map(named => run.parameter.as(named.value))
+  /** The implementations what encloses a run names: a bound callee's slot's, or the `with` around a block. */
+  private def enclosingImplementations(
+      enclosing: Enclosing,
+      callees: Map[ValueFQN, OperatorResolvedValue]
+  ): Seq[Sourced[ValueFQN]] =
+    enclosing match {
+      case Enclosing.Slot(callee, index)    =>
+        callees.get(callee).toSeq.flatMap(orv =>
+          SignatureView.of(orv.signature).parameters.lift(index).toSeq.flatMap(tpe =>
+            SlotBindings.of(tpe.value).map(_.implementation)
+          )
+        )
+      case Enclosing.Around(implementation) => Seq(implementation)
     }
 
+  /** What decides `ability` for a run, among what encloses it, innermost first: the implementation a slot names for it,
+    * carried and located at the run, where it binds; or [[None]], when a slot supplying it with nothing named or a
+    * `with` around a block binds it first, or nothing encloses it that does. A slot that rides it passes it outward.
+    */
+  private def carried(
+      run: Run,
+      ability: AbilityFQN,
+      callees: Map[ValueFQN, OperatorResolvedValue],
+      abilityOf: Map[ValueFQN, AbilityFQN]
+  ): Option[Sourced[ValueFQN]] =
+    run.enclosing.iterator
+      .map {
+        case enclosing @ Enclosing.Slot(callee, index) =>
+          enclosingImplementations(enclosing, callees).find(named => abilityOf.get(named.value).contains(ability)) match {
+            case Some(named) => Some(Some(run.parameter.as(named.value)))
+            case None        => Option.when(callees.get(callee).exists(supplies(_, index, ability)))(None)
+          }
+        case Enclosing.Around(implementation)        =>
+          Option.when(abilityOf.get(implementation.value).contains(ability))(None)
+      }
+      .collectFirst { case Some(decided) => decided }
+      .flatten
+
+  /** Whether `callee`'s slot at `index` supplies `ability`: lists it, and `callee`'s own clause does not declare it
+    * spelled the same, which would make the slot ride it.
+    */
+  private def supplies(callee: OperatorResolvedValue, index: Int, ability: AbilityFQN): Boolean = {
+    val own = callee.effectRow.returnEffects.map(spelled).toSet
+    callee.effectRow.parameterEffects
+      .filter(_.parameterIndex == index)
+      .flatMap(_.effects)
+      .exists(entry => entry.abilityFQN == ability && !own.contains(spelled(entry)))
+  }
+
   /** What a run is bound to among the slot's listed abilities: its own `with`s — the innermost for each, since it
-    * shadows — over what the callee's slot it is passed to binds among the `carriable` ones.
+    * shadows — over what an enclosing callee's slot binds among the `carriable` ones.
     */
   private def bound(
       run: Run,
@@ -246,8 +351,8 @@ object RunWithHoister {
       callees: Map[ValueFQN, OperatorResolvedValue],
       abilityOf: Map[ValueFQN, AbilityFQN]
   ): Map[AbilityFQN, Bound] =
-    (calleeSlot(run, callees).flatMap(named =>
-      abilityOf.get(named.value).filter(carriable.contains).map(_ -> Bound(named, carried = true))
+    (carriable.toSeq.flatMap(ability =>
+      carried(run, ability, callees, abilityOf).map(ability -> Bound(_, carried = true))
     ) ++ run.withs.reverse.flatMap(named =>
       abilityOf.get(named.value).filter(listed.contains).map(_ -> Bound(named, carried = false))
     )).toMap
@@ -261,7 +366,7 @@ object RunWithHoister {
   ): Sourced[OperatorResolvedExpression] = expr.value match {
     case FunctionLiteral(name, paramType, body) if skip > 0 =>
       expr.as(FunctionLiteral(name, paramType, strip(body, hoisted, skip - 1, shadowed)))
-    case WithBinding(_, _)                                  =>
+    case WithBinding(_, _, _)                               =>
       val (subject, withs) = unwrap(expr)
       subject.value match {
         case ParameterReference(name) if hoisted.contains(name.value) && !shadowed.contains(name.value) =>
@@ -270,8 +375,8 @@ object RunWithHoister {
           else kept.foldLeft(subject)((acc, named) => named.as(WithBinding(acc, named)))
         case _                                                                                       =>
           expr.value match {
-            case WithBinding(inner, implementation) =>
-              expr.as(WithBinding(strip(inner, hoisted, 0, shadowed), implementation))
+            case WithBinding(inner, implementation, entry) =>
+              expr.as(WithBinding(strip(inner, hoisted, 0, shadowed), implementation, entry))
             case _                                  => expr
           }
       }
@@ -282,11 +387,6 @@ object RunWithHoister {
     case ValueReference(name, typeArgs)                     =>
       expr.as(ValueReference(name, typeArgs.map(strip(_, hoisted, 0, shadowed))))
     case _                                                  => expr
-  }
-
-  private def slotImplementations(tpe: OperatorResolvedExpression): Seq[Sourced[ValueFQN]] = tpe match {
-    case WithBinding(subject, implementation) => slotImplementations(subject.value) :+ implementation
-    case _                                    => Seq.empty
   }
 
   private def disagreement(run: Sourced[String], ability: AbilityFQN, carried: Boolean): (Sourced[String], Seq[String]) =

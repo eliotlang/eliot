@@ -112,6 +112,57 @@ class CarriedSlotBindingIntegrationTest extends FullIntegrationTest {
     ).asserting(_ shouldBe "Hello, fixed!;\n<;")
   }
 
+  // D26: a slot's named implementation performs `State[String]` in its clauses, which the slot does not list; the
+  // definition supplies it through `runStateToFinalState`, whose slot names the platform's `holding`.
+  "a clause entry of a slot's implementation" should "be bound as the slot it runs in binds it" in {
+    compileAndRun(
+      """import eliot.effect.Console
+        |
+        |effect Mocking {
+        |   def note(s: String): Unit
+        |}
+        |
+        |implement recording: Mocking {
+        |   def note(s: String) uses State[String]: Unit = putState(state ++ s)
+        |}
+        |
+        |def twice(body uses *: Unit) uses *: Unit = {
+        |   body
+        |   body
+        |}
+        |
+        |def mocked(body uses *, Mocking with recording: Unit) uses *: String = runStateToFinalState("", twice(body))
+        |
+        |def main uses Console: Unit = printLine(mocked(note("b")))""".stripMargin
+    ).asserting(_ shouldBe "bb")
+  }
+
+  // eliot-test's `mocked`: a carried binding names no entry, so it binds the supplied `Throw[Int]` and leaves the
+  // declared `Throw[String]` riding to the caller's `catch`.
+  "a binding carried for one entry of an ability" should "leave a declared entry of the same ability riding" in {
+    compileAndRun(
+      """import eliot.effect.Console
+        |
+        |def guarded(body uses *, Throw[Int], Throw[String]: Unit) uses *, Throw[String]: Unit =
+        |   catch[Int, Unit](body, e -> raise("caught " ++ show(e)))
+        |
+        |def failing uses Throw[Int]: Unit = raise(7)
+        |
+        |def asserting uses Throw[String]: Unit = raise("passed through")
+        |
+        |def outcome(body uses *, Throw[Int], Throw[String]: Unit) uses *: String =
+        |   catch[String, String]({
+        |      guarded(body)
+        |      "none"
+        |   }, e -> e)
+        |
+        |def main uses Console: Unit = {
+        |   printLine(outcome(failing))
+        |   printLine(outcome(asserting))
+        |}""".stripMargin
+    ).asserting(_ shouldBe "caught 7\npassed through")
+  }
+
   "a run passed on in a cycle" should "be reported as recursion" in {
     compileForErrors(
       s"""$terminal

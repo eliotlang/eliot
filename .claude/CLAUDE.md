@@ -676,8 +676,17 @@ parameterised ability implementations.
 implementation threads a value through calls that never mention it. Neither is expressible in a strict pure core, so
 each target ships **escape** (`escapeInternal(body, onExit, onValue)` — on jvm a fresh frame object handed to `body`,
 exited by identity; on the compile track an evaluator intrinsic of the same shape), **cell** (`withCellInternal(initial,
-body, combine)` — a one-slot array local to the call, handed to `body`) and **loop** (`foreverInternal`). The control effects' single implementations are
-written over them, and each jvm copy states in its own clause what it gives its `body` (rule 5). They are private
+body, combine)` — a one-slot array local to the call, handed to `body`) and **loop** (`foreverInternal`). The control
+effects' single implementations are **named** and written over them (`escaping`, `aborting`, `holding`, `writing`,
+`providing`), and each platform discharger binds its own with an ordinary `with` over the frame its primitive made —
+`escapeInternal((frame: ThrowFrame[E]) -> obj with escaping(frame), …)` — so a primitive gives no effect (D25 step 4,
+the first step of **D26**: no effect has a default, every effect implementation is named, and the platform will run
+`main` by generating a `with` per entry; `docs/effects.md` §11). That `with` is hoisted onto the discharger's slot,
+and every discharger over it (`catch`, `else`, `mocked`) has its code bound as the slot it runs in binds it — a run
+nested anywhere in the actual, and the clause entries of the slot's implementations too — so it names nothing. A
+slot's `with` binds an **entry**, not an ability (`row/SlotBindings`): one written after a clause entry binds that
+entry, one carried from a callee binds the entries the definition does not declare. A guarded signature's uncovered
+`raise`/`abort` is bound as `runThrow`'s/`runAbort`'s slot binds (`WellKnownTypes.guardDischargers`). They are private
 because a public cell is Landin's knot (`termination/PurityGuardTest` exists to keep it out), so
 `runThrow`/`runAbort`/`runStateToPair`/`runWriterToPair`/`provide` are **body-less in the base and bodied per
 platform**, while `catch`/`else`/`runStateToValue`/`runStateToFinalState`/`runWriterToValue`/`runWriterToLog` are

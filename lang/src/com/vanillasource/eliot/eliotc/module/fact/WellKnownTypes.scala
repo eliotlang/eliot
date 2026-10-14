@@ -170,6 +170,19 @@ object WellKnownTypes {
     */
   private val controlEffectModules: Seq[ModuleName] = Seq("Abort", "Throw").map(ModuleName(effectPackage, _))
 
+  /** The discharger a guarded signature's uncovered control effect is bound by, keyed by the effect's module and name
+    * (`docs/effects.md` D26): the guarded-return read *is* that discharge, run by the compiler, so a `raise` or `abort`
+    * nothing in the signature discharges is bound as the discharger's slot binds — `runThrow`'s and `runAbort`'s merged
+    * declarations name the platform's implementation (`escaping`, `aborting`) on each track.
+    */
+  val guardDischargers: Map[(ModuleName, String), ValueFQN] =
+    Map(
+      (ModuleName(effectPackage, "Throw"), "Throw") ->
+        ValueFQN(ModuleName(effectPackage, "Throw"), QualifiedName("runThrow", Qualifier.Default)),
+      (ModuleName(effectPackage, "Abort"), "Abort") ->
+        ValueFQN(ModuleName(effectPackage, "Abort"), QualifiedName("runAbort", Qualifier.Default))
+    )
+
   /** `escapeIntrinsic[K, A, R](body uses *, E: A, onExit uses *: K => R, onValue uses *: A => R) uses *: R` in each
     * control effect's overlay module: runs `body` with a fresh frame and answers `onValue` of its result, or `onExit`
     * of what an `exitIntrinsic` through that frame carried.

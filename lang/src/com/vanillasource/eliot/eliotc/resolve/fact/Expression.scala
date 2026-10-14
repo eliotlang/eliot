@@ -35,7 +35,8 @@ object Expression {
     * ([[ImplementationNameResolver]]). Consumed by the `row` phase, which writes the binding into every phantom
     * binder inside the subject and erases the node.
     */
-  case class WithBinding(subject: Sourced[Expression], implementation: Sourced[ValueFQN]) extends Expression
+  case class WithBinding(subject: Sourced[Expression], implementation: Sourced[ValueFQN], entry: Option[Int] = None)
+      extends Expression
 
   case class MatchCase(
       pattern: Sourced[Pattern],
@@ -74,8 +75,8 @@ object Expression {
               .mapN((bt, e) => BlockLine(line.binderName, bt, e))
           )
           .map(BlockExpression.apply)
-      case WithBinding(subject, implementation)            =>
-        f(subject.value).map(s => WithBinding(subject.as(s), implementation))
+      case WithBinding(subject, implementation, entry)     =>
+        f(subject.value).map(s => WithBinding(subject.as(s), implementation, entry))
       case _: IntegerLiteral | _: StringLiteral | _: ParameterReference => expr.pure[F]
     }
 
@@ -98,6 +99,6 @@ object Expression {
         lines
           .map(l => l.binderName.map(n => s"val ${n.value} = ").getOrElse("") + l.expression.value.render)
           .mkString("{ ", "; ", " }")
-      case WithBinding(subject, implementation)    => s"${subject.value.render} with ${implementation.value.show}"
+      case WithBinding(subject, implementation, _) => s"${subject.value.render} with ${implementation.value.show}"
     }
 }

@@ -110,8 +110,10 @@ class GivenEffectIntegrationTest extends FullIntegrationTest {
     ).asserting(_ shouldBe "hi;")
   }
 
-  "a computation promised the default" should "not run inside code passed to a slot binding another implementation" in {
-    compileForErrors(
+  // D26: a run inside an actual is bound by the slot it stands in as a run passed to it directly is — the slot's
+  // `with` covers the whole actual — so `both`'s runs of `program` are bound to `recordingConsole` too.
+  "a computation run inside code passed to a slot binding an implementation" should "be bound as that slot binds" in {
+    compileAndRun(
       recording +
         """
           |def both(first uses *: Unit, second uses *: Unit) uses *: Unit = {
@@ -124,10 +126,6 @@ class GivenEffectIntegrationTest extends FullIntegrationTest {
           |
           |def main uses Console: Unit = printLine(relay(printLine("hi")))
           |""".stripMargin
-    ).asserting(
-      _ should include(
-        "'program' was promised the default 'Console', but runs where a slot binds another implementation for it."
-      )
-    )
+    ).asserting(_ shouldBe "hi;hi;")
   }
 }

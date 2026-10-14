@@ -7,18 +7,19 @@ effect Writer[W] {
 /**
  * The JVM `Writer[W]` implementation — the single one for this platform, `State` restricted to append-only: `tell`
  * joins `w` onto the content of its discharger's cell with the `Combine[W]` monoid, and nothing here can read it back
- * out, which is the whole contract.
+ * out, which is the whole contract. Named, as every effect implementation is (`docs/effects.md` D26).
  */
-implement[W ~ Combine[W]] Writer[W](cell: WriterCell[W]) {
+implement[W ~ Combine[W]] writing(cell: WriterCell[W]): Writer[W] {
    def tell(w: W): Unit = writeCellInternal(cell, combine(readCellInternal(cell), w))
 }
 
 /**
  * Discharge `Writer[W]` by installing the cell `tell` appends to, starting from `empty`, and running the computation
- * inside it: the result paired with what was accumulated. The platform body of the base's body-less signature.
+ * bound to `writing` over it: the result paired with what was accumulated. The platform body of the base's body-less
+ * signature.
  */
 def runWriterToPair[W ~ Combine[W], A](p uses *, Writer[W]: A) uses *: Pair[A, W] =
-   withCellInternal(empty, p, a -> w -> Pair(a, w))
+   withCellInternal(empty, (cell: WriterCell[W]) -> p with writing(cell), a -> w -> Pair(a, w))
 
 /**
  * The cell `tell` appends to: made by `withCellInternal`. It has no constructor, so nothing else
@@ -27,11 +28,11 @@ def runWriterToPair[W ~ Combine[W], A](p uses *, Writer[W]: A) uses *: Pair[A, W
 type WriterCell[S]
 
 /**
- * Make a fresh cell holding `initial`, run `body` with it, and answer the result paired with the cell's final content.
+ * Make a fresh cell holding `initial`, hand it to `body`, and combine the result with the cell's final content.
  * `eliot.effect.State`'s leaf of the same shape and purpose; per-module `private` means each module declares its own.
- * Implemented by the backend. `body` is given `Writer[S]` and the cell, as `State`'s copy gives `State[S]` (D20 rule 5).
+ * Implemented by the backend; it gives no effect.
  */
-private def withCellInternal[S, A, R](initial: S, body uses *, Writer[S]: A, combine uses *: A => S => R) uses *: R
+private def withCellInternal[S, A, R](initial: S, body uses *: WriterCell[S] => A, combine uses *: A => S => R) uses *: R
 
 /**
  * The content of `cell`. Implemented by the backend.

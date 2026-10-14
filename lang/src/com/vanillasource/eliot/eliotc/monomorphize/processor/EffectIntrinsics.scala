@@ -1,5 +1,6 @@
 package com.vanillasource.eliot.eliotc.monomorphize.processor
 
+import com.vanillasource.eliot.eliotc.ast.fact.ImplementationParameters
 import com.vanillasource.eliot.eliotc.module.fact.{Qualifier, ValueFQN}
 import com.vanillasource.eliot.eliotc.module.fact.WellKnownTypes.{
   cellReadFQN,
@@ -146,7 +147,8 @@ object EffectIntrinsics {
         // Nor has a body decided anything whose result still holds an undispatched operation or a stuck escape or exit:
         // it was evaluated read raw, with nothing dispatched or threaded, so an operation in it never ran. Answering
         // would hand a handler a value the operation should have replaced, and a handler that ignores its argument
-        // (`_ -> false`) turns that into a plausible wrong answer.
+        // (`_ -> false`) turns that into a plausible wrong answer. So has one holding a `with` that supplies arguments:
+        // only the threading lowers its binder (`escaping$with(frame, obj)`), which has no body and never reduces.
         if (isNeutral(result) || undecided(result)) None else Some(Right(result))
       } catch { case Exiting(exited, value) if exited == frame => Some(Left(value)) }
     outcome match {
@@ -157,14 +159,14 @@ object EffectIntrinsics {
   }
 
   /** Whether a settled value holds, at its head or in a constructor's or a stuck native's arguments, an ability
-    * **method**'s call — an ability's marker is named after the ability itself and is not a call — or a stuck escape or
-    * exit.
+    * **method**'s call — an ability's marker is named after the ability itself and is not a call — an implementation's
+    * binder the threading did not lower ([[ImplementationParameters.isBinder]]), or a stuck escape or exit.
     */
   private def undecided(v: SemValue): Boolean = v match {
     case VTopDef(fqn, None, spine, _) =>
       (fqn.name.qualifier match {
         case Qualifier.Ability(ability) => fqn.name.name != ability
-        case _                          => false
+        case _                          => ImplementationParameters.isBinder(fqn)
       }) || spine.toList.exists(undecided)
     case VStuckNative(fqn, spine)     =>
       escapeIntrinsicFQNs.contains(fqn) || exitIntrinsicFQNs.contains(fqn) || spine.toList.exists(undecided)

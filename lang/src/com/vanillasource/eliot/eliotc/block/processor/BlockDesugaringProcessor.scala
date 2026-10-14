@@ -76,8 +76,8 @@ class BlockDesugaringProcessor
         ).mapN((s, cs) => expr.as(Expression.MatchExpression(s, cs)))
       case Expression.ValueReference(name, typeArgs)    =>
         typeArgs.traverse(desugar).map(tas => expr.as(Expression.ValueReference(name, tas)))
-      case Expression.WithBinding(subject, impl)        =>
-        desugar(subject).map(s => expr.as(Expression.WithBinding(s, impl)))
+      case Expression.WithBinding(subject, impl, entry) =>
+        desugar(subject).map(s => expr.as(Expression.WithBinding(s, impl, entry)))
       case _: Expression.IntegerLiteral | _: Expression.StringLiteral | _: Expression.ParameterReference =>
         expr.pure[CompilerIO]
     }
@@ -204,7 +204,7 @@ class BlockDesugaringProcessor
     case Expression.ValueReference(_, typeArgs)       => typeArgs.exists(ta => referencesParameter(ta.value, name))
     case Expression.MatchExpression(scrutinee, cases) =>
       referencesParameter(scrutinee.value, name) || cases.exists(c => referencesParameter(c.body.value, name))
-    case Expression.WithBinding(subject, _)           => referencesParameter(subject.value, name)
+    case Expression.WithBinding(subject, _, _)        => referencesParameter(subject.value, name)
     case Expression.BlockExpression(lines)            => lines.exists(l => referencesParameter(l.expression.value, name))
     case _: Expression.IntegerLiteral | _: Expression.StringLiteral => false
   }

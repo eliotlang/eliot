@@ -6,10 +6,11 @@ effect State[S] {
 
 /**
  * The JVM `State[S]` implementation — the single one for this platform: the threaded value lives in the cell its
- * discharger made and handed to exactly the computation it discharges, so `state` reads it and `putState` replaces it,
- * and a helper's own `State` never sees its caller's.
+ * discharger made and bound to exactly the computation it discharges with `with`, so `state` reads it and `putState`
+ * replaces it, and a helper's own `State` never sees its caller's. Named, as every effect implementation is
+ * (`docs/effects.md` D26).
  */
-implement[S] State[S](cell: StateCell[S]) {
+implement[S] holding(cell: StateCell[S]): State[S] {
    def state: S = readCellInternal(cell)
 
    def putState(s: S): Unit = writeCellInternal(cell, s)
@@ -17,13 +18,13 @@ implement[S] State[S](cell: StateCell[S]) {
 
 /**
  * Discharge `State[S]` by installing the cell `state`/`putState` reach, holding `initial`, and running the computation
- * inside it: the result paired with the cell's final content. The platform body of the base's body-less signature.
+ * bound to `holding` over it: the result paired with the cell's final content. The platform body of the base's body-less signature.
  *
  * Nesting is the user's: `runStateToPair(s, runThrow(c))` keeps the state across a `raise`, `runThrow(runStateToPair(s, c))`
  * does not, because the cell is gone when the frame it sat inside is exited.
  */
 def runStateToPair[S, A](initial: S, p uses *, State[S]: A) uses *: Pair[A, S] =
-   withCellInternal(initial, p, a -> s -> Pair(a, s))
+   withCellInternal(initial, (cell: StateCell[S]) -> p with holding(cell), a -> s -> Pair(a, s))
 
 /**
  * The cell `state` and `putState` reach: made by `withCellInternal`. It has no constructor, so nothing else
@@ -32,7 +33,7 @@ def runStateToPair[S, A](initial: S, p uses *, State[S]: A) uses *: Pair[A, S] =
 type StateCell[S]
 
 /**
- * Make a fresh cell holding `initial`, run `body` with it, and answer the result paired with the cell's final content.
+ * Make a fresh cell holding `initial`, hand it to `body`, and combine the result with the cell's final content.
  * The stateful half of the platform's control-flow primitives (`docs/effects.md` §9.6): on the JVM a cell is a one-slot
  * array local to this call, so it is gone when the call returns or is exited through.
  *
@@ -40,11 +41,9 @@ type StateCell[S]
  * that reads the cell is a loop — and the recursion gate (`termination/PurityGuardTest`) exists to keep that out.
  * Implemented by the backend.
  *
- * `body` is given `State[S]`, and with it the cell: a body-less declaration is the only kind that gives an effect from
- * nothing, so the platform's default reaches a discharger's block here and nowhere else (`docs/effects.md` §11, D20
- * rule 5).
+ * It gives no effect: what runs on the cell is the `with` its caller writes (`docs/effects.md` D25).
  */
-private def withCellInternal[S, A, R](initial: S, body uses *, State[S]: A, combine uses *: A => S => R) uses *: R
+private def withCellInternal[S, A, R](initial: S, body uses *: StateCell[S] => A, combine uses *: A => S => R) uses *: R
 
 /**
  * The content of `cell`. Implemented by the backend.

@@ -185,7 +185,7 @@ object EffectSugarDesugarer {
       expr: Sourced[Expression]
   ): Option[(Int, Seq[UnresolvedAbilityConstraint[Sourced[Expression]]])] =
     expr.value match {
-      case WithBinding(subject, _)                 => codomainRow(subject)
+      case WithBinding(subject, _, _)              => codomainRow(subject)
       case FlatExpression(parts) if parts.size > 1 =>
         val arrows = parts.count(isArrow)
         parts.last.value match {
@@ -244,13 +244,13 @@ object EffectSugarDesugarer {
     */
   private def topLevelRowEntries(expr: Sourced[Expression]): Seq[UnresolvedAbilityConstraint[Sourced[Expression]]] =
     expr.value match {
-      case WithBinding(subject, _)         => topLevelRowEntries(subject)
+      case WithBinding(subject, _, _)      => topLevelRowEntries(subject)
       case EffectfulType(effects, _) => effects
       case _                         => Seq.empty
     }
 
   private def isRow(expr: Sourced[Expression]): Boolean = expr.value match {
-    case WithBinding(subject, _) => isRow(subject)
+    case WithBinding(subject, _, _) => isRow(subject)
     case _: EffectfulType        => true
     case _                       => false
   }
@@ -280,8 +280,8 @@ object EffectSugarDesugarer {
     * rides.
     */
   private def thunked(expr: Sourced[Expression]): Sourced[Expression] = expr.value match {
-    case WithBinding(subject, implementation) =>
-      expr.as(WithBinding(thunked(subject), implementation))
+    case WithBinding(subject, implementation, entry) =>
+      expr.as(WithBinding(thunked(subject), implementation, entry))
     case EffectfulType(_, resultType)         =>
       expr.as(
         FunctionApplication(
@@ -297,8 +297,8 @@ object EffectSugarDesugarer {
   /** Erase every effect row from an expression, keeping its payload: a row is declaration metadata and never a type. */
   private def bare(expr: Sourced[Expression]): Sourced[Expression] = expr.value match {
     case EffectfulType(_, resultType)                             => bare(resultType)
-    case WithBinding(subject, implementation)                     =>
-      expr.as(WithBinding(bare(subject), implementation))
+    case WithBinding(subject, implementation, entry)              =>
+      expr.as(WithBinding(bare(subject), implementation, entry))
     case FunctionApplication(moduleName, name, genericArgs, args) =>
       expr.as(FunctionApplication(moduleName, name, genericArgs.map(_.map(bare)), args.map(bare)))
     case FunctionLiteral(parameters, body)                        =>
@@ -330,7 +330,7 @@ object EffectSugarDesugarer {
   private def collectRows(expr: Sourced[Expression]): Seq[Sourced[EffectfulType]] = expr.value match {
     case et @ EffectfulType(effects, resultType)       =>
       (expr.as(et) +: effects.flatMap(_.typeArgs.flatMap(collectRows))) ++ collectRows(resultType)
-    case WithBinding(subject, _)                       => collectRows(subject)
+    case WithBinding(subject, _, _)                    => collectRows(subject)
     case FunctionApplication(_, _, genericArgs, args)  =>
       genericArgs.getOrElse(Seq.empty).flatMap(collectRows) ++ args.flatMap(collectRows)
     case FunctionLiteral(parameters, body)             =>
