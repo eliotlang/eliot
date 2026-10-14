@@ -24,7 +24,7 @@ import com.vanillasource.eliot.eliotc.processor.CompilerFactKey
 import com.vanillasource.eliot.eliotc.progress.{ProgressActivity, ProgressDescriber}
 import com.vanillasource.eliot.eliotc.reconcile.fact.ReconciledMonomorphicValue
 import com.vanillasource.eliot.eliotc.resolve.fact.ResolvedValue
-import com.vanillasource.eliot.eliotc.row.fact.RowElaboratedValue
+import com.vanillasource.eliot.eliotc.row.fact.{RowElaboratedValue, SlotBoundValue}
 import com.vanillasource.eliot.eliotc.saturate.fact.SaturatedValue
 import com.vanillasource.eliot.eliotc.source.content.SourceContent
 import com.vanillasource.eliot.eliotc.source.file.FileContent
@@ -69,6 +69,7 @@ object LangProgressDescriber extends ProgressDescriber {
       case NamedValuesRewrittenValue.Key(vfqn, _)          => resolving(vfqn.moduleName)
       case NamedValuesIndex.Key(name, _)                   => ProgressActivity("resolving", s"values named $name")
       case RecursionCheckedValue.Key(vfqn, _)              => resolving(vfqn.moduleName)
+      case SlotBoundValue.Key(vfqn, _)                     => resolving(vfqn.moduleName)
       case RowElaboratedValue.Key(vfqn, _)                 => resolving(vfqn.moduleName)
       case SaturatedValue.Key(vfqn, _)                     => checking(vfqn.moduleName)
       case BodyValueReferences.Key(vfqn, _)                => checking(vfqn.moduleName)

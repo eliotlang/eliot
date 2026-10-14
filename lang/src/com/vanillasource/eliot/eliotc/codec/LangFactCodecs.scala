@@ -388,6 +388,10 @@ object LangFactCodecs {
       : FactCodec[com.vanillasource.eliot.eliotc.row.fact.RowElaboratedValue] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_row_fact_RowElaboratedValue_Key
       : FactCodec[com.vanillasource.eliot.eliotc.row.fact.RowElaboratedValue.Key] = FactCodec.derived
+  given codec_com_vanillasource_eliot_eliotc_row_fact_SlotBoundValue
+      : FactCodec[com.vanillasource.eliot.eliotc.row.fact.SlotBoundValue] = FactCodec.derived
+  given codec_com_vanillasource_eliot_eliotc_row_fact_SlotBoundValue_Key
+      : FactCodec[com.vanillasource.eliot.eliotc.row.fact.SlotBoundValue.Key] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_namedvalues_fact_NamedValuesIndex
       : FactCodec[com.vanillasource.eliot.eliotc.namedvalues.fact.NamedValuesIndex] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_namedvalues_fact_NamedValuesIndex_Key
@@ -527,6 +531,8 @@ object LangFactCodecs {
     codec_com_vanillasource_eliot_eliotc_resolve_fact_ResolvedValue
   val rowElaboratedValueCodec: FactCodec[com.vanillasource.eliot.eliotc.row.fact.RowElaboratedValue]                   =
     codec_com_vanillasource_eliot_eliotc_row_fact_RowElaboratedValue
+  val slotBoundValueCodec: FactCodec[com.vanillasource.eliot.eliotc.row.fact.SlotBoundValue]                           =
+    codec_com_vanillasource_eliot_eliotc_row_fact_SlotBoundValue
   val saturatedValueCodec: FactCodec[com.vanillasource.eliot.eliotc.saturate.fact.SaturatedValue]                      =
     codec_com_vanillasource_eliot_eliotc_saturate_fact_SaturatedValue
   val sourceContentCodec: FactCodec[com.vanillasource.eliot.eliotc.source.content.SourceContent]                       =
@@ -581,6 +587,7 @@ object LangFactCodecs {
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_saturate_fact_SaturatedValue_Key),
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_ast_fact_SourceAST_Key),
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_row_fact_RowElaboratedValue_Key),
+    FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_row_fact_SlotBoundValue_Key),
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_namedvalues_fact_NamedValuesIndex_Key),
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_namedvalues_fact_NamedValuesRewrittenValue_Key),
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_monomorphize_channel_SuppliedRowArguments_Key),

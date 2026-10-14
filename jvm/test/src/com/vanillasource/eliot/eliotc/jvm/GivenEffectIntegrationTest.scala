@@ -97,13 +97,30 @@ class GivenEffectIntegrationTest extends FullIntegrationTest {
     ).asserting(_ should include("declares the effect 'Writer' but does not perform it"))
   }
 
-  "a computation promised the default" should "not be passed to a slot binding another implementation" in {
-    compileForErrors(
+  "a computation passed to a slot binding an implementation" should "be bound as that slot binds" in {
+    compileAndRun(
       recording +
         """
           |def transcriptOf(program uses *, Console with recordingConsole: Unit) uses *: String =
           |   runWriterToLog(program)
           |def relay(program uses *, Console: Unit) uses *: String = transcriptOf(program)
+          |
+          |def main uses Console: Unit = printLine(relay(printLine("hi")))
+          |""".stripMargin
+    ).asserting(_ shouldBe "hi;")
+  }
+
+  "a computation promised the default" should "not run inside code passed to a slot binding another implementation" in {
+    compileForErrors(
+      recording +
+        """
+          |def both(first uses *: Unit, second uses *: Unit) uses *: Unit = {
+          |   first
+          |   second
+          |}
+          |def transcriptOf(program uses *, Console with recordingConsole: Unit) uses *: String =
+          |   runWriterToLog(program)
+          |def relay(program uses *, Console: Unit) uses *: String = transcriptOf(both(program, program))
           |
           |def main uses Console: Unit = printLine(relay(printLine("hi")))
           |""".stripMargin

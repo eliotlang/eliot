@@ -3,8 +3,8 @@
 **Status (2026-10-14).** This is the effect system's single document. What the tree builds is effects v6 (2026-09-09)
 in D20/D21's `uses` surface (2026-10-09/10) with D20c option 5's environments and (b) (2026-10-12), and D22's reading
 of a listed effect, D23's reading of `with`, D24's `uses *` on a definition, compile-track frames and named
-implementations with parameters (2026-10-13), their type parameters solved where they run and their `with` around a
-run of a code parameter (2026-10-14). An effect is
+implementations with parameters (2026-10-13), their type parameters solved where they run, their `with` around a
+run of a code parameter, and a run bound as the slot it is passed to binds (2026-10-14). An effect is
 an ability declared with the `effect` keyword. A definition's `uses` clause says what its caller hands it. An implementation has two halves: its **code**, a
 compile-time name written at every reference by a syntax-directed pass that reads declarations only, and its
 **environment** (an escape frame, a cell, its own parameters), a value threaded after monomorphization — on the
@@ -42,8 +42,8 @@ lives now.
    example jar is byte-identical, and eliot-test (193) and eliot-build (368, and its launcher) pass unchanged.
 8. **D25** (decided 2026-10-14, §11): parameters only on a named implementation, and the platform's dischargers bind
    theirs with an ordinary `with`. Its steps, in order: ~~§8 item 30~~ (closed 2026-10-14); ~~a `with name(args)`
-   around a run of a code parameter~~ (built 2026-10-14, closing §8 item 32 on the way); a slot's binding carried to
-   the slot a run is passed from; the control effects
+   around a run of a code parameter~~ (built 2026-10-14, closing §8 item 32 on the way); ~~a slot's binding carried
+   to the slot a run is passed from~~ (built 2026-10-14, closing §8 item 33); the control effects
    moved to named implementations; the anonymous parameter list and the giving primitives deleted. User dischargers
    such as `withConfig` then need nothing of their own, and parameterised ability implementations follow by the same
    mechanism, after §8 item 31.
@@ -52,14 +52,14 @@ D20a, D20c and D3 stay open until decided; none blocks the steps above.
 
 **Open, in order of severity.**
 
-- **Silent:** none known (§8 items 14, 24 and 26 closed 2026-10-13).
+- **Silent:** none known (§8 items 14, 24 and 26 closed 2026-10-13, item 33 on 2026-10-14).
 - **Loud, at compile time:** a
   `catch` over a parameter spells its arguments (§7 item 2); a function-typed code parameter's own entries are never
   supplied (§7 item 1); `runThrow("no failure")` with its argument spelled is accepted (§8 item 4); a `with`'s
   argument typed only by the entry it binds, an unannotated lambda, is refused (§8 item 31).
 - **Decided, not built:** D25, parameters only on a named implementation and the platform's dischargers binding
-  theirs with `with` (steps 1 and 2 built 2026-10-14: a named implementation's type parameters solved, and its `with`
-  around a run of a code parameter), then parameterised
+  theirs with `with` (steps 1–3 built 2026-10-14: a named implementation's type parameters solved, its `with`
+  around a run of a code parameter, and a run bound as the slot it is passed to binds), then parameterised
   ability implementations (§11, "Decided, not built").
 - **Undecided:** naming a set of effects in a clause (D20a), storing an effectful computation (D20c), `~`/`&` in user
   space (D3).
@@ -607,18 +607,28 @@ inside is captured, the rule-3 error. An argument at a closed slot is walked in 
 with the slot's riding entries left reachable. A run of one of this definition's code parameters is held to what
 its caller's write promised (`BindingWriter.checkGiven`, rule 5): each entry the slot supplies must be bound there
 by a callee's slot that supplies it (a `Binding` marked `bySlot`) — a row of the definition's own is not a frame,
-nor is a `with` in the body, except around a run of the parameter, which is the slot's own (below). A body `with`
+nor is a `with` in the body, except around a run of the parameter, which is the slot's own (below). An entry the
+clauses of the implementation its slot names perform is given, too, by a callee's slot that names the same
+implementation and supplies that entry (`Scope.clausesGiven`): the callee is held to giving it where it runs the code,
+as the definition was. A body `with`
 whose named implementation performs an effect in its clauses may not be used below a nearer binding of that effect,
 the one shape whose frame would be intercepted (§3.4); "that effect" is the clause's **entry**, looked up at its own
 arguments as a frame is chosen, so a nearer `Throw[NotFetched]` does not stand between a `with` and the use of an
 implementation performing `Throw[GitError]`. A body `with` no reference in its subject is written from is
 *"This `with` binds nothing …"*, with the help naming the slot spelling when its subject is a code parameter.
 
-**A `with` around a run of a code parameter is moved onto the slot before anyone reads the declaration**
-(`operator/processor/RunWithHoister`, the last step of operator resolution, since `OperatorResolvedValue` is what
-every caller's write and the environment threading read). Only a nullary code parameter's listed abilities move; the
-runs must agree, and a slot already naming another implementation of that ability is an error. It reads the
-definition's own text and nothing else, so a binding is still written from declarations.
+**A run's binding is moved onto its slot before anyone reads the declaration** (`row/RunWithHoister`, run by
+`row/processor/SlotBindingProcessor` into `SlotBoundValue`, which is what every caller's write and the environment
+threading read as a declaration). A run is bound by a `with` directly around it, or by being **passed** to a callee's
+slot that names an implementation of a listed entry with `with` (D25 step 3): `catch`'s `computation`, handed to
+`runThrow`'s slot, is bound as that slot binds, and so is the code of every discharger written over `catch`. The
+nearer wins, so a `with` around the run shadows the callee's slot. Only a nullary code parameter's listed abilities
+move, and a callee's slot is not carried for an entry the definition also declares, spelled the same: that entry
+rides (D22, (b)). The runs must agree, and a slot already naming another implementation of that ability is an error.
+It reads the definition's own text and the declarations of the callees its runs are passed to, never a body, so a
+binding is still written from declarations. Reading a callee's declaration is what puts it after the recursion gate:
+a value reaches it only when its body cannot reach itself, so no callee it reads reads it back, and a callee the gate
+rejected carries nothing.
 
 **Effect-ness is read from one place only**: the callee's declaration. An ability appearing in
 `effectRow.returnEffects` is an effect at this reference — which for an `effect`'s member is what membership
@@ -765,7 +775,9 @@ there holds it, unless a frame of the entry is nearer — a block whose slot rid
 runs, as (b) says. A slot naming such an implementation — moved there from a `with` around a run of its code — gives
 the block the implementation's parameters too, after its clauses' frames, and a run passes the arguments the `with`
 around it supplied: the hoisting left the binder's call `scripted$with(name, body)` at the run, so the threading
-treats it as any other, and the run finds them there.
+treats it as any other, and the run finds them there. A run whose binding was carried from the slot it is passed to
+runs on the frame that slot gives the block it stands in (a `Frame` marked `bySlot`), clauses and parameters alike,
+since that is where the callee built them; a received frame is never taken this way, as its clauses are the caller's.
 
 **What that does and does not remove.** There is no search across calls: a frame reaches a definition only as a value
 passed to it, so a helper's own `catch` or `State` cannot intercept the effects of a block its caller wrote with
@@ -1110,6 +1122,7 @@ items keep one line, and their full record is in git history (§13).
 | 28 | a `where` over a control effect could not be evaluated: `where (if(c, true) else false)`, and even an inline `where rangeWithin[0, 255](range(x))`, reported *"Cannot evaluate the `where` precondition"* while the same predicate behind a helper worked (present at `v0.0`) | 2026-10-13 by compile-track frames (§3.4): the channel's reduction of the `^Where` companion is threaded and links its callees reduced at their instantiations. A failing precondition still leaves a runnable jar behind (exit 1) — the build-artifact invariant's, not this document's |
 | 30 | a named implementation's own type parameters were never solved for a binding: dispatch ran its clauses at `T := Type`, so `pick(42) with showing`, for `implement[T ~ Show[T]] showing: Source[T]`, lost `Show[Int]` (reported as *"This native value produces 'String' … states no meta transfer"* at `Show`), and one taking parameters as well was refused where it was bound | 2026-10-14 (D25 step 1): solved where the implementation runs, by matching its pattern against the entry's ground arguments as the two-site search does (`NamedImplementationArguments`), at dispatch and in the environment threading alike; a pattern that does not match is an error at the use, and arguments that do not fit are one at the `with` |
 | 32 | a slot naming a **constrained** named implementation was rejected: `shown(body uses *, Source[A] with showing: String) uses *: String = body`, for `implement[T ~ Show[T]] showing: Source[T]`, was *"'body' may perform the effect 'Show' here, which this definition neither handles nor declares"*, since the given-check read the implementation's `~` constraint, an ability, as one of the effects its clauses perform (found building D25 step 2, where a `with` around a run lands on the slot; Writer's `W ~ Combine[W]` implementation meets it at step 4) | 2026-10-14: the given-check reads only what the implementation's row lists, as the threading does (`BindingWriter.performedEntries`); a constraint's `Default` is the two-site search's wherever it is written |
+| 33 | a run passed to a callee's slot that names an implementation was compiled against the definition's own slot: `def passing(body uses *, Terminal with other: Unit) uses *: String = run(body)`, for `run(body uses *, Terminal with fixed: Unit)`, ran `other` and silently dropped `fixed` (found building D25 step 3) | 2026-10-14 (D25 step 3): the run is bound as the slot it is passed to binds, and a definition's slot naming another implementation is the hoisting's *"The slot of 'body' names another implementation of 'Terminal' than the `with` around its runs."* |
 
 Items 9–13 were found 2026-10-05 while designing D20 and share one cause: a row on a slot both *marked a block* and
 *minted bindings*, and nothing kept the block inside the call or checked that the callee had the binding it handed
@@ -1325,11 +1338,11 @@ In the order they would be built:
   2. ~~A `with name(args)` around a run of a code parameter~~ — built 2026-10-14: the **code** moves onto the slot,
      the **arguments** stay at the run, where the frame is built (§2, §3.4). A parameter's clause still cannot spell
      arguments; the slot carries code only. It found and closed §8 item 32.
-  3. A slot's binding carried to the slot a run is passed from. `RunWithHoister` then reads its callees' declarations
-     as well as the definition's own text (§3.1 says "nothing else" today), so a definition's declaration depends on
-     its callees'. That is acyclic only because nothing is recursive, while the recursion gate runs *after* the
-     hoisting (operator resolution's last step): the step goes after the gate, or must be safe against a cycle the
-     gate has not yet rejected.
+  3. ~~A slot's binding carried to the slot a run is passed from~~ — built 2026-10-14: the hoisting moved out of
+     operator resolution to its own fact after the recursion gate (`SlotBoundValue`, §3.1), where reading a callee's
+     declaration cannot lead back. A decision on the engine's in-progress chain (`activeFactKeys`) was the
+     alternative and was not taken: the cached fact would depend on demand order and miss the edge it declined to
+     read.
   4. The control effects — `Throw`, `Abort`, `State`, `Writer`, `Dep`, on both tracks — moved to named
      implementations bound by their platform dischargers; the primitives' clauses lose the entry they give.
   5. The anonymous parameter list, `ImplementationParameters`' anonymous route, and the giving primitives deleted; §1

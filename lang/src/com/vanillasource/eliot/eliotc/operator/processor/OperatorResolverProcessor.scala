@@ -8,9 +8,8 @@ import com.vanillasource.eliot.eliotc.platform.Platform
 import com.vanillasource.eliot.eliotc.processor.CompilerIO.*
 import com.vanillasource.eliot.eliotc.matchdesugar.fact.{MatchDesugaredExpression, MatchDesugaredValue}
 import com.vanillasource.eliot.eliotc.processor.common.TransformationProcessor
-import com.vanillasource.eliot.eliotc.resolve.fact.{AbilityConstraint, Qualifier as ResolveQualifier}
+import com.vanillasource.eliot.eliotc.resolve.fact.AbilityConstraint
 import com.vanillasource.eliot.eliotc.source.content.Sourced
-import com.vanillasource.eliot.eliotc.source.content.Sourced.compilerError
 
 class OperatorResolverProcessor
     extends TransformationProcessor[MatchDesugaredValue.Key, OperatorResolvedValue.Key](key =>
@@ -27,44 +26,17 @@ class OperatorResolverProcessor
       resolvedSignature   <- resolveInExpression(desugaredValue.signature.value).map(desugaredValue.signature.as)
       resolvedConstraints <- resolveParamConstraints(desugaredValue.paramConstraints)
       resolvedEffectRow   <- resolveEffectRow(desugaredValue.effectRow)
-      hoisted             <- hoistRunWiths(
-                               OperatorResolvedValue(
-                                 desugaredValue.vfqn,
-                                 desugaredValue.name,
-                                 resolvedRuntime,
-                                 resolvedSignature,
-                                 resolvedConstraints,
-                                 desugaredValue.roleHint,
-                                 platform = desugaredValue.platform,
-                                 effectRow = resolvedEffectRow
-                               )
-                             )
-    } yield hoisted
+    } yield OperatorResolvedValue(
+      desugaredValue.vfqn,
+      desugaredValue.name,
+      resolvedRuntime,
+      resolvedSignature,
+      resolvedConstraints,
+      desugaredValue.roleHint,
+      platform = desugaredValue.platform,
+      effectRow = resolvedEffectRow
+    )
   }
-
-  /** A `with` around a run of a code parameter is that parameter's slot `with` ([[RunWithHoister]]). It is moved here,
-    * on the declaration every caller reads, because a caller compiles the code it hands over against that declaration.
-    * A disagreement is reported on the runtime track only, as the `row` phase reports, and aborts this value on both.
-    */
-  private def hoistRunWiths(value: OperatorResolvedValue)(using platform: Platform): CompilerIO[OperatorResolvedValue] =
-    for {
-      abilities <- RunWithHoister.candidates(value).toSeq.traverse { marker =>
-                     getFactIfProduced(MatchDesugaredValue.Key(marker, platform)).map(_.flatMap { implementation =>
-                       implementation.name.value.qualifier match {
-                         case ResolveQualifier.AbilityImplementation(ability, _, _) => Some(marker -> ability)
-                         case _                                                    => None
-                       }
-                     })
-                   }
-      hoisted    = RunWithHoister.hoist(value, abilities.flatten.toMap)
-      _         <- hoisted.errors match {
-                     case Seq()  => ().pure[CompilerIO]
-                     case errors =>
-                       errors
-                         .traverse_ { case (message, help) => compilerError(message, help) }
-                         .whenA(platform == Platform.Runtime) >> abort[Unit]
-                   }
-    } yield hoisted.value
 
   private def resolveInExpression(expr: MatchDesugaredExpression)(using Platform): CompilerIO[OperatorResolvedExpression] =
     expr match {

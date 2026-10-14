@@ -22,6 +22,7 @@ import com.vanillasource.eliot.eliotc.monomorphize.fact.{
   MonomorphicValue
 }
 import com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedExpression.SignatureView
+import com.vanillasource.eliot.eliotc.row.fact.SlotBoundValue
 import com.vanillasource.eliot.eliotc.operator.fact.{OperatorResolvedExpression, OperatorResolvedValue}
 import com.vanillasource.eliot.eliotc.platform.Platform
 import com.vanillasource.eliot.eliotc.processor.CompilerIO.*
@@ -146,9 +147,18 @@ object EnvironmentThreading {
   private case class Supplied(marker: ValueFQN, own: Seq[Part], level: Int, at: Sourced[?])
 
   /** A frame in scope: the entry it answers, the binding its code was written with, the frames its implementation's
-    * clauses perform on, and the implementation's own parameters.
+    * clauses perform on, and the implementation's own parameters. `bySlot` marks the frame a callee's slot gives a
+    * block for an implementation it names with `with` ([[Threader.givenFrames]]): a run of code whose own slot names the
+    * same implementation runs on that frame ([[Threader.runBlock]]).
     */
-  private case class Frame(entry: Entry, binding: GroundValue, clauses: Seq[Frame], own: Seq[Part], level: Int = 0) {
+  private case class Frame(
+      entry: Entry,
+      binding: GroundValue,
+      clauses: Seq[Frame],
+      own: Seq[Part],
+      level: Int = 0,
+      bySlot: Boolean = false
+  ) {
     def parts: Seq[Part] = clauses.flatMap(_.parts) ++ own
   }
 
@@ -579,7 +589,8 @@ object EnvironmentThreading {
                               }
               own          <- namedOwn(entry, marker)
             } yield {
-              val frame = Frame(entry, namedBinding(marker), clauseFrames, own.map(tpe => Part(fresh(), tpe)))
+              val frame =
+                Frame(entry, namedBinding(marker), clauseFrames, own.map(tpe => Part(fresh(), tpe)), bySlot = true)
               (frame, frame.parts)
             }
         })
@@ -588,7 +599,8 @@ object EnvironmentThreading {
     /** Running one of this definition's row-typed parameters passes the frames of the entries its slot lists, found
       * where it runs — a ridden entry's at this definition's own binding for it, which is the block's code. An
       * implementation the slot names that takes parameters is given the arguments the `with` around this run supplied
-      * ([[runArguments]]).
+      * ([[runArguments]]). A run passed to a callee's slot that names the same implementation is given the frame that
+      * slot gives, clauses and arguments alike: its binding was carried from that slot (`docs/effects.md` D25).
       */
     private def runBlock(
         head: Sourced[MonomorphicExpression],
@@ -603,12 +615,16 @@ object EnvironmentThreading {
                     case Listed.Rides(entry, binding)         => lookup(context, entry, binding, name)
                     case Listed.Supplied(entry, None)         => lookup(context, entry, defaultBinding, name)
                     case Listed.Supplied(entry, Some(marker)) =>
-                      for {
-                        clauseFrames <- namedClauses(marker).flatMap(
-                                          _.traverse(clause => lookup(context, clause, clauseBinding(mv, clause), name))
-                                        )
-                        own          <- runArguments(context, entry, marker, name)
-                      } yield Frame(entry, namedBinding(marker), clauseFrames, own)
+                      slotGiven(context, entry, marker, name).flatMap {
+                        case Some(frame) => frame.pure[CompilerIO]
+                        case None        =>
+                          for {
+                            clauseFrames <- namedClauses(marker).flatMap(
+                                              _.traverse(clause => lookup(context, clause, clauseBinding(mv, clause), name))
+                                            )
+                            own          <- runArguments(context, entry, marker, name)
+                          } yield Frame(entry, namedBinding(marker), clauseFrames, own)
+                      }
                   })
         parts   = frames.flatMap(_.parts)
         retyped = context.types.get(name.value).fold(head)(tpe => head.as(head.value.copy(expressionType = tpe)))
@@ -616,6 +632,20 @@ object EnvironmentThreading {
         if (parts.isEmpty) applyAll(retyped, Seq(unit), keepTypes = None)
         else applyAll(retyped, parts.map(partReference(name, _)), keepTypes = None)
     }
+
+    /** The frame a callee's slot gave the block this run stands in for `entry`, when it is the nearest of the entry, runs
+      * the implementation `marker`, and no `with` around the run supplied arguments to it more nearly.
+      */
+    private def slotGiven(
+        context: Context,
+        entry: Entry,
+        marker: ValueFQN,
+        at: Sourced[?]
+    ): CompilerIO[Option[Frame]] =
+      nearest(context.frames, entry, at).map(_.filter { frame =>
+        frame.bySlot && sameImplementation(frame.binding, namedBinding(marker)) &&
+        context.supplied.find(_.marker == marker).forall(_.level < frame.level)
+      })
 
     /** The arguments of the implementation `marker` a slot names, where a run of its code performs `entry`: those the
       * `with` around the run supplied, which the hoisting left there when it moved the implementation onto the slot
@@ -696,20 +726,18 @@ object EnvironmentThreading {
       }
 
     /** The implementations a slot's declared type names with `with`, by ability. The row phase strips them from the
-      * signature it hands on, so they are read off the operator-resolved declaration, as the row phase read them.
+      * signature it hands on, so they are read off the bound declaration, as the row phase read them.
       */
     private def slotImplementations(value: Specialisation, index: Int): CompilerIO[Map[AbilityFQN, ValueFQN]] =
-      getFactIfProduced(OperatorResolvedValue.Key(value.vfqn, track.platform)).flatMap {
-        case None      => Map.empty.pure[CompilerIO]
-        case Some(orv) =>
-          SignatureView
-            .of(orv.signature)
-            .parameters
-            .lift(index)
-            .toSeq
-            .flatMap(tpe => slotMarkers(tpe.value))
-            .traverse(marker => abilityOfMarker(marker).map(_.map(_ -> marker)))
-            .map(_.flatten.toMap)
+      getFactOrAbort(SlotBoundValue.Key(value.vfqn, track.platform)).flatMap { bound =>
+        SignatureView
+          .of(bound.value.signature)
+          .parameters
+          .lift(index)
+          .toSeq
+          .flatMap(tpe => slotMarkers(tpe.value))
+          .traverse(marker => abilityOfMarker(marker).map(_.map(_ -> marker)))
+          .map(_.flatten.toMap)
       }
 
     private def slotMarkers(tpe: OperatorResolvedExpression): Seq[ValueFQN] = tpe match {

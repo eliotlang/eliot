@@ -7,10 +7,9 @@ import com.vanillasource.eliot.eliotc.operator.fact.{OperatorResolvedExpression,
 import com.vanillasource.eliot.eliotc.platform.Platform
 import com.vanillasource.eliot.eliotc.processor.CompilerIO.*
 import com.vanillasource.eliot.eliotc.processor.common.TransformationProcessor
-import com.vanillasource.eliot.eliotc.row.fact.RowElaboratedValue
+import com.vanillasource.eliot.eliotc.row.fact.{RowElaboratedValue, SlotBoundValue}
 import com.vanillasource.eliot.eliotc.row.{BindingWriter, RowChecker}
 import com.vanillasource.eliot.eliotc.source.content.Sourced.compilerError
-import com.vanillasource.eliot.eliotc.termination.fact.RecursionCheckedValue
 
 import scala.collection.mutable
 
@@ -19,9 +18,9 @@ import scala.collection.mutable
   * every `with` is consumed. See [[BindingWriter]] for the rules; this processor only supplies the declared world it
   * needs and reports what it could not answer.
   *
-  * Placed after [[RecursionCheckedValue]] (the recursion gate walks the *user's* reference graph) and before
-  * `SaturatedValueProcessor`, so everything from saturation onwards sees written bodies and signatures with no `with`
-  * left in them. A value that is not [[RowChecker.checkable]] — body-less, a `@Signature` twin, a type constructor or
+  * Placed after [[SlotBoundValue]] (which is after the recursion gate, which walks the *user's* reference graph) and
+  * before `SaturatedValueProcessor`, so everything from saturation onwards sees written bodies and signatures with no
+  * `with` left in them. A value that is not [[RowChecker.checkable]] — body-less, a `@Signature` twin, a type constructor or
   * a meta companion — is carried through unchanged.
   *
   * **The universe is built by demand, not guessed.** The write is decision-free but not context-free: it consults the
@@ -34,20 +33,21 @@ import scala.collection.mutable
   *   The platform-contributed values at which every effect's chain ends ([[com.vanillasource.eliot.eliotc.row.RunBoundaryFunctions]]) —
   *   the synthesized entry point. Only the platform knows which value that is.
   *
-  * The fetch is [[getFactIfProduced]] by design: a referenced name legitimately has no [[OperatorResolvedValue]] when
-  * its own definition aborted upstream, and a reference the write cannot read is simply left alone — the fail-safe
-  * direction, since an unwritten binder is caught by the checker rather than silently defaulted.
+  * Every name is read as its [[SlotBoundValue]], the declaration whose slots name what their runs are bound by. The
+  * fetch is [[getFactIfProduced]] by design: a referenced name legitimately has none when its own definition aborted
+  * upstream or was rejected by the recursion gate, and a reference the write cannot read is simply left alone — the
+  * fail-safe direction, since an unwritten binder is caught by the checker rather than silently defaulted.
   */
 class RowElaborationProcessor(isRunBoundary: ValueFQN => Boolean = _ => false)
-    extends TransformationProcessor[RecursionCheckedValue.Key, RowElaboratedValue.Key](key =>
-      RecursionCheckedValue.Key(key.vfqn, key.platform)
+    extends TransformationProcessor[SlotBoundValue.Key, RowElaboratedValue.Key](key =>
+      SlotBoundValue.Key(key.vfqn, key.platform)
     ) {
 
   override protected def generateFromKeyAndFact(
       key: RowElaboratedValue.Key,
-      recursionChecked: RecursionCheckedValue
+      slotBound: SlotBoundValue
   ): CompilerIO[RowElaboratedValue] = {
-    val value = recursionChecked.value
+    val value = slotBound.value
     for {
       universe <- universeFor(value, key.platform)
       written   = BindingWriter.write(value, universe, isRunBoundary(value.vfqn))
@@ -107,9 +107,9 @@ class RowElaborationProcessor(isRunBoundary: ValueFQN => Boolean = _ => false)
       if (fresh.isEmpty) RowChecker.Universe(known).pure[CompilerIO]
       else
         fresh.toSeq
-          .traverse(fqn => getFactIfProduced(OperatorResolvedValue.Key(fqn, platform)).map(fqn -> _))
+          .traverse(fqn => getFactIfProduced(SlotBoundValue.Key(fqn, platform)).map(fqn -> _))
           .flatMap(fetched =>
-            loop(known ++ fetched.collect { case (fqn, Some(orv)) => fqn -> orv }, attempted ++ fresh)
+            loop(known ++ fetched.collect { case (fqn, Some(bound)) => fqn -> bound.value }, attempted ++ fresh)
           )
     }
 

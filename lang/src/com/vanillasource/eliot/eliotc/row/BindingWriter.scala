@@ -127,6 +127,11 @@ object BindingWriter {
     def nextSerial(): Long = serials.incrementAndGet()
   }
 
+  /** An entry a run of a code parameter must be given, and the implementation named on its slot whose clauses perform
+    * it, when that is where it comes from.
+    */
+  private case class Need(ability: AbilityFQN, arguments: Option[Seq[String]], clauseOf: Option[ValueFQN] = None)
+
   /** The lexical environment at one point. `bindings` is innermost-first, so a nearer `with` shadows an outer one for
     * the same ability; `thunks` are the row-typed parameters in scope, whose references apply.
     *
@@ -138,6 +143,11 @@ object BindingWriter {
     * @param signature
     *   Whether this is a signature, whose references are evaluated rather than checked, so a type-argument list there
     *   may not hold the checker's hole ([[Writer.mergeTypeArguments]]).
+    * @param clausesGiven
+    *   Inside an actual at a slot that names an implementation with `with`: each entry that implementation's clauses
+    *   perform and the callee supplies, by implementation. The callee gives them where it runs the actual, so a run of
+    *   this definition's code whose own slot names the same implementation is given them there
+    *   ([[Writer.checkGiven]]).
     */
   private case class Scope(
       bindings: Seq[Binding],
@@ -145,10 +155,11 @@ object BindingWriter {
       uncoveredDefaults: Boolean = false,
       callbacks: Set[String] = Set.empty,
       captured: Set[String] = Set.empty,
-      thunkNeeds: Map[String, Seq[(AbilityFQN, Option[Seq[String]])]] = Map.empty,
+      thunkNeeds: Map[String, Seq[Need]] = Map.empty,
       closed: Boolean = false,
       ridden: Map[String, Set[AbilityFQN]] = Map.empty,
-      signature: Boolean = false
+      signature: Boolean = false,
+      clausesGiven: Seq[Need] = Seq.empty
   ) {
     def bind(binding: Binding): Scope = copy(bindings = binding +: bindings)
     def shadow(name: String): Scope   =
@@ -347,7 +358,7 @@ object BindingWriter {
   private def thunkRequirements(
       orv: OperatorResolvedValue,
       universe: RowChecker.Universe
-  ): Map[String, Seq[(AbilityFQN, Option[Seq[String]])]] = {
+  ): Map[String, Seq[Need]] = {
     val own        = ownEntries(orv, Map.empty)
     val parameters = SignatureView.of(orv.signature).parameters
     orv.effectRow.parameterEffects.flatMap { pe =>
@@ -355,10 +366,12 @@ object BindingWriter {
         val markers   = parameters.lift(pe.parameterIndex).toSeq.flatMap(p => slotBindings(p.value))
         val withBound = markers.flatMap(marker => abilityOf(marker.value, universe)).toSet
         val listed    = pe.effects
-          .map(entry => entry.abilityFQN -> knownArguments(entry.typeArgs, Map.empty))
-          .filterNot(entry => withBound.contains(entry._1))
-        val clauses   = markers.flatMap(marker => performedEntries(marker.value, universe))
-        name -> (listed ++ clauses).filterNot(ridesOwn(own)).distinct
+          .map(entry => Need(entry.abilityFQN, knownArguments(entry.typeArgs, Map.empty)))
+          .filterNot(need => withBound.contains(need.ability))
+        val clauses   = markers.flatMap(marker =>
+          performedEntries(marker.value, universe).map((ability, arguments) => Need(ability, arguments, Some(marker.value)))
+        )
+        name -> (listed ++ clauses).filterNot(need => ridesOwn(own)(need.ability -> need.arguments)).distinct
       }
     }.toMap
   }
@@ -727,7 +740,8 @@ object BindingWriter {
       */
     private def checkGiven(name: Sourced[String], scope: Scope): Unit =
       if (!scope.uncoveredDefaults)
-        scope.thunkNeeds.getOrElse(name.value, Seq.empty).foreach { (ability, arguments) =>
+        scope.thunkNeeds.getOrElse(name.value, Seq.empty).filterNot(givenBySlot(_, scope)).foreach { need =>
+          val Need(ability, arguments, _) = need
           scope.binding(ability, arguments).foreach(binding => used += binding.serial)
           scope.binding(ability, arguments) match {
             case Some(binding) if binding.bySlot && !binding.byWith => ()
@@ -753,6 +767,17 @@ object BindingWriter {
               )
           }
         }
+
+    /** Whether `need`, an entry the clauses of the implementation this definition's slot names perform, is given by the
+      * callee whose slot the run is passed to: that slot names the same implementation, and the callee supplies the
+      * entry, so it is held to giving it where it runs the code, as this definition was (`docs/effects.md` D25).
+      */
+    private def givenBySlot(need: Need, scope: Scope): Boolean =
+      need.clauseOf.exists(marker =>
+        scope.clausesGiven.exists(clause =>
+          clause.clauseOf.contains(marker) && clause.ability == need.ability && !differ(clause.arguments, need.arguments)
+        )
+      )
 
     /** An expression standing where **code** is expected — the argument of a code parameter, or the head of an
       * application — whose first `arity` lambdas are therefore the caller's text and keep its scope. A lambda past them
@@ -887,8 +912,15 @@ object BindingWriter {
         .flatMap(marker => abilityOf(marker.value, universe).map(_ -> marker))
         .toMap
       val entries  = calleeOrv.effectRow.parameterEffects.find(_.parameterIndex === index).toSeq.flatMap(_.effects)
+      val clauses  = declared.values.toSeq.flatMap(marker =>
+        performedEntries(marker.value, universe)
+          .filterNot(ridesOwn(own))
+          .map((ability, arguments) => Need(ability, arguments, Some(marker.value)))
+      )
       // An entry the slot binds with `with` is handled by that implementation, even one this callee also declares (D23).
-      entries.filterNot(entry => rides(entry) && !declared.contains(entry.abilityFQN)).foldLeft(scope) { (acc, entry) =>
+      entries.filterNot(entry => rides(entry) && !declared.contains(entry.abilityFQN)).foldLeft(
+        scope.copy(clausesGiven = clauses ++ scope.clausesGiven)
+      ) { (acc, entry) =>
         val ability   = entry.abilityFQN
         val arguments = knownArguments(entry.typeArgs, substitution)
         acc.bind(

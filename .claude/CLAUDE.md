@@ -239,16 +239,19 @@ subset of its data.
    definition's return type hands it that alias's declared row: the same reading, of the declaration a resolved name
    resolved to, so an alias crosses files and is shadowed like any other name (`docs/effects.md` §2.4)
 7. **matchdesugar** — pattern matches into function applications; exhaustiveness, nested/constructor/wildcard patterns
-8. **operator** — infix operators by precedence and associativity, into structured applications; its last step moves a
-   `with` around a run of a code parameter onto that parameter's slot (`RunWithHoister`, `docs/effects.md` D23)
+8. **operator** — infix operators by precedence and associativity, into structured applications
 9. **termination** — the recursion gate (see the *Total by Default* cornerstone)
 10. *(There is no `effect` package. It held carrier identification and the `Effect`/`Suspend` machinery recognition,
     and effects v6 left nothing in it: nothing mints those abilities, no `.els` declares them and there is no
     `eliot.carrier` package. The one predicate that survived — "is this binder higher-kinded?", a **kind** question,
     not an effect one — is `CarrierKindChecker.isHktBinder`, beside its only caller. The carrier-stack renderer that
     lived there is gone too, because a type now prints as what the user wrote.)*
-11. **row** — the effect phase. `row/processor/RowElaborationProcessor` produces `RowElaboratedValue` between the
-    recursion gate and saturation, running `row/BindingWriter` over **both halves** of a definition (body *and*
+11. **row** — the effect phase. It opens with `row/processor/SlotBindingProcessor` (`SlotBoundValue`, right after the
+    gate): a run of a code parameter's binding moves onto that parameter's slot — a `with` around the run, or the
+    `with` of a callee's slot the run is passed to (`row/RunWithHoister`, `docs/effects.md` D23, D25 step 3). It reads
+    callees' declarations, which is why it is after the gate, and `SlotBoundValue` — not `OperatorResolvedValue` — is
+    the declaration the write and the threading read for slots. `row/processor/RowElaborationProcessor` then
+    produces `RowElaboratedValue` before saturation, running `row/BindingWriter` over **both halves** of a definition (body *and*
     signature — a guarded return holds references too). One walk, three jobs, **from declarations only**: write each
     binding binder's implementation at the indices the callee's declaration **marks** (`Impl: Implementation[Console]`),
     merged by index with what the call determines for the rest; **thunk and apply** (an actual at a row-typed slot
@@ -603,10 +606,12 @@ entry it runs for (`NamedImplementationArguments`, the two-site search's match w
 the threading alike, so one `with showing` serves `Source[Int]` and `Source[String]`. **`with`** binds a name for every effect of its ability that **escapes its
 subject** (D23): infix, subject-first, loosest precedence, left-associative, as an expression in a body or after an
 entry of a parameter's clause. A `with` nothing escapes to is an error; one around a run of a code parameter binds
-what the slot lists and is moved onto the slot (`operator/processor/RunWithHoister`), since the caller compiles that
+what the slot lists and is moved onto the slot (`row/RunWithHoister`), since the caller compiles that
 code — one supplying arguments moves only its code, and its `scripted$with(args…, run)` call stays at the run, where
 the threading builds the frame and hands it to the code (D25 step 2); a slot `with` handles its entry even when the
-definition declares the effect. `with` on a definition's own
+definition declares the effect. A run **passed** to a callee's slot that names an implementation is bound as that slot
+binds, and the binding moves onto the definition's slot the same way (D25 step 3), unless the definition declares the
+entry itself, spelled the same, in which case it rides. `with` on a definition's own
 clause is rejected. **`with` is written almost nowhere**: a def declaring `uses Console` receives its binding from its
 caller up to `main`, and a `with` in production code is the same mistake as a hard-coded dependency.
 
