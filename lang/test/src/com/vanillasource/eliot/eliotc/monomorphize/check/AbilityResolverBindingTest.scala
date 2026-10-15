@@ -4,6 +4,7 @@ import cats.data.Chain
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
+import com.vanillasource.eliot.eliotc.ability.fact.NamedImplementationCheck
 import com.vanillasource.eliot.eliotc.ast.fact.Visibility
 import com.vanillasource.eliot.eliotc.feedback.CompilerError
 import com.vanillasource.eliot.eliotc.module.fact.{
@@ -37,8 +38,8 @@ import java.net.URI
   * binding, and the two-site search is a stub that records what it was asked.
   *
   * The facts are the named implementation's marker, `implement[E] loggingThrow: Throw[E]`'s, which the arm matches
-  * against the pattern arguments to solve the implementation's `E` (§8 item 30), and its module's names, which say
-  * whether it has the referenced clause. No ability marker is registered, so the arity read falls back to "slice
+  * against the pattern arguments to solve the implementation's `E` (§8 item 30), its module's names, which say
+  * whether it has the referenced clause, and its conformance check (§8 item 42), taken as passed. No ability marker is registered, so the arity read falls back to "slice
   * nothing" and a reference's whole argument list is its ability-level slice.
   */
 class AbilityResolverBindingTest extends AnyFlatSpec with Matchers {
@@ -90,8 +91,8 @@ class AbilityResolverBindingTest extends AnyFlatSpec with Matchers {
   private val searchedImpl: (ValueFQN, Seq[GroundValue]) =
     (ValueFQN(throwModule, QualifiedName("raise", Qualifier.AbilityImplementation("Throw", "E", None))), Seq(string))
 
-  /** A [[CompilationProcess]] holding the named implementation's marker and its module's `clauses`: every other read
-    * answers "not produced".
+  /** A [[CompilationProcess]] holding the named implementation's marker, its module's `clauses` and its passed
+    * conformance check: every other read answers "not produced".
     */
   private class Implementation(clauses: Seq[String]) extends CompilationProcess {
     private val names =
@@ -101,7 +102,9 @@ class AbilityResolverBindingTest extends AnyFlatSpec with Matchers {
         key: K,
         ancestors: List[CompilerFactKey[?]]
     ): IO[Option[V]] =
-      IO.pure(Seq(implMarkerValue, names).find(_.key() == key).map(_.asInstanceOf[V]))
+      IO.pure(
+        Seq(implMarkerValue, names, NamedImplementationCheck(implMarker)).find(_.key() == key).map(_.asInstanceOf[V])
+      )
 
     override def registerFact(value: CompilerFact): IO[Unit] = IO.unit
   }

@@ -1,7 +1,7 @@
 package com.vanillasource.eliot.eliotc.monomorphize.check
 
 import cats.syntax.all.*
-import com.vanillasource.eliot.eliotc.ability.fact.AbilityImplementation
+import com.vanillasource.eliot.eliotc.ability.fact.{AbilityImplementation, NamedImplementationCheck}
 import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, Qualifier, UnifiedModuleNames, ValueFQN, WellKnownTypes}
 import com.vanillasource.eliot.eliotc.monomorphize.check.CheckIO.*
 import com.vanillasource.eliot.eliotc.monomorphize.domain.*
@@ -143,7 +143,12 @@ class AbilityResolver(
                           case Right(groundArgs)                                  =>
                             ImplementationBinding.split(groundArgs) match {
                               case (patternArgs, Some(impl: ImplementationBinding.Implementation)) =>
-                                liftF(NamedImplementationArguments.solve(impl, patternArgs, platform)).flatMap {
+                                // A named implementation is never searched, so its conformance to the ability is
+                                // checked here, where a binding first dispatches to it.
+                                liftF(
+                                  getFactOrAbort(NamedImplementationCheck.Key(impl.head, platform)) >>
+                                    NamedImplementationArguments.solve(impl, patternArgs, platform)
+                                ).flatMap {
                                   case Some(typeArguments) =>
                                     val method = impl.method(abilityVfqn.value.name.name)
                                     liftF(getFactOrAbort(UnifiedModuleNames.Key(method.moduleName, platform))).flatMap {

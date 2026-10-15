@@ -4,7 +4,8 @@ import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.ability.fact.{
   AbilityImplementation,
   AbilityImplementationCheck,
-  ModuleAbilityOverlapCheck
+  ModuleAbilityOverlapCheck,
+  NamedImplementationCheck
 }
 import com.vanillasource.eliot.eliotc.ast.fact.SourceAST
 import com.vanillasource.eliot.eliotc.block.fact.BlockDesugaredValue
@@ -79,6 +80,7 @@ object LangProgressDescriber extends ProgressDescriber {
       case CompilerMonomorphicValue.Key(vfqn, _)           => checking(vfqn.moduleName)
       case AbilityImplementation.Key(ability, _, _)        => checking(ability.moduleName)
       case AbilityImplementationCheck.Key(ability, _, _)   => checking(ability.moduleName)
+      case NamedImplementationCheck.Key(marker, _)         => checking(marker.moduleName)
       case ModuleAbilityOverlapCheck.Key(moduleName, _, _) => checking(moduleName)
       case RefinementTable.Key(vfqn, _)                    => checking(vfqn.moduleName)
       case SuppliedRowArguments.Key(vfqn, _)               => checking(vfqn.moduleName)

@@ -159,6 +159,10 @@ object LangFactCodecs {
       : FactCodec[com.vanillasource.eliot.eliotc.ability.fact.AbilityImplementationCheck] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_ability_fact_AbilityImplementationCheck_Key
       : FactCodec[com.vanillasource.eliot.eliotc.ability.fact.AbilityImplementationCheck.Key] = FactCodec.derived
+  given codec_com_vanillasource_eliot_eliotc_ability_fact_NamedImplementationCheck
+      : FactCodec[com.vanillasource.eliot.eliotc.ability.fact.NamedImplementationCheck] = FactCodec.derived
+  given codec_com_vanillasource_eliot_eliotc_ability_fact_NamedImplementationCheck_Key
+      : FactCodec[com.vanillasource.eliot.eliotc.ability.fact.NamedImplementationCheck.Key] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_ability_fact_ModuleAbilityOverlapCheck
       : FactCodec[com.vanillasource.eliot.eliotc.ability.fact.ModuleAbilityOverlapCheck] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_ability_fact_ModuleAbilityOverlapCheck_Key
@@ -479,6 +483,8 @@ object LangFactCodecs {
   val abilityImplementationCheckCodec
       : FactCodec[com.vanillasource.eliot.eliotc.ability.fact.AbilityImplementationCheck] =
     codec_com_vanillasource_eliot_eliotc_ability_fact_AbilityImplementationCheck
+  val namedImplementationCheckCodec: FactCodec[com.vanillasource.eliot.eliotc.ability.fact.NamedImplementationCheck] =
+    codec_com_vanillasource_eliot_eliotc_ability_fact_NamedImplementationCheck
   val moduleAbilityOverlapCheckCodec: FactCodec[com.vanillasource.eliot.eliotc.ability.fact.ModuleAbilityOverlapCheck] =
     codec_com_vanillasource_eliot_eliotc_ability_fact_ModuleAbilityOverlapCheck
   val sourceASTCodec: FactCodec[com.vanillasource.eliot.eliotc.ast.fact.SourceAST]                                     =
@@ -568,6 +574,7 @@ object LangFactCodecs {
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_core_fact_CoreAST_Key),
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_ability_fact_AbilityImplementation_Key),
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_ability_fact_AbilityImplementationCheck_Key),
+    FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_ability_fact_NamedImplementationCheck_Key),
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_ability_fact_ModuleAbilityOverlapCheck_Key),
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_module_fact_ModuleAbilities_Key),
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_module_fact_ModuleConstructors_Key),
