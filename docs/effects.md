@@ -69,16 +69,19 @@ lives now.
    `implement[T, K ~ Compare[K]] byKey(key: T => K)`. Building it found §8 item 41, closed by D28.
 15. ~~**D28**~~ (decided and built 2026-10-15, closing §8 item 41): a `uses` clause lists effects only, and a slot
    cannot bind an implementation whose type parameter only a `with`'s arguments decide.
-16. ~~**§8 item 4**~~ — closed 2026-10-15 as not a defect: pure code may stand at a slot that allows an effect. §8 has
-   no open item left.
+16. ~~**§8 item 4**~~ — closed 2026-10-15 as not a defect: pure code may stand at a slot that allows an effect.
+17. **The 2026-10-15 review** (§8 items 42–59, and its cleanup list). First §8 item 42, a named implementation
+   checked against its ability; then the decision item 43 needs (which comparison decides riding), and items 44–45
+   with it; then the *read* items, each reproduced or proved dead first.
 
 D20a, D20c and D3 stay open until decided; none blocks the steps above.
 
 **Open, in order of severity.**
 
-- **Silent:** none known (§8 items 14, 24 and 26 closed 2026-10-13, items 33 and 34 on 2026-10-14, item 37 on
-  2026-10-15).
-- **Loud, at compile time:** a
+- **Silent:** §8 items 42 (reproduced, a runtime crash), 43 (reproduced, the wrong implementation runs), 44, and,
+  read but not reproduced, 46–49 and 51.
+- **Latent:** §8 items 52–58; item 59 is a decision.
+- **Loud, at compile time:** §8 items 45 (reproduced) and 50; a
   `catch` over a parameter spells its arguments (§7 item 2); a function-typed code parameter's own entries are never
   supplied (§7 item 1).
 - **Decided, not built:** none.
@@ -1171,9 +1174,88 @@ Each is stated, fail-safe, and either has a plan entry or is a deliberate trade.
 Each item is a defect to close or a decision to make, never a doc fix. Numbers are kept so citations resolve; closed
 items keep one line, and their full record is in git history (§13).
 
-**Open.**
+**Open.** Found by the code review of 2026-10-15 (f78861cf..67eba060). *Reproduced* means a program was compiled and
+run; *read* means found in the code, not yet reproduced — establishing it is the item's first step.
 
-None.
+| # | defect | severity | evidence |
+| --- | --- | --- | --- |
+| 42 | a **named** implementation is never checked against its ability: `AbilityImplementationCheckProcessor.collectImplMethods` reads `anonymousImplementationMethodsOf` only, and only the two-site search demands the check, so a missing member, a member the ability does not declare and a member at the wrong signature all compile. Since D26 every effect implementation is named, so no effect implementation is checked at all. `implement session: Terminal { def write(line: String, extra: String): Unit = unit; def bogus: String = "x" }`, `read` missing, compiles and fails at runtime with `ClassCastException … cannot be cast to java.lang.Void`; `def read: Int = 42` against `def read: String` with `ClassCastException: BigInteger cannot be cast to String`. A missing member is caught only when used (`AbilityResolver.reportMissingClause`), whose help blames a platform layer | silent (runtime crash) | reproduced |
+| 43 | whether a slot entry **rides** or is **supplied** is decided two ways. As spelled — §2.2's rule, *"never at ground arguments"*: `EnvironmentThreading.ridingFlags`, `BindingWriter.riddenEntries`, `RunWithHoister.spelled`. At the arguments the call determines, an undetermined one counting as riding: `BindingWriter.ridesOwn`/`knownArguments`, read by `suppliedScope` (the caller's write), `thunkRequirements` and `slotEntries`. `Writer.rides` (closed slots) compares by ability alone. With `def handle(body uses *, Source[Int] with inner: String) uses *: String = body` and `def handled[E](body uses *, Source[E]: String) uses *, Source[Int]: String = handle(body) ++ "\|" ++ pick(1)`, `handled[Int](pick(5)) with outer` prints `outer:5\|outer:1`; changing only the clause to `Source[String]` prints `inner:5\|outer:x` — the slot's meaning depends on the instantiation. §2.2's own `raising[E](…, body uses *, Throw[E]: Unit) uses Throw[AssertionError]` has no test, and its "neither handles nor declares" check is dropped by `thunkRequirements`. **The document disagrees with itself too**: §3.1 says *"known meaning ground once the call's determined arguments are written in … the same comparison decides whether a slot entry rides"*. Needs a decision of which rule stands before code is changed | silent (wrong implementation runs) | reproduced |
+| 44 | the threading hides a disagreement between a reference's binding and the nearest frame: `EnvironmentThreading.lookup` reports one only when the binding is `Default`, and builds a fresh frame for a differing **named** binding (`built`). §3.4: *"a disagreement is an error, never a silent pick"*. It is what lets item 43 run instead of failing | silent | read (seen through item 43) |
+| 45 | an implementation a slot names runs its clauses at `Default` for every type argument: `EnvironmentThreading.namedClauses` calls `implementationClauses(marker, None)`, which fills every binder with `defaultBinding`, while `namedOwn` solves them with `NamedImplementationArguments.solve` — item 30 promised the same solve *"at dispatch and in the environment threading alike"*. `implement[T ~ Show[T]] recording: Source[T] { def describe(t: T) uses Writer[List[T]]: String = … }` bound by `def captured(body uses *, Source[Int] with recording: String) uses *: List[Int] = runWriterToLog(body)` fails with *"The implementation 'writing' performs 'Writer' here, and nothing supplies the parameters it takes"*; at `Writer[List[String]]`, or as a body `with`, it works. On that path `constrained` is always empty, so such an implementation's `~` constraint bound to a named one never gets its frame (item 39's mechanism). The comment there (*"a slot's `with`, whose clause bindings the caller writes as `Default`"*) contradicts D26 | loud | reproduced |
+| 46 | a closed slot keeps an outer binding by **ability**: `Writer.rides` feeds `Scope.enterClosed` with abilities, so a closed `body uses Throw[String]` under a definition declaring `Throw[Int]` — a supplied entry, not a ridden one — lets a `Throw[Int]` raised in the argument reach the caller's binding with no capture error, against rule 4 | silent | read |
+| 47 | the over-declaration check (§4) is per ability, not per entry: `Writer.consumed: Set[AbilityFQN]`, `overDeclared`'s `distinctBy` and the ridden consumption's `scope.binding(ability)`, so `uses Throw[A], Throw[B]` performing only `Throw[A]` is accepted, while §4 says two same-ability entries at different arguments are two entries | silent (accepts) | read |
+| 48 | the row phase finds a definition's value-parameter names two ways: `BindingWriter.valueParameterNames` peels **every** leading lambda and takes the last `n`, `RunWithHoister.parameterNames` caps the peel at binders plus parameters. With a function-alias return type and a lambda body (`def f(body uses *: Unit): Handler = s -> …`) the write keys `thunks`, `thunkNeeds` and `slotEntries` on `s` | silent | read |
+| 49 | compile-track linking keeps one binding per FQN: `ReducedBindingClosure.collectBindings(deep = true)` folds `acc + (fqn -> reduced)`, so of a callee linked at two instantiations the last wins, while §3.4 promises *"a binding per instantiation"* (only `PostDrainQuoter.reduceThreaded`'s top level keys per instance). `EscalatingReducer.escalate`'s ambiguous-FQN decline exists for exactly this, and `reduceApplied` now uses the deep collection whenever threading changed the body; the safety argument at `ReducedBindingClosure.scala:46` (driven only by `escalatingLoop`'s laziness) no longer holds | silent | read |
+| 50 | an **anonymous** ability implementation whose clause performs an effect its member does not declare gets `Default` for it (`AbilityImplementationProcessor.withPhantomDefaults`), and fails only at monomorphization, at the clause's operation, with *"Nothing binds an implementation of the effect 'Console' here"* and help about body-less dischargers. There is no definition-site rule for it. `EnvironmentThreading.implementationOf` likewise sends any `Default` binding, an effect entry's included, to the two-site search and treats a miss as an empty shape | loud, late, misattributed | reproduced (the error); read (the threading) |
+| 51 | the parser accepts `with` on a value parameter and on a `data` field (`ArgumentDefinition.plainRest` → `Expression.typeWithBindings`; `EffectSyntaxParserTest` pins *"bind a data field's type"*), while §2 allows `with` in an expression or after a clause entry only, and rule 6 gives a field no clause. Whether anything downstream rejects it is unchecked; if nothing does, it is item 1's silent no-op | silent? | read |
+| 52 | the row phase's two processors disagree on the compile track: `RowElaborationProcessor` reports **and aborts** only on the runtime track, so a compile-track value with violations still yields a `RowElaboratedValue` with `Default` written (against `Written.violations`' *"a violation aborts the definition"*), while `SlotBindingProcessor` reports on runtime only but aborts on both. Probably fail-safe today (an effect's `Default` dies in `AbilityResolver`) | latent | read |
+| 53 | "is this ability an effect?" is answered three ways, against §3.6's *"read from one place"*: `ValueResolver.requireEffect` (any member's row in `UnifiedModuleValue`, compared by the **unresolved local name**; a member-less ability counts as an effect), `RowElaborationProcessor.defaultOfEffect` (any member's `OperatorResolvedValue`, by FQN; member-less counts as an ability), `AbilityResolver.isEffect` (the one member reached, `getFactIfProduced`). They differ on a member-less effect and on two abilities of one local name | latent | read |
+| 54 | `AbilityResolver`'s fallback (`:122-132`, `CheckState.findConstraintTypeArgs`) takes a not-yet-ground reference's ability arguments, its binding included, from the enclosing definition's first constraint of the same **local ability name** — keyed on a name, and by its own comment wrong for two entries of one ability. Not shown reachable after the row phase; prove it dead or close it | latent | read |
+| 55 | `MatchDesugarUtils.findAbilityMethodImpl` searches `ModuleAbilities.namedImplementationMethodsOf` — "named" there means *by method name* and includes named implementations — and picks `headOption`/`findM` in name-table order, so a user's named `implement x: PatternMatch[…]` in the data's module can be selected, against *"a named one is reached only by `with`"* (item 7) | latent | read |
+| 56 | the environment-entries rule is implemented twice: `EnvironmentThreading.environmentEntries` re-implements `DeclaredEntries.environment` (92db28bc says they are shared), selects clauses by `methodName != abilityName` where `RowElaborationProcessor.clausesOf` uses `vfqn != marker`, and treats a missing member as an empty set (`getFactIfProduced`) where the row phase gives up on the implementation | latent | read |
+| 57 | unreachable fallbacks that would install an effect `Default` silently: `typeArguments.lift(received.binderIndex).getOrElse(defaultBinding)` in `EnvironmentThreading` (five sites); `TypeStackLoop.monomorphicEffects` already drops an out-of-range index. Fail-safe would be an internal abort | latent | read |
+| 58 | a binding's mangled identity hashes module and pattern with a 32-bit `String.hashCode` (`CommonPatterns.implementationBinding`), and `JvmClassGenerator` emits a mangled name and descriptor once, so a collision between two same-named implementations of one ability brings item 37 back. `CodegenProjection.erasedCarrier`, documented as *"exactly the backend's mangling"*, keys on `carrierFQN` and no longer mirrors item 37's identity | latent | read |
+| 59 | §3.8 and CLAUDE.md say *"the checker holds no effect rule … no effect diagnostic"*, while `monomorphize/check` holds `AbilityResolver.isEffect`/`reportUnboundEffect`/`reportUnmatchedBinding`, `DeclaredEntries.forwarded` (recorded by `AbilityResolver.record`, applied in `PostDrainQuoter`), `PostDrainQuoter.reachesFrames`/`threaded` and `TypeStackLoop.guardRead`; §3.1 and §3.4 themselves name `AbilityResolver` and `PostDrainQuoter`. A decision: restate §3.8, or move them | decision | read |
+
+**Cleanup found by the same review.** Not defects — dead code and text that no longer describes the tree. Each was
+checked with a repository-wide grep, tests included.
+
+- *Unused code:* `RowChecker.checkable` (only a Scaladoc link; `RowChecker`'s header still claims *"two predicates
+  it shares with its processor"*); `PostDrainQuoter.reduceSignatureToGround`; `CheckState.metaConstraints`/
+  `recordMetaConstraints`/`MetaConstraint` and `CarrierKindChecker.recordMetaConstraints` (written, never read;
+  `CarrierKindChecker:61` links a non-existent `CheckState.ambientCarriers`); `WellKnownTypes.boolFoldFQN`/`boolIfFQN`;
+  `ModuleAbilities.implementationMethodsOf`/`markersOf`; `ImplementationParameters.isDeclaration`;
+  `Unifier.occursInValue`; `CompilerMonomorphicValue.naturalArity`; the unused `UnifiedModuleNames`/`SignatureView`
+  imports in `AbilityImplementationCheckProcessor`; the `IO`/`runMain` stub in `ProcessorTest.scala:50-52`, citing a
+  `LangProcessors(runBoundaryFunctions = …)` that no longer exists. **The compile-track type-keyed cell** —
+  `stdlib/eliot/compiler/eliot/compiler/Cell.els`, `EffectIntrinsics`' `withCell`/`read`/`write`/`nearestCell`/
+  `CellFrame` and `WellKnownTypes.withCellFQN`/`cellReadFQN`/`cellWriteFQN` — is read only by tests, and finds its
+  cell by type, the mechanism item 26 replaced for escape.
+- *Possibly dead, to prove before deleting:* `GuardDischargeResolver`'s `VMeta` arms (`:58-66`, `:95-96`), whose
+  stated reason is the deleted `Track.Compiler.pinCarriers`; `UnifiedModuleValueProcessor.mergeEffectRows`, whose
+  stated reason (a layer spelling `{Throw[E] | G} A`) can no longer arise.
+- *A protection that names deleted code:* §3.8 (and CLAUDE.md, which names `Checker.resolveDeferredSlot` where §3.8
+  names `Unifier.resolveDeferredSlot`) keeps the compile track's *"mid-spine default ladder and deferred slots"* as
+  *"the sole live reader of the `Unifier`'s higher-kinded-meta record"*. Neither exists (deleted in 4bb25c00); the
+  record's readers are `CarrierKindChecker.verifyCarrierKinds` and `GuardDischargeResolver`. `Unifier.scala:48` links
+  the deleted method.
+- *Base `.els` docs, rendered by apidoc:* `File.els:123` and `Process.els:127` say *"a `with standardFileSystem` binds
+  that too"* of `Throw[IoError]`, against §2's *"each call hands it … the `with` binding the implementation answers
+  nothing for it"* — and that was the reason given for their `{…}` blocks of clause signatures, which the other four
+  `standard…` implementations do without; `lang/Implementation.els:4-7, 32` says a `Default` is *"find the
+  implementation the ordinary way"* for every `uses` entry (D26); base `effect/Throw.els:20-23`, `Abort.els:25-26` and
+  `State.els:13-14` say there is *"nothing to bind with `with`"*, while their dischargers bind `escaping`/`aborting`/
+  `holding` with one; `compiler/Cell.els:6` cites the deleted `eliot.compiler.Escape`, and its line 8 calls `body uses *: A` the jvm
+  `withCellInternal`'s shape, which takes `StateCell[S] => A`.
+- *Scaladoc that says the opposite of the code:* `SlotBoundValue`'s `@param` (the hoisted `with`s are *added*, not
+  removed); `RowElaboratedValue` (*"fully explicit monadic core … every `flatMap`/`pure`/`runId`"*);
+  `RowElaborationProcessor:24` and `RowElaboratedValue:30` (*"a non-elaborable value is carried through unchanged"*);
+  `ImplementationParameters:22` (the conformance check is not a reader since 92db28bc) and `:76-78` (the `$with`
+  binder's type arguments are written since items 31/36 and D27); `EffectIntrinsics:28` (the jvm cell is a local
+  one-slot array, not a static field); `SuppliedRowArgumentsProcessor:18-23` (a by-type frame rationale), its message
+  *"this call"* anchored at the enclosing definition (`mv.name`), and its scan covering ridden entries too;
+  `NamedImplementationArguments:24` and `AbilityMatcher.patternParameters` (a binder outside the pattern may be a free
+  parameter since D27); `LspPlugin.scala:148-151` (*"binds the carrier to `eliot.jvm.IO`"*); `WellKnownTypes:187`
+  (`escapeIntrinsic`'s shape).
+- *Carrier-era and brace-row text on live types:* `EffectRow` (the carrier desugar, the `Effect` machinery entry, a
+  non-existent `EffectSugarDesugarer.rowEntries`); `NamedImplementation` (*"landed dark"*, a brace example, *"exactly
+  as an anonymous implementation's"* parameters); `ImplementBlock:26-29, 61` (*"until the flag day"*, a `Coerce`
+  guard); `Expression.WithBinding`'s and `BindingWriter`'s (`:50-52, 276, 571, 1501-1506`) and
+  `RowElaborationProcessor:107`'s brace examples; `ValueResolver.superConstraints` (the `Web[F[_] ~ Console & Log]`
+  example, which D28 makes inexpressible), `ValueResolver:548, 891-893`; `CoreExpressionConverter:139`;
+  `AbilityImplementation:12-25`; `AbilityImplementationProcessor:172-179, 344-354`; `AbilityResolver:17, 99`;
+  `TypeStackLoop:214, 218`; `ReducedBindingClosure:42-46, 97-100`; `PostDrainQuoter.reduceSourced`;
+  `ArgumentDefinition:47` (*"landed dark"*); `TerminationIntegrationTest:128, 141` (*"the run boundary"*);
+  `EffectCorpus:131` and `ListIntegrationTest:142` (`RowChecker.rowDeclaringParameters`/`parameterEnvironment`).
+- *`Default` described as every binder's search:* `WellKnownTypes:39-50`, `ImplementationBinding:11-15, 49`,
+  `EffectSugarDesugarer:16-17`, `BindingWriter.slotImplementation` (`:1235-1237`), `RunWithHoister:199-201`,
+  `RowElaborationProcessor:89-90`. For an effect, D26 makes it a promise the given-check holds, never a search.
+- *This document and CLAUDE.md:* "Next" step 10 says item 36 *"was decided to stay open"* while step 13 and the table
+  close it, and CLAUDE.md still spells `people.sorted[Person] with byKey(…)`; CLAUDE.md's testing note (a
+  `ProcessorTest` calling an effect method needs `type Default`) holds for abilities only since D26; it cites
+  `Expression.typeParser` (the parser is `typeRunParser`) and `AbilityConstraint.combinedBy` (the field is on the
+  ast's `UnresolvedAbilityConstraint`); its `~ Web ⤳ Web, Console, Log` example is the inexpressible one above.
 
 **Closed.**
 
