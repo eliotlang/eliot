@@ -675,8 +675,11 @@ implementation with parameters is always **named** (D25) — never a default, si
 arguments — and a run passed to a callee's slot is bound as that slot binds (how `catch` learns `runThrow`'s). An
 entry a named implementation's clause only repeats from its member (`standardFileSystem`'s `readFile` and its
 `Throw[IoError]`) is the **call's**: dispatch hands the clause the call's binding (`DeclaredEntries.forwarded`), so a
-`with` binding the implementation answers nothing for it (`BindingWriter.perCallBinders`). Decided, not built:
-parameterised ability implementations (§11).
+`with` binding the implementation answers nothing for it (`BindingWriter.perCallBinders`). An **ability**'s named
+implementation takes parameters the same way (`people.sorted[Person] with byKey(p -> p.age)`), and an implementation's
+`~` constraint bound to a named one holds its frame (`EnvironmentThreading.implementationClauses`). A binding is mangled
+by the backend as its whole identity — ability, module-and-pattern hash, name — since by the ability's name alone two
+named implementations of one ability were one method and one body silently replaced the other.
 
 **Three platform-private primitives, and nothing else.** A finishing clause is a non-local exit; a stateful
 implementation threads a value through calls that never mention it. Neither is expressible in a strict pure core, so

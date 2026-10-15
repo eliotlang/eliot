@@ -993,9 +993,13 @@ object EnvironmentThreading {
             .map(_.flatMap(_.resolution.resolved))
       }
 
-    /** The entries an implementation's clauses perform, with the bindings its type arguments hold for them — read off
-      * its marker's specialisation, whose clause row every clause carries. `typeArguments` [[None]] is a slot's `with`,
-      * whose clause bindings the caller writes as `Default`. An implementation whose clauses declare no row needs no
+    /** The entries an implementation's environment holds frames of, with the bindings its type arguments hold for them
+      * — read off its marker's specialisation, whose clause row every clause carries: the effects its clauses perform
+      * ([[environmentEntries]]), and its `~` constraints bound to a **named** implementation. `implement[T ~
+      * Compare[T]] byLast: Compare[List[T]]` bound where `with byKey(f)` binds `Compare[Int]` holds `byKey`'s frame,
+      * since its clauses' `<=` runs on it; a constraint at `Default` is the two-site search's, whose anonymous answer
+      * takes no parameters (`docs/effects.md` D25), so its frame would hold nothing. `typeArguments` [[None]] is a slot's
+      * `with`, whose clause bindings the caller writes as `Default`. An implementation with neither needs no
       * specialisation read at all.
       */
     private def implementationClauses(
@@ -1003,21 +1007,30 @@ object EnvironmentThreading {
         typeArguments: Option[Seq[GroundValue]]
     ): CompilerIO[Seq[(Entry, GroundValue)]] =
       getFactOrAbort(OperatorResolvedValue.Key(marker, track.platform)).flatMap { orv =>
-        val performed = orv.effectRow.returnEffects.map(_.abilityFQN).toSet
-        if (performed.isEmpty) Seq.empty.pure[CompilerIO]
-        else {
-          val arguments =
-            typeArguments.getOrElse(Seq.fill(SignatureView.of(orv.signature).binders.size)(defaultBinding))
+        val performed   = orv.effectRow.returnEffects.map(_.abilityFQN).toSet
+        val arguments   =
+          typeArguments.getOrElse(Seq.fill(SignatureView.of(orv.signature).binders.size)(defaultBinding))
+        val binders     = SignatureView.of(orv.signature).binders.map(_.name.value)
+        val constrained = orv.paramConstraints.values.flatten.toSeq.flatMap { constraint =>
+          constraint.typeArgs.headOption.collect {
+            case OperatorResolvedExpression.ParameterReference(name)
+                if !performed.contains(constraint.abilityFQN) &&
+                  arguments.lift(binders.indexOf(name.value)).exists(isNamed) =>
+              binders.indexOf(name.value)
+          }
+        }.toSet
+        if (performed.isEmpty && constrained.isEmpty) Seq.empty.pure[CompilerIO]
+        else
           for {
             held   <- abilityOfImplementation(orv).fold(Set.empty[Declared].pure[CompilerIO])(environmentEntries(marker, _))
             own    <- declaredEntries(marker)
             ground <- track.specialisation(marker, arguments)
           } yield ground.effects.received
             .filter(received =>
-              performed.contains(received.entry.ability) && own.get(received.binderIndex).exists(held.contains)
+              constrained.contains(received.binderIndex) ||
+                performed.contains(received.entry.ability) && own.get(received.binderIndex).exists(held.contains)
             )
             .map(received => received.entry -> arguments.lift(received.binderIndex).getOrElse(defaultBinding))
-        }
       }
 
     private def abilityOfImplementation(

@@ -102,7 +102,7 @@ object BindingWriter {
     *   generic in some binder, or a `with` — answers any.
     * @param clauses
     *   For a body `with`'s implementation, the [[serial]] of the binding in scope at the `with` for each entry its
-    *   clauses perform, with the entry's known arguments: the environment threading builds that implementation's frame
+    *   clauses perform and each of its `~` constraints, with the entry's known arguments: the environment threading builds that implementation's frame
     *   where it is used, from the frames in scope there, so they must be the ones at the `with`
     *   ([[Writer.checkClauses]]).
     * @param serial
@@ -122,8 +122,10 @@ object BindingWriter {
 
   private object Binding {
 
-    /** One entry a `with`'s implementation performs in its clauses, and the binding that answered it at the `with`. */
-    case class Clause(ability: AbilityFQN, arguments: Option[Seq[String]], serial: Option[Long])
+    /** One entry a `with`'s implementation performs in its clauses or names in a `~` constraint, and the binding that
+      * answered it at the `with`.
+      */
+    case class Clause(ability: AbilityFQN, arguments: Option[Seq[String]], serial: Option[Long], performed: Boolean)
     private val serials = new java.util.concurrent.atomic.AtomicLong()
 
     def nextSerial(): Long = serials.incrementAndGet()
@@ -777,8 +779,9 @@ object BindingWriter {
       abilityOf(implementation.value, universe) match {
         case Some(ability) =>
           val perCall = perCallBinders(implementation.value, ability, universe)
-          val clauses = bindingEntries(implementation.value, universe, perCall).map { case (clause, arguments) =>
-            Binding.Clause(clause, arguments, scope.binding(clause, arguments).map(_.serial))
+          val performed = performedEntries(implementation.value, universe).map(_._1).toSet
+          val clauses   = bindingEntries(implementation.value, universe, perCall).map { case (clause, arguments) =>
+            Binding.Clause(clause, arguments, scope.binding(clause, arguments).map(_.serial), performed(clause))
           }
           val binding =
             Binding(ability, boundImplementation(implementation, scope, perCall), byWith = true, clauses = clauses)
@@ -1585,19 +1588,24 @@ object BindingWriter {
         )
       )
 
-    /** A body `with`'s implementation used below a nearer binding of an effect its clauses perform. Its clauses were
-      * written to perform that effect on the binding at the `with`, but the frame they would reach at runtime is the
-      * nearer one: the implementation's frame is built where it is used (effects D20c option 5), and a discharge between
-      * the `with` and the use is exactly what that would intercept. Each entry is looked up at its own arguments, as a
-      * frame is chosen by entry: a nearer discharge of `Throw[NotFetched]` does not stand between a `with` and the use
-      * of an implementation performing `Throw[GitError]`.
+    /** A body `with`'s implementation used below a nearer binding of an effect its clauses perform, or of an ability
+      * its `~` constraints name. Its clauses were written to run on the binding at the `with`, but the frame they would
+      * reach at runtime is the nearer one: the implementation's frame is built where it is used (effects D20c option 5),
+      * and a binding between the `with` and the use is exactly what that would intercept. Each entry is looked up at its
+      * own arguments, as a frame is chosen by entry: a nearer discharge of `Throw[NotFetched]` does not stand between a
+      * `with` and the use of an implementation performing `Throw[GitError]`.
+      *
+      * The `with`'s own binding is never between them: `xs.sorted with byLast`, for `implement[T ~ Compare[T]] byLast:
+      * Compare[List[T]]`, finds `byLast` itself nearest for its constraint's `Compare`, and nothing nearer than that.
       */
     private def checkClauses(binding: Binding, at: Sourced[?], scope: Scope): Unit =
-      binding.clauses.sortBy(_.ability.abilityName).foreach { case Binding.Clause(clause, arguments, serial) =>
-        if (scope.binding(clause, arguments).map(_.serial) != serial)
+      binding.clauses.sortBy(_.ability.abilityName).foreach { case Binding.Clause(clause, arguments, serial, performed) =>
+        val nearest = scope.binding(clause, arguments).map(_.serial)
+        if (nearest != serial && !nearest.contains(binding.serial))
           violations += Violation(
             at.as(
-              s"The implementation of '${binding.ability.abilityName}' bound by the `with` around this performs " +
+              s"The implementation of '${binding.ability.abilityName}' bound by the `with` around this " +
+                s"${if (performed) "performs" else "uses"} " +
                 s"'${clause.abilityName}', and a nearer binding of '${clause.abilityName}' stands between them."
             ),
             Seq(s"Move the `with` inside the nearer binding of '${clause.abilityName}', or that binding outside it.")
