@@ -571,7 +571,9 @@ same row node (`EffectfulType`) the rest of the compiler always read — a defin
 parameter's onto the slot or its arrow codomain — so no phase past `ast` learned the clause except one bit,
 **closed** (`ArgumentDefinition.closedRow`). **The brace spelling `{Console} Unit` is a parse error** naming the
 clause, everywhere except a **row alias** body (`type Test = {Writer[List[TestResult]]} Unit`), which has no `uses`
-form until D20a decides one.
+form until D20a decides one. **A clause lists effects only** (D28): an ability is a `~` constraint, never
+inherited along a call chain, so listing one is an error at the entry (`ValueResolver.requireEffect`), and no callee
+can fix an ability's implementation for code its caller wrote.
 
 **The user rules** (§1; D20's and D21's, which are the rules every artefact answers to — where code, a stdlib
 signature, an example or a test conflicts with them, the rule wins and the artefact is the defect):

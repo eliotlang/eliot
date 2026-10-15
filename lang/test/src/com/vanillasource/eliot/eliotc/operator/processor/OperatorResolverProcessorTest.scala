@@ -320,7 +320,7 @@ class OperatorResolverProcessorTest
 
   "effect-set sugar" should "mark the minted binder with the ability it binds, thunk a row parameter, and leave the return bare" in {
     val source =
-      "data Str\ndata Unt\nability Suspend[F[_]] { def delay(value: Str): F[Str] }\n" +
+      "data Str\ndata Unt\neffect Suspend { def delay(value: Str): Str }\n" +
         "def sugar(x uses *, Suspend: Str) uses *, Suspend: Unt"
     runEngineForResolvedValue(source, "sugar").asserting { sugar =>
       (signatureShow(sugar), constraintShow(sugar)) shouldBe (
@@ -338,7 +338,7 @@ class OperatorResolverProcessorTest
     // differ in their marks and agree on everything else: the same abilities, and the same payload once the binders
     // are peeled off. The marks are erased at the `row` phase, so the checker sees the two as identical.
     val source =
-      "data Str\nability Suspend[F[_]] { def s(value: Str): F[Str] }\nability Abort[F[_]] { def a(value: Str): F[Str] }\n" +
+      "data Str\neffect Suspend { def s(value: Str): Str }\neffect Abort { def a(value: Str): Str }\n" +
         "def ab(x: Str) uses Suspend, Abort: Str\ndef ba(x: Str) uses Abort, Suspend: Str"
     (runEngineForResolvedValue(source, "ab"), runEngineForResolvedValue(source, "ba")).mapN { (ab, ba) =>
       (abilitySet(ab), markedAbilitySet(ab), payloadShow(ab)) shouldBe
@@ -371,7 +371,7 @@ class OperatorResolverProcessorTest
 
   "the effect channel metadata" should "record open rows by position, resolved to ability FQNs" in {
     val source =
-      "data Str\ndata Unt\nability Suspend[F[_]] { def delay(value: Str): F[Str] }\n" +
+      "data Str\ndata Unt\neffect Suspend { def delay(value: Str): Str }\n" +
         "def sugar(x uses *, Suspend: Str) uses *, Suspend: Unt"
     runEngineForResolvedValue(source, "sugar").asserting { sugar =>
       (effectRowReturn(sugar), effectRowParameters(sugar)) shouldBe (Seq("Suspend"), Seq((0, Seq("Suspend"))))

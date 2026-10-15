@@ -8,7 +8,8 @@ run of a code parameter, a run bound as the slot it is passed to binds, the cont
 implementations their dischargers bind with `with`, and D26's explicit passing — no effect has a default, every effect
 implementation is named, and `main` is run with a `with` per entry (2026-10-14), and an ability's named
 implementations taking parameters as an effect's do, with a type parameter their pattern does not take read off
-those arguments (D27, 2026-10-15). An effect is
+those arguments (D27, 2026-10-15), and a `uses` clause listing effects only, so that no callee fixes an implementation
+for code its caller wrote unless the declaration can say all of it (D28, 2026-10-15). An effect is
 an ability declared with the `effect` keyword. A definition's `uses` clause says what its caller hands it. An implementation has two halves: its **code**, a
 compile-time name written at every reference by a syntax-directed pass that reads declarations only, and its
 **environment** (an escape frame, a cell, its own parameters), a value threaded after monomorphization — on the
@@ -65,7 +66,9 @@ lives now.
    (368, and its launcher) were run against it; no dependent moved.
 13. ~~**§8 item 36**~~ — closed 2026-10-15: `people.sorted with byKey(p -> p.age)` needs nothing spelled.
 14. ~~**D27**~~ (decided and built 2026-10-15, closing §8 item 40): a key of any comparable type,
-   `implement[T, K ~ Compare[K]] byKey(key: T => K)`. Building it found §8 item 41, which needs a decision.
+   `implement[T, K ~ Compare[K]] byKey(key: T => K)`. Building it found §8 item 41, closed by D28.
+15. ~~**D28**~~ (decided and built 2026-10-15, closing §8 item 41): a `uses` clause lists effects only, and a slot
+   cannot bind an implementation whose type parameter only a `with`'s arguments decide.
 
 D20a, D20c and D3 stay open until decided; none blocks the steps above.
 
@@ -75,8 +78,7 @@ D20a, D20c and D3 stay open until decided; none blocks the steps above.
   2026-10-15).
 - **Loud, at compile time:** a
   `catch` over a parameter spells its arguments (§7 item 2); a function-typed code parameter's own entries are never
-  supplied (§7 item 1); `runThrow("no failure")` with its argument spelled is accepted (§8 item 4); a `with` moved onto
-  a code parameter's slot does not read its implementation's type parameter off its arguments (§8 item 41).
+  supplied (§7 item 1); `runThrow("no failure")` with its argument spelled is accepted (§8 item 4).
 - **Decided, not built:** none.
 - **Undecided:** naming a set of effects in a clause (D20a), storing an effectful computation (D20c), `~`/`&` in user
   space (D3).
@@ -217,6 +219,12 @@ def catch[E, A](computation uses *, Throw[E]: A, onError uses *: E => A) uses *:
 | `uses *, E` | a parameter | the same, plus `E`, which the callee handles or declares — a handler's slot | the same |
 | `uses E` | a parameter | code that may use `E` and nothing from around it — a **closed** clause | the same |
 
+**A clause lists effects only** (D28). An ability is a `~` constraint on a type parameter, filled by the caller or
+answered by its default, and is never handed down a call chain the way a clause's entries are: `def f uses
+Compare[Int]: Bool` and `body uses *, Compare[Person]: A` are both *"'Compare' is an ability, and a `uses` clause lists
+effects only"*, at the entry. So a `with` binding an ability reaches only its own subject's calls, and no callee can fix
+an ability's implementation for code its caller wrote.
+
 `*` comes first and at most once. On a parameter it opens the argument to the caller's text, since only an argument
 has a caller's text to be open to; on a definition it is written **exactly when** some parameter's clause has one, and
 says that a call performs what the caller's code there does — so the result side of a signature is complete without
@@ -281,7 +289,10 @@ performs 'Source[Int]' on the implementation 'none', which does not implement it
 pattern does **not** take is read off the arguments its `with` supplies (D27): `with byKey(p -> p.age)`, for
 `implement[T, K ~ Compare[K]] byKey(key: T => K): Compare[T]`, runs at `K := Int`, one type per `with`, and two `with`s
 at two keys are two specialisations. One its arguments do not determine either is never solved — free when nothing uses
-it, and loud when something does. With parameters, the arguments must fit every entry the `with` binds: *"The implementation 'constant' takes (String) where it runs
+it, and loud when something does. Such an implementation is bound **only where its code is written** (D28): on a slot,
+written there or moved there from a run of a code parameter, it is *"The implementation 'keyed' cannot bind the code a
+caller wrote: only the arguments of a `with` determine its type parameter 'K', which its pattern does not take"*, since
+those arguments are computed in the definition's body and the caller compiles the code from its declaration alone. With parameters, the arguments must fit every entry the `with` binds: *"The implementation 'constant' takes (String) where it runs
 'Source[String]', but this `with` supplies (Int)"*, at the `with`.
 
 ```eliot
@@ -308,7 +319,9 @@ precedence, left-associative, so `xs.sort.render with reverseOrd` applies to the
 definition declares what it performs and does not discharge, what *escapes* a subject is read off it: the effects its
 calls declare, and those its own code performs. A `with` binds exactly those, for its implementation's ability — an
 effect discharged further down never escapes, so no `with` reaches it — and a `with` that nothing escapes to is an
-error, never a no-op. It works on an ability exactly as on an effect, and there are **two positions, one construct**:
+error, never a no-op. It works on an ability as on an effect, except that an ability is never listed in a clause (D28),
+so a `with` for one binds the `~` binders of its subject's calls and nothing past them. There are **two positions, one
+construct**:
 an expression in a body, and after an entry of a parameter's clause — the same split as `f(x)` and `List[Int]`,
 both application under the types-are-values cornerstone.
 
@@ -1158,15 +1171,6 @@ items keep one line, and their full record is in git history (§13).
 
 4. **`runThrow("no failure")` is accepted** when the call spells the argument, although §2.2 lists an actual that
    raises nothing among the shapes rejected. Loud by construction (the argument is written by hand), so last.
-41. **A `with` moved onto a code parameter's slot does not read a type parameter off its arguments.** `def byAge(body
-    uses *, Compare[Person]: List[Person]) uses *: List[Person] = body with byAnyKey(p -> p.age)`, for `implement[T, K
-    ~ Compare[K]] byAnyKey(key: T => K): Compare[T]`, is *"The implementation 'byAnyKey' takes (Person -> Default) …
-    but this `with` supplies (Person -> Int)"* (loud, never wrong). The `with` is hoisted onto the slot (D23), so the
-    binding is written by `byAge`'s **caller**, while the arguments that decide `K` are checked in `byAge`'s body — a
-    separate check, which no key spans. D27 reads `K` where the `with` is written; here that would make the slot's
-    declared binding depend on checking the body, which is a decision, not a fix. Until then such a `with` is written
-    where its subject's references are. Found 2026-10-15 building D27.
-
 **Closed.**
 
 | # | defect | closed |
@@ -1207,6 +1211,7 @@ items keep one line, and their full record is in git history (§13).
 | 35 | a slot's `with` bound an ability, not an entry: carrying `escaping` onto `mocked`'s slot for its supplied `Throw[IoError]` also captured its declared `Throw[AssertionError]`, which must ride, and the run asked for arguments no `with` supplied (loud, found building D25 step 4) | 2026-10-14: a slot `with` records the clause entry it was written after, and a carried one binds only the entries the definition does not declare (`row/SlotBindings`) |
 | 36 | a `with`'s arguments were typed from themselves where the entry it binds is not spelled: `pick(1) with mapping(x -> show(x))`, for `def pick[A](a: A) uses Source[A]`, whose `A` only the checker reads off `1`, was *"… but this `with` supplies (Type -> String)"*, so `people.sorted with byKey(p -> p.age)` needed `sorted[Person]` (loud, found 2026-10-14 building item 31) | 2026-10-15: the row phase writes one **keyed hole**, `Inferred[k]`, at the callee's undetermined binder and, through the implementation's pattern, at the `with`'s binder, and the checker reads one key as one metavariable (`BindingWriter.sharedHoles`, `CheckState.sharedHoles`); every example jar is byte-identical. An argument that does not fit such an entry, `pick("a") with constant(1)`, is now the checker's *"Type mismatch."* inside the call; the threading's *"… but this `with` supplies (Int)"* remains where the entries disagree |
 | 40 | a named implementation's type parameter its pattern does not take was never solved: `implement[T, K ~ Compare[K]] byKey(key: T => K): Compare[T]` ran at `K := Default`, so its clauses' `<=` was *"No ability implementation found for ability 'Compare' with type arguments [Default]"* and the `with` *"… takes (Person -> Default)"* (loud, found 2026-10-15 building parameterised ability implementations) | 2026-10-15 by D27 (§11): one keyed hole in the binding and the `with`'s binder (`BindingWriter.freeParameters`), and nested keyed holes in the checker (`Checker.keyedHoles`); a `with` moved onto a slot does not read it, item 41 |
+| 41 | a `with` moved onto a code parameter's slot did not read a type parameter its implementation's pattern does not take: `def byAge(body uses *, Compare[Person]: List[Person]) uses *: List[Person] = body with byAnyKey(p -> p.age)`, for `implement[T, K ~ Compare[K]] byAnyKey(key: T => K): Compare[T]`, was *"The implementation 'byAnyKey' takes (Person -> Default) … but this `with` supplies (Person -> Int)"*, since the caller writes the binding from the slot while the arguments deciding `K` are checked in the body (loud, found 2026-10-15 building D27) | 2026-10-15 by D28 (§11), refused rather than handled: an ability is not listed in a clause, and an effect's implementation with such a parameter cannot be bound on a slot (`SlotBindingProcessor.slotFreeParameters`) |
 | 37 | two named implementations of one ability at the same type arguments, used in one program, were one method: the jvm backend mangled a binding by its marker's local name, which is the ability's, so `xs.sorted with reversed` and `xs.sorted with natural` were both `sorted$Compare$Int` and one body silently replaced the other — as were two doubles of one effect (`greet with loud` beside `greet with quiet`), in releases up to `v0.12` (found 2026-10-15 building parameterised ability implementations) | 2026-10-15: a binding is mangled as its whole identity — the ability, a hash of its module and pattern, and its name (`CommonPatterns.mangleTypeArgument`); every example behaves identically, with the same instructions, and its jar 2.8% larger by the longer names |
 | 38 | a named implementation constrained on its own ability was rejected wherever it was bound: `xs.sorted with byLast`, for `implement[T ~ Compare[T]] byLast: Compare[List[T]]`, was *"… performs 'Compare', and a nearer binding of 'Compare' stands between them"*, the `with`'s own binding taken for the nearer one (loud) | 2026-10-15: the `with`'s own binding never stands between (`BindingWriter.checkClauses`), and a constraint is *"uses"* where an effect *"performs"* |
 | 39 | an implementation's `~` constraint bound to a named implementation taking parameters reached none of them: `(xs.sorted with byShown).joined(",") with prefixed(">>")`, for `implement[T ~ Show[T]] byShown: Compare[T]`, was *"The implementation 'prefixed' performs 'Show' here, and nothing supplies the parameters it takes"* (loud) | 2026-10-15: an implementation's environment holds the frames of its constraints bound to a named implementation, after those its clauses perform (`EnvironmentThreading.implementationClauses`) |
@@ -1445,6 +1450,18 @@ Numbers are kept so citations resolve; the record of each is in git history (§1
   only those arguments solve it; it amends §5 rule 3 (a type parameter of a binding, never the implementation it
   names, may be a metavariable). Closed §8 item 40; a `with` moved onto a code parameter's slot does not read it (§8
   item 41).
+- **D28** (decided and built 2026-10-15): *a `uses` clause lists effects only, and a slot binds no implementation
+  whose type parameter only a `with`'s arguments decide.* Found as §8 item 41: a `with` around a run of a code
+  parameter is moved onto the slot, so the caller compiles its code from the declaration, while D27's `K` is decided
+  by arguments the body computes. Rejected: reading `K` off the callee's checked body (a caller's compilation would
+  depend on a callee's body, not its signature) and spelling it at the `with` (a convenience for a shape nothing
+  needs). **Decided: do not handle it.** An ability is not inherited along a call chain — it is a `~` constraint,
+  filled by the caller or answered by its default — so it has no place in a clause, and listing one is an error at
+  the entry (`ValueResolver.requireEffect`); an ability's `with` then reaches only its subject's own calls, and fixing
+  an ability's implementation for code a caller wrote has no spelling. For an effect the same shape stays reachable,
+  since a discharger binding its code's effect is exactly a `with` on its slot, so that case is an error at the
+  `with` instead (`SlotBindingProcessor.slotFreeParameters`); the implementation is bound where the code is written.
+  Measured first: no `.els` in eliot, eliot-test or eliot-build lists an ability in a clause.
 - **D26** (decided and built 2026-10-14): *no effect has a default; every effect implementation is named, and every
   effect binding is written.* **Amended** D25's *"a default — always parameterless — is given only at `main`"*: the
   run boundary was the last place an effect's implementation was searched for. The compiler only passes an effect's
@@ -1567,6 +1584,10 @@ Numbers are kept so citations resolve; the record of each is in git history (§1
 - **The `<Ability>Carrier` convention as an explicit declaration.** Its premise — that an effect *has* a
   representation — is gone; the property it named ("has a canonical monad transformer") is exactly what
   §3.4's primitives replace.
+- **A slot's implementation solved from the callee's body** (D28, 2026-10-15). A slot-bound implementation's type
+  parameter its pattern does not take (`K` of `byAnyKey(key: T => K)`) is decided by arguments the body computes,
+  while the caller compiles the code from the declaration: reading it back would make a caller depend on a callee's
+  body. Such an implementation is bound where the code is written instead.
 
 **Not now — conveniences deliberately left out (2026-09-08).** Each is additive later and none touches the mechanism:
 
@@ -1574,8 +1595,9 @@ Numbers are kept so citations resolve; the record of each is in git history (§1
   abilities required of a binder** (v5's `ability Web[F[_] ~ Console & Log]`). A row *with its payload* has a name —
   the row alias, §2.4 — and the superability closure stays for ordinary binders.
 - **`with` on a def's own clause.** Rejected as a second spelling of `with` around the body.
-- **A clause spelling for a ground ability default** (`def printAll(xs: List[Int]) uses Ord[Int]: Unit`). `with`
-  on an ability reaches a callee only through a `~` constraint on a generic.
+- **A clause spelling for a ground ability default** (`def printAll(xs: List[Int]) uses Ord[Int]: Unit`). Refused
+  since D28: a clause lists effects only, and `with` on an ability reaches a callee only through a `~` constraint on a
+  generic.
 - **A user-declared boundary default** (`implement Throw[ConfigError]` handling an undischarged
   `Throw[ConfigError]` at `main`). It would overlap the platform's single `implement[E] Throw[E]`, which
   coherence rejects; the boundary binds the platform layer's defaults only.

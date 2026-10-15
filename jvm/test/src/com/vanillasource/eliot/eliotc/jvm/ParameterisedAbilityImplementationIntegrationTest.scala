@@ -95,7 +95,7 @@ class ParameterisedAbilityImplementationIntegrationTest extends FullIntegrationT
     ).asserting(_ shouldBe "a,b,c")
   }
 
-  it should "not yet be read off the arguments of a `with` moved onto a code parameter's slot" in {
+  it should "not be listed in a code parameter's clause, so no callee binds it for its caller's code" in {
     compileForErrors(
       s"""$people
          |implement[T, K ~ Compare[K]] byAnyKey(key: T => K): Compare[T] {
@@ -105,7 +105,7 @@ class ParameterisedAbilityImplementationIntegrationTest extends FullIntegrationT
          |def byAge(body uses *, Compare[Person]: List[Person]) uses *: List[Person] = body with byAnyKey(p -> p.age)
          |
          |def main uses Console: Unit = printLine(names(byAge(everyone.sorted)))""".stripMargin
-    ).asserting(_ should include("The implementation 'byAnyKey' takes (Person -> Default)"))
+    ).asserting(_ should include("'Compare' is an ability, and a `uses` clause lists effects only."))
   }
 
   "a named ability implementation with parameters" should "run on each `with`'s own arguments in one program" in {

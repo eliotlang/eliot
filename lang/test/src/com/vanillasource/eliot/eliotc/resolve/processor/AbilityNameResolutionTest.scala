@@ -33,6 +33,16 @@ class AbilityNameResolutionTest extends ProcessorTest(LangProcessors()*) {
       .asserting(_ shouldBe Seq("Ability not found."))
   }
 
+  "a `uses` clause" should "refuse an ability on a definition" in {
+    errorsOf("ability Shout[A] {\ndef shout(a: A): String\n}\ndef f uses Shout[String]: String = \"\"")
+      .asserting(_ shouldBe Seq("'Shout' is an ability, and a `uses` clause lists effects only."))
+  }
+
+  it should "refuse an ability on a code parameter" in {
+    errorsOf("ability Shout[A] {\ndef shout(a: A): String\n}\ndef f(body uses *, Shout[String]: String) uses *: String = body")
+      .asserting(_ shouldBe Seq("'Shout' is an ability, and a `uses` clause lists effects only."))
+  }
+
   /** The modules of the resolved constraints on the binder the row minted for its single entry (effects v6: a row
     * entry is a phantom binder, and the constraint on it is what names the ability).
     */

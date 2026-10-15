@@ -540,6 +540,23 @@ object BindingWriter {
     */
   private val matchSelector = "$selector"
 
+  /** A named implementation's type parameters its **pattern does not take** (`docs/effects.md` D27): `K` of
+    * `implement[T, K ~ Compare[K]] byKey(key: T => K): Compare[T]`. Only the arguments a `with` supplies determine one,
+    * so it is solved where that `with` is written, and an implementation with one cannot be bound on a slot (D28).
+    */
+  def freeParameters(implementation: OperatorResolvedValue): Seq[String] = {
+    val pattern = SignatureView.of(implementation.signature).parameters.map(_.value)
+    unmarkedBinders(implementation).filterNot(name => pattern.exists(OperatorResolvedExpression.containsVar(_, name)))
+  }
+
+  /** The names of `orv`'s binders its declaration does not mark as bindings, in order. */
+  private def unmarkedBinders(orv: OperatorResolvedValue): Seq[String] = {
+    val marked = phantoms(orv).map(_._1).toSet
+    SignatureView.of(orv.signature).binders.zipWithIndex.collect {
+      case (parameter, index) if !marked.contains(index) => parameter.name.value
+    }
+  }
+
   /** A definition's **binding binders**, as `(index, ability)` pairs in index order — read off the **marks** its own
     * declaration carries, and off nothing else.
     *
@@ -920,14 +937,6 @@ object BindingWriter {
       }
     }
 
-    /** The names of `orv`'s binders its declaration does not mark as bindings, in order. */
-    private def unmarkedBinders(orv: OperatorResolvedValue): Seq[String] = {
-      val marked = phantoms(orv).map(_._1).toSet
-      SignatureView.of(orv.signature).binders.zipWithIndex.collect {
-        case (parameter, index) if !marked.contains(index) => parameter.name.value
-      }
-    }
-
     /** `binders` written from `values`, up to the last one it has a value for: a gap before it is the checker's hole. */
     private def holeFilled(
         at: Sourced[?],
@@ -944,10 +953,7 @@ object BindingWriter {
       * ([[walkSupplied]]); the checker solves it from those arguments, since a binding occurs in no parameter type.
       */
     private def freeParameters(marker: ValueFQN): Seq[String] =
-      universe.lookup(marker).fold(Seq.empty) { implementation =>
-        val pattern = SignatureView.of(implementation.signature).parameters.map(_.value)
-        unmarkedBinders(implementation).filterNot(name => pattern.exists(OperatorResolvedExpression.containsVar(_, name)))
-      }
+      universe.lookup(marker).fold(Seq.empty)(BindingWriter.freeParameters)
 
     /** What matching a pattern's arguments against an entry's binds the implementation's `parameters` to, if they match. */
     private def matchPattern(

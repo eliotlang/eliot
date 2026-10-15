@@ -99,4 +99,36 @@ class WithArgumentTypingIntegrationTest extends FullIntegrationTest {
          |def main uses Console: Unit = printLine({ pickInt(1) ++ pickString("s") } with mapping(x -> show(x)))""".stripMargin
     ).asserting(_ should include("this `with` supplies (Type -> String)"))
   }
+
+  "an implementation with a type parameter its pattern does not take" should "be bound where its code is written" in {
+    compileAndRun(
+      s"""$source$keyed
+         |def main uses Console: Unit = printLine(pickInt(3) with keyed(x -> x + 1))""".stripMargin
+    ).asserting(_ shouldBe "4")
+  }
+
+  it should "not bind the code a caller wrote, around a run of a code parameter" in {
+    compileForErrors(
+      s"""$source$keyed
+         |def shown(body uses *, Source[Int]: String) uses *: String = body with keyed(x -> x + 1)
+         |def main uses Console: Unit = printLine(shown(pickInt(3)))""".stripMargin
+    ).asserting(_ should include("The implementation 'keyed' cannot bind the code a caller wrote"))
+  }
+
+  it should "not bind the code a caller wrote, on a slot" in {
+    compileForErrors(
+      s"""$source
+         |implement[T, K] silent: Source[T] {
+         |   def describe(t: T): String = "silent"
+         |}
+         |def shown(body uses *, Source[Int] with silent: String) uses *: String = body
+         |def main uses Console: Unit = printLine(shown(pickInt(3)))""".stripMargin
+    ).asserting(_ should include("The implementation 'silent' cannot bind the code a caller wrote"))
+  }
+
+  private val keyed =
+    """implement[T, K ~ Show[K]] keyed(f: T => K): Source[T] {
+      |   def describe(t: T): String = show(f(t))
+      |}
+      |""".stripMargin
 }

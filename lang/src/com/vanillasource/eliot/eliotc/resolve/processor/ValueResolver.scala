@@ -26,6 +26,7 @@ import com.vanillasource.eliot.eliotc.module.fact.WellKnownTypes.{
 }
 import com.vanillasource.eliot.eliotc.feedback.Logging
 import com.vanillasource.eliot.eliotc.module.fact.{
+  ModuleAbilities,
   ModuleName,
   UnifiedModuleValue,
   ValueFQN,
@@ -446,7 +447,39 @@ class ValueResolver
   private def resolveEffectRow(
       effectRow: EffectRow[UnresolvedAbilityConstraint[CoreExpression]]
   ): ScopedIO[EffectRow[AbilityConstraint[Expression]]] =
-    effectRow.traverse(resolveConstraint)
+    effectRow.traverse(entry =>
+      resolveConstraint(entry).flatTap(resolved => requireEffect(entry.abilityName, resolved.abilityFQN))
+    )
+
+  /** A `uses` clause lists **effects** only (`docs/effects.md` D28). An ability is a `~` constraint: filled by the
+    * caller or answered by its default, and never handed down a call chain the way a clause's entries are, so no
+    * callee can fix an ability's implementation for code its caller wrote.
+    *
+    * Effect-ness is read where it is recorded: the members' declared clauses, which membership in an `effect` block
+    * fills with the effect itself. An ability with no member to read, or whose members are not there to read, is let
+    * through — it is what it was before this check, and its own errors are reported where they arise.
+    */
+  private def requireEffect(name: Sourced[String], ability: AbilityFQN): ScopedIO[Unit] =
+    getPlatform.flatMap { platform =>
+      (for {
+        abilities <- getFactOrAbort(ModuleAbilities.Key(ability.moduleName, platform))
+        members   <- abilities
+                       .declaredMethodsOf(ability.abilityName)
+                       .filterNot(_.name.name == ability.abilityName)
+                       .traverse(member => getFactIfProduced(UnifiedModuleValue.Key(member, platform)))
+        known      = members.flatten
+        isAbility  = known.nonEmpty && !known.exists(
+                       _.namedValue.effectRow.returnEffects.exists(_.abilityName.value == ability.abilityName)
+                     )
+        _         <- compilerAbort(
+                       name.as(s"'${ability.abilityName}' is an ability, and a `uses` clause lists effects only."),
+                       Seq(
+                         s"Take it as a constraint on a type parameter (`[A ~ ${ability.abilityName}]`), which the " +
+                           "caller fills or its default implementation answers."
+                       )
+                     ).whenA(isAbility)
+      } yield ()).liftToScoped
+    }
 
   /** Resolve a value's `~` ability constraints, per generic parameter, **closed under what each named ability itself
     * requires of that parameter** ([[superConstraints]]).
