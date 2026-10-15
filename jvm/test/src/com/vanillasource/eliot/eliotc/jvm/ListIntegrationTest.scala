@@ -393,6 +393,15 @@ class ListIntegrationTest extends FullIntegrationTest {
     ).asserting(_ shouldBe "alpha,beta,gamma|alpha,beta,gamma|alpha,beta,beta,gamma")
   }
 
+  "sortedBy" should "order by the key, keeping equal keys in their original order" in {
+    compileAndRun(
+      sampleProgram +
+        """
+          |def main uses Console: Unit =
+          |   printLine(sample.sortedBy(w -> w.length).joined(",") ++ "|" ++ sample.sortedBy(w -> 0 - w.length).joined(","))""".stripMargin
+    ).asserting(_ shouldBe "beta,alpha,gamma|alpha,gamma,beta")
+  }
+
   "joined" should "put the separator between elements only" in {
     compileAndRun(
       sampleProgram +

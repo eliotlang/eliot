@@ -8,7 +8,7 @@ import com.vanillasource.eliot.eliotc.platform.Platform
 import com.vanillasource.eliot.eliotc.processor.CompilerIO.*
 import com.vanillasource.eliot.eliotc.processor.common.TransformationProcessor
 import com.vanillasource.eliot.eliotc.row.fact.{RowElaboratedValue, SlotBoundValue}
-import com.vanillasource.eliot.eliotc.resolve.fact.Qualifier as ResolveQualifier
+import com.vanillasource.eliot.eliotc.resolve.fact.{AbilityFQN, Qualifier as ResolveQualifier}
 import com.vanillasource.eliot.eliotc.row.{BindingWriter, RowChecker}
 import com.vanillasource.eliot.eliotc.source.content.Sourced.compilerError
 
@@ -48,42 +48,71 @@ class RowElaborationProcessor
     for {
       universe <- universeFor(value, key.platform)
       written   = BindingWriter.write(value, universe)
-      _        <- (defaultOfEffect(value, key.platform) >> report(written, value, key.platform))
+      _        <- (implementationKind(value, key.platform) >> report(written, value, key.platform))
                     .whenA(key.platform == Platform.Runtime)
     } yield RowElaboratedValue(written.value)
   }
 
-  /** An anonymous `implement` of an **effect** is an error at its marker (`docs/effects.md` D26). An anonymous
-    * implementation is its ability's default, found by the two-site search, and an effect has none: every binding of
-    * an effect is passed explicitly, so a default would never be reached and would only look like it is used.
+  /** The two definition-site rules of an implementation's marker, both of which keep effects and abilities apart
+    * (`docs/effects.md` D26, D29):
+    *
+    *   - an **anonymous** `implement` of an **effect** is an error: an anonymous implementation is its ability's
+    *     default, found by the two-site search, and an effect has none — every binding of one is passed explicitly, so a
+    *     default would never be reached and would only look like it is used;
+    *   - a **named** `implement` of an **ability** is an error: an ability is answered by the two-site search alone and
+    *     is never bound with `with`, so a name would never be reached. Behaviour chosen per call is a value parameter.
+    *     And a named implementation's type parameters are all its pattern's: one the pattern does not take could only be
+    *     read off a `with`'s arguments (D27, reversed by D29).
     *
     * Effect-ness is read where it is recorded: the members' declared clauses, which membership in an `effect` block
     * fills with the effect itself.
     */
-  private def defaultOfEffect(value: OperatorResolvedValue, platform: Platform): CompilerIO[Unit] =
+  private def implementationKind(value: OperatorResolvedValue, platform: Platform): CompilerIO[Unit] =
     value.name.value.qualifier match {
-      case ResolveQualifier.AbilityImplementation(ability, _, None) if value.vfqn.name.name == ability.abilityName =>
-        for {
-          abilities <- getFactOrAbort(ModuleAbilities.Key(ability.moduleName, platform))
-          members   <- abilities
-                         .declaredMethodsOf(ability.abilityName)
-                         .filterNot(_.name.name == ability.abilityName)
-                         .traverse(member => getFactIfProduced(OperatorResolvedValue.Key(member, platform)))
-          _         <- (compilerError(
-                         value.name.as(
-                           s"An implementation of the effect '${ability.abilityName}' must be named, since an effect " +
-                             "has no default."
-                         ),
-                         Seq(
-                           s"Name it (`implement name: ${ability.abilityName} { … }`) and bind it with `with` where it " +
-                             "is used."
-                         )
-                       ) >> abort[Unit]).whenA(
-                         members.flatten.exists(_.effectRow.returnEffects.exists(_.abilityFQN == ability))
-                       )
-        } yield ()
-      case _                                                                                              => ().pure[CompilerIO]
+      case ResolveQualifier.AbilityImplementation(ability, _, named) if value.vfqn.name.name == ability.abilityName =>
+        isEffect(ability, platform).flatMap { effect =>
+          named match {
+            case None if effect        =>
+              refuse(
+                value,
+                s"An implementation of the effect '${ability.abilityName}' must be named, since an effect has no default.",
+                s"Name it (`implement name: ${ability.abilityName} { … }`) and bind it with `with` where it is used."
+              )
+            case Some(name) if !effect =>
+              refuse(
+                value,
+                s"The implementation '$name' of the ability '${ability.abilityName}' cannot be named: an ability's " +
+                  "implementation is found by its type, and never bound with `with`.",
+                s"Make it the anonymous `implement ${ability.abilityName}[…]` in the ability's or the type's module, or " +
+                  "take the behaviour as a value parameter of the function that needs it."
+              )
+            case Some(name)            =>
+              BindingWriter.unpatternedParameters(value).headOption.fold(().pure[CompilerIO])(parameter =>
+                refuse(
+                  value,
+                  s"The type parameter '$parameter' of the implementation '$name' is not taken by its pattern, so " +
+                    "nothing where it runs determines it.",
+                  s"Use '$parameter' in the implemented '${ability.abilityName}[…]', or remove it."
+                )
+              )
+            case None                  => ().pure[CompilerIO]
+          }
+        }
+      case _                                                                                                    =>
+        ().pure[CompilerIO]
     }
+
+  private def isEffect(ability: AbilityFQN, platform: Platform): CompilerIO[Boolean] =
+    for {
+      abilities <- getFactOrAbort(ModuleAbilities.Key(ability.moduleName, platform))
+      members   <- abilities
+                     .declaredMethodsOf(ability.abilityName)
+                     .filterNot(_.name.name == ability.abilityName)
+                     .traverse(member => getFactIfProduced(OperatorResolvedValue.Key(member, platform)))
+    } yield members.flatten.exists(_.effectRow.returnEffects.exists(_.abilityFQN == ability))
+
+  private def refuse(value: OperatorResolvedValue, message: String, help: String): CompilerIO[Unit] =
+    compilerError(value.name.as(message), Seq(help)) >> abort[Unit]
 
   /** A binding the write could not answer aborts this value: nothing downstream runs for it, so the user gets one
     * located error in effect vocabulary rather than the machinery's downstream symptoms — and, crucially, no body is

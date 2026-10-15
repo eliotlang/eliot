@@ -420,9 +420,10 @@ class Checker(
         }
     }
 
-  /** The keys of the keyed holes nested in a written type argument — a binding's own type parameter its `with`'s
-    * arguments determine (`docs/effects.md` D27), `sorted[Person, byKey[Person, Inferred[1]]]`. Each is evaluated as a
-    * parameter bound to its key's metavariable ([[withoutKeyedHoles]]), so the one evaluator needs no hole of its own.
+  /** The keys of the keyed holes nested in a written type argument — a `with`'s binder whose implementation's pattern
+    * matched an entry only this checker determines inside a larger type, `mapping$with[List[Inferred[1]]]` for a
+    * `Source[List[A]]`. Each is evaluated as a parameter bound to its key's metavariable ([[withoutKeyedHoles]]), so the
+    * one evaluator needs no hole of its own.
     */
   private def keyedHoles(expr: OperatorResolvedExpression): Seq[BigInt] =
     expr match {

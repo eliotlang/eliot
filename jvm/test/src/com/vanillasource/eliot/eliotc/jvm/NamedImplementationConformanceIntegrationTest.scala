@@ -88,16 +88,4 @@ class NamedImplementationConformanceIntegrationTest extends FullIntegrationTest 
          |def main uses Console: Unit = printLine(greet with session(42))""".stripMargin
     ).asserting(_ should include("Signature of implementation does not match the ability definition."))
   }
-
-  it should "be checked when it implements an ability" in {
-    compileForErrors(
-      """import eliot.collection.List
-        |
-        |implement reversed: Compare[Int] {
-        |   def lessThanOrEqual(a: Int, b: String): Bool = true
-        |}
-        |
-        |def main uses Console: Unit = printLine(append(append(empty, 2), 1).sorted.joined(",") with reversed)""".stripMargin
-    ).asserting(_ should include("Signature of implementation does not match the ability definition."))
-  }
 }

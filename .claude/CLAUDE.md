@@ -261,7 +261,7 @@ subset of its data.
     `row/RowChecker` is now just the demand-driven `Universe` the walk consults (its `onMiss`/`onMissClauses` are what
     let a demand-driven consumer avoid guessing the consulted set). Nothing is exempt from the check: the synthesized
     entry point is an ordinary definition binding `main`'s entries with `with` (`row/EntryPoint`). The same processor
-    refuses an anonymous `implement` of an effect at its marker. See the *Effects Are a Channel* cornerstone.
+    refuses an anonymous `implement` of an effect, and a named one of an ability (D29), at its marker. See the *Effects Are a Channel* cornerstone.
 12. **ability** — checks and returns a type-specific ability implementation. A reference whose binder was written to a
     named implementation uses it **directly** — no structural match, no `where` filter, no coherence question, which is
     what lets a test's double freely overlap another. Only the `Default` marker reaches the two-site search — for an
@@ -603,7 +603,7 @@ signature, an example or a test conflicts with them, the rule wins and the artef
 performs *beyond* the effect it belongs to (`uses Console` on a member of `effect Console` is not written). An
 **anonymous `implement`** in one of the two sites is an **ability**'s *default* for its pattern, takes no parameters
 (a parameter list there is a parse error naming the named form), and of an **effect** is an error, since an effect has
-no default (D26); a **named `implement`** is never a default — it may live anywhere, is never searched, is not checked for overlap, closes over nothing, and its clauses
+no default (D26); a **named `implement`** is an effect's only (of an ability it is an error, D29) and is never a default — it may live anywhere, is never searched, is not checked for overlap, closes over nothing, and its clauses
 may carry `uses`. It may take **parameters**, supplied by the `with` that binds it (`implement scripted(answer:
 String): Terminal`, `greet with scripted("Bob")`): the resolver lowers that `with` to a call of the implementation's
 body-less binder `scripted$with(args…, subject with scripted)` so the checker types the arguments, and
@@ -677,9 +677,10 @@ implementation with parameters is always **named** (D25) — never a default, si
 arguments — and a run passed to a callee's slot is bound as that slot binds (how `catch` learns `runThrow`'s). An
 entry a named implementation's clause only repeats from its member (`standardFileSystem`'s `readFile` and its
 `Throw[IoError]`) is the **call's**: dispatch hands the clause the call's binding (`DeclaredEntries.forwarded`), so a
-`with` binding the implementation answers nothing for it (`BindingWriter.perCallBinders`). An **ability**'s named
-implementation takes parameters the same way (`people.sorted[Person] with byKey(p -> p.age)`), and an implementation's
-`~` constraint bound to a named one holds its frame (`EnvironmentThreading.implementationClauses`). A binding is mangled
+`with` binding the implementation answers nothing for it (`BindingWriter.perCallBinders`). An **ability** has no
+named implementation and is never bound with `with` (D29): it is answered by the two-site search alone, a named
+`implement` of one is an error at its marker, and behaviour chosen per call is a value parameter. Every type parameter
+of an implementation is its pattern's (D29 reversed D27). A binding is mangled
 by the backend as its whole identity — ability, module-and-pattern hash, name — since by the ability's name alone two
 named implementations of one ability were one method and one body silently replaced the other.
 

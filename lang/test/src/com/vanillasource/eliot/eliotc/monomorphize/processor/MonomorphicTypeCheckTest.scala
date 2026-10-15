@@ -943,6 +943,26 @@ class MonomorphicTypeCheckTest
       )
   }
 
+  // --- An ability is never bound with `with` (docs/effects.md D29) ---
+
+  // An ability is answered by the two-site search alone, so a name for one of its implementations would never be
+  // reached. It is refused at its marker, as an anonymous effect implementation is.
+  "a named implementation of an ability" should "be refused, naming the anonymous form" in {
+    runGenerator(
+      "ability Pretty[T] {\ndef pretty(t: T): String\n}\nimplement loud: Pretty[String] {\ndef pretty(t: String): String = t\n}",
+      RowElaboratedValue.Key(
+        ValueFQN(testModuleName, QualifiedName("Pretty", Qualifier.AbilityImplementation("Pretty", "String", Some("loud"))))
+      ),
+      systemImports
+    ).map(result => toTestErrors(result._1))
+      .asserting(
+        _ shouldBe Seq(
+          "The implementation 'loud' of the ability 'Pretty' cannot be named: an ability's implementation is found by " +
+            "its type, and never bound with `with`." at "Pretty"
+        )
+      )
+  }
+
   // A slot that supplies an effect and names no implementation for it promises a binding nothing makes: a body-less
   // discharger whose platform layer, which would name one, is not on the path. The two-site search is an ability's
   // alone, so the operation is the error, never a search.

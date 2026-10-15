@@ -256,6 +256,18 @@ def flatten[A](lists: List[List[A]]): List[A] = lists.foldLeft(empty, e -> acc -
 def sorted[A ~ Compare](list: List[A]): List[A] = list.foldLeft(empty, e -> acc -> insert(e, acc))
 
 /**
+ * The elements of `list` in ascending order of `key`, by the same insertion sort as `sorted`. Elements with equal keys
+ * keep their original order. This is how an ordering is chosen per call: an ability has one implementation per type,
+ * found by the type, so a different order is a function passed in.
+ *
+ * ```eliot
+ * def byAge(people: List[Person]): List[Person] = people.sortedBy(p -> p.age)
+ * ```
+ */
+def sortedBy[A, K ~ Compare](key: A => K, list: List[A]): List[A] =
+   list.foldLeft(empty, e -> acc -> insertBy(key, e, acc))
+
+/**
  * `element` inserted into the already-ascending `sortedList`, after every element that is not greater than it.
  *
  * Carries a "placed yet?" flag through the fold, since the insertion point is decided once and every later element
@@ -267,6 +279,22 @@ def insert[A ~ Compare](element: A, sortedList: List[A]): List[A] =
          pair(empty, false),
          e -> acc -> acc.foldPair(kept -> placed -> fold(
             placed || e <= element,
+            pair(append(kept, e), placed),
+            pair(append(append(kept, element), e), true)
+         ))
+      )
+      .foldPair(kept -> placed -> fold(placed, kept, append(kept, element)))
+
+/**
+ * `element` inserted into `sortedList`, already ascending by `key`, after every element whose key is not greater than
+ * its own.
+ */
+def insertBy[A, K ~ Compare](key: A => K, element: A, sortedList: List[A]): List[A] =
+   sortedList
+      .foldLeft(
+         pair(empty, false),
+         e -> acc -> acc.foldPair(kept -> placed -> fold(
+            placed || key(e) <= key(element),
             pair(append(kept, e), placed),
             pair(append(append(kept, element), e), true)
          ))
