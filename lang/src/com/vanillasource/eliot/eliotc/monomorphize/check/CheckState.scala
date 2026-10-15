@@ -65,6 +65,10 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
   *   the meta's raw id (docs/effects-as-channel.md §10 U4-f). Recorded at instantiation ([[recordMetaConstraints]],
   *   from [[CarrierKindChecker.recordCarrierMetas]]); read by the row-argument type-pinning rule when a constrained
   *   carrier meta needs its declared abilities looked up. Built once here.
+  * @param sharedHoles
+  *   The metavariable each **keyed** hole stands for — `Inferred[k]`, which the `row` phase writes at every place that
+  *   must agree on one type the checker reads off the call (`docs/effects.md` §8 item 36): `pick`'s `A` in
+  *   `pick(1) with mapping(x -> show(x))` and `mapping$with`'s `T`. The first occurrence of a key mints the meta.
   */
 case class CheckState(
     gamma: Env,
@@ -74,7 +78,8 @@ case class CheckState(
     abilityResolutions: Map[CheckState.AbilityResolutionKey, (ValueFQN, Seq[GroundValue])],
     metaConstraints: Map[Int, Seq[CheckState.MetaConstraint]] = Map.empty,
     abilityArities: Map[ValueFQN, Int] = Map.empty,
-    bindingForwards: Map[(ValueFQN, ValueFQN), Seq[(Int, Int)]] = Map.empty
+    bindingForwards: Map[(ValueFQN, ValueFQN), Seq[(Int, Int)]] = Map.empty,
+    sharedHoles: Map[BigInt, VMeta] = Map.empty
 ) {
 
   /** Record a higher-kinded type-parameter instantiation meta with its expected kind, for post-drain verification. */

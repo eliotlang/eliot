@@ -55,7 +55,8 @@ object WellKnownTypes {
     * only the checker determines — a member of `ability Greeter[A]` declaring `uses Console` has `[Impl, A, Impl0]`, and
     * `A` is read off the argument. [[com.vanillasource.eliot.eliotc.row.BindingWriter]] writes this at such a binder,
     * in a body only, and the checker's `inferValueReference` replaces it with a fresh metavariable — what it already
-    * does for every binder past the end of the list.
+    * does for every binder past the end of the list. Applied to an integer literal, `Inferred[k]`, it is a **keyed**
+    * hole: one metavariable wherever its key is written in one definition (`docs/effects.md` §8 item 36).
     */
   val inferredTypeArgumentFQN: ValueFQN =
     ValueFQN(ModuleName(defaultSystemPackage, "Implementation"), QualifiedName("Inferred", Qualifier.Type))

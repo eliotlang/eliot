@@ -17,7 +17,9 @@ type Default
  * A call's type arguments are written by position, and the compiler writes every binding it passes. Where a binding
  * stands behind a type parameter only the type checker can read off the call's arguments — `greetAs(Bob(…))` for a
  * member of `ability Greeter[A]` that `uses Console` — the compiler writes `Inferred` at that parameter, and the
- * checker infers it exactly as it infers a type parameter left off the end of the list. Only the compiler writes it.
+ * checker infers it exactly as it infers a type parameter left off the end of the list. Written with a number,
+ * `Inferred[1]`, it is one shared hole: every place the compiler writes the same number stands for the same type, which
+ * is how a `with`'s arguments are typed by an entry only the checker reads off the call. Only the compiler writes it.
  */
 type Inferred
 

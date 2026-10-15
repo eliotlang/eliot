@@ -1,8 +1,8 @@
 package com.vanillasource.eliot.eliotc.jvm
 
-/** A `with`'s arguments are typed from the entries it binds, wherever those entries' arguments are spelled
-  * (`docs/effects.md` §8 item 31): the implementation's pattern is matched against them, which decides its own type
-  * parameters before the checker types the arguments.
+/** A `with`'s arguments are typed from the entries it binds (`docs/effects.md` §8 items 31 and 36): the
+  * implementation's pattern is matched against them, which decides its own type parameters — before the checker where
+  * the entries are spelled, and by the checker, through one keyed hole, where only it reads them off the call.
   */
 class WithArgumentTypingIntegrationTest extends FullIntegrationTest {
 
@@ -64,11 +64,33 @@ class WithArgumentTypingIntegrationTest extends FullIntegrationTest {
     ).asserting(_ shouldBe "3")
   }
 
-  it should "still be typed from themselves where the entry is not spelled" in {
-    compileForErrors(
+  it should "be typed by an entry only the checker determines" in {
+    compileAndRun(
       s"""$source
          |def main uses Console: Unit = printLine(pick(1) with mapping(x -> show(x)))""".stripMargin
-    ).asserting(_ should include("this `with` supplies (Type -> String)"))
+    ).asserting(_ shouldBe "1")
+  }
+
+  it should "be typed by an entry only the checker determines, through the implementation's pattern" in {
+    compileAndRun(
+      s"""$source
+         |def pickAny[A](a: Option[A]) uses Source[Option[A]]: String = describe(a)
+         |def main uses Console: Unit = printLine(pickAny(Some(1)) with defaulting(None))""".stripMargin
+    ).asserting(_ shouldBe "defaulted")
+  }
+
+  it should "be typed by an entry only the checker determines, in a nested call" in {
+    compileAndRun(
+      s"""$source
+         |def main uses Console: Unit = printLine(("a" ++ pick(2)) with mapping(x -> show(x + 1)))""".stripMargin
+    ).asserting(_ shouldBe "a3")
+  }
+
+  it should "be refused where they do not fit the entry only the checker determines" in {
+    compileForErrors(
+      s"""$source
+         |def main uses Console: Unit = printLine(pick("s") with mapping(x -> show(x + 1)))""".stripMargin
+    ).asserting(_ should include("Type mismatch."))
   }
 
   it should "still be typed from themselves where the entries disagree" in {

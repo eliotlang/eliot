@@ -120,6 +120,11 @@ object BindingWriter {
       serial: Long = Binding.nextSerial()
   )
 
+  /** What [[Writer.sharedHoles]] adds to one reference: the type arguments it writes past the call's own, and the
+    * keyed hole each keyed binder stands for, by name.
+    */
+  private case class SharedHoles(written: Seq[Sourced[OperatorResolvedExpression]], holes: Map[String, OperatorResolvedExpression])
+
   private object Binding {
 
     /** One entry a `with`'s implementation performs in its clauses or names in a `~` constraint, and the binding that
@@ -1273,9 +1278,11 @@ object BindingWriter {
         case Some(orv) =>
           val effects          = orv.effectRow.returnEffects.map(_.abilityFQN).toSet
           val marks            = phantoms(orv).toMap
-          val determined       = if (existing.isEmpty) suppliedArguments(orv, args, marks.keySet) else existing
+          val supplied         = if (existing.isEmpty) suppliedArguments(orv, args, marks.keySet) else existing
           val entries          = entryArguments(orv)
-          val substitution     = substitutionOf(orv, marks.keySet, determined)
+          val substitution     = substitutionOf(orv, marks.keySet, supplied)
+          val shared           = sharedHoles(orv, marks, supplied, entries, substitution, reference, scope)
+          val determined       = supplied ++ shared.written
           val (written, reach) = mergeTypeArguments(
             SignatureView.of(orv.signature).binders.size,
             marks,
@@ -1286,7 +1293,7 @@ object BindingWriter {
                 bindingFor(
                   ability,
                   entries.get(index).flatMap(knownArguments(_, substitution)),
-                  entries.get(index).flatMap(spelledArguments(_, substitution)),
+                  entries.get(index).flatMap(spelledArguments(_, substitution ++ shared.holes)),
                   effects.contains(ability) && !perCall.contains(index),
                   reference,
                   scope
@@ -1299,6 +1306,67 @@ object BindingWriter {
           if (written.isEmpty) reference
           else reference.as(ValueReference(nameOf(reference), written))
       }
+
+    /** The **keyed holes** of a reference whose entry a `with` binds but whose arguments this call does not spell
+      * (`docs/effects.md` §8 item 36): `pick(1) with mapping(x -> show(x))`, for `def pick[A](a: A) uses Source[A]`,
+      * reads `A` off `1`, which only the checker does. So `A` is written as a hole with a key, `pick[Inferred[k]]`, and
+      * the entry is spelled with that hole (`Source[Inferred[k]]`) for the `with`, whose binder then takes the same
+      * hole by matching the implementation's pattern against it ([[suppliedTypeArguments]]): `mapping$with[Inferred[k]]`.
+      * The checker reads every occurrence of one key as one metavariable, so the lambda is typed at what `1` gives.
+      *
+      * Nothing is decided here: a hole is the checker's to solve, as a binder left off the list always was, and the key
+      * only says that two places stand for the same type. Only a `with`'s own binding gets them — the one place whose
+      * type arguments are read from the entries it binds — and only in a body, which is the only place a hole may stand.
+      *
+      * `written` is what the call's type-argument list gains past what it determines — a hole for every undetermined
+      * binder up to the last keyed one — and `holes` is what spells the entry: each keyed binder's hole, by name.
+      */
+    private def sharedHoles(
+        orv: OperatorResolvedValue,
+        marks: Map[Int, AbilityFQN],
+        supplied: Seq[Sourced[OperatorResolvedExpression]],
+        entries: Map[Int, Seq[OperatorResolvedExpression]],
+        substitution: Map[String, OperatorResolvedExpression],
+        reference: Sourced[OperatorResolvedExpression],
+        scope: Scope
+    ): SharedHoles = {
+      val open    = SignatureView
+        .of(orv.signature)
+        .binders
+        .zipWithIndex
+        .collect { case (binder, index) if !marks.contains(index) => binder.name.value }
+        .drop(supplied.size)
+      val unspelt = marks.toSeq.flatMap { case (index, ability) =>
+        entries
+          .get(index)
+          .filter(arguments =>
+            spelledArguments(arguments, substitution).isEmpty &&
+              scope.binding(ability, knownArguments(arguments, substitution)).exists(_.byWith)
+          )
+          .toSeq
+          .flatten
+      }
+      val keyed   = open.filter(name => unspelt.exists(OperatorResolvedExpression.containsVar(_, name)))
+      if (scope.signature || keyed.isEmpty) SharedHoles(Seq.empty, Map.empty)
+      else {
+        val holes = keyed.map(name => name -> keyedHole(reference)).toMap
+        val hole  = ValueReference(reference.as(WellKnownTypes.inferredTypeArgumentFQN))
+        SharedHoles(
+          open.take(open.lastIndexWhere(holes.contains) + 1).map(name => reference.as(holes.getOrElse(name, hole))),
+          holes
+        )
+      }
+    }
+
+    private var holeKeys: Long = 0
+
+    private def keyedHole(at: Sourced[?]): OperatorResolvedExpression = {
+      holeKeys += 1
+      ValueReference(
+        at.as(WellKnownTypes.inferredTypeArgumentFQN),
+        Seq(at.as(IntegerLiteral(at.as(BigInt(holeKeys)))))
+      )
+    }
 
     /** Merge the bindings with what the call determines, slot by slot: index `i` is `binding(ability)` where the
       * declaration marks it, and the next undetermined value otherwise.

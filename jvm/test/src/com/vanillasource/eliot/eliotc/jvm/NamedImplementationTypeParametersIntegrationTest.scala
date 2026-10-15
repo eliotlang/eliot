@@ -99,7 +99,7 @@ class NamedImplementationTypeParametersIntegrationTest extends FullIntegrationTe
   "a `with` supplying arguments its implementation does not take at the entry" should "be an error at the `with`" in {
     compileForErrors(
       s"""$source
-         |def main uses Console: Unit = printLine(pick("a") with constant(1))""".stripMargin
+         |def main uses Console: Unit = printLine({ pick(2) ++ pick("a") } with constant(1))""".stripMargin
     ).asserting(
       _ should include("The implementation 'constant' takes (String) where it runs 'Source[String]', but this `with` supplies (Int).")
     )

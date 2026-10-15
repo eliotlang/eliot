@@ -52,6 +52,13 @@ class ParameterisedAbilityImplementationIntegrationTest extends FullIntegrationT
     ).asserting(_ shouldBe "b,c,a")
   }
 
+  it should "be typed by the list it sorts, with nothing spelled" in {
+    compileAndRun(
+      s"""$people
+         |def main uses Console: Unit = printLine(names(everyone.sorted with byKey(p -> p.age)))""".stripMargin
+    ).asserting(_ shouldBe "b,c,a")
+  }
+
   it should "run on each `with`'s own arguments in one program" in {
     compileAndRun(
       s"""$people

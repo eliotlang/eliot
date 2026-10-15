@@ -391,15 +391,29 @@ class Checker(
   }
 
   /** One written type argument: evaluated, except the `row` phase's hole ([[WellKnownTypes.inferredTypeArgumentFQN]]),
-    * which is a fresh metavariable — solved from the call's arguments like a binder past the end of the list.
+    * which is a fresh metavariable — solved from the call's arguments like a binder past the end of the list. A
+    * **keyed** hole, `Inferred[k]`, is the same metavariable wherever its key is written ([[CheckState.sharedHoles]]),
+    * which is how a `with`'s arguments are typed by an entry only this checker determines (`docs/effects.md` §8 item
+    * 36).
     */
   private def explicitTypeArgument(typeArg: Sourced[OperatorResolvedExpression]): CheckIO[SemValue] =
     typeArg.value match {
       case OperatorResolvedExpression.ValueReference(name, Seq()) if name.value === WellKnownTypes.inferredTypeArgumentFQN =>
         freshMeta.widen[SemValue]
+      case OperatorResolvedExpression.ValueReference(name, Seq(key)) if name.value === WellKnownTypes.inferredTypeArgumentFQN =>
+        key.value match {
+          case OperatorResolvedExpression.IntegerLiteral(k) => sharedHole(k.value).widen[SemValue]
+          case other                                        => evalExpr(other)
+        }
       case other                                                                                                       =>
         evalExpr(other)
     }
+
+  private def sharedHole(key: BigInt): CheckIO[VMeta] =
+    get.flatMap(_.sharedHoles.get(key) match {
+      case Some(meta) => pure(meta)
+      case None       => freshMeta.flatTap(meta => modify(s => s.copy(sharedHoles = s.sharedHoles.updated(key, meta))))
+    })
 
   /** Infer a value reference's type from its saturated signature, applying the given (already-evaluated) explicit type
     * arguments.
