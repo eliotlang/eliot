@@ -193,6 +193,13 @@ class NamedImplementationParametersIntegrationTest extends FullIntegrationTest {
     ).asserting(_ should include("The implementation 'scripted' takes 1 parameter, but this `with` supplies 2."))
   }
 
+  it should "be the one error at a rejected `main`" in {
+    compileForErrors(
+      s"""$terminal
+         |def main uses Console: Unit = printLine(runWriterToLog(greet with scripted("a", "b")))""".stripMargin
+    ).asserting(_ should not include "Not a function.")
+  }
+
   it should "supply them at the parameters' types" in {
     compileForErrors(
       s"""$terminal
@@ -218,5 +225,15 @@ class NamedImplementationParametersIntegrationTest extends FullIntegrationTest {
          |
          |def main uses Console: Unit = greet with silent("a")""".stripMargin
     ).asserting(_ should include("The implementation 'silent' takes no parameters."))
+  }
+
+  "a rejected `main`" should "not be checked again on the compile track" in {
+    compileForErrors(
+      s"""$terminal
+         |def main uses Console: Unit = {
+         |   greet with scripted("a")
+         |   write("x")
+         |}""".stripMargin
+    ).asserting(_ should not include "Nothing binds an implementation")
   }
 }

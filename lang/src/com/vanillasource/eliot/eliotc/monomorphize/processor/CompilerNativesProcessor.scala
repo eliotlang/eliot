@@ -3,7 +3,7 @@ package com.vanillasource.eliot.eliotc.monomorphize.processor
 import cats.Id
 import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.core.processor.MetaConstructorDesugarer
-import com.vanillasource.eliot.eliotc.module.fact.{Qualifier, UnifiedModuleNames, ValueFQN}
+import com.vanillasource.eliot.eliotc.module.fact.{Qualifier, UnifiedModuleNames, UnifiedModuleValue, ValueFQN}
 import com.vanillasource.eliot.eliotc.monomorphize.fact.{BindingContribution, CompilerMonomorphicValue, ContributedBinding}
 import com.vanillasource.eliot.eliotc.operator.fact.{OperatorResolvedExpression, OperatorResolvedValue}
 import com.vanillasource.eliot.eliotc.platform.Platform
@@ -123,6 +123,11 @@ class CompilerNativesProcessor extends BodyContributorProcessor(ContributedBindi
     * uses effects. Gated on runtime-pool membership (a quiet name-set read) so a compiler-only value is not probed and
     * does not trigger the runtime pool's "Could not find" abort.
     *
+    * Having a body is read off the merged [[UnifiedModuleValue]], where the layers decided it, never off a later phase's
+    * fact: a definition a later phase *rejected* (a `main` whose effect write failed) produces no `SaturatedValue`, and
+    * reading that absence as "runtime-abstract" monomorphized it on the compile track, at no type arguments, only to
+    * report a second, misleading error after the real one (`docs/effects.md` §8 item 29).
+    *
     * A **refinement artifact** ([[isRefinementArtifact]]) is never runtime-concrete for this purpose even though it is
     * physically emitted into the runtime pool (dead there, never code-generated): it is a compile-time-only value the
     * refinement channel evaluates, so its ability calls (`add`/`join` dispatched on the interval domain) must be resolved
@@ -136,7 +141,7 @@ class CompilerNativesProcessor extends BodyContributorProcessor(ContributedBindi
       getFactOrAbort(UnifiedModuleNames.Key(vfqn.moduleName, Platform.Runtime))
         .map(_.names.contains(vfqn.name))
         .ifM(
-          getFactIfProduced(SaturatedValue.Key(vfqn, Platform.Runtime)).map(_.exists(_.value.runtime.isDefined)),
+          getFactIfProduced(UnifiedModuleValue.Key(vfqn, Platform.Runtime)).map(_.exists(_.namedValue.runtime.isDefined)),
           false.pure[CompilerIO]
         )
 
