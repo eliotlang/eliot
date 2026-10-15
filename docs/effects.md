@@ -7,7 +7,8 @@ implementations with parameters (2026-10-13), their type parameters solved where
 run of a code parameter, a run bound as the slot it is passed to binds, the control effects as named
 implementations their dischargers bind with `with`, and D26's explicit passing — no effect has a default, every effect
 implementation is named, and `main` is run with a `with` per entry (2026-10-14), and an ability's named
-implementations taking parameters as an effect's do (2026-10-15). An effect is
+implementations taking parameters as an effect's do, with a type parameter their pattern does not take read off
+those arguments (D27, 2026-10-15). An effect is
 an ability declared with the `effect` keyword. A definition's `uses` clause says what its caller hands it. An implementation has two halves: its **code**, a
 compile-time name written at every reference by a syntax-directed pass that reads declarations only, and its
 **environment** (an escape frame, a cell, its own parameters), a value threaded after monomorphization — on the
@@ -63,6 +64,8 @@ lives now.
    ability implementations; `v0.13` failed its release workflow and publishes nothing. eliot-test (193) and eliot-build
    (368, and its launcher) were run against it; no dependent moved.
 13. ~~**§8 item 36**~~ — closed 2026-10-15: `people.sorted with byKey(p -> p.age)` needs nothing spelled.
+14. ~~**D27**~~ (decided and built 2026-10-15, closing §8 item 40): a key of any comparable type,
+   `implement[T, K ~ Compare[K]] byKey(key: T => K)`. Building it found §8 item 41, which needs a decision.
 
 D20a, D20c and D3 stay open until decided; none blocks the steps above.
 
@@ -72,8 +75,8 @@ D20a, D20c and D3 stay open until decided; none blocks the steps above.
   2026-10-15).
 - **Loud, at compile time:** a
   `catch` over a parameter spells its arguments (§7 item 2); a function-typed code parameter's own entries are never
-  supplied (§7 item 1); `runThrow("no failure")` with its argument spelled is accepted (§8 item 4); a named
-  implementation's type parameter its pattern does not take is never solved (§8 item 40).
+  supplied (§7 item 1); `runThrow("no failure")` with its argument spelled is accepted (§8 item 4); a `with` moved onto
+  a code parameter's slot does not read its implementation's type parameter off its arguments (§8 item 41).
 - **Decided, not built:** none.
 - **Undecided:** naming a set of effects in a clause (D20a), storing an effectful computation (D20c), `~`/`&` in user
   space (D3).
@@ -274,8 +277,11 @@ parameters are an ordinary parameter list, whether they hold a frame or a functi
 parameters** are what its pattern takes where it runs: `with showing`, for `implement[T ~ Show[T]] showing: Source[T]`,
 runs at `T := Int` for a `Source[Int]` and at `T := String` for a `Source[String]` under the same `with`, by the match
 the two-site search makes for an anonymous implementation, and a pattern that does not match the entry is *"This
-performs 'Source[Int]' on the implementation 'none', which does not implement it"* at that use. With parameters, the
-arguments must fit every entry the `with` binds: *"The implementation 'constant' takes (String) where it runs
+performs 'Source[Int]' on the implementation 'none', which does not implement it"* at that use. A type parameter its
+pattern does **not** take is read off the arguments its `with` supplies (D27): `with byKey(p -> p.age)`, for
+`implement[T, K ~ Compare[K]] byKey(key: T => K): Compare[T]`, runs at `K := Int`, one type per `with`, and two `with`s
+at two keys are two specialisations. One its arguments do not determine either is never solved — free when nothing uses
+it, and loud when something does. With parameters, the arguments must fit every entry the `with` binds: *"The implementation 'constant' takes (String) where it runs
 'Source[String]', but this `with` supplies (Int)"*, at the `with`.
 
 ```eliot
@@ -595,8 +601,12 @@ entry's arguments — `pick(1) with mapping(x -> show(x))`, for `def pick[A](a: 
 `1` — the walk writes a **keyed hole** at the callee's binder and at the binder's, `pick[Inferred[k]]` and
 `mapping$with[Inferred[k]]`, and the checker reads every occurrence of one key as one metavariable
 (`BindingWriter.sharedHoles`, `CheckState.sharedHoles`): nothing is decided before the checker, the key only says that
-two places stand for one type. Entries that disagree leave the arguments to type themselves. Nothing ever runs the
-binder: the environment threading replaces it (§3.4).
+two places stand for one type. Entries that disagree leave the arguments to type themselves. A type parameter the
+implementation's pattern does not take (D27) gets one keyed hole too, written in the binding itself
+(`sorted[Person, byKey[Inferred, Inferred[k]]]`, at every reference the `with` binds) and in the binder, so the
+arguments decide it; the checker evaluates a keyed hole nested in a type argument as a parameter bound to its key's
+metavariable, so the one evaluator has no hole of its own. Nothing ever runs the binder: the environment threading
+replaces it (§3.4).
 
 A **row alias** (§2.4) adds no mechanism of its own: a definition naming one as its return type is handed the alias's
 row *entries* by `resolve/…/ValueResolver`, which mints them exactly as `EffectSugarDesugarer` mints entries written
@@ -1035,7 +1045,10 @@ These bind every future change to the effect system.
    forced", "narrowed to ~nothing", "a small local concession", "keeps the shipped idiom", "it usually
    holds". A conflict is a decision for Robert, not a judgement call in flight.
 3. **There is nothing to infer.** A phantom binder is written by a `with`, by the enclosing declaration, by a
-   supplying slot, or — for an ability — as `Default`, in that order — never left to a metavariable, a join, a lattice, an
+   supplying slot, or — for an ability — as `Default`, in that order — never left to a metavariable (one exception,
+   D27: a type parameter of the implementation a `with` names that its pattern does not take is that `with`'s
+   arguments' to decide, as one keyed hole the binding occurs in nowhere else; *which* implementation is never
+   inferred), a join, a lattice, an
    ordering-sensitive slot decision, a row variable unified across arguments, or a sum over a monomorphized
    sub-graph. Carrier inference was the historical bug class (carrier theft, premature commitment); binding
    inference would be the same bug in the new vocabulary, and **dynamic scoping resolved at compile time** is its
@@ -1145,14 +1158,14 @@ items keep one line, and their full record is in git history (§13).
 
 4. **`runThrow("no failure")` is accepted** when the call spells the argument, although §2.2 lists an actual that
    raises nothing among the shapes rejected. Loud by construction (the argument is written by hand), so last.
-40. **A named implementation's type parameter its pattern does not take is never solved.** `implement[T, K ~
-    Compare[K]] byKey(key: T => K): Compare[T]` — a key of any comparable type — runs at `K := Default`: its type
-    parameters are what its pattern takes at the entry (§8 item 30), and `K` is in its parameters only, so its clauses'
-    `<=` is *"No ability implementation found for ability 'Compare' with type arguments [Default]"* and the `with` is
-    *"The implementation 'byKey' takes (Person -> Default) …"* (loud, never wrong). A binding is the implementation's
-    name and the types its pattern takes; carrying a type its arguments decide would make the binding depend on the
-    checker's reading of the `with`, which is a decision, not a fix. Until then a key is a fixed type (`T => Int`).
-    Found 2026-10-15 building parameterised ability implementations.
+41. **A `with` moved onto a code parameter's slot does not read a type parameter off its arguments.** `def byAge(body
+    uses *, Compare[Person]: List[Person]) uses *: List[Person] = body with byAnyKey(p -> p.age)`, for `implement[T, K
+    ~ Compare[K]] byAnyKey(key: T => K): Compare[T]`, is *"The implementation 'byAnyKey' takes (Person -> Default) …
+    but this `with` supplies (Person -> Int)"* (loud, never wrong). The `with` is hoisted onto the slot (D23), so the
+    binding is written by `byAge`'s **caller**, while the arguments that decide `K` are checked in `byAge`'s body — a
+    separate check, which no key spans. D27 reads `K` where the `with` is written; here that would make the slot's
+    declared binding depend on checking the body, which is a decision, not a fix. Until then such a `with` is written
+    where its subject's references are. Found 2026-10-15 building D27.
 
 **Closed.**
 
@@ -1193,6 +1206,7 @@ items keep one line, and their full record is in git history (§13).
 | 34 | the compile track's raw read of an implementation's `where` guard answered a plausible wrong value once a discharger bound its implementation with arguments: `runThrow`'s body read raw settled to an unlowered `escaping$with(frame, …)` call, which the escape took for a decided value and handed to `onValue`, so `accepted("/api")` read `false` where the program says `true` (silent, found building D25 step 4) | 2026-10-14: an implementation's binder the threading did not lower counts as undecided (`EffectIntrinsics.undecided`), so the raw read stays stuck and the threaded one decides |
 | 35 | a slot's `with` bound an ability, not an entry: carrying `escaping` onto `mocked`'s slot for its supplied `Throw[IoError]` also captured its declared `Throw[AssertionError]`, which must ride, and the run asked for arguments no `with` supplied (loud, found building D25 step 4) | 2026-10-14: a slot `with` records the clause entry it was written after, and a carried one binds only the entries the definition does not declare (`row/SlotBindings`) |
 | 36 | a `with`'s arguments were typed from themselves where the entry it binds is not spelled: `pick(1) with mapping(x -> show(x))`, for `def pick[A](a: A) uses Source[A]`, whose `A` only the checker reads off `1`, was *"… but this `with` supplies (Type -> String)"*, so `people.sorted with byKey(p -> p.age)` needed `sorted[Person]` (loud, found 2026-10-14 building item 31) | 2026-10-15: the row phase writes one **keyed hole**, `Inferred[k]`, at the callee's undetermined binder and, through the implementation's pattern, at the `with`'s binder, and the checker reads one key as one metavariable (`BindingWriter.sharedHoles`, `CheckState.sharedHoles`); every example jar is byte-identical. An argument that does not fit such an entry, `pick("a") with constant(1)`, is now the checker's *"Type mismatch."* inside the call; the threading's *"… but this `with` supplies (Int)"* remains where the entries disagree |
+| 40 | a named implementation's type parameter its pattern does not take was never solved: `implement[T, K ~ Compare[K]] byKey(key: T => K): Compare[T]` ran at `K := Default`, so its clauses' `<=` was *"No ability implementation found for ability 'Compare' with type arguments [Default]"* and the `with` *"… takes (Person -> Default)"* (loud, found 2026-10-15 building parameterised ability implementations) | 2026-10-15 by D27 (§11): one keyed hole in the binding and the `with`'s binder (`BindingWriter.freeParameters`), and nested keyed holes in the checker (`Checker.keyedHoles`); a `with` moved onto a slot does not read it, item 41 |
 | 37 | two named implementations of one ability at the same type arguments, used in one program, were one method: the jvm backend mangled a binding by its marker's local name, which is the ability's, so `xs.sorted with reversed` and `xs.sorted with natural` were both `sorted$Compare$Int` and one body silently replaced the other — as were two doubles of one effect (`greet with loud` beside `greet with quiet`), in releases up to `v0.12` (found 2026-10-15 building parameterised ability implementations) | 2026-10-15: a binding is mangled as its whole identity — the ability, a hash of its module and pattern, and its name (`CommonPatterns.mangleTypeArgument`); every example behaves identically, with the same instructions, and its jar 2.8% larger by the longer names |
 | 38 | a named implementation constrained on its own ability was rejected wherever it was bound: `xs.sorted with byLast`, for `implement[T ~ Compare[T]] byLast: Compare[List[T]]`, was *"… performs 'Compare', and a nearer binding of 'Compare' stands between them"*, the `with`'s own binding taken for the nearer one (loud) | 2026-10-15: the `with`'s own binding never stands between (`BindingWriter.checkClauses`), and a constraint is *"uses"* where an effect *"performs"* |
 | 39 | an implementation's `~` constraint bound to a named implementation taking parameters reached none of them: `(xs.sorted with byShown).joined(",") with prefixed(">>")`, for `implement[T ~ Show[T]] byShown: Compare[T]`, was *"The implementation 'prefixed' performs 'Show' here, and nothing supplies the parameters it takes"* (loud) | 2026-10-15: an implementation's environment holds the frames of its constraints bound to a named implementation, after those its clauses perform (`EnvironmentThreading.implementationClauses`) |
@@ -1425,6 +1439,12 @@ Numbers are kept so citations resolve; the record of each is in git history (§1
   36 closed (2026-10-15) where only the checker knows the entry as well. Its feared obstacle, a *constrained*
   named implementation failing codegen undiagnosed ("Function not implemented." at `Combine`'s marker, 2026-09-12),
   did not recur; what it met was §8 items 37–39.
+- **D27** (decided and built 2026-10-15): *a named implementation's type parameter its pattern does not take is read
+  off its `with`'s arguments* — `people.sorted with byKey(p -> p.age)`, for `implement[T, K ~ Compare[K]] byKey(key: T
+  => K): Compare[T]`, runs at `K := Int`. One keyed hole stands for it in the binding and in the `with`'s binder, so
+  only those arguments solve it; it amends §5 rule 3 (a type parameter of a binding, never the implementation it
+  names, may be a metavariable). Closed §8 item 40; a `with` moved onto a code parameter's slot does not read it (§8
+  item 41).
 - **D26** (decided and built 2026-10-14): *no effect has a default; every effect implementation is named, and every
   effect binding is written.* **Amended** D25's *"a default — always parameterless — is given only at `main`"*: the
   run boundary was the last place an effect's implementation was searched for. The compiler only passes an effect's

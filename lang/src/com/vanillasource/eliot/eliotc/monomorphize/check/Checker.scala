@@ -406,8 +406,54 @@ class Checker(
           case other                                        => evalExpr(other)
         }
       case other                                                                                                       =>
-        evalExpr(other)
+        keyedHoles(other) match {
+          case Seq() => evalExpr(other)
+          case keys  =>
+            for {
+              metas <- keys.traverse(key => sharedHole(key).map(key -> _))
+              rho   <- inspect(_.rho)
+              value <- evalExpr(
+                         withoutKeyedHoles(other),
+                         Some(metas.foldLeft(rho) { case (env, (key, meta)) => env.bind(keyedHoleName(key), meta) })
+                       )
+            } yield value
+        }
     }
+
+  /** The keys of the keyed holes nested in a written type argument — a binding's own type parameter its `with`'s
+    * arguments determine (`docs/effects.md` D27), `sorted[Person, byKey[Person, Inferred[1]]]`. Each is evaluated as a
+    * parameter bound to its key's metavariable ([[withoutKeyedHoles]]), so the one evaluator needs no hole of its own.
+    */
+  private def keyedHoles(expr: OperatorResolvedExpression): Seq[BigInt] =
+    expr match {
+      case OperatorResolvedExpression.ValueReference(name, Seq(key)) if name.value === WellKnownTypes.inferredTypeArgumentFQN =>
+        key.value match {
+          case OperatorResolvedExpression.IntegerLiteral(k) => Seq(k.value)
+          case _                                            => Seq.empty
+        }
+      case OperatorResolvedExpression.ValueReference(_, typeArgs)                                                      =>
+        typeArgs.flatMap(typeArg => keyedHoles(typeArg.value)).distinct
+      case OperatorResolvedExpression.FunctionApplication(target, argument)                                           =>
+        (keyedHoles(target.value) ++ keyedHoles(argument.value)).distinct
+      case _                                                                                                          => Seq.empty
+    }
+
+  private def withoutKeyedHoles(expr: OperatorResolvedExpression): OperatorResolvedExpression =
+    expr match {
+      case OperatorResolvedExpression.ValueReference(name, Seq(key)) if name.value === WellKnownTypes.inferredTypeArgumentFQN =>
+        key.value match {
+          case OperatorResolvedExpression.IntegerLiteral(k) => OperatorResolvedExpression.ParameterReference(k.as(keyedHoleName(k.value)))
+          case _                                            => expr
+        }
+      case OperatorResolvedExpression.ValueReference(name, typeArgs)                                                  =>
+        OperatorResolvedExpression.ValueReference(name, typeArgs.map(_.map(withoutKeyedHoles)))
+      case OperatorResolvedExpression.FunctionApplication(target, argument)                                           =>
+        OperatorResolvedExpression.FunctionApplication(target.map(withoutKeyedHoles), argument.map(withoutKeyedHoles))
+      case other                                                                                                      => other
+    }
+
+  /** Not a name the tokenizer can produce, so it shadows no parameter. */
+  private def keyedHoleName(key: BigInt): String = s"$$hole$$$key"
 
   private def sharedHole(key: BigInt): CheckIO[VMeta] =
     get.flatMap(_.sharedHoles.get(key) match {

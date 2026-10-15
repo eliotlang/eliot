@@ -59,7 +59,56 @@ class ParameterisedAbilityImplementationIntegrationTest extends FullIntegrationT
     ).asserting(_ shouldBe "b,c,a")
   }
 
-  it should "run on each `with`'s own arguments in one program" in {
+  "a named ability implementation's type parameter its pattern does not take" should "be read off its `with`'s arguments" in {
+    compileAndRun(
+      s"""$people
+         |implement[T, K ~ Compare[K]] byAnyKey(key: T => K): Compare[T] {
+         |   def lessThanOrEqual(a: T, b: T): Bool = key(a) <= key(b)
+         |}
+         |
+         |def main uses Console: Unit = printLine(names(everyone.sorted with byAnyKey(p -> p.age)))""".stripMargin
+    ).asserting(_ shouldBe "b,c,a")
+  }
+
+  it should "be read off each `with`'s own arguments in one program" in {
+    compileAndRun(
+      s"""$people
+         |implement[T, K ~ Compare[K]] byAnyKey(key: T => K): Compare[T] {
+         |   def lessThanOrEqual(a: T, b: T): Bool = key(b) <= key(a)
+         |}
+         |
+         |def main uses Console: Unit = {
+         |   printLine(names(everyone.sorted with byAnyKey(p -> p.age)))
+         |   printLine(names(everyone.sorted with byAnyKey(p -> p.name)))
+         |}""".stripMargin
+    ).asserting(_ shouldBe "a,c,b\nc,b,a")
+  }
+
+  it should "cost nothing where the arguments do not determine it and nothing uses it" in {
+    compileAndRun(
+      s"""$people
+         |implement[T, K ~ Compare[K]] ignoring(fallback: Bool): Compare[T] {
+         |   def lessThanOrEqual(a: T, b: T): Bool = fallback
+         |}
+         |
+         |def main uses Console: Unit = printLine(names(everyone.sorted with ignoring(true)))""".stripMargin
+    ).asserting(_ shouldBe "a,b,c")
+  }
+
+  it should "not yet be read off the arguments of a `with` moved onto a code parameter's slot" in {
+    compileForErrors(
+      s"""$people
+         |implement[T, K ~ Compare[K]] byAnyKey(key: T => K): Compare[T] {
+         |   def lessThanOrEqual(a: T, b: T): Bool = key(a) <= key(b)
+         |}
+         |
+         |def byAge(body uses *, Compare[Person]: List[Person]) uses *: List[Person] = body with byAnyKey(p -> p.age)
+         |
+         |def main uses Console: Unit = printLine(names(byAge(everyone.sorted)))""".stripMargin
+    ).asserting(_ should include("The implementation 'byAnyKey' takes (Person -> Default)"))
+  }
+
+  "a named ability implementation with parameters" should "run on each `with`'s own arguments in one program" in {
     compileAndRun(
       s"""$people
          |def main uses Console: Unit = {

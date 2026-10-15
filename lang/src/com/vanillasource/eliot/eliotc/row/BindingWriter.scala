@@ -779,7 +779,8 @@ object BindingWriter {
         subject: Sourced[OperatorResolvedExpression],
         implementation: Sourced[ValueFQN],
         scope: Scope,
-        applied: Int
+        applied: Int,
+        free: Map[String, OperatorResolvedExpression] = Map.empty
     ): (Sourced[OperatorResolvedExpression], Option[Long]) =
       abilityOf(implementation.value, universe) match {
         case Some(ability) =>
@@ -789,7 +790,7 @@ object BindingWriter {
             Binding.Clause(clause, arguments, scope.binding(clause, arguments).map(_.serial), performed(clause))
           }
           val binding =
-            Binding(ability, boundImplementation(implementation, scope, perCall), byWith = true, clauses = clauses)
+            Binding(ability, boundImplementation(implementation, scope, perCall, free), byWith = true, clauses = clauses)
           val written = walk(subject, scope.bind(binding), applied)
           if (!scope.signature && !used.contains(binding.serial))
             violations += unusedWith(subject, implementation, ability, scope)
@@ -827,11 +828,15 @@ object BindingWriter {
         case WithBinding(_, named, _) => ImplementationParameters.binderOf(named.value) == callee.value
         case _                        => false
       })
-      def written(entries: Seq[Option[Seq[OperatorResolvedExpression]]], marker: Option[ValueFQN]) =
+      def written(
+          entries: Seq[Option[Seq[OperatorResolvedExpression]]],
+          marker: Option[ValueFQN],
+          free: Map[String, OperatorResolvedExpression] = Map.empty
+      ) =
         writeBindings(
           head,
           callee.value,
-          if (existing.isEmpty) marker.fold(Seq.empty)(suppliedTypeArguments(callee, _, entries)) else existing,
+          if (existing.isEmpty) marker.fold(Seq.empty)(suppliedTypeArguments(callee, _, entries, free)) else existing,
           scope,
           args
         )
@@ -860,13 +865,17 @@ object BindingWriter {
         }
         val (supplied, rest)                        = args.splitAt(position)
         val WithBinding(subject, implementation, _) = rest.head.value: @unchecked
+        val free                                    =
+          if (scope.signature || existing.nonEmpty) Map.empty[String, OperatorResolvedExpression]
+          else freeParameters(implementation.value).map(name => name -> keyedHole(implementation)).toMap
         // The subject first: the entries its references are written at decide the binder's type arguments.
-        val (bound, serial)                         = walkWith(subject, implementation, scope, applied + rest.size - 1)
+        val (bound, serial)                         =
+          walkWith(subject, implementation, scope, applied + rest.size - 1, free)
         val walkedSupplied                          = supplied.map(walk(_, scope))
         val entries                                 = serial.flatMap(answered.get).getOrElse(Seq.empty)
         expr.as(
           applyChain(
-            written(entries, Some(implementation.value)),
+            written(entries, Some(implementation.value), free),
             walkedSupplied ++ (bound +: rest.tail.map(walk(_, scope)))
           )
         )
@@ -880,17 +889,19 @@ object BindingWriter {
       * `mapping$with[Int]`.
       *
       * Only the run of the binder's leading type parameters every entry decides alike is written; the rest are the
-      * checker's to infer from the arguments, as before. So nothing is written when an entry's arguments are not
-      * spelled here (`pick(1)`, whose `A` only the checker reads off `1`), when the entries disagree, or when the
-      * pattern does not match — which the environment threading reports where the implementation runs.
+      * checker's to infer from the arguments, as before. So nothing is written when the entries disagree or when the
+      * pattern does not match — which the environment threading reports where the implementation runs. An entry only
+      * the checker reads arrives spelled with a keyed hole ([[sharedHoles]]), and a parameter the pattern does not take
+      * is the `free` keyed hole the binding carries too ([[freeParameters]]); with those, a gap before the last one
+      * written is the checker's plain hole.
       */
     private def suppliedTypeArguments(
         callee: Sourced[ValueFQN],
         marker: ValueFQN,
-        entries: Seq[Option[Seq[OperatorResolvedExpression]]]
-    ): Seq[Sourced[OperatorResolvedExpression]] =
-      (for {
-        binder         <- universe.lookup(callee.value)
+        entries: Seq[Option[Seq[OperatorResolvedExpression]]],
+        free: Map[String, OperatorResolvedExpression]
+    ): Seq[Sourced[OperatorResolvedExpression]] = {
+      val solution = (for {
         implementation <- universe.lookup(marker)
         view            = SignatureView.of(implementation.signature)
         parameters      = view.binders.map(_.name.value).toSet
@@ -902,18 +913,41 @@ object BindingWriter {
                             )
                           )
         solution       <- solutions.foldLeftM(Map.empty[String, OperatorResolvedExpression])(mergeSolutions)
-      } yield {
-        val marked = phantoms(binder).map(_._1).toSet
-        SignatureView
-          .of(binder.signature)
-          .binders
-          .zipWithIndex
-          .collect { case (parameter, index) if !marked.contains(index) => parameter.name.value }
-          .map(solution.get)
-          .takeWhile(_.isDefined)
-          .flatten
-          .map(callee.as(_))
-      }).getOrElse(Seq.empty)
+      } yield solution).getOrElse(Map.empty) ++ free
+      universe.lookup(callee.value).fold(Seq.empty) { binder =>
+        if (free.isEmpty) unmarkedBinders(binder).map(solution.get).takeWhile(_.isDefined).flatten.map(callee.as(_))
+        else holeFilled(callee, unmarkedBinders(binder), solution)
+      }
+    }
+
+    /** The names of `orv`'s binders its declaration does not mark as bindings, in order. */
+    private def unmarkedBinders(orv: OperatorResolvedValue): Seq[String] = {
+      val marked = phantoms(orv).map(_._1).toSet
+      SignatureView.of(orv.signature).binders.zipWithIndex.collect {
+        case (parameter, index) if !marked.contains(index) => parameter.name.value
+      }
+    }
+
+    /** `binders` written from `values`, up to the last one it has a value for: a gap before it is the checker's hole. */
+    private def holeFilled(
+        at: Sourced[?],
+        binders: Seq[String],
+        values: Map[String, OperatorResolvedExpression]
+    ): Seq[Sourced[OperatorResolvedExpression]] =
+      binders
+        .take(binders.lastIndexWhere(values.contains) + 1)
+        .map(name => at.as(values.getOrElse(name, ValueReference(at.as(WellKnownTypes.inferredTypeArgumentFQN)))))
+
+    /** A named implementation's type parameters its **pattern does not take** (`docs/effects.md` D27): `K` of
+      * `implement[T, K ~ Compare[K]] byKey(key: T => K): Compare[T]`. Only the arguments its `with` supplies determine
+      * one, so it is one type per `with`, written as one keyed hole in the binding and in the `with`'s binder alike
+      * ([[walkSupplied]]); the checker solves it from those arguments, since a binding occurs in no parameter type.
+      */
+    private def freeParameters(marker: ValueFQN): Seq[String] =
+      universe.lookup(marker).fold(Seq.empty) { implementation =>
+        val pattern = SignatureView.of(implementation.signature).parameters.map(_.value)
+        unmarkedBinders(implementation).filterNot(name => pattern.exists(OperatorResolvedExpression.containsVar(_, name)))
+      }
 
     /** What matching a pattern's arguments against an entry's binds the implementation's `parameters` to, if they match. */
     private def matchPattern(
@@ -1175,12 +1209,13 @@ object BindingWriter {
     private def boundImplementation(
         implementation: Sourced[ValueFQN],
         scope: Scope,
-        perCall: Set[Int] = Set.empty
+        perCall: Set[Int] = Set.empty,
+        free: Map[String, OperatorResolvedExpression] = Map.empty
     ): OperatorResolvedExpression =
       writeBindings(
         implementation.as(ValueReference(implementation)),
         implementation.value,
-        Seq.empty,
+        universe.lookup(implementation.value).fold(Seq.empty)(orv => holeFilled(implementation, unmarkedBinders(orv), free)),
         scope,
         Seq.empty,
         perCall
