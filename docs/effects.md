@@ -69,6 +69,8 @@ lives now.
    `implement[T, K ~ Compare[K]] byKey(key: T => K)`. Building it found §8 item 41, closed by D28.
 15. ~~**D28**~~ (decided and built 2026-10-15, closing §8 item 41): a `uses` clause lists effects only, and a slot
    cannot bind an implementation whose type parameter only a `with`'s arguments decide.
+16. ~~**§8 item 4**~~ — closed 2026-10-15 as not a defect: pure code may stand at a slot that allows an effect. §8 has
+   no open item left.
 
 D20a, D20c and D3 stay open until decided; none blocks the steps above.
 
@@ -78,7 +80,7 @@ D20a, D20c and D3 stay open until decided; none blocks the steps above.
   2026-10-15).
 - **Loud, at compile time:** a
   `catch` over a parameter spells its arguments (§7 item 2); a function-typed code parameter's own entries are never
-  supplied (§7 item 1); `runThrow("no failure")` with its argument spelled is accepted (§8 item 4).
+  supplied (§7 item 1).
 - **Decided, not built:** none.
 - **Undecided:** naming a set of effects in a clause (D20a), storing an effectful computation (D20c), `~`/`&` in user
   space (D3).
@@ -441,7 +443,9 @@ against a frame it will not meet at runtime. Three shapes reach that rejection h
   `body uses *, Throw[String]: Unit` determines `E` with nothing spelled, while `computation catch (err -> 0)` over
   `computation uses *, Throw[String]: Int` is still *"Cannot tell which 'Throw' this call supplies"*, so a `catch`
   over a parameter spells its arguments or types its handler (§7 item 2);
-- the actual **raises nothing**, so it has no entry of that ability at all;
+- the actual **raises nothing**, so it has no entry of that ability to read `E` off. Spelling it is then enough —
+  `runThrow[String, Int](5)` compiles — since a slot's entry is a permission, not an obligation: code that uses less
+  than its slot allows is fine, as a pure function value is wherever code is expected (rule 3);
 - the slot's clause names the **same ability twice** (`uses *, Throw[IoError], Throw[AssertionError]`), where only the
   call can say which one is being discharged.
 
@@ -1169,8 +1173,8 @@ items keep one line, and their full record is in git history (§13).
 
 **Open.**
 
-4. **`runThrow("no failure")` is accepted** when the call spells the argument, although §2.2 lists an actual that
-   raises nothing among the shapes rejected. Loud by construction (the argument is written by hand), so last.
+None.
+
 **Closed.**
 
 | # | defect | closed |
@@ -1178,6 +1182,7 @@ items keep one line, and their full record is in git history (§13).
 | 1 | an unused `with` was a silent no-op — the likeliest case a `with` around a code parameter's run | 2026-10-13 by D23: an error, and a `with` around a run of a listed parameter is the slot's |
 | 2 | a dot-read of a row-typed field handed back the thunk | 2026-09-12; its subject (stored computations) deleted by D20 step 3 |
 | 3 | `val x = comp` then `x else …` failed | 2026-09-12 by D17 — the tree was right, §3.5 was wrong |
+| 4 | `runThrow[String, String]("no failure")` was accepted, although §2.2 listed an actual that raises nothing among the shapes rejected | 2026-10-15, not a defect: a slot's entry is a permission, and pure code may stand at any slot (rule 3), as `"x" else "y"` always has; §2.2 lists that shape only as one where nothing determines the argument, so spelling it is enough. Rejected: requiring the code at a slot to perform every entry the slot supplies |
 | 5 | an undischarged control effect at `main` failed at runtime | 2026-10-12 by option 5 (D19): a compile error at the operation |
 | 6 | a row alias works in return position only | moved to §7 item 5 / D20a; the file-local limit was lifted 2026-09-12 (§9.3 step 8) |
 | 7 | a named implementation answered the two-site search | 2026-09-12: the search and both coherence checks read the anonymous ones only |
