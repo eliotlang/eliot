@@ -76,8 +76,8 @@ lives now.
    implementation is checked against its ability); then the decision item 43 needs (which comparison decides riding), and items 44–45
    with it; then the *read* items, each reproduced or proved dead first. Superseded in order by step 18.
 18. **The 2026-10-15 diagnosis** (§11): the open items trace to four structural choices, and four decisions follow, in
-   this order: ~~**D29**~~ (an ability has no named implementation and no `with`; built 2026-10-15) and **D30**
-   (entries compared as spelled, closing items 43, 46, 47), both decided; then measure **D31**'s cost (code compiled where it runs); then
+   this order: ~~**D29**~~ (an ability has no named implementation and no `with`; built 2026-10-15) and ~~**D30**~~
+   (entries compared as spelled, closing items 43, 46, 47; built 2026-10-15), both decided; then measure **D31**'s cost (code compiled where it runs); then
    D31 and **D32** (one walk decides code and frame) together, if signed off. Items 49, 52 and 58 are ordinary bugs,
    independent of them.
 
@@ -85,13 +85,13 @@ D20a, D20c, D3, D31 and D32 stay open until decided; none blocks the steps above
 
 **Open, in order of severity.**
 
-- **Silent:** §8 items 43 (reproduced, the wrong implementation runs), 44, and,
-  read but not reproduced, 46–49 and 51.
+- **Silent:** §8 items 60 (reproduced, an effect escapes a closed clause; needs a decision) and 44, and, read but
+  not reproduced, 48, 49 and 51.
 - **Latent:** §8 items 52–58; item 59 is a decision.
 - **Loud, at compile time:** §8 items 45 (reproduced) and 50; a
   `catch` over a parameter spells its arguments (§7 item 2); a function-typed code parameter's own entries are never
   supplied (§7 item 1).
-- **Decided, not built:** D30 (entries compared as spelled).
+- **Decided, not built:** none.
 - **Undecided:** naming a set of effects in a clause (D20a), storing an effectful computation (D20c), `~`/`&` in user
   space (D3), code compiled where it runs (D31), one walk deciding code and frame (D32).
 - **Outside this document:** `v0.9` is the first release carrying `uses` (`v0.8` is tagged before it, and its release
@@ -662,14 +662,20 @@ binders stands for. Three jobs, one walk:
    whose platform layer is not on the path has — is *"Nothing binds an implementation of the effect 'X' here, and an
    effect has no default"* at monomorphization (`AbilityResolver`), never a search.
 
-**A binding is for an entry, not only an ability.** Each step above looks for a binding of the reference's ability
-that **answers its entry**: one is passed over only when both sides know their type arguments and they differ —
-known meaning ground once the call's determined arguments are written in (`BindingWriter.knownArguments`), rendered
-and compared. So inside `catch[Refused, String](checked(…), …)` the slot's `Throw[Refused]` does not answer
+**A binding is for an entry, not only an ability, and entries compare as they are spelled** (D30). Each step above
+looks for a binding of the reference's ability that **answers its entry**: one is passed over only when both sides are
+spelled and the spellings differ — the arguments as this definition writes them, the call's determined arguments
+substituted into a callee's entry and the definition's own binders by their names (`BindingWriter.spelledRendered`),
+rendered and compared. So inside `catch[Refused, String](checked(…), …)` the slot's `Throw[Refused]` does not answer
 `checked`'s `Throw[Missing]`, which goes on to the enclosing definition's own entry or is the "performs but does not
-declare" error; and the same comparison decides whether a slot entry **rides** (§2.2), so `mocked`'s own
-`Throw[AssertionError]` does not make its slot's `Throw[IoError]` ride. An entry still generic in some binder
-(`raise`'s `Throw[E]`) answers the nearest binding of its ability (`OverDeclaredEffectIntegrationTest`).
+declare" error, and in a definition generic in `E` a received `Throw[E]` is told from a received `Throw[String]`. An
+entry with a binder the call leaves to the checker (`raise`'s `Throw[E]`) is not spelled, and answers the nearest
+binding of its ability (`OverDeclaredEffectIntegrationTest`). Whether a slot entry **rides** (§2.2) is decided on the
+declarations alone, never at the arguments a call determines: the slot's entry rides iff the callee's own clause
+spells it the same, so `mocked`'s own `Throw[AssertionError]` does not make its slot's `Throw[IoError]` ride, and
+`raising[E]`'s `Throw[E]` is supplied even at `E := AssertionError`. The hoisting (`RunWithHoister`) and the
+threading (`EnvironmentThreading.ridingFlags`, `clauseBinding`) decide it the same way, so a slot means one thing at
+every instantiation.
 
 **Code and values are told apart by where a lambda stands, read off the declaration** (rules 2–4). A lambda is
 walked as code only where it is the argument of a code parameter (up to that parameter's arity), the head of an
@@ -1033,7 +1039,9 @@ write's own walk (§3.1), so this is a spec of `row/BindingWriter` rather than o
   *"Remove 'X' from its `uses` clause"*. A clause says *my caller hands me an implementation of these*; one nothing
   here uses asks every caller to declare an effect on no evidence, all the way to `main`. Consumed means written from
   at least once — by an operation, a declaring callee, or a `with`'s clause bindings — on any path, so `if(ok, v)`
-  consumes `Abort` whatever `ok` is. Running a code parameter consumes exactly the entries its slot **rides**, since
+  consumes `Abort` whatever `ok` is. It is per entry (D30): a reference spelled `Throw[Int]` consumes the `Throw[Int]`
+  entry and not a `Throw[String]` beside it, while one the call does not spell (`raise(e)`, its `E` left to the checker)
+  may stand for any entry of its ability, and consumes all of them. Running a code parameter consumes exactly the entries its slot **rides**, since
   the block runs on the definition's received frame ((b), §3.4): `def passThrough[A](v uses *, Console: A) uses *,
   Console: A = v` is accepted, while its twin over `v uses *: A` lists nothing, consumes nothing and is the error. Exempt: a
   body-less value (its clause is a contract a later layer bodies) and a signature's own references.
@@ -1175,11 +1183,8 @@ run; *read* means found in the code, not yet reproduced — establishing it is t
 
 | # | defect | severity | evidence |
 | --- | --- | --- | --- |
-| 43 | whether a slot entry **rides** or is **supplied** is decided two ways. As spelled — §2.2's rule, *"never at ground arguments"*: `EnvironmentThreading.ridingFlags`, `BindingWriter.riddenEntries`, `RunWithHoister.spelled`. At the arguments the call determines, an undetermined one counting as riding: `BindingWriter.ridesOwn`/`knownArguments`, read by `suppliedScope` (the caller's write), `thunkRequirements` and `slotEntries`. `Writer.rides` (closed slots) compares by ability alone. With `def handle(body uses *, Source[Int] with inner: String) uses *: String = body` and `def handled[E](body uses *, Source[E]: String) uses *, Source[Int]: String = handle(body) ++ "\|" ++ pick(1)`, `handled[Int](pick(5)) with outer` prints `outer:5\|outer:1`; changing only the clause to `Source[String]` prints `inner:5\|outer:x` — the slot's meaning depends on the instantiation. §2.2's own `raising[E](…, body uses *, Throw[E]: Unit) uses Throw[AssertionError]` has no test, and its "neither handles nor declares" check is dropped by `thunkRequirements`. **The document disagrees with itself too**: §3.1 says *"known meaning ground once the call's determined arguments are written in … the same comparison decides whether a slot entry rides"*. Needs a decision of which rule stands before code is changed | silent (wrong implementation runs) | reproduced |
 | 44 | the threading hides a disagreement between a reference's binding and the nearest frame: `EnvironmentThreading.lookup` reports one only when the binding is `Default`, and builds a fresh frame for a differing **named** binding (`built`). §3.4: *"a disagreement is an error, never a silent pick"*. It is what lets item 43 run instead of failing | silent | read (seen through item 43) |
 | 45 | an implementation a slot names runs its clauses at `Default` for every type argument: `EnvironmentThreading.namedClauses` calls `implementationClauses(marker, None)`, which fills every binder with `defaultBinding`, while `namedOwn` solves them with `NamedImplementationArguments.solve` — item 30 promised the same solve *"at dispatch and in the environment threading alike"*. `implement[T ~ Show[T]] recording: Source[T] { def describe(t: T) uses Writer[List[T]]: String = … }` bound by `def captured(body uses *, Source[Int] with recording: String) uses *: List[Int] = runWriterToLog(body)` fails with *"The implementation 'writing' performs 'Writer' here, and nothing supplies the parameters it takes"*; at `Writer[List[String]]`, or as a body `with`, it works. On that path `constrained` is always empty, so such an implementation's `~` constraint bound to a named one never gets its frame (item 39's mechanism). The comment there (*"a slot's `with`, whose clause bindings the caller writes as `Default`"*) contradicts D26 | loud | reproduced |
-| 46 | a closed slot keeps an outer binding by **ability**: `Writer.rides` feeds `Scope.enterClosed` with abilities, so a closed `body uses Throw[String]` under a definition declaring `Throw[Int]` — a supplied entry, not a ridden one — lets a `Throw[Int]` raised in the argument reach the caller's binding with no capture error, against rule 4 | silent | read |
-| 47 | the over-declaration check (§4) is per ability, not per entry: `Writer.consumed: Set[AbilityFQN]`, `overDeclared`'s `distinctBy` and the ridden consumption's `scope.binding(ability)`, so `uses Throw[A], Throw[B]` performing only `Throw[A]` is accepted, while §4 says two same-ability entries at different arguments are two entries | silent (accepts) | read |
 | 48 | the row phase finds a definition's value-parameter names two ways: `BindingWriter.valueParameterNames` peels **every** leading lambda and takes the last `n`, `RunWithHoister.parameterNames` caps the peel at binders plus parameters. With a function-alias return type and a lambda body (`def f(body uses *: Unit): Handler = s -> …`) the write keys `thunks`, `thunkNeeds` and `slotEntries` on `s` | silent | read |
 | 49 | compile-track linking keeps one binding per FQN: `ReducedBindingClosure.collectBindings(deep = true)` folds `acc + (fqn -> reduced)`, so of a callee linked at two instantiations the last wins, while §3.4 promises *"a binding per instantiation"* (only `PostDrainQuoter.reduceThreaded`'s top level keys per instance). `EscalatingReducer.escalate`'s ambiguous-FQN decline exists for exactly this, and `reduceApplied` now uses the deep collection whenever threading changed the body; the safety argument at `ReducedBindingClosure.scala:46` (driven only by `escalatingLoop`'s laziness) no longer holds | silent | read |
 | 50 | an **anonymous** ability implementation whose clause performs an effect its member does not declare gets `Default` for it (`AbilityImplementationProcessor.withPhantomDefaults`), and fails only at monomorphization, at the clause's operation, with *"Nothing binds an implementation of the effect 'Console' here"* and help about body-less dischargers. There is no definition-site rule for it. `EnvironmentThreading.implementationOf` likewise sends any `Default` binding, an effect entry's included, to the two-site search and treats a miss as an empty shape | loud, late, misattributed | reproduced (the error); read (the threading) |
@@ -1192,6 +1197,7 @@ run; *read* means found in the code, not yet reproduced — establishing it is t
 | 57 | unreachable fallbacks that would install an effect `Default` silently: `typeArguments.lift(received.binderIndex).getOrElse(defaultBinding)` in `EnvironmentThreading` (five sites); `TypeStackLoop.monomorphicEffects` already drops an out-of-range index. Fail-safe would be an internal abort | latent | read |
 | 58 | a binding's mangled identity hashes module and pattern with a 32-bit `String.hashCode` (`CommonPatterns.implementationBinding`), and `JvmClassGenerator` emits a mangled name and descriptor once, so a collision between two same-named implementations of one ability brings item 37 back. `CodegenProjection.erasedCarrier`, documented as *"exactly the backend's mangling"*, keys on `carrierFQN` and no longer mirrors item 37's identity | latent | read |
 | 59 | §3.8 and CLAUDE.md say *"the checker holds no effect rule … no effect diagnostic"*, while `monomorphize/check` holds `AbilityResolver.isEffect`/`reportUnboundEffect`/`reportUnmatchedBinding`, `DeclaredEntries.forwarded` (recorded by `AbilityResolver.record`, applied in `PostDrainQuoter`), `PostDrainQuoter.reachesFrames`/`threaded` and `TypeStackLoop.guardRead`; §3.1 and §3.4 themselves name `AbilityResolver` and `PostDrainQuoter`. A decision: restate §3.8, or move them | decision | read |
+| 60 | a reference whose entry the call does not spell answers the nearest binding of its ability before the checker has typed it, while its frame is chosen after monomorphization by its entry at ground arguments: in `def guarded(body uses Throw[String]: Unit) uses Throw[Int]: String`, an argument `guarded(raise(1))` is written from the slot's `Throw[String]` binding, so rule 4's closed cut sees nothing, and then runs on the caller's `Throw[Int]` frame — the program compiles and `main`'s handler catches `1` past `guarded` entirely. Writing the frame from the binding instead (D32) would hand an `Int` to a `Throw[String]` handler: the root is that `raise`'s `E` is decided by the checker while the binding it answers is decided before it. Closing it needs a decision — the answering binding's spelled arguments written as the reference's undetermined ones (a determination from a declaration, which makes a generic `raise` in a body with two `Throw` entries take the nearest and be a type error for the other), or such a reference refused where two entries of its ability are in scope | silent | reproduced (2026-10-15, building D30) |
 
 **Cleanup found by the same review.** Not defects — dead code and text that no longer describes the tree. Each was
 checked with a repository-wide grep, tests included.
@@ -1295,6 +1301,9 @@ checked with a repository-wide grep, tests included.
 | 40 | a named implementation's type parameter its pattern does not take was never solved: `implement[T, K ~ Compare[K]] byKey(key: T => K): Compare[T]` ran at `K := Default`, so its clauses' `<=` was *"No ability implementation found for ability 'Compare' with type arguments [Default]"* and the `with` *"… takes (Person -> Default)"* (loud, found 2026-10-15 building parameterised ability implementations) | 2026-10-15 by D27 (§11): one keyed hole in the binding and the `with`'s binder (`BindingWriter.freeParameters`), and nested keyed holes in the checker (`Checker.keyedHoles`); a `with` moved onto a slot does not read it, item 41 |
 | 41 | a `with` moved onto a code parameter's slot did not read a type parameter its implementation's pattern does not take: `def byAge(body uses *, Compare[Person]: List[Person]) uses *: List[Person] = body with byAnyKey(p -> p.age)`, for `implement[T, K ~ Compare[K]] byAnyKey(key: T => K): Compare[T]`, was *"The implementation 'byAnyKey' takes (Person -> Default) … but this `with` supplies (Person -> Int)"*, since the caller writes the binding from the slot while the arguments deciding `K` are checked in the body (loud, found 2026-10-15 building D27) | 2026-10-15 by D28 (§11), refused rather than handled: an ability is not listed in a clause, and an effect's implementation with such a parameter cannot be bound on a slot (`SlotBindingProcessor.slotFreeParameters`) |
 | 42 | a **named** implementation was never checked against its ability: the conformance check read the anonymous implementations only and only the two-site search demanded it, so since D26 no effect implementation was checked at all. `implement session: Terminal { def write(line: String, extra: String): Unit = unit; def bogus: String = "x" }`, `read` missing, compiled and failed at runtime with `ClassCastException`, as did `def read: Int = 42` against `def read: String` (silent, found by the 2026-10-15 review) | 2026-10-15: a binding dispatching to a named implementation demands its check (`NamedImplementationCheck`, shared with the anonymous one as `ImplementationConformance`): every member given, nothing extra, each clause at its member's signature with the implementation's own parameters dropped first. One that declares no clause at all (the base's `implement standardConsole: Console`) is a declaration a platform layer bodies, so its missing clause stays the error at the reference (`AbilityResolver.reportMissingClause`) |
+| 43 | whether a slot entry **rides** or is **supplied** was decided two ways — as spelled (`ridingFlags`, `riddenEntries`, `RunWithHoister.spelled`) and at the arguments the call determines (`ridesOwn`/`knownArguments`, read by the caller's write, `thunkRequirements` and `slotEntries`) — so `handled[E](body uses *, Source[E]: String) uses *, Source[Int]` meant one thing at `E := Int` and another elsewhere, and the wrong implementation ran (silent, reproduced by the 2026-10-15 review) | 2026-10-15 by D30: every reading decides it as the declarations spell it (`BindingWriter.spelledEntry`/`declaredRow`), the threading's `clauseBinding` included, so that `handled` is *"'body' may perform the effect 'Source' here, which this definition neither handles nor declares"* at every `E` (`SpelledEntryIntegrationTest`, with §2.2's `raising` shape) |
+| 46 | a closed slot kept an outer binding by **ability**, so a closed `body uses Throw[String]` under a definition declaring `Throw[Int]` let a `Throw[Int]` raised in the argument reach the caller's binding, against rule 4 (silent) | 2026-10-15 by D30: a closed slot keeps reachable only the bindings answering the entries it rides, spelled the same (`Scope.enterClosed`) |
+| 47 | the over-declaration check (§4) was per ability, so `uses Throw[A], Throw[B]` performing only `Throw[A]` was accepted (silent) | 2026-10-15 by D30: consumption is per received entry (`Writer.consumed` by binder index); a reference whose entry the call does not spell consumes every entry of its ability, since it may be any of them |
 | 37 | two named implementations of one ability at the same type arguments, used in one program, were one method: the jvm backend mangled a binding by its marker's local name, which is the ability's, so `xs.sorted with reversed` and `xs.sorted with natural` were both `sorted$Compare$Int` and one body silently replaced the other — as were two doubles of one effect (`greet with loud` beside `greet with quiet`), in releases up to `v0.12` (found 2026-10-15 building parameterised ability implementations) | 2026-10-15: a binding is mangled as its whole identity — the ability, a hash of its module and pattern, and its name (`CommonPatterns.mangleTypeArgument`); every example behaves identically, with the same instructions, and its jar 2.8% larger by the longer names |
 | 38 | a named implementation constrained on its own ability was rejected wherever it was bound: `xs.sorted with byLast`, for `implement[T ~ Compare[T]] byLast: Compare[List[T]]`, was *"… performs 'Compare', and a nearer binding of 'Compare' stands between them"*, the `with`'s own binding taken for the nearer one (loud) | 2026-10-15: the `with`'s own binding never stands between (`BindingWriter.checkClauses`), and a constraint is *"uses"* where an effect *"performs"* |
 | 39 | an implementation's `~` constraint bound to a named implementation taking parameters reached none of them: `(xs.sorted with byShown).joined(",") with prefixed(">>")`, for `implement[T ~ Show[T]] byShown: Compare[T]`, was *"The implementation 'prefixed' performs 'Show' here, and nothing supplies the parameters it takes"* (loud) | 2026-10-15: an implementation's environment holds the frames of its constraints bound to a named implementation, after those its clauses perform (`EnvironmentThreading.implementationClauses`) |
@@ -1397,7 +1406,7 @@ tree decide one thing in two places:
 | --- | --- | --- |
 | **A. Code is compiled by its caller, but its listed effects are handled by the callee.** The caller writes the code's bindings from the declaration, so whatever the callee's *body* does about a listed entry must be reported back through its *signature*: the slot `with`, the hoisting of a `with` around a run (`RunWithHoister`), the carrying of a callee's slot binding (D25 step 3), `SlotBindings`, the given-check (`checkGiven`, `clausesGiven`), "every run must bind the same implementation", a `with`'s code moving while its arguments stay, and D28's refusal | 45, 48, 51 | 20, 33, 35, 41 |
 | **B. An implementation's two halves are decided by two walks at two times.** The code is written pre-mono, lexically, by `BindingWriter`; the frame is chosen post-mono "by entry at ground arguments" by `EnvironmentThreading`, which re-derives what the walk knew (environment entries, a named implementation's arguments) and must then check that the two agree. (b), *ride by code, give by frame*, makes the split a rule, and is sound only because a control effect has one implementation per platform — the family distinction §3.5 says the language does not make | 44, 45, 56, 57 | 25, 30, 34, 39 |
-| **C. An entry's identity includes type arguments that are not known where it is compared.** Three comparisons are in use: as spelled (§2.2), at the arguments the call determines (`knownArguments`), and by ability alone (`Writer.rides`, `Writer.consumed`). The ground half adds the coinciding-frames error (§3.4) and the "which `Throw` does this call supply" precondition | 43, 46, 47 | 19, 22, 23 |
+| **C. An entry's identity includes type arguments that are not known where it is compared.** Three comparisons are in use: as spelled (§2.2), at the arguments the call determines (`knownArguments`), and by ability alone (`Writer.rides`, `Writer.consumed`). The ground half adds the coinciding-frames error (§3.4) and the "which `Throw` does this call supply" precondition. D30 closed the first two readings' split; an entry the call does not spell is still answered before the checker types it (item 60) | 60 | 19, 22, 23, 43, 46, 47 |
 | **D. Abilities run on the effect machinery but mean something else.** An ability is searched and never inherited; an effect is passed and never searched. Sharing `with`, named implementations and their parameters made every effect rule need an ability exception (D28) and every ability rule an effect one (D27, items 38–40) | 50, 53, 54, 55, part of 59 | 38, 39, 40, 41 |
 
 Four decisions follow, in order of cost: D29 and D30 are decided, and D31 and D32 are open until D31's cost is measured.
@@ -1428,8 +1437,31 @@ for the callee to bind.
   key carries a lifted block as an argument — a genuine compile-time constant, unlike the per-value keys rejected
   2026-07 — and code size grows per call site of such a definition (`mocked` once per test case). On a microcontroller
   it may be a gain: a `runAbort` around a block specialised into it can be a local jump.
-- **Measure first:** the call sites of definitions with a listing slot across the examples, eliot-test and eliot-build,
-  and the specialisations that would result.
+- **Measured (2026-10-15).** 24 definitions have a slot that lists an entry, with **1,271** call sites across the
+  examples, the layers, eliot-test and eliot-build (syntactic, comments and strings stripped, infix uses counted). 62%
+  are eliot-test's: `in` (560, every case) and `mocked` (225). The rest: `else` 105, `if` 94, `catch` 53,
+  `failingOnGit` 49, `provide` 46, `raising` 35, `answered` 23, `expect` 13, `failingOnAsset` 11, `attempt` 10,
+  `against` 9, `runAbort` 8, `offline` 7, `runStateToPair` and `ioFailureOf` 6 each, `runThrow` 4, and seven with two
+  or fewer. What they cost today: eliot-test's own suite built as a jar (2.6 MB, 3,935 classes, 85,815 instructions)
+  holds 2 specialisations of `in` and 4 of `mocked` for those 785 call sites, each method a dozen instructions or
+  fewer. Per block, each call site gets its own copy of the definition *and of every discharger it hands the block to*
+  — `in` → `runThrow` → `escapeInternal`, `mocked` → `runStateToValue` → `runStateToPair` → `withCellInternal` and
+  `catch` → `runThrow` → `escapeInternal` — so a lower bound for that jar is some 3,000 more methods and 2,000 more
+  lambda classes, about half again its size; an estimate from the call graph, not a build. Production code pays far
+  less (`else`, `if` and `catch` are a few hundred tiny copies).
+- **What the measurement showed about the design.** The binding a callee gives at a run of its code depends on the
+  callee's body and the callee's own type arguments, never on the block. Specialising per block is therefore more than
+  is needed: the hoisting already computes exactly that function of the callee — from its **body** — and publishes it
+  as `SlotBoundValue`, which every caller reads as the declaration. So callers already depend on a body-derived fact
+  (D28's stated reason for refusing to read a callee's body no longer separates the two), and the shipped mechanism is
+  D31 keyed by *binding* rather than by *block*: it shares one compiled block across every callee run that binds the
+  same way, and pays for the sharing with the slot surface. Every edge case cause A lists comes from the binding
+  having to be one per parameter (one summary in the signature) rather than one per run. Three readings are left
+  for the decision: **(a)** D31 as proposed, per block, at the cost above; **(b)** keyed by binding but per *run*
+  — the callee's summary a set of run bindings, the caller compiling the block once per element and the callee picking
+  one at each run (D20c option 4's "one entry point per binding", applied to code) — which keeps the sharing and drops
+  "every run binds the same implementation" but keeps the slot summary and its ride/supply reading; **(c)** the shipped
+  mechanism, with D30 and D32 closing its known gaps.
 
 ### D32 — one walk decides both halves of an implementation (open: with D31)
 
@@ -1500,12 +1532,7 @@ not a value, so an ability denotes no type of values.
 
 ### Decided, not built
 
-- **D30** (decided 2026-10-15): *a slot entry rides or is supplied, and an entry answers another, as the declarations
-  spell them — one comparison everywhere.* Closes §8 item 43 by §2.2's rule, which the document states and the tree
-  half-follows; items 46 (a closed slot keeps a binding by ability) and 47 (over-declaration per ability) are the same
-  comparison applied by ability, and close with it. §3.1's *"known meaning ground once the call's determined arguments
-  are written in … the same comparison decides whether a slot entry rides"* is the sentence reversed. An entry still
-  generic in a binder the checker solves (`raise`'s `Throw[E]`) keeps answering the nearest binding of its ability.
+None.
 
 **Awaiting sign-off:** the four choices made in the code while building option 5 (§3.4, "Decided in the code"). A
 fifth, an anonymous implementation's parameters as part of its pattern key, lapsed with D25's step 5.
@@ -1621,6 +1648,15 @@ Numbers are kept so citations resolve; the record of each is in git history (§1
   implementation's arguments too. Built with `sortedBy(key, list)` in the base's `eliot.collection.List` as the
   replacement idiom, and the refusals at the marker in `RowElaborationProcessor.implementationKind`; every example jar
   is byte-identical.
+- **D30** (decided and built 2026-10-15): *a slot entry rides or is supplied, and an entry answers another, as the declarations
+  spell them — one comparison everywhere.* Closes §8 item 43 by §2.2's rule, which the document states and the tree
+  half-follows; items 46 (a closed slot keeps a binding by ability) and 47 (over-declaration per ability) are the same
+  comparison applied by ability, and close with it. §3.1's *"known meaning ground once the call's determined arguments
+  are written in … the same comparison decides whether a slot entry rides"* is the sentence reversed. An entry still
+  generic in a binder the checker solves (`raise`'s `Throw[E]`) keeps answering the nearest binding of its ability,
+  and consumes every received entry of it. Built in the walk (`BindingWriter.spelledEntry`, `declaredRow`,
+  `spelledRendered`, a received binding keyed by its binder) and in the threading's `clauseBinding`, which had kept a
+  ground comparison for a slot implementation's clause entries.
 - **D26** (decided and built 2026-10-14): *no effect has a default; every effect implementation is named, and every
   effect binding is written.* **Amended** D25's *"a default — always parameterless — is given only at `main`"*: the
   run boundary was the last place an effect's implementation was searched for. The compiler only passes an effect's

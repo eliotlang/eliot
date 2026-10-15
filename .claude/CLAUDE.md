@@ -644,9 +644,12 @@ inspects a *sibling argument's expression shape* is inference, not desugaring, a
 cannot be made from a declaration is a gap to close **in the declarations**.
 
 **A slot's entries are *supplied*, and that is what makes a discharger** (§2.2). `body uses *, Abort: A` says "on my
-caller's bindings **extended by** `Abort`": an entry the definition's own clause already has is *not* supplied and
-the walk continues outward (so `if`'s `value uses *, Abort: T` under its own `uses Abort` rides the caller's), and an entry it lacks
-is supplied by the slot. A function-typed code parameter's clause is the callback's own scope (`onError uses *: E =>
+caller's bindings **extended by** `Abort`": an entry the definition's own clause already has, **spelled the same**, is *not* supplied
+and the walk continues outward (so `if`'s `value uses *, Abort: T` under its own `uses Abort` rides the caller's), and an
+entry it lacks is supplied by the slot. Entries compare as the declarations spell them, never at the arguments a call or an
+instantiation determines (D30): `Throw[E]` on a slot is supplied beside a declared `Throw[String]` even at `E := String`,
+and a reference whose entry the call does not spell (`raise`'s `E`, left to the checker) answers the nearest binding of
+its ability. A function-typed code parameter's clause is the callback's own scope (`onError uses *: E =>
 A`). A supplied entry's **type arguments** are written from the actual's declaration (`bad uses Throw[String]:
 String` against `Throw[E]` gives `E := String`); where no declaration answers, the call spells them
 (`runThrow[AssertionError, Unit](body)`) and an argument nothing determines is **rejected**, never defaulted — which

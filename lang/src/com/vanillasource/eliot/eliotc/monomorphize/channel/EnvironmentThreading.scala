@@ -576,9 +576,10 @@ object EnvironmentThreading {
             for {
               clauses      <- namedClauses(marker)
               named        <- slotImplementations(callee, slot.parameterIndex)
-              clauseFrames <- clauses.traverse { clauseEntry =>
-                                val binding = clauseBinding(callee, clauseEntry, named, marker)
-                                shapeOf(clauseEntry, binding).map(shape => held(clauseEntry, binding, shape))
+              clauseFrames <- clauses.traverse { clause =>
+                                clauseBinding(callee, clause, named, marker).flatMap(binding =>
+                                  shapeOf(clause._1, binding).map(shape => held(clause._1, binding, shape))
+                                )
                               }
               own          <- namedOwn(entry, marker)
             } yield {
@@ -615,7 +616,8 @@ object EnvironmentThreading {
                             named        <- slotImplementations(mv, index)
                             clauseFrames <- namedClauses(marker).flatMap(
                                               _.traverse(clause =>
-                                                lookup(context, clause, clauseBinding(mv, clause, named, marker), name)
+                                                clauseBinding(mv, clause, named, marker)
+                                                  .flatMap(binding => lookup(context, clause._1, binding, name))
                                               )
                                             )
                             own          <- runArguments(context, entry, marker, name)
@@ -697,22 +699,24 @@ object EnvironmentThreading {
       } yield listing
 
     /** The binding the implementation `marker` a slot names performs `clause` on: the definition's own, where its row
-      * has the entry — the caller writes its binding there, which it also hands the definition — and otherwise what the
-      * slot binds the clause's ability to, which is what the caller writes for a clause the slot supplies: another
-      * implementation the slot `named`, or the default (`docs/effects.md` D26). Either way the frame is given where the
-      * block runs (D20c, decided (b)).
+      * has the entry spelled as the clause spells it (`docs/effects.md` D30) — the caller writes its binding there, which
+      * it also hands the definition — and otherwise what the slot binds the clause's ability to, which is what the
+      * caller writes for a clause the slot supplies: another implementation the slot `named`, or the default (D26).
+      * Either way the frame is given where the block runs (D20c, decided (b)).
       */
     private def clauseBinding(
         value: Specialisation,
-        clause: Entry,
+        clause: (Entry, Option[Declared]),
         named: SlotNamed,
         marker: ValueFQN
-    ): GroundValue =
-      value.effects.received
-        .find(_.entry == clause)
-        .flatMap(received => value.typeArguments.lift(received.binderIndex))
-        .orElse(named.forClause(marker, clause.ability).map(namedBinding))
-        .getOrElse(defaultBinding)
+    ): CompilerIO[GroundValue] =
+      declaredEntries(value.vfqn).map { own =>
+        clause._2
+          .flatMap(spelled => own.collectFirst { case (index, declared) if declared == spelled => index })
+          .flatMap(value.typeArguments.lift)
+          .orElse(named.forClause(marker, clause._1.ability).map(namedBinding))
+          .getOrElse(defaultBinding)
+      }
 
     /** Whether each entry of `slot` **rides** the definition's own row rather than being supplied by the slot (§2.2) —
       * decided as the declaration spells it, never at ground arguments: `raising[E](…, body: {Throw[E]} Unit):
@@ -754,9 +758,11 @@ object EnvironmentThreading {
         case _                                                                                          => None
       }))
 
-    /** The entries a named implementation's clauses perform, at the bindings a slot's `with` writes for them. */
-    private def namedClauses(marker: ValueFQN): CompilerIO[Seq[Entry]] =
-      implementationClauses(marker, None).map(_.map(_._1))
+    /** The entries a named implementation's clauses perform, each with its spelling, at the bindings a slot's `with`
+      * writes for them.
+      */
+    private def namedClauses(marker: ValueFQN): CompilerIO[Seq[(Entry, Option[Declared])]] =
+      implementationClauses(marker, None).map(_.map((entry, _, spelled) => entry -> spelled))
 
     private def namedBinding(marker: ValueFQN): GroundValue =
       GroundValue.Structure(marker, Seq.empty, GroundValue.Type)
@@ -777,7 +783,9 @@ object EnvironmentThreading {
           for {
             named   <- slotImplementations(value, slot.parameterIndex)
             clauses <- namedClauses(marker).flatMap(
-                         _.flatTraverse(clause => shapeOf(clause, clauseBinding(value, clause, named, marker)).map(_.types))
+                         _.flatTraverse(clause =>
+                           clauseBinding(value, clause, named, marker).flatMap(binding => shapeOf(clause._1, binding)).map(_.types)
+                         )
                        )
             own     <- namedOwn(entry, marker)
           } yield clauses ++ own
@@ -970,7 +978,7 @@ object EnvironmentThreading {
         case Some((marker, typeArguments)) =>
           for {
             clauses <- implementationClauses(marker, Some(typeArguments))
-            shaped  <- clauses.traverse { case (clauseEntry, clauseBinding) =>
+            shaped  <- clauses.traverse { case (clauseEntry, clauseBinding, _) =>
                          shapeOf(clauseEntry, clauseBinding).map(shape => (clauseEntry, clauseBinding, shape))
                        }
             own     <- ownParameterTypes(marker, typeArguments)
@@ -1003,7 +1011,7 @@ object EnvironmentThreading {
     private def implementationClauses(
         marker: ValueFQN,
         typeArguments: Option[Seq[GroundValue]]
-    ): CompilerIO[Seq[(Entry, GroundValue)]] =
+    ): CompilerIO[Seq[(Entry, GroundValue, Option[Declared])]] =
       getFactOrAbort(OperatorResolvedValue.Key(marker, track.platform)).flatMap { orv =>
         val performed = orv.effectRow.returnEffects.map(_.abilityFQN).toSet
         val arguments =
@@ -1016,7 +1024,9 @@ object EnvironmentThreading {
             ground <- track.specialisation(marker, arguments)
           } yield ground.effects.received
             .filter(received => performed.contains(received.entry.ability) && own.get(received.binderIndex).exists(held.contains))
-            .map(received => received.entry -> arguments.lift(received.binderIndex).getOrElse(defaultBinding))
+            .map(received =>
+              (received.entry, arguments.lift(received.binderIndex).getOrElse(defaultBinding), own.get(received.binderIndex))
+            )
       }
 
     private def abilityOfImplementation(
