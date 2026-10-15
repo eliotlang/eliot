@@ -72,9 +72,14 @@ lives now.
 16. ~~**§8 item 4**~~ — closed 2026-10-15 as not a defect: pure code may stand at a slot that allows an effect.
 17. **The 2026-10-15 review** (§8 items 42–59, and its cleanup list). ~~§8 item 42~~ (closed 2026-10-15: a named
    implementation is checked against its ability); then the decision item 43 needs (which comparison decides riding), and items 44–45
-   with it; then the *read* items, each reproduced or proved dead first.
+   with it; then the *read* items, each reproduced or proved dead first. Superseded in order by step 18.
+18. **The 2026-10-15 diagnosis** (§11): the open items trace to four structural choices, and four decisions follow, in
+   this order: **D29** (an ability has no named implementation and no `with`) and **D30** (entries compared as
+   spelled, closing items 43, 46, 47), both decided; then measure **D31**'s cost (code compiled where it runs); then
+   D31 and **D32** (one walk decides code and frame) together, if signed off. Items 49, 52 and 58 are ordinary bugs,
+   independent of them.
 
-D20a, D20c and D3 stay open until decided; none blocks the steps above.
+D20a, D20c, D3, D31 and D32 stay open until decided; none blocks the steps above.
 
 **Open, in order of severity.**
 
@@ -84,9 +89,10 @@ D20a, D20c and D3 stay open until decided; none blocks the steps above.
 - **Loud, at compile time:** §8 items 45 (reproduced) and 50; a
   `catch` over a parameter spells its arguments (§7 item 2); a function-typed code parameter's own entries are never
   supplied (§7 item 1).
-- **Decided, not built:** none.
+- **Decided, not built:** D29 (an ability has no named implementation and no `with`), D30 (entries compared as
+  spelled).
 - **Undecided:** naming a set of effects in a clause (D20a), storing an effectful computation (D20c), `~`/`&` in user
-  space (D3).
+  space (D3), code compiled where it runs (D31), one walk deciding code and frame (D32).
 - **Outside this document:** `v0.9` is the first release carrying `uses` (`v0.8` is tagged before it, and its release
   workflow failed, so it publishes no assets); `v0.14` is the latest (`v0.13`, tagged before it, failed its release
   workflow the same way — the LSP did not compile clean — and publishes nothing); eliot-test `v0.5`, eliot-build and the docs site's
@@ -1391,6 +1397,60 @@ value it names. And a test stub that diverges from the real declaration (`fold`'
 
 Only rule decisions are listed; conveniences are in §12 under "not now". Every decision is Robert's.
 
+### The 2026-10-15 diagnosis — where the edge cases come from
+
+The review's seventeen open items (§8 43–59), and most of the thirty closed before them, are not independent
+mistakes. Apart from three ordinary bugs (49, 52, 58), they trace to four structural choices, each of which makes the
+tree decide one thing in two places:
+
+| cause | open items | closed items it produced |
+| --- | --- | --- |
+| **A. Code is compiled by its caller, but its listed effects are handled by the callee.** The caller writes the code's bindings from the declaration, so whatever the callee's *body* does about a listed entry must be reported back through its *signature*: the slot `with`, the hoisting of a `with` around a run (`RunWithHoister`), the carrying of a callee's slot binding (D25 step 3), `SlotBindings`, the given-check (`checkGiven`, `clausesGiven`), "every run must bind the same implementation", a `with`'s code moving while its arguments stay, and D28's refusal | 45, 48, 51 | 20, 33, 35, 41 |
+| **B. An implementation's two halves are decided by two walks at two times.** The code is written pre-mono, lexically, by `BindingWriter`; the frame is chosen post-mono "by entry at ground arguments" by `EnvironmentThreading`, which re-derives what the walk knew (environment entries, a named implementation's arguments) and must then check that the two agree. (b), *ride by code, give by frame*, makes the split a rule, and is sound only because a control effect has one implementation per platform — the family distinction §3.5 says the language does not make | 44, 45, 56, 57 | 25, 30, 34, 39 |
+| **C. An entry's identity includes type arguments that are not known where it is compared.** Three comparisons are in use: as spelled (§2.2), at the arguments the call determines (`knownArguments`), and by ability alone (`Writer.rides`, `Writer.consumed`). The ground half adds the coinciding-frames error (§3.4) and the "which `Throw` does this call supply" precondition | 43, 46, 47 | 19, 22, 23 |
+| **D. Abilities run on the effect machinery but mean something else.** An ability is searched and never inherited; an effect is passed and never searched. Sharing `with`, named implementations and their parameters made every effect rule need an ability exception (D28) and every ability rule an effect one (D27, items 38–40) | 50, 53, 54, 55, part of 59 | 38, 39, 40, 41 |
+
+Four decisions follow, in order of cost: D29 and D30 are decided, and D31 and D32 are open until D31's cost is measured.
+The rest of the design is untouched: the `uses` clause, code and value, `*`, closed clauses, D24's marker, named effect
+implementations with parameters, the three primitives, frames as environments, and the one pre-mono verifier.
+
+### D31 — code is compiled where it runs (open: measure first)
+
+**Proposed:** a definition whose code parameter **lists** an entry is specialised per code argument. The argument is
+lifted to a synthesised definition whose listed entries are its own phantom binders, and the callee fills them at each
+run by the ordinary resolution order (§3.1) — an enclosing `with`, else its own received binder — exactly as it fills a
+callee's binders at a call. An effect the code uses through `*` is still bound where the code is written, by the
+caller; a `uses *`-only slot (`fold`, `foldLeft`, `map`, every native's) stays an ordinary thunk, since there is nothing
+for the callee to bind.
+
+- **Why it fits.** Rule 3 (code is never kept) and the no-recursion cornerstone together guarantee that code can always
+  be a compile-time argument and that the specialisation chain is finite. It is the code-plus-environment split of
+  §3.4 applied to a block: the code a compile-time name, its captures the environment. It is Kotlin's `inline`, which
+  §1 cites as rule 3's precedent, and Kotlin inlines for this very reason — a non-local exit out of a lambda.
+- **What it deletes.** The slot `with` (`body uses *, Console with recordingConsole` becomes `body with
+  recordingConsole` in the body), `RunWithHoister`, the carrying of D25 step 3, `SlotBindings`/`SlotBoundValue`/
+  `SlotBindingProcessor`, `checkGiven`/`clausesGiven`, "every run must bind the same implementation", the split of a
+  `with`'s code from its arguments, D28's effect half and (b). Rule 5 becomes the ordinary *"performs but does not
+  declare"* at the run, with D22's meaning unchanged: `describedAs` catches its body's failure because its `catch` is
+  lexically around the run. §7 item 1 closes with it, since a function-typed slot's listed entries are bound at its
+  runs like a nullary one's.
+- **What it costs.** A reversal of D22's mechanism (not its meaning), D23's slot half, D25's steps 2–3 and D28. The mono
+  key carries a lifted block as an argument — a genuine compile-time constant, unlike the per-value keys rejected
+  2026-07 — and code size grows per call site of such a definition (`mocked` once per test case). On a microcontroller
+  it may be a gain: a `runAbort` around a block specialised into it can be a local jump.
+- **Measure first:** the call sites of definitions with a listing slot across the examples, eliot-test and eliot-build,
+  and the specialisations that would result.
+
+### D32 — one walk decides both halves of an implementation (open: with D31)
+
+**Proposed:** the walk already knows, lexically, where each binding comes from — a received binder, an enclosing
+`with`, or (with D31) the block's own binder. It records that link beside the name, and the threading builds what the
+link names and decides nothing. Deleted with it: the frame choice "innermost of its entry at ground arguments" and the
+coinciding-frames error (§3.4); item 44's class, since a binding and its frame can no longer disagree; items 45, 56
+and 57; §3.3's plumbing errors; and probably `SuppliedRowArgumentsProcessor` with §7 item 2, which exist because a
+wrong type argument meant a wrong frame, while with a written link an undetermined one is an ordinary unresolved type
+parameter. Without D31 the link for a listed entry is still split by (b), so the two are decided together.
+
 ### D20a — naming a set of effects
 
 `type Git[A] = {Process, FileSystem, Throw[IoError], Throw[GitError]} A` is a row alias, return position only (§2.4).
@@ -1450,7 +1510,25 @@ not a value, so an ability denotes no type of values.
 
 ### Decided, not built
 
-None.
+- **D29** (decided 2026-10-15): *an ability is never bound with `with`, and has no named implementation.* An ability is
+  answered by the two-site search alone, and an effect by explicit passing alone; behaviour configured per call is a
+  value parameter (`people.sortBy(p -> p.age)`), as in every language without implicit instances. A named `implement`
+  of an ability is an error at its marker, naming the anonymous form and the value parameter, so a `with` can name only
+  an effect's implementation, and an implementation's `~` constraint is always the search's. **Reverses** the
+  parameterised ability implementations of 2026-10-15 and D27: with no named ability implementation, a type parameter
+  outside an implementation's pattern has no use left (no effect implementation in the corpus has one), so every type
+  parameter of an implementation is its pattern's, an error at the marker otherwise. Measured first: no `.els` in eliot,
+  eliot-test or eliot-build names an ability's implementation; two Scala tests exercise it. What goes: `with` reaching
+  a `~` binder, a constraint bound to a named implementation (§8 item 39's mechanism), the `with`'s own binding not
+  standing between (item 38), the free parameters of D27 (item 40's keyed hole in a binding), and D28's ability half,
+  which a clause listing an ability keeps as its error. Item 36's shared holes stay: they type an effect
+  implementation's arguments too.
+- **D30** (decided 2026-10-15): *a slot entry rides or is supplied, and an entry answers another, as the declarations
+  spell them — one comparison everywhere.* Closes §8 item 43 by §2.2's rule, which the document states and the tree
+  half-follows; items 46 (a closed slot keeps a binding by ability) and 47 (over-declaration per ability) are the same
+  comparison applied by ability, and close with it. §3.1's *"known meaning ground once the call's determined arguments
+  are written in … the same comparison decides whether a slot entry rides"* is the sentence reversed. An entry still
+  generic in a binder the checker solves (`raise`'s `Throw[E]`) keeps answering the nearest binding of its ability.
 
 **Awaiting sign-off:** the four choices made in the code while building option 5 (§3.4, "Decided in the code"). A
 fifth, an anonymous implementation's parameters as part of its pattern key, lapsed with D25's step 5.
