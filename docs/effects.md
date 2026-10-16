@@ -85,6 +85,8 @@ lives now.
 19. **D33** (decided 2026-10-16, §11): a `with` specialises a named call, and a control effect takes only a frame.
    Its settling questions first, then the write, the deletions, and the dependents with eliot-test's mocking redesign
    (deferred, undecided) on the same release. Closes §8 items 44, 45, 48, 51, 56 and 57.
+20. **D34** (proposed 2026-10-16, §11): a binding is part of a definition, never an expression. Paper-measured on
+   eliot-test's `Mock.els`; awaiting sign-off of its reversals and its four findings before any of D33 is built.
 
 D20a, D20c and D3 stay open until decided; none blocks the steps above.
 
@@ -98,6 +100,8 @@ D20a, D20c and D3 stay open until decided; none blocks the steps above.
   supplied (§7 item 1).
 - **Decided, not built:** D33 (a `with` specialises a named call; a control effect takes only a frame), which closes
   §8 items 44, 45, 48, 51, 56 and 57; its mocking half is deferred.
+- **Proposed:** D34 (a binding is part of a definition, never an expression), which would replace D33 point 1 and
+  answer its mocking half.
 - **Undecided:** naming a set of effects in a clause (D20a), storing an effectful computation (D20c), `~`/`&` in user
   space (D3), the rules items 60 and 61 need. D31 and D32 are withdrawn (§11).
 - **Outside this document:** `v0.9` is the first release carrying `uses` (`v0.8` is tagged before it, and its release
@@ -1551,6 +1555,9 @@ not a value, so an ability denotes no type of values.
 
 #### D33 — a `with` specialises a named call; a control effect takes only a frame (decided 2026-10-16)
 
+*D34 (proposed 2026-10-16, below) would reverse point 1 and answer the deferral of mocking; D33 stands as written until
+D34 is signed off.*
+
 **The question** (Robert, 2026-10-16, after D31's measurement): the unit of compilation is a named value, not a
 lambda. If an implementation is a compile-time parameter, a `with` is a monomorphization step like a type argument, and
 it should apply only to a call of a named value, specialising it. Would that simplify everything?
@@ -1643,6 +1650,102 @@ mockProcess`); the arrange and verify words declare `uses State[Recording]` with
 **Order.** The settling questions; then the write (`BindingWriter`) binds control entries by frame only and refuses
 the removed `with` shapes; then the deletions; then the dependents — eliot-test's mocking redesign and eliot-build's
 three test files — on the same release.
+
+#### D34 — a binding is part of a definition, never an expression (proposed 2026-10-16, awaiting sign-off)
+
+**The question** (Robert, 2026-10-16, while D33's settling questions were being drafted): `with` is still too
+complicated after D33. Can Eliot offer static effects, like dependency injection, without it?
+
+**The finding.** Almost every edge case in the 2026-10-15 diagnosis, and every one of D33's settling questions, comes
+from one property: **a binding is placed inside a body**, at a point in an expression tree. That property is what
+needs the four-step resolution order (§3.1), nested `with`s and the frame-interception check, "binds nothing" and
+"what is the subject", a `with` around a run of a code parameter (the hoisting, the carrying, `SlotBindings`, the
+given-check), chains as expressions, and arguments evaluated at the `with` (the `$with` binder, keyed holes,
+parameter threading), and it is why the threading must work out which `with` a frame belongs to ((b), items 44, 45,
+56, 57). A declaration has no inside, so none of these can arise. The model is compile-time dependency injection
+(Dagger): a component declares what it needs, a root wires it, and the wiring is resolved at monomorphization.
+
+**Proposed.**
+
+1. **A definition either receives an implementation or fixes it for its own body**, in its declaration beside
+   `uses`. An implementation's name already says which entry it implements:
+   ```eliot
+   def releaseTests with tableGit: Test = …
+   def modelEntry(name: PackageName, project: Project) uses FileSystem, Process, Dep[Path] with cachedPackages, shellGit: ModelEntry = …
+   ```
+   Every reference in the body gets that implementation, including the references in code the body writes and passes
+   to a `uses *` slot. A caller sees neither the bound entry nor its implementation, only what the implementation's
+   clauses perform, which the definition declares or discharges like any other effect. That is "the root also
+   satisfies its components' dependencies".
+2. **Resolution is two steps per reference**: this definition's `with`, else its own received binder; anything else
+   is "performs but does not declare". A **control effect** has no binding at all: the platform's single
+   implementation and a frame threaded by entry (D33 point 2, kept).
+3. **A bound implementation's clause entries are performed by the definition at that reference**, covered as any use
+   is: by the definition's other bindings, its own `uses`, or a discharger around the reference. So a **chain** is
+   set-shaped, with no order (`with gitPackages, shellGit`: `gitPackages`'s `Git` is covered by the sibling), and the
+   bindings must form a DAG, a static check on the declaration. A binding never covers its own clause, which gives
+   **decorators**: in `def d uses Console with loggingConsole`, `loggingConsole`'s own `Console` is `d`'s received one.
+4. **An implementation takes no parameters.** A double's data comes through a control effect, as eliot-test's `Mock`
+   already does with `State[Recording]`: `greet with scripted("Bob")` becomes `implement scripted: Terminal` reading a
+   `Dep[String]`, run under `provide("Bob", …)`.
+5. **A code parameter lists only control effects** (D33 point 3, kept). Running one performs its listed entries, as
+   calling a definition with that clause does, so rule 5 is the ordinary scope check at the run, and supplied versus
+   riding disappears: a listed entry's frame is always the one where the code runs.
+
+**It would reverse**, each needing Robert's sign-off: D23 (a `with` expression, binding what escapes its subject);
+D25's parameters on a named implementation and `with name(args)`; D33 point 1 (a `with` on a named call) and D33's
+deferral of mocking, which this answers; §3.1's resolution order and its interception check. It keeps D33 points 2–4, D26's meaning (no effect has a default, every implementation is named, `main` is
+bound per entry — by the synthesized `main`'s declaration rather than by generated `with`s), D22's meaning, D28 and
+D29. **It would delete** the `with` expression (its parser node, `WithBinding`, the resolver's `$with` lowering,
+`ImplementationParameters`, keyed holes), `RunWithHoister`, `SlotBindings`, `SlotBoundValue`/`SlotBindingProcessor`,
+`checkGiven`/`clausesGiven`, the interception check, and in the threading the riding flags, `bySlot` frames,
+implementation-parameter threading and the frame-versus-binding paths; `guardDischargers`' slot read becomes "the
+platform's implementation". **It does not touch** cause C (§8 items 59–61, §7 item 2), D33's first settling question
+(how a control effect is declared), or the spelling (`with` on the declaration, or another word).
+
+**Why not `Dep[MyOutput]`** (Robert's first suggestion, the same day). A `Dep` holds a value, and a value may perform
+no effect (rules 2 and 6), so a record of operations whose production version prints is rejected where it is built.
+Allowing it needs a clause on a field (reversing rule 6, with `StrictPositivityChecker` counting a field's entries as
+negative, D20c option 4), and implementations performing different effects (`shellGit`'s `Process` against a table)
+need either the union in the field's type or a row variable, which is prohibited. A binding on a declaration needs
+neither, because an implementation's effects are charged where it is bound and never appear in a type. It is static
+from the start — a binding is a type argument at a named value, the ordinary mono key — so there is no later
+"optimise to static" step, and `Dep` stays what it is for, data.
+
+**What it costs.** Two implementations of one effect in one body need two definitions (none in the corpus: eliot-build's
+three `Launcher` `with`s are in three definitions, `releasing`, `modelEntry` and `performed`). A test case wanting a
+different *implementation* needs its own definition; different *data* per case is fine. Each suite lists its doubles.
+
+**Measured on paper (2026-10-16): eliot-test's `Mock.els` and the suite with the most doubles.**
+
+- `Mock.els` changes in **one definition**: `mocked` keeps only its control entries,
+  `def mocked(body uses *, State[Recording], Throw[IoError], Throw[AssertionError]: Unit) uses *, Throw[AssertionError]: Unit`,
+  with its body unchanged. No double, no arrange word and no verify word changes, and no `with` is left in the module.
+  `Mocking` and `Calls` keep their point, which D33 had taken from them: they hide `State[Recording]`, so no suite spells
+  the private `Recording`.
+- On the call side, the 225 `in mocked { … }` cases are unchanged. Each suite definition gains one list — 7 in
+  eliot-test's mock suites (five `testCases` and two private `refusals`), e.g. `def testCases with mockConsole,
+  mockLog, mockProcess, mockEnvironment, recordingDoorbell, recording, journal: Test` — and the one body `with`
+  (`greetVisitor("Ann") with recordingDoorbell`) goes, its double joining that list.
+- Not rewritten, counted: eliot-build's tests hold 96 call-site `with`s (`tableGit` 44, `shellGit` 30, `shellAssets` 14,
+  `gitPackages` 7, `tablePackages` 1) in 8 files, which move onto their suites' declarations, and `against`'s slot loses
+  its `PackageSource with tablePackages`.
+
+**Found by the rewrite**, each to settle before building:
+
+1. **A double's own failure becomes catchable.** A double's clause `Throw[AssertionError]` (`mockProcess`,
+   `mockFileSystem`) is performed at the reference, so a `raising` around the call now sees it; today it is bound where
+   `mocked` binds the double (`MockProcessTests`' `refusals`). No case depends on it — the refusals are checked as failed
+   cases, which is unchanged. Either accept it (then a refusal can be tested with `raising` directly), or a double
+   records a refusal in the `Recording` and `mocked` fails the case after the body.
+2. **The diagnostic must name the binding.** A case outside `mocked` in a suite binding the doubles reaches
+   "performs `State[Recording]`" at a `printLine`, naming a type the suite never wrote and cannot. The message must say
+   that `printLine` is bound to `mockConsole` by this definition and that its clause performs `State[Recording]`.
+3. **An unused binding.** If it is an error, as "declares but does not perform" is (§4), each suite's list must match
+   what it uses, and a standard list cannot be copied; a name for a set of bindings is D20a's question. If it is
+   allowed, nothing unsound follows — it binds nothing.
+4. A private suite carries its own list: `refusals: Test` in `MockFileSystemTests` and `MockProcessTests`, two of the
+   seven above.
 
 
 **Awaiting sign-off:** the four choices made in the code while building option 5 (§3.4, "Decided in the code"). A
