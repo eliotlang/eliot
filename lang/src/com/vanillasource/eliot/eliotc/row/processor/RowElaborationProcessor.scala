@@ -2,7 +2,7 @@ package com.vanillasource.eliot.eliotc.row.processor
 
 import cats.Id
 import cats.syntax.all.*
-import com.vanillasource.eliot.eliotc.module.fact.{ModuleAbilities, Qualifier, ValueFQN}
+import com.vanillasource.eliot.eliotc.module.fact.{ModuleAbilities, Qualifier, UnifiedModuleNames, ValueFQN}
 import com.vanillasource.eliot.eliotc.operator.fact.{OperatorResolvedExpression, OperatorResolvedValue}
 import com.vanillasource.eliot.eliotc.platform.Platform
 import com.vanillasource.eliot.eliotc.processor.CompilerIO.*
@@ -48,8 +48,7 @@ class RowElaborationProcessor
     for {
       universe <- universeFor(value, key.platform)
       written   = BindingWriter.write(value, universe)
-      _        <- (implementationKind(value, key.platform) >> report(written, value, key.platform))
-                    .whenA(key.platform == Platform.Runtime)
+      _        <- implementationKind(value, key.platform) >> report(written, value, key.platform)
     } yield RowElaboratedValue(written.value)
   }
 
@@ -75,12 +74,14 @@ class RowElaborationProcessor
             case None if effect        =>
               refuse(
                 value,
+                platform,
                 s"An implementation of the effect '${ability.abilityName}' must be named, since an effect has no default.",
                 s"Name it (`implement name: ${ability.abilityName} { … }`) and bind it with `with` where it is used."
               )
             case Some(name) if !effect =>
               refuse(
                 value,
+                platform,
                 s"The implementation '$name' of the ability '${ability.abilityName}' cannot be named: an ability's " +
                   "implementation is found by its type, and never bound with `with`.",
                 s"Make it the anonymous `implement ${ability.abilityName}[…]` in the ability's or the type's module, or " +
@@ -90,6 +91,7 @@ class RowElaborationProcessor
               BindingWriter.unpatternedParameters(value).headOption.fold(().pure[CompilerIO])(parameter =>
                 refuse(
                   value,
+                  platform,
                   s"The type parameter '$parameter' of the implementation '$name' is not taken by its pattern, so " +
                     "nothing where it runs determines it.",
                   s"Use '$parameter' in the implemented '${ability.abilityName}[…]', or remove it."
@@ -111,12 +113,33 @@ class RowElaborationProcessor
                      .traverse(member => getFactIfProduced(OperatorResolvedValue.Key(member, platform)))
     } yield members.flatten.exists(_.effectRow.returnEffects.exists(_.abilityFQN == ability))
 
-  private def refuse(value: OperatorResolvedValue, message: String, help: String): CompilerIO[Unit] =
-    compilerError(value.name.as(message), Seq(help)) >> abort[Unit]
+  private def refuse(value: OperatorResolvedValue, platform: Platform, message: String, help: String)
+      : CompilerIO[Unit] =
+    reported(value, platform)(compilerError(value.name.as(message), Seq(help)))
 
-  /** A binding the write could not answer aborts this value: nothing downstream runs for it, so the user gets one
-    * located error in effect vocabulary rather than the machinery's downstream symptoms — and, crucially, no body is
-    * emitted whose operation silently ran on whatever the two-site search happened to find.
+  /** A failed write aborts the value on both tracks, so neither carries a definition whose write failed, and its errors
+    * are said once. The runtime track says them. The compile track writes the same definitions, so it demands the
+    * runtime track's write of this one, which reports, and stays quiet — demanded rather than assumed, because the
+    * runtime check reads compile-track facts, and this abort could otherwise stop the runtime track before anything
+    * asked for that write. It reports its own errors only where no runtime write does: a definition the runtime pool
+    * does not have, or one it wrote cleanly (the compile track's overlay redefines it).
+    */
+  private def reported(value: OperatorResolvedValue, platform: Platform)(errors: CompilerIO[Unit]): CompilerIO[Unit] =
+    (platform match {
+      case Platform.Runtime  => errors
+      case Platform.Compiler => reportedAtRuntime(value.vfqn).ifM(().pure[CompilerIO], errors)
+    }) >> abort[Unit]
+
+  private def reportedAtRuntime(vfqn: ValueFQN): CompilerIO[Boolean] =
+    getFactIfProduced(UnifiedModuleNames.Key(vfqn.moduleName, Platform.Runtime)).flatMap {
+      case Some(names) if names.names.contains(vfqn.name) =>
+        getFactIfProduced(RowElaboratedValue.Key(vfqn, Platform.Runtime)).map(_.isEmpty)
+      case _                                              => false.pure[CompilerIO]
+    }
+
+  /** A binding the write could not answer aborts this value on both tracks: nothing downstream runs for it, so the user
+    * gets one located error in effect vocabulary rather than the machinery's downstream symptoms — and, crucially, no
+    * body is emitted or reduced whose operation silently ran on whatever the two-site search happened to find.
     *
     * An over-declared effect aborts too, but only once its callees are known to be sound ([[calleesWritten]]).
     */
@@ -126,8 +149,9 @@ class RowElaborationProcessor
       _                <- (written.violations ++ overDeclarations) match {
                             case Seq()      => ().pure[CompilerIO]
                             case violations =>
-                              violations.traverse_(violation => compilerError(violation.message, violation.help)) >>
-                                abort[Unit]
+                              reported(value, platform)(
+                                violations.traverse_(violation => compilerError(violation.message, violation.help))
+                              )
                           }
     } yield ()
 

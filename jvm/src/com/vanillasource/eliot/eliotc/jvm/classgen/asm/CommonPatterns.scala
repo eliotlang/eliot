@@ -7,6 +7,9 @@ import com.vanillasource.eliot.eliotc.monomorphize.fact.GroundValue
 import com.vanillasource.eliot.eliotc.uncurry.fact.MonomorphicParameterDefinition
 import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, Qualifier}
 
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
+
 object CommonPatterns {
 
   /** The JVM type FQN a value erases to. The erasure logic itself is the platform-independent
@@ -69,11 +72,24 @@ object CommonPatterns {
     qualifier match {
       case Qualifier.AbilityImplementation(abilityName, pattern, implementationName) =>
         Some(marker =>
-          abilityName + "$impl$" + Integer.toHexString((marker.moduleName.show + "/" + pattern).hashCode) +
+          abilityName + "$impl$" + stableHash(marker.moduleName.show + "/" + pattern) +
             implementationName.fold("")("$" + _)
         )
       case _                                                                         => None
     }
+
+  /** A JVM-identifier-safe stand-in for a string that is not one, such as an implementation's pattern (`List[T]`): the
+    * first 64 bits of its SHA-256, in hex. Two implementations' names differ exactly when these do, and the JVM keeps
+    * one method per name and descriptor, so a collision silently runs one body for the other (`docs/effects.md` §8
+    * item 58, which a 32-bit `String.hashCode` left within reach).
+    */
+  private def stableHash(text: String): String =
+    MessageDigest
+      .getInstance("SHA-256")
+      .digest(text.getBytes(StandardCharsets.UTF_8))
+      .take(8)
+      .map(b => f"${b & 0xff}%02x")
+      .mkString
 
   private def mangleLiteral(literal: GroundValue.Literal): String =
     literal match {
@@ -100,12 +116,12 @@ object CommonPatterns {
   private def implementationSuffix(qualifier: Qualifier): String =
     qualifier match {
       // The implementation's identity is its `(ability, pattern, implementation name)` key. The pattern string is not a
-      // legal JVM identifier (it holds `[`, `,`, spaces), so it is encoded as a stable hex hash; deterministic per
-      // pattern, and the monomorphized type-argument suffix appended by the caller further separates concrete
+      // legal JVM identifier (it holds `[`, `,`, spaces), so it is encoded as a stable hash ([[stableHash]]);
+      // deterministic per pattern, and the monomorphized type-argument suffix appended by the caller further separates concrete
       // instantiations. A named implementation appends its name, which is what keeps it apart from the anonymous
       // default of the same pattern; an anonymous one appends nothing, so its mangled name is unchanged.
       case Qualifier.AbilityImplementation(abilityName, pattern, implementationName) =>
-        "$" + abilityName + "$impl$" + Integer.toHexString(pattern.hashCode) + implementationName.fold("")("$" + _)
+        "$" + abilityName + "$impl$" + stableHash(pattern) + implementationName.fold("")("$" + _)
       case _                                                                         => ""
     }
 

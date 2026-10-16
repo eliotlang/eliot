@@ -113,4 +113,31 @@ class WhereOnDefIntegrationTest extends FullIntegrationTest {
     compileForErrors(branchingByte + "def main uses Console: Unit = printLine(show(asByte(300)))")
       .asserting(_ should include("precondition of 'Test::asByte' is not satisfied"))
   }
+
+  // A threaded predicate links each callee reduced at its instantiation, and those were keyed by FQN, so of `pickOf` at
+  // `BigInteger` and at `String` the last linked answered both (`docs/effects.md` §8 item 49).
+  private def picking(predicate: String) =
+    """import eliot.effect.Console
+      |ability Pick[T] {
+      |   def picked(t: T): Bool
+      |}
+      |implement Pick[BigInteger] {
+      |   def picked(t: BigInteger): Bool = true
+      |}
+      |implement Pick[String] {
+      |   def picked(t: String): Bool = false
+      |}
+      |def pickOf[T ~ Pick[T]](t: T): Bool = picked(t)
+      |""".stripMargin +
+      s"def checked(x: Int): Int where $predicate = x\n" +
+      "def main uses Console: Unit = printLine(show(checked(42)))"
+
+  "a threaded where precondition calling one function at two instantiations" should "accept what it proves" in {
+    compileAndRun(picking("""(if(pickOf("a"), false) else pickOf(1))""")).asserting(_ shouldBe "42")
+  }
+
+  it should "reject what it refutes" in {
+    compileForErrors(picking("""(if(pickOf(1), pickOf("a")) else true)"""))
+      .asserting(_ should include("precondition of 'Test::checked' is not satisfied"))
+  }
 }

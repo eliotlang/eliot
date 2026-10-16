@@ -23,8 +23,12 @@ import com.vanillasource.eliot.eliotc.saturate.fact.SaturatedValue
 class MonomorphicTypeCheckProcessor()
     extends TransformationProcessor[SaturatedValue.Key, MonomorphicValue.Key](key => SaturatedValue.Key(key.vfqn)) {
 
+  /** A callee's binding. A callee whose own definition was rejected has none, on either track, and is skipped: the
+    * checker names it where it is referenced (*"Cannot use 'x' here: its own definition was rejected."*), while an
+    * abort here would stop this check before anything did.
+    */
   private def fetchBinding(vfqn: ValueFQN): CompilerIO[Option[SemValue]] =
-    getFactOrAbort(NativeBinding.Key(vfqn, Platform.Runtime)).map(_.semValue)
+    getFactIfProduced(NativeBinding.Key(vfqn, Platform.Runtime)).map(_.flatMap(_.semValue))
 
   override protected def generateFromKeyAndFact(
       key: MonomorphicValue.Key,

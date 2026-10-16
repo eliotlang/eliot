@@ -54,15 +54,16 @@ object EscalatingReducer {
     getFactIfProduced(CompilerMonomorphicValue.Key(vfqn, typeArguments)).flatMap {
       case Some(cmv @ CompilerMonomorphicValue(_, _, _, _, Some(_), _)) =>
         // Threaded, a body passes frames to its callees, which must then be threaded too: link each one reduced at its
-        // instantiation, as an escalation would, rather than the raw one-hop binding that takes no frame.
+        // instantiation from the start, as `PostDrainQuoter.reduceThreaded` does, rather than the raw one-hop binding
+        // that takes no frame — so there is nothing left to escalate to.
         ReducedBindingClosure.threaded(cmv).flatMap(_.flatTraverse { reduced =>
           val deep = !cmv.reduced.contains(reduced)
-          ReducedBindingClosure.collectBindings(reduced.value, vfqn, Platform.Compiler, deep).flatMap { base =>
+          ReducedBindingClosure.collectBindings(reduced.value, vfqn, Platform.Compiler, deep).flatMap { linked =>
             def evalWith(extra: Map[ValueFQN, SemValue]): SemValue = {
-              val lookup: ValueFQN => Option[SemValue] = fqn => extra.get(fqn).orElse(base.get(fqn))
-              val body                                 =
-                new MonomorphicEvaluator(lookup).eval(Env.empty, MonomorphicExpression(GroundValue.Type, reduced.value))
-              val applied                              = argMetas.foldLeft(body)(Evaluator.applyValue)
+              val lookup  = linked.lookup(extra)
+              val body    =
+                new MonomorphicEvaluator(lookup).eval(Env.empty, MonomorphicExpression(GroundValue.Type, linked.body))
+              val applied = argMetas.foldLeft(body)(Evaluator.applyValue)
               Evaluator.renormalize(applied, MetaStore.empty, lookup, deep = true)
             }
 
@@ -70,7 +71,9 @@ object EscalatingReducer {
             escalatingLoop(
               MetaStore.empty,
               evalWith,
-              already => escalate(candidates, already, ReducedBindingClosure.reduceInstance(_, _), (_, sem) => sem),
+              already =>
+                if (deep) Map.empty[ValueFQN, SemValue].pure[CompilerIO]
+                else escalate(candidates, already, ReducedBindingClosure.reduceInstance(_, _), (_, sem) => sem),
               channelStuck
             ).map(result => Quoter.quote(0, result, MetaStore.empty).toOption.filterNot(isAbstractAbilityStructure))
           }

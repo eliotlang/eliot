@@ -1,7 +1,7 @@
 package com.vanillasource.eliot.eliotc.used
 
 import cats.syntax.all.*
-import com.vanillasource.eliot.eliotc.module.fact.ValueFQN
+import com.vanillasource.eliot.eliotc.module.fact.{Qualifier, ValueFQN}
 import com.vanillasource.eliot.eliotc.monomorphize.fact.GroundValue
 import com.vanillasource.eliot.eliotc.processor.CompilerIO.*
 import com.vanillasource.eliot.eliotc.saturate.fact.{BinderRoles, SaturatedValue}
@@ -59,16 +59,29 @@ object CodegenProjection {
     * its callees by mangling its own type arguments, so `else[Option[Name]]` calls `runAbort$Option$Name` and
     * `else[Option[String]]` calls `runAbort$Option$String`. Keyed on the head alone the two merged, only one was walked,
     * and the other's callee was never emitted — a `NoSuchMethodError` at run time. Two distinct heads sharing a
-    * representation stay distinct (they mangle to different method names). Used only as a `visited`-set identity, never
-    * to fetch a fact.
+    * representation stay distinct (they mangle to different method names), and so do two implementation bindings of one
+    * ability, which the backend mangles by their whole identity. Used only as a `visited`-set identity, never to fetch a
+    * fact.
     */
   private def erasedCarrier(arg: GroundValue): GroundValue =
     arg match {
-      case GroundValue.Structure(_, args, _) =>
+      case GroundValue.Structure(name, args, _) if isImplementationBinding(name) =>
+        GroundValue.Structure(name, args.map(erasedCarrier), GroundValue.Type)
+      case GroundValue.Structure(_, args, _)                                     =>
         GroundValue.Structure(arg.carrierFQN, args.map(erasedCarrier), GroundValue.Type)
-      case GroundValue.Direct(_, _)          =>
+      case GroundValue.Direct(_, _)                                              =>
         arg
-      case _                                 =>
+      case _                                                                     =>
         GroundValue.Structure(arg.carrierFQN, Seq.empty, GroundValue.Type)
+    }
+
+  /** Whether a structure is headed by an implementation's marker, i.e. is an implementation binding
+    * (`docs/effects.md` §3.1). Its erased carrier is its ability's name, which two named implementations of one ability
+    * share, so it keeps its whole name, as the backend's mangling keeps its whole identity.
+    */
+  private def isImplementationBinding(name: ValueFQN): Boolean =
+    name.name.qualifier match {
+      case _: Qualifier.AbilityImplementation => true
+      case _                                  => false
     }
 }
