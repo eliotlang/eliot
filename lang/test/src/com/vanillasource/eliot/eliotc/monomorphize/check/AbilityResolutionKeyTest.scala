@@ -44,8 +44,8 @@ class AbilityResolutionKeyTest extends AnyFlatSpec with Matchers {
   private val quietImpl    = impl("writeQuiet")
   private val standardImpl = impl("writeStandard")
   private val collided     = Map(
-    (writeRef, Option(Seq(quietBinding)))    -> quietImpl,
-    (writeRef, Option(Seq(standardBinding))) -> standardImpl
+    (writeRef, Seq(quietBinding))    -> quietImpl,
+    (writeRef, Seq(standardBinding)) -> standardImpl
   )
 
   private def lookup(
@@ -63,19 +63,12 @@ class AbilityResolutionKeyTest extends AnyFlatSpec with Matchers {
   }
 
   "a reference resolved from its own ground arguments" should "be found by those arguments" in {
-    lookup(Map((writeRef, Option(Seq(standardBinding))) -> standardImpl), Some(Seq(standardBinding))) shouldBe
+    lookup(Map((writeRef, Seq(standardBinding)) -> standardImpl), Some(Seq(standardBinding))) shouldBe
       Some(standardImpl)
   }
 
   it should "still be found when the reader cannot derive the arguments, being the only entry at that span" in {
-    lookup(Map((writeRef, Option(Seq(standardBinding))) -> standardImpl), None) shouldBe Some(standardImpl)
-  }
-
-  "a constraint-covered resolution" should "be found whatever arguments the reader derives" in {
-    val constraintCovered =
-      Map[CheckState.AbilityResolutionKey, (ValueFQN, Seq[GroundValue])]((writeRef, None) -> standardImpl)
-    (lookup(constraintCovered, Some(Seq(quietBinding))), lookup(constraintCovered, None)) shouldBe
-      (Some(standardImpl), Some(standardImpl))
+    lookup(Map((writeRef, Seq(standardBinding)) -> standardImpl), None) shouldBe Some(standardImpl)
   }
 
   "an unresolved reference" should "be absent" in {

@@ -26,7 +26,6 @@ import com.vanillasource.eliot.eliotc.module.fact.WellKnownTypes.{
 }
 import com.vanillasource.eliot.eliotc.feedback.Logging
 import com.vanillasource.eliot.eliotc.module.fact.{
-  ModuleAbilities,
   ModuleName,
   UnifiedModuleValue,
   ValueFQN,
@@ -34,6 +33,7 @@ import com.vanillasource.eliot.eliotc.module.fact.{
   Qualifier as CoreQualifier
 }
 import com.vanillasource.eliot.eliotc.platform.Platform
+import com.vanillasource.eliot.eliotc.ability.util.AbilityKind
 import com.vanillasource.eliot.eliotc.processor.CompilerIO.*
 import com.vanillasource.eliot.eliotc.processor.common.TransformationProcessor
 import com.vanillasource.eliot.eliotc.resolve.fact.*
@@ -455,29 +455,20 @@ class ValueResolver
     * caller or answered by its default, and never handed down a call chain the way a clause's entries are, so no
     * callee can fix an ability's implementation for code its caller wrote.
     *
-    * Effect-ness is read where it is recorded: the members' declared clauses, which membership in an `effect` block
-    * fills with the effect itself. An ability with no member to read, or whose members are not there to read, is let
-    * through — it is what it was before this check, and its own errors are reported where they arise.
+    * Effect-ness is read where it is recorded ([[AbilityKind]]). An ability whose members are not there to read is let
+    * through: its own errors are reported where they arise.
     */
   private def requireEffect(name: Sourced[String], ability: AbilityFQN): ScopedIO[Unit] =
     getPlatform.flatMap { platform =>
       (for {
-        abilities <- getFactOrAbort(ModuleAbilities.Key(ability.moduleName, platform))
-        members   <- abilities
-                       .declaredMethodsOf(ability.abilityName)
-                       .filterNot(_.name.name == ability.abilityName)
-                       .traverse(member => getFactIfProduced(UnifiedModuleValue.Key(member, platform)))
-        known      = members.flatten
-        isAbility  = known.nonEmpty && !known.exists(
-                       _.namedValue.effectRow.returnEffects.exists(_.abilityName.value == ability.abilityName)
-                     )
+        effect    <- AbilityKind.isEffect(ability, platform)
         _         <- compilerAbort(
                        name.as(s"'${ability.abilityName}' is an ability, and a `uses` clause lists effects only."),
                        Seq(
                          s"Take it as a constraint on a type parameter (`[A ~ ${ability.abilityName}]`), which the " +
                            "caller fills or its default implementation answers."
                        )
-                     ).whenA(isAbility)
+                     ).whenA(effect.contains(false))
       } yield ()).liftToScoped
     }
 

@@ -34,7 +34,7 @@ class DataMatchDesugarer(context: MatchDesugarContext) {
           "PatternMatch",
           "handleCases",
           platform,
-          Some(dataType.name)
+          dataType.name
         )
       orderedHandlers              <- buildOrderedHandlers(scrutinee, cases, allConstructors)
     } yield buildHandleCasesCall(scrutinee, handleCasesFqn, orderedHandlers)

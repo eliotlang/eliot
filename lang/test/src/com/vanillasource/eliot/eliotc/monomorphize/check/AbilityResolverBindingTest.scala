@@ -8,6 +8,7 @@ import com.vanillasource.eliot.eliotc.ability.fact.NamedImplementationCheck
 import com.vanillasource.eliot.eliotc.ast.fact.Visibility
 import com.vanillasource.eliot.eliotc.feedback.CompilerError
 import com.vanillasource.eliot.eliotc.module.fact.{
+  ModuleAbilities,
   ModuleName,
   QualifiedName,
   Qualifier,
@@ -91,8 +92,13 @@ class AbilityResolverBindingTest extends AnyFlatSpec with Matchers {
   private val searchedImpl: (ValueFQN, Seq[GroundValue]) =
     (ValueFQN(throwModule, QualifiedName("raise", Qualifier.AbilityImplementation("Throw", "E", None))), Seq(string))
 
-  /** A [[CompilationProcess]] holding the named implementation's marker, its module's `clauses` and its passed
-    * conformance check: every other read answers "not produced".
+  /** The ability's module, declaring no member to read, so whether it is an effect is unknown and a `Default` binding
+    * goes to the search ([[com.vanillasource.eliot.eliotc.ability.util.AbilityKind]]).
+    */
+  private val abilities = ModuleAbilities(throwModule, Seq.empty, Seq.empty)
+
+  /** A [[CompilationProcess]] holding the named implementation's marker, its module's `clauses`, its passed
+    * conformance check and the ability's module: every other read answers "not produced".
     */
   private class Implementation(clauses: Seq[String]) extends CompilationProcess {
     private val names =
@@ -103,7 +109,9 @@ class AbilityResolverBindingTest extends AnyFlatSpec with Matchers {
         ancestors: List[CompilerFactKey[?]]
     ): IO[Option[V]] =
       IO.pure(
-        Seq(implMarkerValue, names, NamedImplementationCheck(implMarker)).find(_.key() == key).map(_.asInstanceOf[V])
+        Seq(implMarkerValue, names, NamedImplementationCheck(implMarker), abilities)
+          .find(_.key() == key)
+          .map(_.asInstanceOf[V])
       )
 
     override def registerFact(value: CompilerFact): IO[Unit] = IO.unit
@@ -127,7 +135,7 @@ class AbilityResolverBindingTest extends AnyFlatSpec with Matchers {
       (Some(searchedImpl): Option[(ValueFQN, Seq[GroundValue])]).pure[CompilerIO]
     }
     val resolver = new AbilityResolver(search, (_, _) => Seq.empty.pure[CompilerIO], Platform.Runtime)
-    val pass     = resolver.resolveAbilities(Seq((raise, args.map(Evaluator.groundToSem))), Map.empty)
+    val pass     = resolver.resolveAbilities(Seq((raise, args.map(Evaluator.groundToSem))))
     pass.run(CheckState.initial).run(implementation).run(Chain.empty).value.unsafeRunSync().map {
       case (_, (state, _)) => (state.abilityResolutions, searched)
     }
@@ -135,7 +143,7 @@ class AbilityResolverBindingTest extends AnyFlatSpec with Matchers {
 
   "a reference bound to an implementation" should "resolve directly to that implementation's method" in {
     resolve(Seq(implBinding, string))._1 shouldBe
-      Map((raise, Some(Seq(implBinding, string))) ->
+      Map((raise, Seq(implBinding, string)) ->
         (ValueFQN(testModule, QualifiedName("raise", namedQualifier)), Seq(string)))
   }
 
@@ -146,7 +154,7 @@ class AbilityResolverBindingTest extends AnyFlatSpec with Matchers {
   it should "run at what its pattern takes at the pattern arguments, whatever the binding carries for it" in {
     val unsolved = GroundValue.Structure(implMarker, Seq(GroundValue.Type), GroundValue.Type)
     resolve(Seq(unsolved, string))._1 shouldBe
-      Map((raise, Some(Seq(unsolved, string))) -> (ValueFQN(testModule, QualifiedName("raise", namedQualifier)), Seq(string)))
+      Map((raise, Seq(unsolved, string)) -> (ValueFQN(testModule, QualifiedName("raise", namedQualifier)), Seq(string)))
   }
 
   it should "report, at the reference, an implementation with no clause for it" in {
@@ -160,7 +168,7 @@ class AbilityResolverBindingTest extends AnyFlatSpec with Matchers {
 
   it should "record the search's answer under the full arguments, binding included" in {
     resolve(Seq(ImplementationBinding.defaultGround, string))._1 shouldBe
-      Map((raise, Some(Seq(ImplementationBinding.defaultGround, string))) -> searchedImpl)
+      Map((raise, Seq(ImplementationBinding.defaultGround, string)) -> searchedImpl)
   }
 
   "a reference with no binding" should "search at all of its ability-level arguments, as today" in {
@@ -168,6 +176,6 @@ class AbilityResolverBindingTest extends AnyFlatSpec with Matchers {
   }
 
   it should "record the search's answer under those arguments" in {
-    resolve(Seq(string))._1 shouldBe Map((raise, Some(Seq(string))) -> searchedImpl)
+    resolve(Seq(string))._1 shouldBe Map((raise, Seq(string)) -> searchedImpl)
   }
 }

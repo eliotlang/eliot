@@ -13,7 +13,6 @@ import com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedExpression.S
 import com.vanillasource.eliot.eliotc.operator.fact.{OperatorResolvedExpression, OperatorResolvedValue}
 import com.vanillasource.eliot.eliotc.platform.Platform
 import com.vanillasource.eliot.eliotc.processor.CompilerIO.*
-import com.vanillasource.eliot.eliotc.resolve.fact.AbilityConstraint
 import com.vanillasource.eliot.eliotc.source.content.Sourced
 import com.vanillasource.eliot.eliotc.source.content.Sourced.{compilerAbort, compilerError}
 
@@ -410,7 +409,7 @@ class TypeStackLoop(
       returnMeta: Option[SemValue.VMeta]
   ): CheckIO[Unit] =
     for {
-      _ <- resolveAbilitiesToFixedPoint(abilityRefs, resolvedValue.paramConstraints)
+      _ <- resolveAbilitiesToFixedPoint(abilityRefs)
       _ <- checker.carriers.verifyCarrierKinds
       _ <- returnMeta.traverse_(failOnUndeterminedDeferredReturn(_, resolvedValue))
       _ <- modify(s => s.withUnifier(s.unifier.drain()))
@@ -431,14 +430,11 @@ class TypeStackLoop(
     * the placement and the carrier, so the runtime track produces no deferral to resolve: the obligations, the resolver
     * and the splice-restart are gone (docs/effects-as-rows.md A.11.8 step 1) and this is a plain fixpoint again.
     */
-  private def resolveAbilitiesToFixedPoint(
-      abilityRefs: Seq[AbilityRef],
-      paramConstraints: Map[String, Seq[AbilityConstraint[OperatorResolvedExpression]]]
-  ): CheckIO[Unit] = {
+  private def resolveAbilitiesToFixedPoint(abilityRefs: Seq[AbilityRef]): CheckIO[Unit] = {
     def loop: CheckIO[Unit] =
       for {
         _        <- modify(s => s.withUnifier(s.unifier.drain()))
-        progress <- checker.abilityResolver.resolveAbilities(abilityRefs, paramConstraints)
+        progress <- checker.abilityResolver.resolveAbilities(abilityRefs)
         _        <- if (progress) loop else pure(())
       } yield ()
 

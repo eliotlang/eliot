@@ -43,31 +43,33 @@ object MatchDesugarUtils {
       case _                                      => Seq.empty
     }
 
+  /** The method `methodName` of the implementation of `abilityName` whose pattern is the data type `dataTypeName` —
+    * the `PatternMatch`/`TypeMatch` implementation `data` desugars to. Only **anonymous** implementations are candidates,
+    * as for the two-site search: a named one is reached only by `with`, so a user's `implement x: PatternMatch[…]` in
+    * the data's module is never what a `match` runs (`docs/effects.md` §8 item 55).
+    */
   def findAbilityMethodImpl(
       errorSource: Sourced[?],
       moduleName: ModuleName,
       abilityName: String,
       methodName: String,
       platform: Platform,
-      dataTypeName: Option[String] = None
+      dataTypeName: String
   ): CompilerIO[ValueFQN] =
     for {
-      impls     <- getFactOrAbort(ModuleAbilities.Key(moduleName, platform))
-      candidates = impls.namedImplementationMethodsOf(abilityName, methodName)
-      selected  <- dataTypeName match {
-                     case None      => candidates.headOption.pure[CompilerIO]
-                     case Some(dtn) =>
-                       candidates.findM(vfqn =>
-                         ImplementationMarkerUtils
-                           .firstPatternTypeConstructorName(moduleName, abilityName, vfqn.name.qualifier, platform)
-                           .map(_.contains(dtn))
-                       )
-                   }
-      result    <- selected match
-                     case Some(vfqn) => vfqn.pure[CompilerIO]
-                     case None       =>
-                       compilerAbort(
-                         errorSource.as(s"No $abilityName.$methodName implementation found in module $moduleName.")
-                       )
+      impls    <- getFactOrAbort(ModuleAbilities.Key(moduleName, platform))
+      selected <- impls
+                    .anonymousImplementationMethodsOf(abilityName, methodName)
+                    .findM(vfqn =>
+                      ImplementationMarkerUtils
+                        .firstPatternTypeConstructorName(moduleName, abilityName, vfqn.name.qualifier, platform)
+                        .map(_.contains(dataTypeName))
+                    )
+      result   <- selected match
+                    case Some(vfqn) => vfqn.pure[CompilerIO]
+                    case None       =>
+                      compilerAbort(
+                        errorSource.as(s"No $abilityName.$methodName implementation found in module $moduleName.")
+                      )
     } yield result
 }

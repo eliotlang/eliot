@@ -2,7 +2,15 @@ package com.vanillasource.eliot.eliotc.row.processor
 
 import cats.Id
 import cats.syntax.all.*
-import com.vanillasource.eliot.eliotc.module.fact.{ModuleAbilities, Qualifier, UnifiedModuleNames, ValueFQN}
+import com.vanillasource.eliot.eliotc.module.fact.{
+  ModuleAbilities,
+  Qualifier,
+  UnifiedModuleNames,
+  ValueFQN,
+  QualifiedName as ModuleQualifiedName
+}
+import com.vanillasource.eliot.eliotc.ability.util.AbilityKind
+import com.vanillasource.eliot.eliotc.monomorphize.check.DeclaredEntries
 import com.vanillasource.eliot.eliotc.operator.fact.{OperatorResolvedExpression, OperatorResolvedValue}
 import com.vanillasource.eliot.eliotc.platform.Platform
 import com.vanillasource.eliot.eliotc.processor.CompilerIO.*
@@ -61,24 +69,27 @@ class RowElaborationProcessor
     *   - a **named** `implement` of an **ability** is an error: an ability is answered by the two-site search alone and
     *     is never bound with `with`, so a name would never be reached. Behaviour chosen per call is a value parameter.
     *     And a named implementation's type parameters are all its pattern's: one the pattern does not take could only be
-    *     read off a `with`'s arguments (D27, reversed by D29).
+    *     read off a `with`'s arguments (D27, reversed by D29);
+    *   - a clause of an **anonymous** implementation may perform only what its member declares: anything else would be
+    *     held in the implementation's environment, from where it is bound, and an anonymous implementation is found by
+    *     its type, never bound, so nothing could give it one (`docs/effects.md` §8 item 50). A named one's clauses may,
+    *     since its `with` binds what they perform beyond their members ([[DeclaredEntries.environment]]).
     *
-    * Effect-ness is read where it is recorded: the members' declared clauses, which membership in an `effect` block
-    * fills with the effect itself.
+    * Effect-ness is read where it is recorded ([[AbilityKind]]).
     */
   private def implementationKind(value: OperatorResolvedValue, platform: Platform): CompilerIO[Unit] =
     value.name.value.qualifier match {
       case ResolveQualifier.AbilityImplementation(ability, _, named) if value.vfqn.name.name == ability.abilityName =>
-        isEffect(ability, platform).flatMap { effect =>
+        AbilityKind.isEffect(ability, platform).flatMap { kind =>
           named match {
-            case None if effect        =>
+            case None if kind.contains(true)        =>
               refuse(
                 value,
                 platform,
                 s"An implementation of the effect '${ability.abilityName}' must be named, since an effect has no default.",
                 s"Name it (`implement name: ${ability.abilityName} { … }`) and bind it with `with` where it is used."
               )
-            case Some(name) if !effect =>
+            case Some(name) if kind.contains(false) =>
               refuse(
                 value,
                 platform,
@@ -87,7 +98,7 @@ class RowElaborationProcessor
                 s"Make it the anonymous `implement ${ability.abilityName}[…]` in the ability's or the type's module, or " +
                   "take the behaviour as a value parameter of the function that needs it."
               )
-            case Some(name)            =>
+            case Some(name)                         =>
               BindingWriter.unpatternedParameters(value).headOption.fold(().pure[CompilerIO])(parameter =>
                 refuse(
                   value,
@@ -97,21 +108,49 @@ class RowElaborationProcessor
                   s"Use '$parameter' in the implemented '${ability.abilityName}[…]', or remove it."
                 )
               )
-            case None                  => ().pure[CompilerIO]
+            case None                               => ().pure[CompilerIO]
           }
         }
+      case ResolveQualifier.AbilityImplementation(ability, _, None)                                            =>
+        anonymousClauseEntries(value, ability, platform)
       case _                                                                                                    =>
         ().pure[CompilerIO]
     }
 
-  private def isEffect(ability: AbilityFQN, platform: Platform): CompilerIO[Boolean] =
-    for {
-      abilities <- getFactOrAbort(ModuleAbilities.Key(ability.moduleName, platform))
-      members   <- abilities
-                     .declaredMethodsOf(ability.abilityName)
-                     .filterNot(_.name.name == ability.abilityName)
-                     .traverse(member => getFactIfProduced(OperatorResolvedValue.Key(member, platform)))
-    } yield members.flatten.exists(_.effectRow.returnEffects.exists(_.abilityFQN == ability))
+  private def anonymousClauseEntries(value: OperatorResolvedValue, ability: AbilityFQN, platform: Platform)
+      : CompilerIO[Unit] =
+    DeclaredEntries.of(value).values.toSeq.distinct match {
+      case Seq()     => ().pure[CompilerIO]
+      case performed =>
+        val clause = value.vfqn.name.name
+        getFactIfProduced(
+          OperatorResolvedValue.Key(
+            ValueFQN(ability.moduleName, ModuleQualifiedName(clause, Qualifier.Ability(ability.abilityName))),
+            platform
+          )
+        ).flatMap {
+          // A clause the ability does not declare is the conformance check's "Method not defined in ability."
+          case None         => ().pure[CompilerIO]
+          case Some(member) =>
+            val declared = DeclaredEntries.ofMember(member)
+            performed.filterNot(declared.contains).headOption match {
+              case None              => ().pure[CompilerIO]
+              case Some((effect, _)) =>
+                val how =
+                  if (declared.exists(_._1 == effect)) s"at other arguments than the ability's '$clause' declares it"
+                  else s"which the ability's '$clause' does not declare"
+                refuse(
+                  value,
+                  platform,
+                  s"This implementation of '${ability.abilityName}' performs the effect '${effect.abilityName}' in " +
+                    s"'$clause', $how, so nothing could bind it: an ability's implementation is found by its type, " +
+                    "never bound with `with`.",
+                  s"Declare it on '$clause' in the ability, so that every call hands it over, or discharge it inside " +
+                    "the clause."
+                )
+            }
+        }
+    }
 
   private def refuse(value: OperatorResolvedValue, platform: Platform, message: String, help: String)
       : CompilerIO[Unit] =

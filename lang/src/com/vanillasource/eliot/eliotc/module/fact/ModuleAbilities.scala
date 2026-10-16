@@ -36,18 +36,6 @@ case class ModuleAbilities(
   def declaredMethodsOf(abilityName: String): Seq[ValueFQN] =
     declaredMethods.filter(_.abilityName == abilityName).map(_.vfqn)
 
-  /** Every method (of every implementation) of `abilityName` provided in this module. */
-  def implementationMethodsOf(abilityName: String): Seq[ValueFQN] =
-    implementations.filter(_.abilityName == abilityName).map(_.vfqn)
-
-  /** The implementation methods named `methodName` belonging to an implementation of `abilityName`. */
-  def namedImplementationMethodsOf(abilityName: String, methodName: String): Seq[ValueFQN] =
-    implementations.filter(impl => impl.abilityName == abilityName && impl.methodName == methodName).map(_.vfqn)
-
-  /** All marker methods (local name equal to the ability name) of implementations of `abilityName`. */
-  def markersOf(abilityName: String): Seq[ValueFQN] =
-    namedImplementationMethodsOf(abilityName, abilityName)
-
   /** Every method of every **anonymous** implementation of `abilityName` — the two-site search's candidate set
     * (`docs/effects.md` §2): an anonymous `implement` is its pattern's default, a named one is reached only by `with`,
     * so a named implementation is never searched and never checked for overlap. Reaching for the unfiltered

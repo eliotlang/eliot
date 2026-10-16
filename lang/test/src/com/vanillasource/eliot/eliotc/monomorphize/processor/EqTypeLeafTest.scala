@@ -82,7 +82,7 @@ class EqTypeLeafTest
   /** The `Eq[Type]::equals` impl-method FQN, decoded from the module's ability surface on the compiler track. */
   private val implMethodFQN: IO[ValueFQN] =
     runGeneratorWithFacts(facts, ModuleAbilities.Key(eqModule, Platform.Compiler)).map {
-      case (Some(ma), _)  => ma.namedImplementationMethodsOf("Eq", "equals").head
+      case (Some(ma), _)  => ma.anonymousImplementationMethodsOf("Eq", "equals").head
       case (None, errors) => fail(s"No Eq module abilities produced. Errors: ${toTestErrors(errors)}")
     }
 

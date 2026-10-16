@@ -36,7 +36,7 @@ class TypeMatchDesugarer(context: MatchDesugarContext) {
                                                 "TypeMatch",
                                                 "typeMatch",
                                                 platform,
-                                                Some(ctor.value.name.name)
+                                                ctor.value.name.name
                                               )
                             } yield (typeMatchFqn, handler)
                           }

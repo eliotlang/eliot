@@ -79,7 +79,12 @@ class CoreProcessor
     // reach match desugaring un-lowered and crash the compiler. See SignatureBlockChecker for why it is reported
     // rather than lowered.
     val signatureErrors  = coreAstData.namedValues.flatMap(SignatureBlockChecker.check)
-    (positivityErrors ++ visibilityErrors ++ signatureErrors)
+    // An `effect` is recorded as one only on its members' rows (see AbilityMembers), so one with no operation would
+    // read as an ability everywhere — and nothing could ever perform it anyway (`docs/effects.md` §8 item 53).
+    val emptyEffects     = sourceAstData.effectDefinitions
+      .filter(_.functions.isEmpty)
+      .map(effect => effect.name.as(s"The effect '${effect.name.value}' declares no operation, so nothing could perform it."))
+    (positivityErrors ++ visibilityErrors ++ signatureErrors ++ emptyEffects)
       .traverse_(message => Sourced.compilerError(message)) >>
       debug[CompilerIO](
         s"Core functions in ${key.uri}: ${coreAstData.namedValues.map(_.render).mkString(", ")}"

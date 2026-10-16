@@ -6,8 +6,8 @@ import com.vanillasource.eliot.eliotc.monomorphize.domain.SemValue.*
 import com.vanillasource.eliot.eliotc.monomorphize.eval.Evaluator
 import com.vanillasource.eliot.eliotc.monomorphize.fact.GroundValue
 import com.vanillasource.eliot.eliotc.monomorphize.unify.Unifier
-import com.vanillasource.eliot.eliotc.operator.fact.{OperatorResolvedExpression, OperatorResolvedValue}
-import com.vanillasource.eliot.eliotc.resolve.fact.{AbilityConstraint, AbilityFQN}
+import com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedValue
+import com.vanillasource.eliot.eliotc.resolve.fact.AbilityFQN
 import com.vanillasource.eliot.eliotc.source.content.Sourced
 
 /** Immutable state for the bidirectional type checker.
@@ -145,23 +145,6 @@ case class CheckState(
   /** Build an [[Evaluator]] from this state. Pure — only reads `bindingCache`. */
   def makeEvaluator: Evaluator =
     new Evaluator(vfqn => bindingCache.getOrElse(vfqn, None))
-
-  /** Look up the first in-scope parameter constraint that targets the given ability name and return its type arguments
-    * evaluated against ρ.
-    *
-    * Used by the ability-resolution loop for refs covered by a constraint: the constraint's type arguments are the
-    * caller's already-monomorphized values, so they're directly groundable — the reference's own implicit metas aren't,
-    * until unification has connected them back to the ambient parameter.
-    */
-  def findConstraintTypeArgs(
-      paramConstraints: Map[String, Seq[AbilityConstraint[OperatorResolvedExpression]]],
-      abilityName: String
-  ): Option[Seq[SemValue]] =
-    paramConstraints.collectFirst(Function.unlift { (_, constraints) =>
-      constraints.find(_.abilityFQN.abilityName == abilityName).map { c =>
-        c.typeArgs.map(arg => makeEvaluator.eval(rho, arg))
-      }
-    })
 }
 
 object CheckState {
@@ -174,19 +157,16 @@ object CheckState {
   )
 
   /** The identity of one resolved ability reference: the source-positioned method FQN, plus the **ability-level** type
-    * arguments the impl was chosen for — `Some(args)` when the reference's own arguments were ground (the impl is
-    * pinned by them), `None` when the impl came from an in-scope parameter constraint instead, in which case the
-    * reference's own arguments were still unsolved metas and cannot key anything. See
+    * arguments the impl was chosen for — the reference's own, ground, which pin it. See
     * [[CheckState.abilityResolutions]] for why the position alone is not an identity.
     */
-  type AbilityResolutionKey = (Sourced[ValueFQN], Option[Seq[GroundValue]])
+  type AbilityResolutionKey = (Sourced[ValueFQN], Seq[GroundValue])
 
   /** Look one reference's resolved impl out of `resolutions`, given the ability-level type arguments the reader could
     * derive for it (`None` if they would not quote).
     *
-    * Three arms, tried in order, and the last one is a **fail-safe rather than a guess**:
+    * Two arms, tried in order, and the second is a **fail-safe rather than a guess**:
     *   - the exact key — the reference's own ground arguments pinned this impl;
-    *   - the constraint-covered key — recorded when the reference's own arguments were not ground;
     *   - the unique entry for this position+FQN, *only if every entry recorded there agrees*. This is what preserves
     *     the pre-fix behaviour in the ordinary case (one reference, one entry, arguments re-derived identically), while
     *     a genuine collision — two carriers at one span — yields `None` and the reference stays abstract, which the
@@ -198,8 +178,7 @@ object CheckState {
       abilityArgs: Option[Seq[GroundValue]]
   ): Option[(ValueFQN, Seq[GroundValue])] =
     abilityArgs
-      .flatMap(args => resolutions.get((ref, Some(args))))
-      .orElse(resolutions.get((ref, None)))
+      .flatMap(args => resolutions.get((ref, args)))
       .orElse {
         val atRef = resolutions.collect { case ((r, _), impl) if r == ref => impl }.toSeq.distinct
         Option.when(atRef.sizeIs == 1)(atRef.head)

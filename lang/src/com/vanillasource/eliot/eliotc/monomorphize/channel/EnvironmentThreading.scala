@@ -1,7 +1,6 @@
 package com.vanillasource.eliot.eliotc.monomorphize.channel
 
 import cats.syntax.all.*
-import com.vanillasource.eliot.eliotc.ability.fact.AbilityImplementation
 import com.vanillasource.eliot.eliotc.ast.fact.ImplementationParameters
 import com.vanillasource.eliot.eliotc.module.fact.{
   ModuleAbilities,
@@ -961,8 +960,8 @@ object EnvironmentThreading {
         case _                                                   => "the default implementation"
       }
 
-    /** The shape of the environment of `binding` for `entry`: the implementation it runs on — the two-site search's
-      * answer for `Default` — with its clause entries' shapes and its own parameters' types.
+    /** The shape of the environment of `binding` for `entry`: the implementation it runs on ([[implementationOf]]; none,
+      * and so an empty shape, for `Default`), with its clause entries' shapes and its own parameters' types.
       */
     private def shapeOf(entry: Entry, binding: GroundValue): CompilerIO[Shape] =
       shapes.get((entry, binding)) match {
@@ -987,18 +986,17 @@ object EnvironmentThreading {
 
     /** The implementation `binding` runs on for `entry`, as its marker and type arguments: a named one at what its
       * pattern takes at the entry's arguments ([[NamedImplementationArguments]]), as its dispatched methods run.
+      *
+      * Every entry here is an effect's — an implementation's `~` constraint holds no frame (D29) — and an effect has no
+      * default (D26), so a `Default` binding names no implementation and has no environment: there is nothing to search
+      * for, since an effect has no anonymous implementation to find (`docs/effects.md` §8 item 50). The one `Default`
+      * still arriving is a slot `with`'s clause binding, item 45.
       */
     private def implementationOf(entry: Entry, binding: GroundValue): CompilerIO[Option[(ValueFQN, Seq[GroundValue])]] =
       ImplementationBinding.fromGround(binding) match {
         case Some(named: ImplementationBinding.Implementation) =>
           NamedImplementationArguments.solve(named, entry.arguments, track.platform).map(_.map(named.head -> _))
-        case _                                                 =>
-          val abilityMarker = ValueFQN(
-            entry.ability.moduleName,
-            QualifiedName(entry.ability.abilityName, Qualifier.Ability(entry.ability.abilityName))
-          )
-          getFactIfProduced(AbilityImplementation.Key(abilityMarker, entry.arguments, track.platform))
-            .map(_.flatMap(_.resolution.resolved))
+        case _                                                 => none[(ValueFQN, Seq[GroundValue])].pure[CompilerIO]
       }
 
     /** The entries an implementation's environment holds frames of, with the bindings its type arguments hold for them

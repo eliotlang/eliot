@@ -2,6 +2,7 @@ package com.vanillasource.eliot.eliotc.monomorphize.check
 
 import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.ability.fact.{AbilityImplementation, NamedImplementationCheck}
+import com.vanillasource.eliot.eliotc.ability.util.AbilityKind
 import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, Qualifier, UnifiedModuleNames, ValueFQN, WellKnownTypes}
 import com.vanillasource.eliot.eliotc.monomorphize.check.CheckIO.*
 import com.vanillasource.eliot.eliotc.monomorphize.domain.*
@@ -10,7 +11,7 @@ import com.vanillasource.eliot.eliotc.monomorphize.fact.{GroundValue, GroundValu
 import com.vanillasource.eliot.eliotc.operator.fact.{OperatorResolvedExpression, OperatorResolvedValue}
 import com.vanillasource.eliot.eliotc.platform.Platform
 import com.vanillasource.eliot.eliotc.processor.CompilerIO.*
-import com.vanillasource.eliot.eliotc.resolve.fact.{AbilityConstraint, AbilityFQN}
+import com.vanillasource.eliot.eliotc.resolve.fact.AbilityFQN
 import com.vanillasource.eliot.eliotc.source.content.Sourced
 import com.vanillasource.eliot.eliotc.source.content.Sourced.compilerError
 
@@ -71,22 +72,15 @@ class AbilityResolver(
     * [[CheckState.AbilityResolutionKey]] exists. Skipping by position alone here is what let a second reference at the
     * same span inherit the first one's impl (see [[CheckState.abilityResolutions]]).
     */
-  def resolveAbilities(
-      allRefs: Seq[AbilityRef],
-      paramConstraints: Map[String, Seq[AbilityConstraint[OperatorResolvedExpression]]]
-  ): CheckIO[Boolean] =
-    allRefs.toList.foldLeftM(false) { (acc, ref) =>
-      tryResolveOne(ref, paramConstraints).map(_ || acc)
-    }
+  def resolveAbilities(allRefs: Seq[AbilityRef]): CheckIO[Boolean] =
+    allRefs.toList.foldLeftM(false)((acc, ref) => tryResolveOne(ref).map(_ || acc))
 
   /** Try to resolve a single ability reference. Returns `true` iff the reference got newly resolved this call.
     *
-    *   - If the ref is covered by an in-scope parameter constraint (e.g. calling a method of `Foo[T]` inside a `[T]
-    *     with Foo[T]` context), the constraint's own type arguments are used — at monomorphization time they're already
-    *     instantiated to the caller's concrete types, whereas the reference's implicit metas won't be solved until
-    *     unification connects them. The constraint path is the direct way to get concrete args.
-    *   - Otherwise the ref's own type arguments are used.
-    *   - Quoting failure (still-unsolved metas) leaves the ref pending for the next iteration.
+    *   - The ref's own ability-level type arguments are used. Quoting failure (still-unsolved metas) leaves the ref
+    *     pending for the next iteration. (A fallback that took them from the enclosing definition's first constraint of
+    *     the same local ability name was never reached by the tests, the examples or the dependents, and was wrong for
+    *     two entries of one ability; it was deleted, `docs/effects.md` §8 item 54.)
     *   - The ground ability-level arguments may end in a **binding** ([[ImplementationBinding]], effects v6 §9.4 step
     *     4): an implementation named there is recorded **directly** — its method of this reference's name, at the type
     *     arguments its pattern takes at this reference's pattern arguments ([[NamedImplementationArguments]]), an
@@ -103,10 +97,7 @@ class AbilityResolver(
     *     already reported at its own definition) leaves the ref silently pending, to be emitted by [[PostDrainQuoter]]
     *     as an abstract reference.
     */
-  private def tryResolveOne(
-      ref: AbilityRef,
-      paramConstraints: Map[String, Seq[AbilityConstraint[OperatorResolvedExpression]]]
-  ): CheckIO[Boolean] = {
+  private def tryResolveOne(ref: AbilityRef): CheckIO[Boolean] = {
     val (abilityVfqn, refTypeArgs) = ref
     abilityVfqn.value.name.qualifier match {
       case Qualifier.Ability(abilityName) =>
@@ -120,27 +111,13 @@ class AbilityResolver(
           _          <- modify(_.recordAbilityArity(abilityVfqn.value, arity))
           refSliced   = refTypeArgs.take(arity)
           refGroundE  = refSliced.toList.traverse(a => Quoter.quote(0, a, state.unifier.metaStore))
-          // Prefer the reference's OWN type arguments once they are fully ground: they pin the exact implementation.
-          // This is essential when several constraints share one ability — e.g. `Dep[Database]` and `Dep[Logger]` in a
-          // single body are both `Dep`, so the by-name constraint lookup would always return the first and every `get`
-          // would mis-dispatch to it. The constraint path remains the fallback *while the ref's args are still unsolved
-          // metas* (its original rationale: at the use site the caller has already instantiated the constraint to
-          // concrete types, whereas the reference's implicit metas are solved only once unification connects them).
-          groundArgsE = refGroundE match {
-                          case Right(ground) => Right(ground)
-                          case Left(_)       =>
-                            state.findConstraintTypeArgs(paramConstraints, abilityName) match {
-                              case Some(cArgs) =>
-                                cArgs.toList.traverse(a => Quoter.quote(0, a, state.unifier.metaStore))
-                              case None        => refGroundE
-                            }
-                        }
-          // The key this resolution is recorded under: the ref's own ground arguments when it has them (they pin the
-          // impl and the post-drain quoter re-derives exactly them), otherwise the constraint-covered `None` key.
-          key         = (abilityVfqn, refGroundE.toOption)
-          progressed <- groundArgsE match {
-                          case Right(_) if state.abilityResolutions.contains(key) => pure(false)
-                          case Right(groundArgs)                                  =>
+          // A resolution is recorded under the ref's own ground arguments, which pin the impl and which the post-drain
+          // quoter re-derives exactly. Arguments still unsolved metas leave the ref pending for the next round.
+          progressed <- refGroundE match {
+                          case Right(groundArgs) if state.abilityResolutions.contains((abilityVfqn, groundArgs)) =>
+                            pure(false)
+                          case Right(groundArgs)                                                               =>
+                            val key = (abilityVfqn, groundArgs)
                             ImplementationBinding.split(groundArgs) match {
                               case (patternArgs, Some(impl: ImplementationBinding.Implementation)) =>
                                 // A named implementation is never searched, so its conformance to the ability is
@@ -161,12 +138,14 @@ class AbilityResolver(
                                     reportUnmatchedBinding(abilityVfqn, abilityName, impl, patternArgs)
                                 }
                               case (patternArgs, _)                                      =>
-                                liftF(isEffect(abilityVfqn.value, abilityName)).flatMap {
-                                  case true  => reportUnboundEffect(abilityVfqn, abilityName)
-                                  case false => searchAndRecord(abilityVfqn, abilityName, key, patternArgs)
-                                }
+                                liftF(AbilityKind.isEffect(AbilityFQN(abilityVfqn.value.moduleName, abilityName), platform))
+                                  .flatMap {
+                                    case Some(true) => reportUnboundEffect(abilityVfqn, abilityName)
+                                    case _          => searchAndRecord(abilityVfqn, abilityName, key, patternArgs)
+                                  }
                             }
-                          case Left(_)                                            => pure(false)
+                          case Left(_)                                                                         =>
+                            pure(false)
                         }
         } yield progressed
       case _                              => pure(false)
@@ -186,14 +165,6 @@ class AbilityResolver(
       case Some(impl) => record(abilityVfqn.value, key, impl).as(true)
       case None       => reportFailedDemand(abilityVfqn, abilityName, patternArgs)
     }
-
-  /** Whether the ability `member` belongs to is an **effect**, read where effect-ness is recorded: the member's own
-    * declared clause, which membership in an `effect` block fills with the effect itself.
-    */
-  private def isEffect(member: ValueFQN, abilityName: String): CompilerIO[Boolean] =
-    getFactIfProduced(OperatorResolvedValue.Key(member, platform)).map(
-      _.exists(_.effectRow.returnEffects.exists(_.abilityFQN == AbilityFQN(member.moduleName, abilityName)))
-    )
 
   /** A member of an effect reached with `Default`: nothing bound an implementation of it. The write reports an
     * uncovered effect in a body, so what reaches here is a binding promised by a slot that names no implementation — a
