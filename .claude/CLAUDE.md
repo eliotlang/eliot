@@ -548,6 +548,13 @@ every citation of a condensed record (**D20**/**D21** rules and steps, **D20c op
 **There is no carrier, no monad, no `Id`, and nothing to infer** — if you are reading code or a comment that mentions
 one, it is history.
 
+**Decided 2026-10-16, not built: D33** (`docs/effects.md` §11). A `with` will apply only to a call of a named value —
+a specialisation, like a type argument — and a control effect (`Throw`, `Abort`, `State`, `Writer`, `Dep`) will take
+only a frame, never a binding. So there will be no slot `with`, no `with` around a run of a code parameter or on a
+block, and a code parameter's clause will list only control effects. Do not extend the slot-binding machinery
+(`RunWithHoister`, `SlotBindings`, `SlotBoundValue`, the given-check): it is what D33 deletes. How eliot-test binds its
+doubles under D33 (`mocked`) is deferred and undecided; D31 and D32 are withdrawn.
+
 **The surface is one clause in two positions.** On a **definition**, `uses Console, Throw[E]` is what its caller
 hands it. On a **parameter**, a clause makes the argument **code** the caller wrote, which the callee may call or pass
 on to another `uses` slot and **never keep**; without one, a parameter is a **value**, computed before the call:

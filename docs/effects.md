@@ -1,6 +1,6 @@
 # Effects in Eliot — the design, and what is left to do
 
-**Status (2026-10-15).** This is the effect system's single document. What the tree builds is effects v6 (2026-09-09)
+**Status (2026-10-16).** This is the effect system's single document. What the tree builds is effects v6 (2026-09-09)
 in D20/D21's `uses` surface (2026-10-09/10) with D20c option 5's environments and (b) (2026-10-12), and D22's reading
 of a listed effect, D23's reading of `with`, D24's `uses *` on a definition, compile-track frames and named
 implementations with parameters (2026-10-13), their type parameters solved where they run, their `with` around a
@@ -11,7 +11,8 @@ implementations taking parameters as an effect's do, with a type parameter their
 those arguments (D27, 2026-10-15), and a `uses` clause listing effects only, so that no callee fixes an implementation
 for code its caller wrote unless the declaration can say all of it (D28, 2026-10-15), and an ability with no named
 implementation and no `with`, answered by its type alone (D29, 2026-10-15, reversing those named implementations and
-D27). An effect is
+D27). **D33** (decided 2026-10-16, not built) reverses the slot half of this: a `with` will apply only to a call of a
+named value, specialising it, and a control effect will take only a frame, never a binding (§11). An effect is
 an ability declared with the `effect` keyword. A definition's `uses` clause says what its caller hands it. An implementation has two halves: its **code**, a
 compile-time name written at every reference by a syntax-directed pass that reads declarations only, and its
 **environment** (an escape frame, a cell, its own parameters), a value threaded after monomorphization — on the
@@ -80,9 +81,12 @@ lives now.
    (entries compared as spelled, closing items 43, 46, 47; built 2026-10-15), both decided; then measure **D31**'s cost (code compiled where it runs); then
    D31 and **D32** (one walk decides code and frame) together, if signed off. ~~Items 49, 52 and 58~~, ordinary bugs
    independent of them, closed 2026-10-16, and ~~items 50, 53, 54 and 55~~ (cause D, unblocked by D29) the same day;
-   closing 50 found item 61, a reading of D30 to decide.
+   closing 50 found item 61, a reading of D30 to decide. D31 and D32 are withdrawn for step 19.
+19. **D33** (decided 2026-10-16, §11): a `with` specialises a named call, and a control effect takes only a frame.
+   Its settling questions first, then the write, the deletions, and the dependents with eliot-test's mocking redesign
+   (deferred, undecided) on the same release. Closes §8 items 44, 45, 48, 51, 56 and 57.
 
-D20a, D20c, D3, D31 and D32 stay open until decided; none blocks the steps above.
+D20a, D20c and D3 stay open until decided; none blocks the steps above.
 
 **Open, in order of severity.**
 
@@ -92,9 +96,10 @@ D20a, D20c, D3, D31 and D32 stay open until decided; none blocks the steps above
 - **Loud, at compile time:** §8 items 45 (reproduced) and 61 (reproduced; needs a decision); a
   `catch` over a parameter spells its arguments (§7 item 2); a function-typed code parameter's own entries are never
   supplied (§7 item 1).
-- **Decided, not built:** none.
+- **Decided, not built:** D33 (a `with` specialises a named call; a control effect takes only a frame), which closes
+  §8 items 44, 45, 48, 51, 56 and 57; its mocking half is deferred.
 - **Undecided:** naming a set of effects in a clause (D20a), storing an effectful computation (D20c), `~`/`&` in user
-  space (D3), code compiled where it runs (D31), one walk deciding code and frame (D32).
+  space (D3), the rules items 60 and 61 need. D31 and D32 are withdrawn (§11).
 - **Outside this document:** `v0.9` is the first release carrying `uses` (`v0.8` is tagged before it, and its release
   workflow failed, so it publishes no assets); `v0.14` is the latest (`v0.13`, tagged before it, failed its release
   workflow the same way — the LSP did not compile clean — and publishes nothing); eliot-test `v0.5`, eliot-build and the docs site's
@@ -1181,7 +1186,8 @@ Each is stated, fail-safe, and either has a plan entry or is a deliberate trade.
 Each item is a defect to close or a decision to make, never a doc fix. Numbers are kept so citations resolve; closed
 items keep one line, and their full record is in git history (§13).
 
-**Open.** Found by the code review of 2026-10-15 (f78861cf..67eba060). *Reproduced* means a program was compiled and
+**Open.** Items 44, 45, 48, 51, 56 and 57 close with D33 (§11, decided 2026-10-16) and are not fixed on their own.
+Found by the code review of 2026-10-15 (f78861cf..67eba060). *Reproduced* means a program was compiled and
 run; *read* means found in the code, not yet reproduced — establishing it is the item's first step.
 
 | # | defect | severity | evidence |
@@ -1413,11 +1419,15 @@ each of which makes the tree decide one thing in two places:
 | **C. An entry's identity includes type arguments that are not known where it is compared.** Three comparisons are in use: as spelled (§2.2), at the arguments the call determines (`knownArguments`), and by ability alone (`Writer.rides`, `Writer.consumed`). The ground half adds the coinciding-frames error (§3.4) and the "which `Throw` does this call supply" precondition. D30 closed the first two readings' split; an entry the call does not spell is still answered before the checker types it (item 60) | 60 | 19, 22, 23, 43, 46, 47 |
 | **D. Abilities run on the effect machinery but mean something else.** An ability is searched and never inherited; an effect is passed and never searched. Sharing `with`, named implementations and their parameters made every effect rule need an ability exception (D28) and every ability rule an effect one (D27, items 38–40) | part of 59 (50, 53, 54, 55 closed 2026-10-16) | 38, 39, 40, 41 |
 
-Four decisions follow, in order of cost: D29 and D30 are decided, and D31 and D32 are open until D31's cost is measured.
+Four decisions followed, in order of cost: D29 and D30, decided and built; D31 and D32, then open. D31's measurement
+led to **D33** (2026-10-16), which removes causes A and B instead and withdraws both.
 The rest of the design is untouched: the `uses` clause, code and value, `*`, closed clauses, D24's marker, named effect
 implementations with parameters, the three primitives, frames as environments, and the one pre-mono verifier.
 
-### D31 — code is compiled where it runs (open: measure first)
+### D31 — code is compiled where it runs (withdrawn 2026-10-16: superseded by D33)
+
+*Withdrawn.* D33 removes what D31 was for — a callee binding an effect of code its caller wrote — so no block needs to
+be compiled where it runs. Kept for its measurement, which is what led to D33.
 
 **Proposed:** a definition whose code parameter **lists** an entry is specialised per code argument. The argument is
 lifted to a synthesised definition whose listed entries are its own phantom binders, and the callee fills them at each
@@ -1467,7 +1477,10 @@ for the callee to bind.
   "every run binds the same implementation" but keeps the slot summary and its ride/supply reading; **(c)** the shipped
   mechanism, with D30 and D32 closing its known gaps.
 
-### D32 — one walk decides both halves of an implementation (open: with D31)
+### D32 — one walk decides both halves of an implementation (superseded 2026-10-16 by D33)
+
+*Superseded.* Under D33 a control effect has no binding to decide, only a frame, and an interpretation effect has no
+environment beyond its own parameters and what a chained `with` binds, so the two halves cannot disagree.
 
 **Proposed:** the walk already knows, lexically, where each binding comes from — a received binder, an enclosing
 `with`, or (with D31) the block's own binder. It records that link beside the name, and the threading builds what the
@@ -1536,7 +1549,101 @@ not a value, so an ability denotes no type of values.
 
 ### Decided, not built
 
-None.
+#### D33 — a `with` specialises a named call; a control effect takes only a frame (decided 2026-10-16)
+
+**The question** (Robert, 2026-10-16, after D31's measurement): the unit of compilation is a named value, not a
+lambda. If an implementation is a compile-time parameter, a `with` is a monomorphization step like a type argument, and
+it should apply only to a call of a named value, specialising it. Would that simplify everything?
+
+**The finding.** For a named call that is already what a `with` is: `greet("Bob") with recordingConsole` is `greet`
+specialised at `Console := recordingConsole`, an ordinary type argument and the ordinary mono key (§3.1). Every edge
+case of causes A and B comes from one other thing: **a callee choosing the implementation of an effect for code its
+caller wrote** — a slot `with`, a `with` around a run of a code parameter, and what keeps them sound (the hoisting,
+carrying a callee's slot binding, `SlotBindings`, the given-check, one binding for every run, a `with`'s code moved
+while its arguments stay, D28's slot refusal, (b)). Code parameters themselves are not the problem and stay: the whole
+control-flow layer is built on them (`if`, `else`, `catch`, `runThrow`, eliot-test's `in`, `map`, `forever`).
+
+**Decided.**
+
+1. **A `with` applies to a call of a named value**, and specialises it: it binds what that value's declaration
+   receives, as a type argument does. A chain is allowed — `compiled(…) with gitPackages with shellGit with
+   shellAssets` — each later `with` binding what the clauses of the implementations before it perform. A `with` on a
+   block, on a run of a code parameter, or on a slot has no spelling.
+2. **A control effect takes a frame, never a binding.** `Throw`, `Abort`, `State`, `Writer` and `Dep` are implemented
+   by the platform alone — their primitives are platform-private, so user code could never implement one, and need
+   not. Each has the platform's one implementation; a discharger installs a frame, and an operation uses the frame its
+   entry is given along the declared chain, as the threading already passes it (§3.4). There is no binding for a
+   caller and a callee to agree on, so "ride by code, give by frame" stops being a rule and is simply what happens.
+3. **A code parameter's clause lists only control effects** (beside `*`). An interpretation effect listed there would
+   ask the callee to bind it for code the caller wrote, which point 1 removes. An effect the code uses through `*` is
+   bound where the code is written, as today.
+4. **An interpretation effect** (`Console`, `Log`, `FileSystem`, `Process`, `Environment`, a program's own `Git` or
+   `PackageSource`) is bound only by point 1: the entry point's generated `with`s (D26, unchanged) and a test's.
+
+**It reverses** — signed off by Robert, 2026-10-16:
+- §3.5's *"every effect is bound the same way … not a distinction in the language"*: control and interpretation
+  become two declared kinds;
+- D26 for control effects: they no longer have a named implementation a discharger binds with `with` (D25's
+  `escaping`, `aborting`, `holding`, `writing`, `providing` become platform internals or go); D26 stands for
+  interpretation effects and for `main`;
+- D23's slot half (*"a `with` around a run of a code parameter … is moved onto the slot"*, *"a slot `with` handles its
+  entry even when the definition also declares the effect"*);
+- D25's rule *"a run passed to a callee's slot is bound as that slot binds"* and its step 2 (`with name(args)` around a
+  run);
+- D28's effect half (`SlotBindingProcessor.slotFreeParameters`), which has nothing left to refuse;
+- D13 (*"eliot-test cases built with their handlers applied … `with` on a discharge word's slot"*);
+- D22's mechanism, not its meaning: a listed (control) effect is still the callee's to handle or declare.
+
+**It deletes:** `row/RunWithHoister`, `row/SlotBindings`, `SlotBoundValue`/`SlotBindingProcessor`, the given-check
+(`checkGiven`, `clausesGiven`), the run-agreement error, the threading's frame-versus-binding choice and its
+disagreement paths, and (b) as a rule.
+
+**It closes, when built:** §8 items 44, 45, 56 and 57 (a binding and a frame can no longer disagree), 48 (the row
+phase's second reading of a definition's parameters is the hoister's) and 51 (`with` on a value parameter or a field
+has no spelling at all); probably §7 item 1 (a function-typed code parameter's own control entries get frames at its
+runs — to confirm). It withdraws D31 and supersedes D32 (below). It does **not** close §8 items 59, 60 and 61 or §7
+item 2, which are about entries whose arguments are not spelled and need their own rules; D20a, D20c and D3 are
+untouched.
+
+**Measured (2026-10-16), what it costs the corpus.** Exactly three code parameters list an interpretation effect, all
+test infrastructure: eliot-test's `mocked` (`body uses *, Console with mockConsole, Log with mockLog, FileSystem with
+mockFileSystem, Process with mockProcess, Environment with mockEnvironment, Mocking with recording, Calls with journal,
+…`, 225 call sites), eliot-build's `against` (`computation uses *, PackageSource with tablePackages, …`, 9) and the
+example `transcriptOf`. A `with` on a block: eliot-build's `CacheTests` (3, `{ … } with tableGit`) and the example
+`EffectsFakeConsole` (1). Production code is unaffected but for one line: eliot-build's `Launcher` writes its three
+`with`s on named calls, and one of them, `Modelled(name, modelOf(name, project)) with cachedPackages with shellGit`,
+binds an effect of an *argument* — `Modelled` is a pure constructor — so it moves onto `modelOf(…)`. Every control
+discharger (`catch`, `else`, `if`, `in`, `expect`, `raising`, `failingOnGit`, `failingOnAsset`, `provide`) keeps its
+surface.
+
+**What it costs the language.** Nothing becomes uncomputable; what goes is a definition deciding how an
+interpretation effect is answered *for a block someone else wrote*. The binding is written at each named call instead:
+`transcriptOf(greet("Bob"))` becomes `runWriterToLog(greet("Bob") with recordingConsole)`, and a production
+`inTransaction(body uses *, Db)` would be `inTransaction(conn -> transfer(a, b) with transactional(conn))`. A
+user-declared effect whose implementation is written over a platform control effect (eliot-test's `Mocking` and
+`Calls`, over `State[Recording]`) can still be declared and implemented, but no longer installed for a block, so an
+effect that exists to hide its implementation's state loses most of its point.
+
+**Deferred: mocking** (Robert, 2026-10-16: "deal with mocking later"). eliot-test's `mocked`, eliot-build's `against`
+and the example `transcriptOf` need a new shape before D33 can be released, since eliot-test (193) and eliot-build
+(368) are its gate. Options on the table: each act call names its doubles (`publishedTags(root, cached) with
+mockProcess`); the arrange and verify words declare `uses State[Recording]` with `Recording` opaque, in place of
+`Mocking` and `Calls`; or another shape found while building. Not decided.
+
+**To settle while building** (each is a step's first question, not a reversal):
+- *How a control effect is declared.* It must be read off a declaration (§3.6), never a name; only the base declares
+  one.
+- *How a platform discharger hands its primitive's frame to the run* — today `escapeInternal((frame: ThrowFrame[E]) ->
+  obj with escaping(frame), …)`, a `with` around a run, which point 1 removes. Either the primitive becomes the
+  discharger whose slot is given the frame natively, or the platform layers keep one internal spelling.
+- *What a `with`'s subject is exactly*: a call of a named value, possibly partially applied, possibly an ability member
+  dispatched to an implementation, and the chain above; how a `with` on a call whose own declaration receives nothing
+  it binds is reported.
+
+**Order.** The settling questions; then the write (`BindingWriter`) binds control entries by frame only and refuses
+the removed `with` shapes; then the deletions; then the dependents — eliot-test's mocking redesign and eliot-build's
+three test files — on the same release.
+
 
 **Awaiting sign-off:** the four choices made in the code while building option 5 (§3.4, "Decided in the code"). A
 fifth, an anonymous implementation's parameters as part of its pattern key, lapsed with D25's step 5.
@@ -1547,7 +1654,8 @@ Numbers are kept so citations resolve; the record of each is in git history (§1
 
 - **D4** (`Suspend`-riding effects) dissolved at the flag day. **D5** (a lambda body at a rowless arrow) closed
   2026-09-08, now rule 2. **D7** (the post-mono verifier) retired by measurement 2026-09-10 (§3.3, §12). **D13**
-  (eliot-test cases built with their handlers applied) closed 2026-09-08: `with` on a discharge word's slot.
+  (eliot-test cases built with their handlers applied) closed 2026-09-08: `with` on a discharge word's slot
+  (**reversed** by D33, 2026-10-16: a slot binds no implementation; how eliot-test binds its doubles is deferred).
 - **D17** (2026-09-12): a `val` is a bind (§3.5).
 - **D18** (a row alias at a parameter) superseded by D20: no effect is written in a type, so there is nothing to move;
   what replaces it is D20a.
@@ -1565,7 +1673,8 @@ Numbers are kept so citations resolve; the record of each is in git history (§1
   implementation (§2, §3.4). Type parameters on the same implementation since 2026-10-14 (§8 item 30).
 - **Compile-track frames** (decided 2026-10-12, built 2026-10-13): the compile track threads its frames as the runtime
   track does, after monomorphization, and the guarded-return read gives a signature's own control effects (§3.4).
-- **D23** (2026-10-13): *what does a `with` apply to?* **Every effect of its ability that escapes its subject** — what
+- **D23** (2026-10-13; its slot half **reversed** by D33, 2026-10-16: a `with` applies to a named call only, so there
+  is no `with` around a run and none on a slot): *what does a `with` apply to?* **Every effect of its ability that escapes its subject** — what
   the subject's calls declare and its own code performs, since every definition declares what it does not discharge —
   and nothing discharged further down. So: a `with` nothing escapes to is an error (closing §8 item 1); a `with`
   around a run of a code parameter binds what the slot lists, and is moved onto the slot, because the caller compiles
@@ -1596,8 +1705,9 @@ Numbers are kept so citations resolve; the record of each is in git history (§1
   now the point, where the reader looks). Optional was rejected, since then its absence would say nothing; Koka's
   spelling — a named effect variable in both places — remains closed (§2.6), since nothing here is unified.
 
-- **D25** (decided and built 2026-10-14): *parameters only on a named implementation, and the platform binds its
-  control effects with `with`.* **Reversed** D20c option 5's point 3 as far as it reached a default (`with
+- **D25** (decided and built 2026-10-14; its control-effect half and its rule for a run passed to a slot **reversed**
+  by D33, 2026-10-16: a control effect takes a frame, never a binding): *parameters only on a named implementation,
+  and the platform binds its control effects with `with`.* **Reversed** D20c option 5's point 3 as far as it reached a default (`with
   Ability(args)`, `p with State(cell)`): a default is what is inserted where nothing is written, and nothing that
   inserts one has arguments to give, so an implementation with parameters is always named — `implement [name[(params)]:]
   Pattern`, and an anonymous parameter list is a parse error naming the named form. A control effect's implementation
@@ -1625,7 +1735,8 @@ Numbers are kept so citations resolve; the record of each is in git history (§1
   only those arguments solve it; it amends §5 rule 3 (a type parameter of a binding, never the implementation it
   names, may be a metavariable). Closed §8 item 40; a `with` moved onto a code parameter's slot does not read it (§8
   item 41).
-- **D28** (decided and built 2026-10-15): *a `uses` clause lists effects only, and a slot binds no implementation
+- **D28** (decided and built 2026-10-15; its effect half moot under D33, 2026-10-16, since no slot binds an
+  implementation): *a `uses` clause lists effects only, and a slot binds no implementation
   whose type parameter only a `with`'s arguments decide.* Found as §8 item 41: a `with` around a run of a code
   parameter is moved onto the slot, so the caller compiles its code from the declaration, while D27's `K` is decided
   by arguments the body computes. Rejected: reading `K` off the callee's checked body (a caller's compilation would
@@ -1661,7 +1772,9 @@ Numbers are kept so citations resolve; the record of each is in git history (§1
   and consumes every received entry of it. Built in the walk (`BindingWriter.spelledEntry`, `declaredRow`,
   `spelledRendered`, a received binding keyed by its binder) and in the threading's `clauseBinding`, which had kept a
   ground comparison for a slot implementation's clause entries.
-- **D26** (decided and built 2026-10-14): *no effect has a default; every effect implementation is named, and every
+- **D26** (decided and built 2026-10-14; **reversed** for control effects by D33, 2026-10-16, which take a frame and no
+  binding, and with that §3.5's "no distinction in the language"; it stands for interpretation effects and `main`):
+  *no effect has a default; every effect implementation is named, and every
   effect binding is written.* **Amended** D25's *"a default — always parameterless — is given only at `main`"*: the
   run boundary was the last place an effect's implementation was searched for. The compiler only passes an effect's
   implementation explicitly — a `with`, a slot naming one, or a binder the caller filled — and `Default`, the two-site
