@@ -548,12 +548,15 @@ every citation of a condensed record (**D20**/**D21** rules and steps, **D20c op
 **There is no carrier, no monad, no `Id`, and nothing to infer** — if you are reading code or a comment that mentions
 one, it is history.
 
-**Decided 2026-10-16, not built: D33** (`docs/effects.md` §11). A `with` will apply only to a call of a named value —
-a specialisation, like a type argument — and a control effect (`Throw`, `Abort`, `State`, `Writer`, `Dep`) will take
-only a frame, never a binding. So there will be no slot `with`, no `with` around a run of a code parameter or on a
-block, and a code parameter's clause will list only control effects. Do not extend the slot-binding machinery
-(`RunWithHoister`, `SlotBindings`, `SlotBoundValue`, the given-check): it is what D33 deletes. How eliot-test binds its
-doubles under D33 (`mocked`) is deferred and undecided; D31 and D32 are withdrawn.
+**Decided 2026-10-16, not built: D35** (`docs/effects.md` §11), reversing D33 of the same day (D34 withdrawn). An
+implementation's code and environment will be passed together as **evidence** after monomorphization — one hidden
+argument per entry, built where a `with` installs it, captured by a code argument for what it uses through `*` and
+given by the callee at each run for what its slot lists — and static code will be a **specialisation pass** that clones
+by constant evidence, on by default on every target. `with` stays an expression on any subject; only the slot `with`
+spelling goes (`mocked`, eliot-build's `against`, the example `transcriptOf` move to a `with` around the run, which
+compiles today). Control effects are bound like any other. Do not extend the slot-binding machinery
+(`RunWithHoister`, `SlotBindings`, `SlotBoundValue`, the given-check) or the binding's place in the mono key: they are
+what D35 deletes. A free-monad representation was evaluated and rejected (reasons in D35). D31 and D32 are withdrawn.
 
 **The surface is one clause in two positions.** On a **definition**, `uses Console, Throw[E]` is what its caller
 hands it. On a **parameter**, a clause makes the argument **code** the caller wrote, which the callee may call or pass
