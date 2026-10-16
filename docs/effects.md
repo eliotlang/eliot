@@ -87,6 +87,10 @@ lives now.
    (deferred, undecided) on the same release. Closes §8 items 44, 45, 48, 51, 56 and 57.
 20. **D34** (proposed 2026-10-16, §11): a binding is part of a definition, never an expression. Paper-measured on
    eliot-test's `Mock.els`; awaiting sign-off of its reversals and its four findings before any of D33 is built.
+21. **D35** (proposed 2026-10-16, §11): an implementation is passed as evidence after monomorphization, and static code
+   is a specialisation pass — the alternative to D34, from evaluating a free-monad design. Measured on the corpus: three
+   definitions change, and eliot-test (193) and eliot-build (368) pass with them under this compiler. D33, D34 and D35
+   are one decision for Robert before anything is built.
 
 D20a, D20c and D3 stay open until decided; none blocks the steps above.
 
@@ -101,7 +105,8 @@ D20a, D20c and D3 stay open until decided; none blocks the steps above.
 - **Decided, not built:** D33 (a `with` specialises a named call; a control effect takes only a frame), which closes
   §8 items 44, 45, 48, 51, 56 and 57; its mocking half is deferred.
 - **Proposed:** D34 (a binding is part of a definition, never an expression), which would replace D33 point 1 and
-  answer its mocking half.
+  answer its mocking half; D35 (an implementation passed as evidence after monomorphization, static code a
+  specialisation), which would reverse D33 and replace D34.
 - **Undecided:** naming a set of effects in a clause (D20a), storing an effectful computation (D20c), `~`/`&` in user
   space (D3), the rules items 60 and 61 need. D31 and D32 are withdrawn (§11).
 - **Outside this document:** `v0.9` is the first release carrying `uses` (`v0.8` is tagged before it, and its release
@@ -1555,8 +1560,8 @@ not a value, so an ability denotes no type of values.
 
 #### D33 — a `with` specialises a named call; a control effect takes only a frame (decided 2026-10-16)
 
-*D34 (proposed 2026-10-16, below) would reverse point 1 and answer the deferral of mocking; D33 stands as written until
-D34 is signed off.*
+*D34 (proposed 2026-10-16, below) would reverse point 1 and answer the deferral of mocking; D35 (proposed the same day,
+below) would reverse all four points. D33 stands as written until one of them is signed off.*
 
 **The question** (Robert, 2026-10-16, after D31's measurement): the unit of compilation is a named value, not a
 lambda. If an implementation is a compile-time parameter, a `with` is a monomorphization step like a type argument, and
@@ -1746,6 +1751,134 @@ different *implementation* needs its own definition; different *data* per case i
    allowed, nothing unsound follows — it binds nothing.
 4. A private suite carries its own list: `refusals: Test` in `MockFileSystemTests` and `MockProcessTests`, two of the
    seven above.
+
+#### D35 — an implementation is evidence passed after monomorphization (proposed 2026-10-16, awaiting sign-off)
+
+**The question** (Robert, 2026-10-16, after D34): would a free-monad system work, be simpler and be right for Eliot —
+rows back in the type and monadic, effects composing as free-monad placeholders rather than transformers, the
+monomorphizer producing free-monadic pure code, and a later step re-compiling the placeholders against static code, so
+that interpreting an effect with different implementations stops being an issue?
+
+**The finding.** What the question reaches for is a change of *when* a binding is decided, not of representation.
+Today an implementation's code is a compile-time name written into the code of whoever writes the reference, before
+monomorphization; causes A and B of the 2026-10-15 diagnosis both come from that, since a callee handling code its
+caller wrote forces the caller to know the callee's choice while compiling its block. If an operation is answered by
+whatever runs it, and static code is an optimisation afterwards, both causes go at the root. A free monad is one way to
+say that, and the most expensive one here:
+
+- a row in `Eff[R, A]` needs row unification (`{Console | R}` against `{Console, Log}` is set subtraction, not
+  definitional equality), or subsumption, an assignability arm — the Types-Are-Values guardrail 1, and next door to
+  §12's row on `VPi`;
+- a user-written handler cannot be typed: a bind node's continuation takes an existential (`Bind(op: F[X], k: X =>
+  Free)`), matching an operation needs GADT refinement (`X := Unit` under `PrintLine`), and a polymorphic operation
+  (`foldLines[B]`) meets the step-6 limit (§12, "an implementation as a runtime value");
+- the interpreter is a fold over recursive data, which user code cannot write (`docs/recursive-data.md`);
+- an operation taking code (`Inf.forever(step uses *)`) is a scoped operation, which a free monad does not represent
+  (Wu, Schrijvers and Hinze, *Effect Handlers in Scope*) — §12's third reason against "a runtime free monad";
+- every native taking a callback becomes a tree builder (an effectful `foldLeft` allocates a bind and a closure per
+  element), against the AVR north star;
+- a helper's own `catch` catches its caller's `raise` again, which option 5 removed (masks or tunnelling would be
+  needed);
+- the static re-compilation exists for tail-resumptive handlers (a direct call), aborting ones (an escape) and state (a
+  cell) — today's frames — and beyond them there is only CPS or stack capture.
+
+The free monad's advantage over transformers (no cross-lifting) buys nothing against v6, which has no transformers.
+What carries the gain is **evidence passing** — how Koka compiles handlers (Xie and Leijen), and Effekt, whose
+second-class blocks are this language's "code is used, never kept".
+
+**Proposed.**
+
+1. **An implementation is a run-time value made after monomorphization**: its code (the operations' entry points) and
+   its environment (a frame, a cell, its own parameters) travel together as one hidden argument per entry — what
+   `EnvironmentThreading` passes today for the environment half alone, extended to the code half. Nothing writes a
+   binding before monomorphization; the walk stays as the scope check (§4), the thunk-and-apply and the one verifier
+   (D7). This is v6's first form (2026-09-06, an implementation is a record value) moved below the checker: it was
+   abandoned only because the *checker* could not type a record of polymorphic operations, and after monomorphization
+   every operation is at ground arguments, so the record never meets the checker.
+2. **A `with` installs its implementation around its subject**, any expression, as D23 reads it: it binds what
+   escapes the subject, and a `with` that binds nothing is an error. An implementation's clause entries beyond its
+   member's are bound **where it is installed** — its evidence closes over the evidence in scope at the `with` — while
+   an entry its member declares is the call's, as `DeclaredEntries.forwarded` reads it now. A chain is left
+   associative, each later `with` binding what the earlier implementations' clauses perform. A named implementation
+   keeps its parameters (D25), evaluated at the `with` into its environment.
+3. **A code argument captures the writer's evidence for what it uses through `*`**, as a closure does, and **receives
+   from the callee, at each run, the evidence for the entries its slot lists**. That is D22's meaning as plain capture:
+   an unlisted effect is invisible to the callee because the block already holds its evidence, and a listed one is the
+   callee's to install or to pass on. "Ride by code, give by frame" ((b)) is no longer a rule: a listed entry's code and
+   frame are one value, found where the code runs.
+4. **Every effect is bound the same way** (§3.5, as before D33). A platform discharger keeps
+   `escapeInternal((frame: ThrowFrame[E]) -> obj with escaping(frame), …)`; a control effect is declared and implemented
+   like any other, so D33's first settling question — how a control effect is declared — does not arise, and a code
+   parameter may list any effect.
+5. **Static code is a specialisation pass after monomorphization**: evidence that is a constant at a call is
+   propagated into a clone of the callee, and a block run with constant evidence is compiled against it. It always
+   succeeds — there is no recursion, code is never kept and a `with` names a compile-time implementation, so the
+   evidence at every point is known by cloning along a finite call tree — and correctness never depends on it. The
+   binding leaves the monomorphization key; the pass puts the same specialisation back where a target wants it.
+6. **The entry point** binds `main`'s entries with a generated `with` each (D26, unchanged).
+
+**It would reverse**, each needing Robert's sign-off: D33, all four points (signed off 2026-10-16) — `with` stays an
+expression, control effects are bound as others are, and a code parameter lists any effect; §3.1's *"the desugar
+writes the implementation; nothing solves for one"* as the mechanism (still true that nothing solves: the evidence is
+passed, never inferred or searched) and §9's binding binder as part of the monomorphization key; §3.4's *"the code is
+the binding"*; D23's slot half and D25 step 3 (the hoisting and the carrying), whose meaning the evidence gives
+directly; D28's effect half. D34 is an alternative to it, to be withdrawn if D35 is chosen. **It keeps** rules 1–6,
+D22's meaning, D24, D26, D28's clause half, D29, D30, the three primitives and their frames, and §4's scope check as
+the one verifier.
+**Readings of §12 for Robert:** "an implementation as a runtime value" is closed for the checker, and D35's evidence
+exists only after it — not reopened, on this reading; "a runtime handler stack searched by type" is not touched, since
+evidence is passed and never searched; "a runtime free monad" stays closed, with the reasons above added; standing
+rule 3's "sum over a monomorphized sub-graph" — the specialisation pass, and on a target without erasure an evidence
+record holding one entry per ground instantiation of a polymorphic operation the subject reaches — decides what code is
+generated, never a binding.
+
+**It would delete** the pre-mono binding write (`BindingWriter`'s resolution order, steps 1–3), `row/RunWithHoister`,
+`row/SlotBindings`, `SlotBoundValue`/`SlotBindingProcessor`, `checkGiven`/`clausesGiven`, the run-agreement error
+("every run binds the same implementation" — runs may differ), the threading's frame-versus-binding choice, its
+coinciding-frames error and riding flags, `slotFreeParameters`, `guardDischargers`' slot read (a guard's `raise` gets
+`runThrow`'s evidence at the run, as any run does) and the slot `with` spelling. It closes, when built, §8 items 44, 45,
+56 and 57 (a binding and a frame are one value) and 48 (the hoister's second reading of parameters). Item 60 changes
+from silent to loud, to confirm: `guarded(raise(1))`'s argument needs `Throw[Int]` evidence, which a closed slot giving
+only `Throw[String]` does not have, so the threading fails where today it runs on the caller's frame; the rule it needs
+is still Robert's. **It does not touch** cause C (§8 items 59–61, §7 item 2), D20a, D20c or D3 — though a stored open
+computation (D20c) would have a cheap mechanism under it, a closure awaiting evidence, while rules 2, 3 and 6 still
+refuse it.
+
+**What it costs.** Unspecialised, one hidden argument per interpretation entry and an indirect call per operation:
+eliot-build's production code has 92 interpretation entries on 66 of its 341 definitions, beside 176 control entries
+that take a frame today; a `standard…` implementation's evidence is a constant, a double's one small object per
+install. The specialisation pass is new machinery, on every target by default, so that a jar is what it is today: every
+slot in the corpus is run with one implementation per callee (today's rule), so the pass reproduces today's
+specialisations, not D31's per-block copies. The compile track threads evidence as it threads frames now.
+
+**Measured (2026-10-16), the surface on the corpus.** A `with` in code (comments and strings removed): eliot-build 102
+(86 on a named call, 10 more as later links of a chain, 5 on a block, 1 on a slot), eliot-test 8 (7 on `mocked`'s slot,
+1 on a call), the layers 7 (each platform discharger's `obj with …(frame)`), the examples 4. Under D35 only the **slot**
+spelling goes, so three definitions change and nothing else does — no suite declaration, no case, no `Launcher` line,
+no discharger:
+
+- eliot-test's `mocked`: `body uses *, Console, Log, FileSystem, Process, Environment, Mocking, Calls, Throw[IoError],
+  Throw[AssertionError]: Unit`, with `body with mockConsole with mockLog with mockFileSystem with mockProcess with
+  mockEnvironment with recording with journal` as `catch`'s computation inside the `runStateToValue`;
+- eliot-build's `against`: `computation uses *, PackageSource, …` and `catch[…](computation with tablePackages, …)`;
+- the example's `transcriptOf`: `program uses *, Console` and `runWriterToLog(program with recordingConsole)`.
+
+Each double is installed inside the recording's `runStateToValue`, so its `State[Recording]` is that recording's and
+`mockProcess`'s `Throw[AssertionError]` is `mocked`'s own, failing the case as today — D34's first finding does not
+arise, nor its second (a case outside `mocked` performing `printLine` is today's "performs `Console` but does not
+declare it"), third or fourth. **The rewritten forms compile today**, since D23 already hoists a `with` around a run of
+a code parameter onto the slot: run against this compiler at 63ad40d8, eliot-test passes 193 and eliot-build 368 with
+the three rewrites, as without them, and the example passes. So the surface D35 needs exists and already means what D35
+says; D35 changes how the compiler arrives at that meaning, not what any program in the corpus does.
+
+**To settle:**
+
+- whether the slot `with` spelling goes (proposed: yes, one place to write a binding), or stays as sugar for a `with`
+  around every run;
+- how a `with` reaches the threading — proposed: every `with` lowered as D25's `scripted$with(args…, subject)` is now,
+  so the threading builds the evidence where it builds an environment today;
+- whether the specialisation pass is on by default on the JVM (proposed: yes, so a jar is unchanged and the indirect
+  form is only the semantics).
 
 
 **Awaiting sign-off:** the four choices made in the code while building option 5 (§3.4, "Decided in the code"). A
