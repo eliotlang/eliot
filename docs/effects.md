@@ -2215,7 +2215,42 @@ every step and each difference explained.
    whether the checker types a block whose parameter is a handle, whether monomorphization by handle type reproduces
    the specialisation pass's clones, the jar size before erasure, and the guarded signature's compile-track run. The
    hole rule cannot be spiked by hand, since the hand form passes every handle explicitly; its cases are listed from
-   the corpus instead.
+   the corpus instead. *Done 2026-10-17*, on v0.16, with one program written twice — once in today's surface, once
+   desugared by hand, every handle passed where the hole rule would put it: an interpretation effect with a
+   parameterless and a parameterised implementation, a `*` lambda capturing a handle, `fetch` with two `Throw`
+   handles, `guarded` catching one of them, `described` catching inside itself what `guarded` passes on, and
+   `mocked`'s shape (a discharger handing its block a `Fixed` and an `Escape[String]`). The hand form's `Throw` is an
+   ability `Fail[H, E]` over `data Escape[E](frame: ThrowFrame[E])`, written in a scratch file of module
+   `eliot.effect.Throw` so that its private `escapeInternal`/`exitInternal` copies merge with the jvm layer's — a real
+   frame, not a stand-in. Findings:
+   - **It compiles unchanged on today's checker and prints the same eight lines.** A block whose parameter is a
+     handle is typed with no annotation (`catchFail(gits -> fetch(strings, gits, n), …)`, `mocked(t -> s ->
+     interview(t, s))`), the nearest-handle cases come out as point 4 says (`"disk full"` caught by `described`'s
+     inner `catch`, the `GitError` by `guarded`'s), and a mismatched `fail` is refused by the ordinary resolver, *"No
+     ability implementation found for ability 'Fail' with type arguments [Escape[Type], String -> Text]"* — loud, and
+     the message D36 starts from.
+   - **Monomorphization by handle type reproduces the specialisation pass's clones one for one** (`total` per pricing,
+     `fetch` per two frames, `guarded`, `interview`), and every operation is an `invokestatic` to the one
+     implementation, as today.
+   - **The jar is 11.8% larger before erasure** (62 935 bytes against 56 300; 113 classes against 98). All of it is
+     the handles' `data` representation: four handle classes, their `PatternMatch` instances, the lambdas behind
+     each field accessor, a `new` per field-less handle at its `with`, an extra parameter where today there is none
+     (`total$…standardPricing(String, String)` against `total$Default$StandardPricing(StandardPricing, String,
+     String)`), and a closure capturing a field-less handle that today captures nothing. Where today's threading
+     passes an environment unboxed (`discounted`'s `off` as a `BigInteger`, a frame as an `Object`), the hand form
+     passes the boxed handle. So step 4's erasure is required: a **field-less handle erased** (no parameter, argument,
+     allocation or capture) and a **single-field handle passed as its field**, which together give today's
+     parameters on every definition of the spike.
+   - **The compile track runs handle code**: `def chosen[B: Bool]: Type = catchFail((h: Escape[Type]) -> if(B)
+     Number[] else fail(h, Text[]), (t: Type) -> t)` types `def number: chosen[true]` as `Number` and `def text:
+     chosen[false]` as `Text`, with a compile-track overlay of the same `Fail` over `escapeIntrinsic`/`exitIntrinsic`
+     superseding the runtime copy, and a mismatched `chosen[false]` is refused.
+   - **Not covered:** the hole rule (by design); a guarded signature's *rejection* — the read that turns a frame
+     left with no `catch` around it into a build error carrying its author's message, `TypeStackLoop.guardRead` today,
+     which under D36 reads a `Left` from the discharger the compiler wraps the signature in; `State`/`Writer` cells,
+     which are a handle's field exactly as a frame is; and the second-class check. The corpus compiles today, so every
+     unspelled discharger in it has one determinable `E`; whether point 4's agreement rule accepts each of them is what
+     step 3's shadow measures.
 2. **The slot names its supplied implementation**: parsed, checked against what the callee's runs give today
    (`MonomorphicEffects.Slot.variants`; a disagreement is an error), and written in the dischargers and the
    dependents' three definitions. Under D35 the name is redundant and checked, so this step ships on its own.
