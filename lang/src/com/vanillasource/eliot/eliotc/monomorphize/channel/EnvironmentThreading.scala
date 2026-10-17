@@ -68,7 +68,8 @@ import scala.util.chaining.*
   * the row phase rejects a use of a `with`'s binding below a nearer binding of an effect its clauses perform. One that
   * takes **parameters** reaches here as its binder applied to the `with`'s arguments around the subject
   * (`scripted$with(xs, greet)`, [[ImplementationParameters.binder]]): the arguments are bound to fresh parameters
-  * around the subject, and a frame built for that implementation inside it holds them as its own parts.
+  * around the subject, and a frame built for that implementation inside it holds them as its own parts. Every other
+  * `with` reaches here as its binder around the subject alone, which is the subject.
   *
   * Nothing here changes a definition that receives and supplies no environment: its frames have no parts, a block
   * with nothing to take keeps its `unit`, and the woven body is the monomorphic one.
@@ -381,10 +382,10 @@ object EnvironmentThreading {
           )
       }
 
-    /** A `with` supplying arguments, as the resolver lowered it: `scripted$with(xs, subject)` becomes
-      * `(answer -> subject)(xs)`, the subject walked with `answer` supplied to `scripted`, so every frame built for
-      * `scripted` inside it holds them ([[built]]). The binder is never called, and what follows its subject applies
-      * the subject's value.
+    /** A `with`, as the resolver lowered it: `scripted$with(xs, subject)` becomes `(answer -> subject)(xs)`, the
+      * subject walked with `answer` supplied to `scripted`, so every frame built for `scripted` inside it holds them
+      * ([[built]]). One supplying nothing (`recordingConsole$with(subject)`) is its subject, walked where the `with`
+      * stands. The binder is never called, and what follows its subject applies the subject's value.
       */
     private def supply(
         head: Sourced[MonomorphicExpression],
@@ -403,7 +404,7 @@ object EnvironmentThreading {
         supplied = args.take(count)
         parts    = parameterTypes(head.value.expressionType, count).map(tpe => Part(fresh(), tpe))
         walked  <- supplied.traverse(walk(_, context))
-        subject <- walk(args(count), context.supply(marker, parts, reference.valueName))
+        subject <- walk(args(count), if (count == 0) context else context.supply(marker, parts, reference.valueName))
         rest    <- args.drop(count + 1).traverse(walk(_, context))
       } yield {
         val bound = parts.foldRight(subject) { (part, inner) =>

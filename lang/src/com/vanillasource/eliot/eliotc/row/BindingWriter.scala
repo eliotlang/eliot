@@ -882,12 +882,12 @@ object BindingWriter {
         )
       if (position < 0) {
         val walked  = args.map(walk(_, scope))
-        val hoisted = args.lastOption.map(_.value) match {
-          case Some(ParameterReference(name)) if scope.thunks.contains(name.value) =>
+        val hoisted = args.lastOption.flatMap(runUnder) match {
+          case Some(name) if scope.thunks.contains(name.value) =>
             scope.slotEntries
               .getOrElse(name.value, Seq.empty)
               .filter((marker, _) => ImplementationParameters.binderOf(marker) == callee.value)
-          case _                                                                  => Seq.empty
+          case _                                               => Seq.empty
         }
         expr.as(applyChain(written(hoisted.map(entry => Some(entry._2)), hoisted.headOption.map(_._1)), walked))
       } else {
@@ -917,6 +917,20 @@ object BindingWriter {
         )
       }
     }
+
+    /** The code parameter a binder's subject runs, when it is one — directly, or as the subject of another binder's call
+      * the hoisting left around it (`b$with(a$with(body))`, from `body with a with b`).
+      */
+    private def runUnder(subject: Sourced[OperatorResolvedExpression]): Option[Sourced[String]] =
+      subject.value match {
+        case ParameterReference(name) => Some(name)
+        case _                        =>
+          spine(subject.value) match {
+            case (ValueReference(callee, _), args) if ImplementationParameters.isBinder(callee.value) =>
+              args.lastOption.flatMap(runUnder)
+            case _                                                                                    => None
+          }
+      }
 
     /** The type arguments of the binder `callee` of the implementation `marker` that the `entries` a `with` binds
       * decide: the implementation's pattern matched against each entry's arguments, as the two-site search matches an

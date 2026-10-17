@@ -618,7 +618,8 @@ may carry `uses`. It may take **parameters**, supplied by the `with` that binds 
 String): Terminal`, `greet with scripted("Bob")`): the resolver lowers that `with` to a call of the implementation's
 body-less binder `scripted$with(args…, subject with scripted)` so the checker types the arguments, and
 `EnvironmentThreading` turns the call into the arguments bound around the subject, where they become the frame's own
-parts (`docs/effects.md` §3.1, §3.4). A named implementation's **type parameters** are what its pattern takes at the
+parts (`docs/effects.md` §3.1, §3.4). Every body `with` is lowered that way (D35 step 2), one with no arguments to a
+binder taking only its subject, so the threading sees each install site. A named implementation's **type parameters** are what its pattern takes at the
 entry it runs for (`NamedImplementationArguments`, the two-site search's match without the search), at dispatch and in
 the threading alike, so one `with showing` serves `Source[Int]` and `Source[String]`. **`with`** binds a name for every effect of its ability that **escapes its
 subject** (D23): infix, subject-first, loosest precedence, left-associative, as an expression in a body or after an

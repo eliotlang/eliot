@@ -42,9 +42,9 @@ import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, Qualifier}
   *     module's [[com.vanillasource.eliot.eliotc.module.fact.ModuleAbilities.markerOfImplementationName]], and only the
   *     real marker flows onward.
   *
-  * A named implementation that takes **parameters** (`implement scripted(lines: List[String]): Terminal`) adds two
-  * declarations, as [[ImplementationParameters]] describes: the parameters declaration, and the binder a `with`
-  * supplying arguments is lowered to. Each clause receives the parameters ahead of its own.
+  * Every named implementation adds the binder a `with` naming it is lowered to, and one that takes **parameters**
+  * (`implement scripted(lines: List[String]): Terminal`) the parameters declaration too, as [[ImplementationParameters]]
+  * describes. Each clause receives the parameters ahead of its own.
   *
   * A named implementation is always public: it exists to be named from elsewhere.
   */
@@ -92,7 +92,7 @@ object NamedImplementationDesugarer {
     )
 
     val declarations =
-      ImplementationParameters.declaration(anchor, qualifier, implementation.genericParameters, implementation.parameters, clauseRow).toSeq ++
+      ImplementationParameters.declaration(anchor, qualifier, implementation.genericParameters, implementation.parameters, clauseRow).toSeq :+
         ImplementationParameters.binder(anchor, qualifier, implementation.genericParameters, implementation.parameters)
 
     (methods ++ declarations :+ marker) :+ nameMarker

@@ -2,6 +2,7 @@ package com.vanillasource.eliot.eliotc.row
 
 import cats.syntax.all.*
 
+import com.vanillasource.eliot.eliotc.ast.fact.ImplementationParameters
 import com.vanillasource.eliot.eliotc.module.fact.ValueFQN
 import com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedExpression.*
 import com.vanillasource.eliot.eliotc.operator.fact.{OperatorResolvedExpression, OperatorResolvedValue}
@@ -41,11 +42,11 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
   * it, and a slot that already names one must name that one. Only nullary code parameters move: a callback's listed
   * entries are its own scope's, not the callee's to bind (§7 item 1).
   *
-  * A `with` supplying arguments to an implementation that takes parameters moves too, but only its **code**: the
-  * resolver lowered `body with scripted(name)` to `scripted$with(name, body with scripted)`, and the `with` inside moves
-  * onto the slot while the binder's call stays at the run, so the arguments are still values computed where they are
-  * written, and each run may supply its own (D25 step 2). The environment threading builds the frame there and hands
-  * it to the code.
+  * The resolver lowers every `with` in a body to its implementation's binder around it (D35 step 2), so a `with` here
+  * is read through that call ([[peel]]), and only its **code** moves: `body with scripted(name)` is
+  * `scripted$with(name, body with scripted)`, and the `with` inside moves onto the slot while the binder's call stays
+  * at the run, so the arguments are still values computed where they are written, and each run may supply its own
+  * (D25 step 2). The environment threading builds the frame there and hands it to the code.
   */
 object RunWithHoister {
 
@@ -236,11 +237,12 @@ object RunWithHoister {
   ): Seq[Run] =
     expr.value match {
       case FunctionLiteral(_, _, body) if skip > 0 => runs(body, inScope, skip - 1)
-      case WithBinding(_, _, _)                    =>
+      case _ if peel(expr).isDefined               =>
         run(expr, inScope, enclosing).fold {
           val (subject, withs) = unwrap(expr)
-          runs(subject, inScope, 0, withs.map(Enclosing.Around(_)) ++ enclosing)
-        }(Seq(_))
+          suppliedArguments(expr).flatMap(runs(_, inScope, 0, enclosing)) ++
+            runs(subject, inScope, 0, withs.map(Enclosing.Around(_)) ++ enclosing)
+        }(run => suppliedArguments(expr).flatMap(runs(_, inScope, 0, enclosing)) :+ run)
       case ParameterReference(_)                   => run(expr, inScope, enclosing).toSeq
       case FunctionLiteral(name, _, body)          => runs(body, inScope - name.value, 0, enclosing)
       case FunctionApplication(_, _)               =>
@@ -285,11 +287,63 @@ object RunWithHoister {
   private def unwrap(
       expr: Sourced[OperatorResolvedExpression]
   ): (Sourced[OperatorResolvedExpression], Seq[Sourced[ValueFQN]]) =
+    peel(expr) match {
+      case Some(layer) =>
+        val (inner, withs) = unwrap(layer.subject)
+        (inner, withs :+ layer.implementation)
+      case None        => (expr, Seq.empty)
+    }
+
+  /** One `with` of a chain: the implementation it names, its subject, and how to write it back around a new subject,
+    * keeping the `with` node or dropping it. A binder's call stays either way.
+    */
+  private case class Layer(
+      implementation: Sourced[ValueFQN],
+      subject: Sourced[OperatorResolvedExpression],
+      rebuild: (Boolean, Sourced[OperatorResolvedExpression]) => Sourced[OperatorResolvedExpression]
+  )
+
+  /** `expr` as one `with`: the node itself — a slot's, or one the binding writer meets unlowered — or the binder's call
+    * the resolver lowered it to, `scripted$with(args…, subject with scripted)`.
+    */
+  private def peel(expr: Sourced[OperatorResolvedExpression]): Option[Layer] =
     expr.value match {
-      case WithBinding(subject, implementation, _) =>
-        val (inner, withs) = unwrap(subject)
-        (inner, withs :+ implementation)
-      case _                                    => (expr, Seq.empty)
+      case WithBinding(subject, implementation, entry) =>
+        Some(Layer(implementation, subject, (keep, inner) => if (keep) expr.as(WithBinding(inner, implementation, entry)) else inner))
+      case FunctionApplication(_, _)                   =>
+        spine(expr) match {
+          case (head @ Sourced(_, _, ValueReference(callee, _)), arguments)
+              if ImplementationParameters.isBinder(callee.value) =>
+            arguments.lastOption.flatMap(last =>
+              last.value match {
+                case WithBinding(subject, implementation, entry)
+                    if ImplementationParameters.binderOf(implementation.value) == callee.value =>
+                  Some(
+                    Layer(
+                      implementation,
+                      subject,
+                      (keep, inner) =>
+                        expr.as(
+                          applyChain(
+                            head,
+                            arguments.init :+ (if (keep) last.as(WithBinding(inner, implementation, entry)) else inner)
+                          )
+                        )
+                    )
+                  )
+                case _ => None
+              }
+            )
+          case _ => None
+        }
+      case _                                           => None
+    }
+
+  /** The arguments a `with` supplies its implementation — those of its binder's call ahead of the subject. */
+  private def suppliedArguments(expr: Sourced[OperatorResolvedExpression]): Seq[Sourced[OperatorResolvedExpression]] =
+    expr.value match {
+      case WithBinding(_, _, _) => Seq.empty
+      case _                    => spine(expr)._2.dropRight(1)
     }
 
   /** The implementations what encloses a run names: a bound callee's slot's, or the `with` around a block. */
@@ -366,19 +420,14 @@ object RunWithHoister {
   ): Sourced[OperatorResolvedExpression] = expr.value match {
     case FunctionLiteral(name, paramType, body) if skip > 0 =>
       expr.as(FunctionLiteral(name, paramType, strip(body, hoisted, skip - 1, shadowed)))
-    case WithBinding(_, _, _)                               =>
-      val (subject, withs) = unwrap(expr)
+    case _ if peel(expr).isDefined                          =>
+      val (subject, _) = unwrap(expr)
       subject.value match {
         case ParameterReference(name) if hoisted.contains(name.value) && !shadowed.contains(name.value) =>
-          val kept = withs.filterNot(named => hoisted(name.value).contains(named.value))
-          if (kept.size == withs.size) expr
-          else kept.foldLeft(subject)((acc, named) => named.as(WithBinding(acc, named)))
+          unlayer(expr, hoisted(name.value))
         case _                                                                                       =>
-          expr.value match {
-            case WithBinding(inner, implementation, entry) =>
-              expr.as(WithBinding(strip(inner, hoisted, 0, shadowed), implementation, entry))
-            case _                                  => expr
-          }
+          val layer = peel(expr).get
+          stripSupplied(layer.rebuild(true, strip(layer.subject, hoisted, 0, shadowed)), hoisted, shadowed)
       }
     case FunctionLiteral(name, paramType, body)             =>
       expr.as(FunctionLiteral(name, paramType, strip(body, hoisted, 0, shadowed + name.value)))
@@ -388,6 +437,29 @@ object RunWithHoister {
       expr.as(ValueReference(name, typeArgs.map(strip(_, hoisted, 0, shadowed))))
     case _                                                  => expr
   }
+
+  /** A run's chain of `with`s with every one naming a `moved` implementation dropped, its binder's call kept. */
+  private def unlayer(
+      expr: Sourced[OperatorResolvedExpression],
+      moved: Set[ValueFQN]
+  ): Sourced[OperatorResolvedExpression] =
+    peel(expr) match {
+      case Some(layer) => layer.rebuild(!moved.contains(layer.implementation.value), unlayer(layer.subject, moved))
+      case None        => expr
+    }
+
+  /** A `with` with the arguments its binder's call supplies stripped, its subject left as it is. */
+  private def stripSupplied(
+      expr: Sourced[OperatorResolvedExpression],
+      hoisted: Map[String, Set[ValueFQN]],
+      shadowed: Set[String]
+  ): Sourced[OperatorResolvedExpression] =
+    expr.value match {
+      case WithBinding(_, _, _) => expr
+      case _                    =>
+        val (head, arguments) = spine(expr)
+        expr.as(applyChain(head, arguments.init.map(strip(_, hoisted, 0, shadowed)) :+ arguments.last))
+    }
 
   private def disagreement(run: Sourced[String], ability: AbilityFQN, carried: Boolean): (Sourced[String], Seq[String]) =
     (

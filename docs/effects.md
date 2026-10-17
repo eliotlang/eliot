@@ -635,7 +635,12 @@ entry's arguments — `pick(1) with mapping(x -> show(x))`, for `def pick[A](a: 
 two places stand for one type. Entries that disagree leave the arguments to type themselves. A keyed hole the match
 nests inside a larger type (`mapping$with[List[Inferred[k]]]` for a `Source[List[A]]`) the checker evaluates as a
 parameter bound to its key's metavariable, so the one evaluator has no hole of its own. Nothing ever runs the binder:
-the environment threading replaces it (§3.4).
+the environment threading replaces it (§3.4). Since D35's step 2 **every** `with` in a body is lowered so, one supplying
+nothing to a binder taking only its subject — `greet with recordingConsole` is `recordingConsole$with(greet with
+recordingConsole)`, for `def recordingConsole$with[Subject$](subject$: Subject$): Subject$`, which takes none of the
+implementation's type parameters, since nothing in the call could decide them — so the threading sees each place an
+implementation is installed; the hoisting reads a `with` through its binder's call (`RunWithHoister.peel`). A `with`
+on a parameter's clause entry is not an install site and is not lowered.
 
 A **row alias** (§2.4) adds no mechanism of its own: a definition naming one as its return type is handed the alias's
 row *entries* by `resolve/…/ValueResolver`, which mints them exactly as `EffectSugarDesugarer` mints entries written
@@ -1884,7 +1889,9 @@ oracle until step 4, where specialisation must restore them.
    eliot-build can release them first, and nothing later waits on a dependent. *Done 2026-10-17*: eliot-test 193 and
    eliot-build 368 pass on eliot v0.11, and the example's jar is byte-identical.
 2. **Every `with` lowered to the `$with` call form**, so the threading sees each install site. The binding write is
-   untouched; jars byte-identical.
+   untouched; jars byte-identical. *Done 2026-10-17*: every named implementation has a binder, the hoisting reads a
+   `with` through it, and the threading erases one supplying nothing where it stands; all 47 example jars
+   byte-identical.
 3. **Evidence threaded beside the written binding**: each entry's hidden argument carries code and environment, built
    at install sites and captured or given as point 3 says, with the threading checking, at every operation, that the
    evidence's implementation is the binding the write chose. A mismatch is a defect in one of the two, found before

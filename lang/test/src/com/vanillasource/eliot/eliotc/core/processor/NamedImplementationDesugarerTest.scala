@@ -16,7 +16,7 @@ class NamedImplementationDesugarerTest extends ProcessorTest(new Tokenizer(), ne
 
   "a named implementation" should "put every clause in its own implementation namespace" in {
     desugar("implement recordingConsole: Console {\n  def printLine(s: String): Unit = u\n  def readLine: X = None\n}")
-      .asserting(_.filter(_._2 == console).map(_._1) shouldBe Seq("printLine", "readLine", "Console"))
+      .asserting(_.filter(_._2 == console).map(_._1) shouldBe Seq("printLine", "readLine", "$with", "Console"))
   }
 
   it should "mint the implementation's marker beside the clauses" in {
@@ -90,9 +90,11 @@ class NamedImplementationDesugarerTest extends ProcessorTest(new Tokenizer(), ne
       .asserting(_.find(_.name.value.name == "Buffer").get.args shouldBe empty)
   }
 
-  "a named implementation without parameters" should "declare neither its parameters nor a binder" in {
-    desugar("implement recordingConsole: Console {\n  def readLine: X = None\n}")
-      .asserting(_.map(_._1).filter(_.startsWith("$")) shouldBe empty)
+  "a named implementation without parameters" should "declare no parameters, and a binder taking only its subject" in {
+    definitions("implement[T] showing: Source[T] {\n  def read: T = t\n}")
+      .asserting(_.filter(f => f.name.value.name.startsWith("$")).map(f =>
+        (f.name.value.name, f.genericParameters.map(_.name.value), f.args.map(_.name.value))
+      ) shouldBe Seq(("$with", Seq("Subject$"), Seq("subject$"))))
   }
 
   private def definitions(source: String) =

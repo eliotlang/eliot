@@ -618,6 +618,21 @@ class ValueResolver
         Expression.mapChildrenM[Id](substituteParameters(bindings))(other)
     }
 
+  /** The resolved `with` `bound` as its implementation's binder applied to `arguments` and then to it. */
+  private def installed(
+      marker: ValueFQN,
+      implementationName: Sourced[String],
+      arguments: Seq[Sourced[Expression]],
+      bound: Expression
+  ): Expression =
+    (arguments :+ implementationName.as(bound))
+      .foldLeft[Sourced[Expression]](
+        implementationName.as(
+          Expression.ValueReference(implementationName.as(ImplementationParameters.binderOf(marker)))
+        )
+      )((target, argument) => argument.as(Expression.FunctionApplication(target, argument)))
+      .value
+
   private def constraintKeys(constraints: Seq[AbilityConstraint[Expression]]): Set[(AbilityFQN, Seq[String])] =
     constraints.map(constraintKey).toSet
 
@@ -647,10 +662,13 @@ class ValueResolver
       // Effects v6 §9.4 step 1: the name is resolved here, to the implementation's marker, and only that marker
       // flows onward — a name carried downstream would ignore import scope and be decided by hash order.
       //
-      // A `with` supplying arguments to an implementation that takes parameters (`greet with scripted(List("Bob"))`) is
-      // lowered here to a call of that implementation's binder declaration around the resolved `with`
-      // (`scripted$with(List("Bob"), greet with scripted)`, [[ImplementationParameters]]): the checker types the
-      // arguments as any call's, and they stand outside the `with`, so they see none of its bindings.
+      // Every `with` in a body is lowered here to a call of the implementation's binder declaration around the resolved
+      // `with`, so the environment threading sees each place an implementation is installed (`docs/effects.md` D35
+      // step 2): `greet with recordingConsole` is `recordingConsole$with(greet with recordingConsole)`. One supplying
+      // arguments (`greet with scripted(List("Bob"))`) passes them ahead of the subject
+      // (`scripted$with(List("Bob"), greet with scripted)`, [[ImplementationParameters]]): the checker types them as any
+      // call's arguments, and they stand outside the `with`, so they see none of its bindings. A `with` on a parameter's
+      // clause entry is not an install site and stays as it is written.
       case WithBinding(subject, implementationName, moduleName, arguments, entry) =>
         for {
           resolvedSubject <- resolveExpression(subject.value, runtime).map(subject.as)
@@ -658,8 +676,10 @@ class ValueResolver
           parameters      <- ImplementationNameResolver.parametersOf(marker)
           bound            = Expression.WithBinding(resolvedSubject, implementationName.as(marker), entry)
           lowered         <- parameters match {
-            case ImplementationNameResolver.Parameters.None if arguments.isEmpty =>
+            case ImplementationNameResolver.Parameters.None if arguments.isEmpty && !runtime =>
               bound.pure[ScopedIO]
+            case ImplementationNameResolver.Parameters.None if arguments.isEmpty             =>
+              installed(marker, implementationName, Seq.empty, bound).pure[ScopedIO]
             case ImplementationNameResolver.Parameters.None                      =>
               compilerAbort[Expression](
                 arguments.head.as(s"The implementation '${implementationName.value}' takes no parameters.")
@@ -680,14 +700,9 @@ class ValueResolver
                 Seq(s"Bind it with `with ${implementationName.value}(…)` in the body, where its arguments are computed.")
               ).liftToScoped
             case ImplementationNameResolver.Parameters.Present                    =>
-              arguments.traverse(argument => resolveExpression(argument.value, runtime).map(argument.as)).map {
-                resolvedArguments =>
-                  (resolvedArguments :+ implementationName.as(bound)).foldLeft[Sourced[Expression]](
-                    implementationName.as(
-                      Expression.ValueReference(implementationName.as(ImplementationParameters.binderOf(marker)))
-                    )
-                  )((target, argument) => argument.as(Expression.FunctionApplication(target, argument))).value
-              }
+              arguments
+                .traverse(argument => resolveExpression(argument.value, runtime).map(argument.as))
+                .map(installed(marker, implementationName, _, bound))
           }
         } yield lowered
       case NamedValueReference(nameSrc, None, typeArgExprs)          =>

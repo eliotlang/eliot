@@ -26,14 +26,20 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
   * looked up, never referenced, so it is never monomorphized for code. Its return type carries the clause row, so it
   * declares the same phantom binders as every clause and as the marker, and accepts the same type arguments.
   *
-  * It has a second declaration, its **binder** ([[binder]]): what a `with` supplying arguments is lowered to, so the checker types the arguments against the parameters like any call's.
+  * Every named implementation has a second declaration, its **binder** ([[binder]]): what every `with` in a body is
+  * lowered to, so the environment threading sees each place an implementation is installed (`docs/effects.md` D35
+  * step 2). One supplying arguments has the checker type them against the parameters like any call's.
   *
   * {{{
   * implement scripted(lines: List[String]): Terminal { … }
   *   ⟶ def scripted$with[Subject$](lines: List[String], subject$: Subject$): Subject$      -- body-less
+  * implement recordingConsole: Console { … }
+  *   ⟶ def recordingConsole$with[Subject$](subject$: Subject$): Subject$                  -- body-less
   *
   * greet with scripted(List("Bob"))
   *   ⟶ scripted$with(List("Bob"), greet with scripted)
+  * greet with recordingConsole
+  *   ⟶ recordingConsole$with(greet with recordingConsole)
   * }}}
   *
   * The arguments stand outside the `with`, so they are computed where the `with` is written and see none of its
@@ -73,30 +79,30 @@ object ImplementationParameters {
   private val subjectType: String = "Subject$"
   private val subject: String     = "subject$"
 
-  /** The binder declaration ([[binder]]) of a named implementation with `parameters`, or [[None]] when it has none.
-    * Its type parameters are the implementation's own and then the subject's; it declares no row, so a reference to it
-    * is written nothing and the checker infers every type argument from the call.
+  /** The binder declaration of a named implementation taking `parameters`, which may be none. Its type parameters are
+    * the implementation's own and then the subject's; it declares no row, so a reference to it is written nothing and
+    * the checker infers every type argument from the call. One taking no parameters has only the subject's: nothing
+    * in the call could decide the implementation's, which its pattern takes at each entry it runs for.
     */
   def binder(
       anchor: Sourced[?],
       qualifier: Qualifier.AbilityImplementation,
       genericParameters: Seq[GenericParameter],
       parameters: Seq[ArgumentDefinition]
-  ): Option[FunctionDefinition] =
-    Option.when(parameters.nonEmpty) {
-      val subjectTypeReference = anchor.as(Expression.FunctionApplication(None, anchor.as(subjectType), None, Seq.empty))
-      FunctionDefinition(
-        anchor.as(QualifiedName(binderName, qualifier)),
-        genericParameters :+ GenericParameter(
-          anchor.as(subjectType),
-          anchor.as(Expression.FunctionApplication(None, anchor.as("Type"), None, Seq.empty)),
-          Seq.empty
-        ),
-        parameters :+ ArgumentDefinition(anchor.as(subject), subjectTypeReference),
-        subjectTypeReference,
-        None
-      )
-    }
+  ): FunctionDefinition = {
+    val subjectTypeReference = anchor.as(Expression.FunctionApplication(None, anchor.as(subjectType), None, Seq.empty))
+    FunctionDefinition(
+      anchor.as(QualifiedName(binderName, qualifier)),
+      (if (parameters.isEmpty) Seq.empty else genericParameters) :+ GenericParameter(
+        anchor.as(subjectType),
+        anchor.as(Expression.FunctionApplication(None, anchor.as("Type"), None, Seq.empty)),
+        Seq.empty
+      ),
+      parameters :+ ArgumentDefinition(anchor.as(subject), subjectTypeReference),
+      subjectTypeReference,
+      None
+    )
+  }
 
   /** The binder declaration of the implementation `member` belongs to — any value in its namespace. */
   def binderOf(member: ValueFQN): ValueFQN =

@@ -44,17 +44,15 @@ object ImplementationNameResolver {
         }
     }
 
-  /** What the implementation `marker` names takes: nothing, or parameters, read off its binder declaration
-    * ([[ImplementationParameters.binder]]), which only a named implementation with parameters has.
+  /** What the implementation `marker` names takes: nothing, or parameters, read off its parameters declaration
+    * ([[ImplementationParameters.declaration]]), which only a named implementation with parameters has.
     */
   def parametersOf(marker: ValueFQN): ScopedIO[Parameters] =
     for {
-      platform <- getPlatform
-      binder    = ImplementationParameters.binderOf(marker)
-      names    <- getFactOrAbort(UnifiedModuleNames.Key(marker.moduleName, platform)).liftToScoped
-      result   <- if (!names.names.contains(binder.name)) Parameters.None.pure[ScopedIO]
-                  else Parameters.Present.pure[ScopedIO]
-    } yield result
+      platform    <- getPlatform
+      declaration  = ImplementationParameters.of(marker)
+      names       <- getFactOrAbort(UnifiedModuleNames.Key(marker.moduleName, platform)).liftToScoped
+    } yield if (names.names.contains(declaration.name)) Parameters.Present else Parameters.None
 
   /** What an implementation takes, as a `with` must supply it. */
   enum Parameters {
