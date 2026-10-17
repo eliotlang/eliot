@@ -554,6 +554,14 @@ every citation of a condensed record (**D20**/**D21** rules and steps, **D20c op
 **There is no carrier, no monad, no `Id`, and nothing to infer** — if you are reading code or a comment that mentions
 one, it is history.
 
+**D36** (decided 2026-10-17, **not built**; `docs/effects.md` §11) will replace D35's mechanism: an effect desugars
+before monomorphization to an **ability over a handle type**, a `uses` entry to a handle type parameter plus a handle
+value parameter, a named implementation to a `data` (its parameters as fields) and that ability's instance, `with` to
+a handle in scope for its subject, and `*` to closure capture. The one decision — which handle answers a use — is the
+checker's: **the nearest handle in lexical scope whose entry answers it after evaluation** (36 eliot-build
+declarations carry two or more `Throw` entries, so a choice by effect name alone cannot work). A slot that supplies an
+entry names its implementation in its signature. Until D36 is built, what follows describes the tree.
+
 **D35** (decided 2026-10-16, built 2026-10-17; it reverses D33, and D34 is withdrawn) is what this cornerstone
 describes: an implementation is **evidence passed after monomorphization**, and static code is a **specialisation
 pass** (`monomorphize/specialise/`) that clones by constant evidence — so a jar is what the binding in the key used to

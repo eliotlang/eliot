@@ -9,7 +9,10 @@ entry (2026-10-14) — a `uses` clause listing effects only (D28) and an ability
 `with` (D29, 2026-10-15), entries compared as spelled (D30), and **D35** (decided 2026-10-16, built 2026-10-17;
 it reverses D33): an implementation's code and environment are passed together as **evidence** after
 monomorphization, and static code is a **specialisation pass**, so a binding is decided where the code runs and never
-written into it beforehand.
+written into it beforehand. **D36** (decided 2026-10-17, not built) replaces that mechanism: an effect desugars to an
+ability over a handle type, a `uses` entry to a handle parameter, a named implementation to a `data` and its instance,
+and the checker gives each use the nearest handle in lexical scope whose entry answers it (§11). Until it is built,
+this paragraph and Part I describe D35.
 An effect is an ability declared with the `effect` keyword. A definition's `uses` clause says what its caller hands
 it. An implementation is **code** (its operations) and an **environment** (an escape frame, a cell, its own
 parameters), one value — the evidence — which is installed by a `with`, received from a caller or given to a block by
@@ -88,20 +91,25 @@ lives now.
    then the lowering, the evidence, the specialisation pass, and the deletions — steps 1–5 built 2026-10-17, closing
    §8 items 44, 45, 48, 51, 56 and 57 and making item 60 loud, and step 6 (Part I and `CLAUDE.md` rewritten for
    evidence) and step 5a (a block copy per evidence, closing §8 item 62) the same day. D35 is built.
+22. **D36** (decided 2026-10-17, §11): an effect desugars to an ability over a handle, and a use takes the nearest
+   handle in lexical scope whose entry answers it, decided by the checker. Its order is in its record, starting with a
+   hand-desugared spike; the spelling of a slot's supplied implementation is settled before its step 2, and six
+   readings it needs (D30, three §12 entries, §3.8, D35's `$with` lowering) await Robert's sign-off. Built, it closes
+   §8 items 59, 60 and 61.
 
 D20a, D20c and D3 stay open until decided; none blocks the steps above.
 
 **Open, in order of severity.**
 
 - **Silent:** none known.
-- **Latent:** item 59 is a decision.
-- **Loud, at compile time:** §8 items 60 (now refused; the rule it needs is still a decision), 61 (reproduced; needs
-  a decision); a `catch` over a
+- **Latent:** item 59 is a decision, which D36 makes (§3.8 restated).
+- **Loud, at compile time:** §8 items 60 and 61, both closed by D36 when built, and `raise(none)` refused under a
+  single `Throw[Option[Int]]` (D36's finding); a `catch` over a
   parameter spells its arguments (§7 item 2); a function-typed code parameter's own entries are never supplied (§7
   item 1).
-- **Decided, not built:** none.
+- **Decided, not built:** D36 (§11), with six readings awaiting sign-off and a spelling to settle.
 - **Undecided:** naming a set of effects in a clause (D20a), storing an effectful computation (D20c), `~`/`&` in user
-  space (D3), the rules items 60 and 61 need. D31 and D32 are withdrawn (§11).
+  space (D3). D31 and D32 are withdrawn (§11).
 - **Outside this document:** `v0.9` is the first release carrying `uses` (`v0.8` is tagged before it, and its release
   workflow failed, so it publishes no assets); `v0.15` (D35 steps 1–6) is the latest (`v0.13` failed its release
   workflow the same way — the LSP did not compile clean — and publishes nothing); eliot-test `v0.5`, eliot-build and the docs site's
@@ -1233,9 +1241,9 @@ run; *read* means found in the code, not yet reproduced — establishing it is t
 
 | # | defect | severity | evidence |
 | --- | --- | --- | --- |
-| 59 | §3.8 and CLAUDE.md say *"the checker holds no effect rule … no effect diagnostic"*, while `monomorphize/check` holds `AbilityResolver.isEffect` (since D35 step 5 only to leave an effect's operation to the specialisation pass; `reportUnboundEffect`, `reportUnmatchedBinding` and the named-implementation dispatch are gone), `DeclaredEntries.forwarded` (recorded by `AbilityResolver.record`, applied in `PostDrainQuoter`), `PostDrainQuoter.reachesFrames`/`threaded` and `TypeStackLoop.guardRead`; §3.4 itself names `PostDrainQuoter.threaded`. A decision: restate §3.8, or move them | decision | read |
-| 60 | a reference whose entry the call does not spell answers the nearest binding of its ability before the checker has typed it, while its frame is chosen after monomorphization by its entry at ground arguments: in `def guarded(body uses Throw[String]: Unit) uses Throw[Int]: String`, an argument `guarded(raise(1))` is written from the slot's `Throw[String]` binding, so rule 4's closed cut sees nothing, and then runs on the caller's `Throw[Int]` frame — the program compiles and `main`'s handler catches `1` past `guarded` entirely. Writing the frame from the binding instead (D32) would hand an `Int` to a `Throw[String]` handler: the root is that `raise`'s `E` is decided by the checker while the binding it answers is decided before it. Closing it needs a decision — the answering binding's spelled arguments written as the reference's undetermined ones (a determination from a declaration, which makes a generic `raise` in a body with two `Throw` entries take the nearest and be a type error for the other), or such a reference refused where two entries of its ability are in scope. Since D35 step 5 the program is refused, *"Nothing binds an implementation of the effect 'Throw' here"* at `raise(1)`: a closed slot's block sees only what its callee's runs give, which is `Throw[String]` | loud (was silent) | reproduced (2026-10-15, building D30; loud 2026-10-17) |
-| 61 | an anonymous implementation's clause cannot repeat a member's entry over the ability's own type parameters: `ability Describe[T] { def describe(t: T) uses Writer[List[T]]: String }` implemented for `Box` must spell `Writer[List[Box]]` (its `T` is out of scope), and entries compare as spelled (`DeclaredEntries.ofMember`/`forwarded`, D30), so dispatch never hands the clause the call's binding. Since item 50's rule it is refused at the clause (*"… performs the effect 'Writer' in 'describe', at other arguments than the ability's 'describe' declares it"*), before it was *"Nothing binds an implementation of the effect 'Writer' here"* at the operation. Whether a clause's entry is compared with its member's under the implementation's pattern (`T := Box`, read off the declarations) is a reading of D30 to decide | loud | reproduced (2026-10-16, closing item 50) |
+| 59 | §3.8 and CLAUDE.md say *"the checker holds no effect rule … no effect diagnostic"*, while `monomorphize/check` holds `AbilityResolver.isEffect` (since D35 step 5 only to leave an effect's operation to the specialisation pass; `reportUnboundEffect`, `reportUnmatchedBinding` and the named-implementation dispatch are gone), `DeclaredEntries.forwarded` (recorded by `AbilityResolver.record`, applied in `PostDrainQuoter`), `PostDrainQuoter.reachesFrames`/`threaded` and `TypeStackLoop.guardRead`; §3.4 itself names `PostDrainQuoter.threaded`. A decision: restate §3.8, or move them D36 decides it: §3.8 is restated, the checker holding one effect rule, the hole. | decision | read |
+| 60 | a reference whose entry the call does not spell answers the nearest binding of its ability before the checker has typed it, while its frame is chosen after monomorphization by its entry at ground arguments: in `def guarded(body uses Throw[String]: Unit) uses Throw[Int]: String`, an argument `guarded(raise(1))` is written from the slot's `Throw[String]` binding, so rule 4's closed cut sees nothing, and then runs on the caller's `Throw[Int]` frame — the program compiles and `main`'s handler catches `1` past `guarded` entirely. Writing the frame from the binding instead (D32) would hand an `Int` to a `Throw[String]` handler: the root is that `raise`'s `E` is decided by the checker while the binding it answers is decided before it. Closing it needs a decision — the answering binding's spelled arguments written as the reference's undetermined ones (a determination from a declaration, which makes a generic `raise` in a body with two `Throw` entries take the nearest and be a type error for the other), or such a reference refused where two entries of its ability are in scope. Since D35 step 5 the program is refused, *"Nothing binds an implementation of the effect 'Throw' here"* at `raise(1)`: a closed slot's block sees only what its callee's runs give, which is `Throw[String]` D36 closes it when built: the use takes the nearest handle whose entry answers it after evaluation, so the open slot reaches the caller's `Throw[Int]` and the closed one names what is in scope. | loud (was silent) | reproduced (2026-10-15, building D30; loud 2026-10-17) |
+| 61 | an anonymous implementation's clause cannot repeat a member's entry over the ability's own type parameters: `ability Describe[T] { def describe(t: T) uses Writer[List[T]]: String }` implemented for `Box` must spell `Writer[List[Box]]` (its `T` is out of scope), and entries compare as spelled (`DeclaredEntries.ofMember`/`forwarded`, D30), so dispatch never hands the clause the call's binding. Since item 50's rule it is refused at the clause (*"… performs the effect 'Writer' in 'describe', at other arguments than the ability's 'describe' declares it"*), before it was *"Nothing binds an implementation of the effect 'Writer' here"* at the operation. Whether a clause's entry is compared with its member's under the implementation's pattern (`T := Box`, read off the declarations) is a reading of D30 to decide D36 closes it when built: entries are compared after evaluation, so `Writer[List[T]]` at `T := Box` answers `Writer[List[Box]]`. | loud | reproduced (2026-10-16, closing item 50) |
 
 **Cleanup found by the same review.** Not defects — dead code and text that no longer describes the tree. Each was
 checked with a repository-wide grep, tests included.
@@ -1797,6 +1805,8 @@ different *implementation* needs its own definition; different *data* per case i
 
 #### D35 — an implementation is evidence passed after monomorphization (decided 2026-10-16, built 2026-10-17)
 
+*Its mechanism is reversed by D36 (decided 2026-10-17, not built); it is the shipped design until D36 is built.*
+
 **The question** (Robert, 2026-10-16, after D34): would a free-monad system work, be simpler and be right for Eliot —
 rows back in the type and monadic, effects composing as free-monad placeholders rather than transformers, the
 monomorphizer producing free-monadic pure code, and a later step re-compiling the placeholders against static code, so
@@ -2036,6 +2046,185 @@ oracle until step 4, where specialisation must restore them.
    step 5a.
 
 
+#### D36 — an effect desugars to an ability over a handle, and a handle is a value in lexical scope (decided 2026-10-17, not built)
+
+**The question** (Robert, 2026-10-17, rejecting the rules proposed for §8 item 60 — "this isn't a valid path to
+effects at all"): how can the effect system be simple, run before monomorphization, and desugar into ordinary
+constructors and abilities? An effect should differ from an ability in exactly two ways: it is **inherited
+automatically** along a call chain, and it is **supplied explicitly**, never found by a search.
+
+**The finding.** §8 items 60 and 61, §7 item 2 and the refusal below share one root: which implementation answers a
+use is decided before monomorphization by comparing spellings (D30), while the type arguments that decide it are
+expressions only the checker evaluates. Two parties decide one thing. Reproduced on v0.16:
+
+```eliot
+def lookup(n: Int) uses Throw[Option[Int]]: String = if(n == 0) raise(none) else "found"
+// refused, "Nothing binds an implementation of the effect 'Throw' here", with ONE Throw in scope;
+// raise[Option[Int], String](none) compiles
+
+def both(n: Int) uses Throw[String], Throw[Int]: String = if(n == 0) raise(1) else if(n == 1) raise("one") else "fine"
+def main uses Console: Unit = printLine((both(0) catch (n -> "int " ++ show(n))) catch (s -> "string " ++ s))
+// refused the same way; compiles with catch[Int, String] and catch[String, String] spelled
+```
+
+Two facts bound the fix. **eliot-build has 36 declarations with two or more `Throw` entries** (`ShellGit.fetch uses
+Process, Throw[IoError], Throw[GitError]`), so an answer chosen by the effect's *name* — Koka's scoped labels, the
+innermost `Throw` wins — is out: `raise(GitError(…))` must reach the `Throw[GitError]` because of its argument's type.
+And a type is an expression, so that choice can be made only after evaluation, which is the checker. Hence the split:
+**the desugaring before monomorphization does all the plumbing and decides nothing; the one decision — which handle
+answers a use — is the checker's**, made as ability resolution makes its choice, after evaluation.
+
+**Decided** (Robert, 2026-10-17: "Basically effects desugar to abilities with an additional typed parameter").
+
+1. **An effect is an ability over a handle type.** The effect gains one type parameter, its handle's type, and every
+   operation takes the handle first:
+
+   ```eliot
+   effect Console { def printLine(line: String): Unit }
+   // ⤳ ability Console[H] { def printLine(handle: H, line: String): Unit }
+   ```
+
+2. **A named implementation is a data type and an ordinary instance of that ability.** Its parameters are the data's
+   fields (D25); a parameterless one is a field-less `data`:
+
+   ```eliot
+   implement scripted(answer: String): Console { def printLine(line: String): Unit = … answer … }
+   // ⤳ data Scripted(answer: String)
+   //   implement Console[Scripted] { def printLine(handle: Scripted, line: String): Unit = … handle.answer … }
+   ```
+
+   Each implementation has a type of its own, so its instance is unique by construction and colocated with that type:
+   coherence holds with nothing to check. The **code** is chosen statically by the handle's type, so a polymorphic
+   operation (`raise[A]`, `foldLines[B]`) is an ability method as today and no record of operations exists; only the
+   **environment** — the fields — is a value. An implementation's clause entries beyond its member's are fields too,
+   handles filled where its `with` stands (D35 point 2's "bound where it is installed"); an entry its member declares
+   is a handle parameter of the instance method, filled at each operation's call (what `DeclaredEntries.forwarded`
+   reads today).
+3. **A `uses` entry is a handle parameter** — one type parameter and one value parameter per entry:
+
+   ```eliot
+   def greet(name: String) uses Console: Unit = printLine("hi " ++ name)
+   // ⤳ def greet[C ~ Console](console: C, name: String): Unit = printLine(console, "hi " ++ name)
+   ```
+
+   Monomorphization clones by the handle's type, which is D35's specialisation by constant evidence done by the
+   ordinary key.
+4. **A use takes the nearest handle in lexical scope whose entry answers it — the one new rule, and where *inherited
+   automatically* lives.** Every operation, and every call of a definition with a clause, gets one handle argument per
+   entry, which the desugar leaves as a **hole**; the checker fills it. The handles in scope are, innermost first: a
+   block's slot parameters, a `with`'s handle, the definition's own handle parameters, and what a block captured from
+   where it was written. A handle **answers** an entry when the two entries are definitionally equal after evaluation.
+   No answering handle is an error naming what is in scope; two at the same distance — two entries of one clause that
+   meet at an instantiation — are an error naming both. A candidate whose entry still holds an unsolved meta after the
+   drain (`catch`'s `E` when nothing else decided it) answers only if every hole it could answer would solve the meta
+   the same way, and then that solves it; otherwise it is the error asking for the arguments to be spelled (§7 item
+   2), so no outcome depends on the order holes are visited. What it gives on the cases above:
+   - `fetch`'s `raise(GitError(…))` takes its `Throw[GitError]` handle; `raise(none)` under `Throw[Option[Int]]` takes
+     the only `Throw` and solves `A := Int`;
+   - `raise(1) catch (n -> …)` inside a definition that itself declares `Throw[Int]` takes `catch`'s slot handle,
+     nearer than the definition's own, and solves `E := Int`, so a `catch` catches what is raised inside it;
+   - a `catch[IoError, …]` around `raise(GitError(…))` does not answer, so the raise reaches the outer
+     `Throw[GitError]`: a `catch` catches only its own type;
+   - item 60's `guarded(raise(1))` on an open slot reaches the caller's `Throw[Int]`, which the block captured, past
+     the slot's `Throw[String]`; on a closed slot it is "no handle here answers `Throw[Int]`; in scope: `Throw[String]`,
+     the slot of `guarded`";
+   - item 61's `Writer[List[T]]` at `T := Box` answers `Writer[List[Box]]`; `Throw[Message]` under
+     `type Message = String` answers `Throw[String]`;
+   - `both(0)` in a `catch` with nothing spelled offers the slot's `Throw[?E]` to two holes that would solve it
+     differently, so it is the spelling error, with a message saying so rather than today's "Nothing binds".
+5. **`with` binds a handle — *supplied explicitly*.** `greet("Bob") with scripted("x")` makes `Scripted("x")` a handle
+   in scope for its subject, and nothing else. D23 stays: a `with` whose handle no hole in its subject takes is an
+   error, now found by the checker.
+6. **A code parameter's listed entries are the block's parameters.** What a block uses through `*` it captures from
+   where it was written, as a closure captures any value — D22's invisibility, as plain capture; a closed slot
+   (rule 4) is a block that captures no handle. An entry the run does not supply is filled by the hole rule at the run,
+   from the callee's own scope (`if`'s `value uses *, Abort` under its own `uses Abort`). An entry the callee
+   **supplies names its implementation in the callee's signature**, because the block's parameter type must be known
+   where the block is checked: `runThrow`'s slot names `escaping`, declared abstract in the base beside an abstract
+   `ThrowFrame[E]` (today it is declared only in the jvm layer and the compiler overlay). Runs of one slot therefore
+   share one handle type, and a run handing it another is an ordinary type error at that run.
+7. **Rules 2 and 3 are a second-class rule on handles**: a handle, or a closure capturing one, stands only where code
+   may — a run, a slot, a `with`'s subject — never in a field, a result or a value lambda. A handle's own fields may
+   hold handles (point 2), since the holder is itself second-class. Checked before monomorphization by the walk, as
+   today.
+8. **The entry point** passes the `standard…` implementations' handles to `main`, one per entry (D26, generated).
+9. **Control effects are the same.** A frame is a handle's field — `escapeInternal((frame: ThrowFrame[E]) ->
+   obj(Escaping(frame)), …)` — and a cell is `holding`'s; the three primitives stay platform-private. The compile track
+   runs handles as values too, so its frames need no threading of their own, and a guarded signature's `raise` takes
+   the handle `runThrow`'s run gives, as any run does.
+
+**The scope check splits.** Before monomorphization, by effect name: "performs the effect 'X' but does not declare it"
+when no handle of `X` is in scope at all, and "declares … but does not perform it" when no use names `X`. Exactly, by
+entry, in the checker: the hole errors of point 4, and a handle parameter no hole takes. Still one verifier (D7): the
+walk's resolution order is deleted, not duplicated.
+
+**It reverses** — confirmed by Robert, 2026-10-17 ("I accept"): D35's mechanism — evidence made after
+monomorphization, the specialisation pass, the threading — since evidence is now an ordinary value before it and
+specialisation is the key's; the choice among handles made in the checker, by type; a slot naming the implementation
+it supplies, and with it D35 step 5a (one handle type per slot; no slot in the corpus has two variants).
+**To sign off** — readings this record needs that the conversation did not name:
+
+- **D30**, entries compared as spelled: replaced by comparison after evaluation, in the checker. Ride versus supply of
+  a slot entry is no longer a comparison either: an entry is supplied exactly when the slot names an implementation
+  for it.
+- **§12, "a handler as a marker type in the type language"** closed, among others, *a marker type per handler* and *a
+  binder that occurs in types and is unified*. Point 2's data type is the first and point 4's handle type parameter the
+  second. What that entry guarded against — two handlers meeting as a type mismatch, one environment per stored
+  computation, a post-mono lowering pass with `handler`/`resume` — none comes back, but the entry needs restating.
+- **§12, "carrier inference", and §5 rule 3's** *"a binding is filled by `with`, declaration, slot or default, never
+  joined"*: a hole is filled by lexical lookup by type, with no meta of its own, no join and no lattice, and a meta in
+  a candidate's entry is solved only when every hole agrees (point 4). The reading: not inference of a binding.
+- **§12, "a runtime handler stack searched by type"**: the search is the checker's, over lexical handles, at compile
+  time; nothing searches at run time and erasure is kept.
+- **§3.8 and §8 item 59**: the checker holds exactly one effect rule, the hole, and §3.8 is restated rather than the
+  code moved.
+- **D35's settled point** that every `with` is lowered to the `$with` binder call: the binder goes.
+
+**It keeps** rules 1–6, D22 (as capture), D23, D24, D25 (as fields), D26, D28, D29, the three primitives and their
+frames, `CarrierKindChecker`, and the surface: no program in the corpus changes except a discharger's slot naming its
+implementation.
+
+**It deletes**, when built: `row/BindingWriter`'s resolution order and write (keeping its second-class check and the
+thunk-and-apply), the `Implementation[A]` mark (§9), `Default` as an effect binding, the `$with`/`$parameters` binders
+(`ast/fact/ImplementationParameters`) and `NamedImplementationArguments`, `monomorphize/specialise/`
+(`SpecialisationProcessor`, `EvidenceSpecialisation`, `EffectBindings`), `channel/EnvironmentThreading`,
+`channel/EffectDeclarations`, `MonomorphicEffects` with its variants, `channel/SuppliedRowArgumentsProcessor`,
+`DeclaredEntries.forwarded` and `PostDrainQuoter`'s `threaded`/`reachesFrames`/`forwarded`, and the effect half of
+`AbilityResolver`. It closes §8 items 59, 60 and 61, and the `raise(none)` refusal above.
+
+**What it costs.**
+
+- **A parameter per entry**, where D35 passes one only for control entries: an interpretation handle is a field-less
+  constant for every `standard…` implementation, so the backend must **erase a field-less handle** — no parameter, no
+  argument — to keep today's code, on the JVM for jar parity and on AVR, where a parameter is a register.
+- **The hole rule**, new code in the checker; its meta case (point 4) is the riskiest part.
+- **Naming supplied implementations.** About 25 slots in the corpus list entries (a single-line count, so a lower
+  bound); only the supplying ones change: the platform dischargers (`runThrow`, `runAbort`, `runStateToPair`,
+  `runWriterToPair`, `provide`), eliot-test's `mocked`, eliot-build's `against` and the example's `transcriptOf`.
+
+**To settle before step 2:** the spelling of a slot's supplied implementation — `body uses *, Throw[E] by escaping: A`,
+or the implementation in place of the entry, `body uses *, escaping[E]: A`. A third, `Throw[E] with escaping`, would
+reverse D35 step 5's refusal of `with` on a parameter.
+
+**Order.** Each step leaves eliot-test and eliot-build green and every example behaving the same; jars are compared at
+every step and each difference explained.
+
+1. **Spike, before any commit.** Handles are ordinary Eliot already — data, abilities, parameters, closures — so a slice
+   can be desugared **by hand** and compiled on today's compiler: multi-`Throw` code shaped like `fetch`, a `catch`
+   inside a definition declaring the same `Throw`, `mocked`'s shape, and a guarded return signature. It answers
+   whether the checker types a block whose parameter is a handle, whether monomorphization by handle type reproduces
+   the specialisation pass's clones, the jar size before erasure, and the guarded signature's compile-track run. The
+   hole rule cannot be spiked by hand, since the hand form passes every handle explicitly; its cases are listed from
+   the corpus instead.
+2. **The slot names its supplied implementation**: parsed, checked against what the callee's runs give today
+   (`MonomorphicEffects.Slot.variants`; a disagreement is an error), and written in the dischargers and the
+   dependents' three definitions. Under D35 the name is redundant and checked, so this step ships on its own.
+3. **The hole rule as a shadow**, if it can run beside the current desugar: the checker resolves each use's handle and
+   compares it with the evidence the specialisation pass dispatches from, D35 step 3's method.
+4. **The switch**: the desugar emits handle parameters, a `data` per named implementation, the instances and the
+   holes; the backend erases field-less handles; the specialisation pass and the threading stop running.
+5. **The deletions**, Part I, §12's restated entries and the cornerstone in `CLAUDE.md`; then a release.
+
 **Awaiting sign-off:** the four choices made in the code while building option 5 (§3.4, "Decided in the code"). A
 fifth, an anonymous implementation's parameters as part of its pattern key, lapsed with D25's step 5.
 
@@ -2195,7 +2384,8 @@ Numbers are kept so citations resolve; the record of each is in git history (§1
   obligation, a post-drain mode resolver. Of 15 fix commits in the v2 window, the four highest-impact were
   one failure: a carrier metavariable captured by first-contact unification. Under v6 the class is still
   prohibited in its restated form (§5 rule 3): a binding is filled by `with`, declaration, slot or default, never
-  joined.
+  joined. *D36's hole — the nearest lexical handle whose entry answers, by type — is read as not inference of a
+  binding; to sign off.*
 - **A second, post-monomorphization effect verifier.** Retired 2026-09-10 by measurement (D7): what a
   monomorphic body can still say about effects is strictly less than what the declaration walk already said, because
   an operation call is by then a call to an implementation method, which declares no row. (Not about the
@@ -2218,7 +2408,9 @@ Numbers are kept so citations resolve; the record of each is in git history (§1
 - **A handler as a marker *type* in the type language** — a marker type per handler, a binder that occurs in
   types and is unified, a "two handlers meeting is a mismatch" rule, one environment per stored computation,
   a handler result function, and a post-mono lowering pass with `handler`/`returning`/`finish`/`resume`/
-  `return`. What is closed is each of those. What is **not** closed is a *phantom* binder per clause entry as the
+  `return`. What is closed is each of those. *D36 (§11) asks to restate this entry: its data type per
+  implementation is a marker type per handler, and its handle type parameter a binder occurring in a parameter type —
+  to sign off.* What is **not** closed is a *phantom* binder per clause entry as the
   mono-key component (§3.1): it occurs in no parameter or return type of any value, so nothing unifies it. Its
   declared type `Implementation[A]` (§9) is erased at `row`, before the checker sees it.
 - **Transitive `with` / summing abilities over a monomorphized sub-graph.** Dynamic scoping resolved at
@@ -2234,6 +2426,7 @@ Numbers are kept so citations resolve; the record of each is in git history (§1
   handling the default. Since option 5 even the primitives search nothing on the runtime track: a frame reaches a
   definition only as a value passed to it. The one choice left — the innermost frame of an entry within one woven
   body (§3.4) — is lexical, and is only ever over an effect the slot lists, which is the callee's to handle (D22).
+  *D36's search is the checker's, over lexical handles, at compile time — read as not this entry; to sign off.*
 - **"No call site is ever dynamically nested inside itself"** (proposed 2026-10-11 to give each frame a compile-time
   identity). Refuted 2026-10-12: a higher-order argument nests a site inside itself with no cycle in the reference
   graph — `catch`'s one `runThrow` installs two live `Throw` frames when a block run under it calls `catch` again. No
