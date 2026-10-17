@@ -54,10 +54,14 @@ import scala.collection.mutable
   */
 object EvidenceSpecialisation {
 
-  /** The specialised body, and the value's effects with each slot's [[MonomorphicEffects.Slot.offered]] read off the runs
-    * of its parameter in that body.
+  /** The specialised body, the value's effects with each slot's [[MonomorphicEffects.Slot.variants]] read off the runs of
+    * its parameter in that body, and its signature with one block per variant (`docs/effects.md` D35 step 5a).
     */
-  case class Specialised(body: Option[Sourced[MonomorphicExpression.Expression]], effects: MonomorphicEffects)
+  case class Specialised(
+      body: Option[Sourced[MonomorphicExpression.Expression]],
+      effects: MonomorphicEffects,
+      signature: GroundValue
+  )
 
   /** The runtime track's specialisation of `checked` at `typeArguments`, whose effect bindings the checker left out. */
   def specialise(checked: CheckedValue, typeArguments: Seq[GroundValue]): CompilerIO[Specialised] =
@@ -73,7 +77,7 @@ object EvidenceSpecialisation {
     */
   def specialiseBody(platform: Platform, value: Specialisation, guarded: Boolean): CompilerIO[Specialised] =
     value.body match {
-      case None       => Specialised(None, value.effects).pure[CompilerIO]
+      case None       => Specialised(None, value.effects, value.signature).pure[CompilerIO]
       case Some(body) =>
         val specialiser = new Specialiser(platform, value.effects.slots)
         val initial     =
@@ -85,7 +89,11 @@ object EvidenceSpecialisation {
         for {
           walked <- specialiser.peel(body.map(MonomorphicExpression(value.signature, _)), 0, Scope(initial, Map.empty))
           slots  <- specialiser.slotsOffered
-        } yield Specialised(Some(walked.map(_.expression)), value.effects.copy(slots = slots))
+        } yield Specialised(
+          Some(walked.map(_.expression)),
+          value.effects.copy(slots = slots),
+          withCopies(value.signature, slots.map(slot => slot.parameterIndex -> slot.copies))
+        )
     }
 
   /** The lexical scope of the walk: the evidence in scope, nearest first, and this value's own code parameters by name,
@@ -111,7 +119,7 @@ object EvidenceSpecialisation {
         getFactOrAbort(CompilerMonomorphicValue.Key(vfqn, typeArguments)).map(Specialisation.of)
     }
 
-  /** A value's specialisation with its slots' [[MonomorphicEffects.Slot.offered]]: the pass's own output. */
+  /** A value's specialisation with its slots' [[MonomorphicEffects.Slot.variants]]: the pass's own output. */
   private def specialisedAt(platform: Platform)(vfqn: ValueFQN, typeArguments: Seq[GroundValue]): CompilerIO[MonomorphicEffects] =
     platform match {
       case Platform.Runtime  => getFactOrAbort(MonomorphicValue.Key(vfqn, typeArguments)).map(_.effects)
@@ -144,9 +152,15 @@ object EvidenceSpecialisation {
           val inside =
             if (slots.exists(_.parameterIndex == index)) scope.copy(runnable = scope.runnable.updated(name.value, index))
             else scope.shadow(name.value)
-          peel(body, index + 1, inside).map(walked =>
-            node.as(node.value.copy(expression = MonomorphicExpression.FunctionLiteral(name, parameterType, walked)))
-          )
+          peel(body, index + 1, inside).map { walked =>
+            // Variant 0's block is the parameter as written; each further variant's is a parameter right after it.
+            val inner = (variantsOf(index).size - 1 to 1 by -1).foldLeft(walked) { (acc, variant) =>
+              literal(node, name.as(MonomorphicEffects.variantName(name.value, variant)), parameterType, acc)
+            }
+            if ((inner eq walked) && walked.value.expressionType == body.value.expressionType)
+              node.as(node.value.copy(expression = MonomorphicExpression.FunctionLiteral(name, parameterType, walked)))
+            else literal(node, name, parameterType, inner)
+          }
         case _                                                               => walk(node, scope)
       }
 
@@ -166,7 +180,19 @@ object EvidenceSpecialisation {
               call(node, head, reference, args, scope)
             case MonomorphicExpression.ParameterReference(name)
                 if scope.runnable.contains(name.value) && args.sizeIs == 1 && isUnit(args.head) =>
-              run(name, scope.runnable(name.value), scope).as(node)
+              run(name, scope.runnable(name.value), scope).map { variant =>
+                if (variant == 0) node
+                else
+                  rebuilt(
+                    node,
+                    head.as(
+                      head.value.copy(expression =
+                        MonomorphicExpression.ParameterReference(name.as(MonomorphicEffects.variantName(name.value, variant)))
+                      )
+                    ),
+                    args
+                  )
+              }
             case _                                                            =>
               for {
                 walkedHead <- walk(head, scope)
@@ -179,37 +205,42 @@ object EvidenceSpecialisation {
       }
 
     /** A run of the code parameter at `index`: the binding of the evidence each entry its slot lists finds here, which
-      * is what the block written there is given. An entry nothing answers is given `Default`, which a block performing
+      * is what the block written there is given, and the variant that makes it — the index of the first run that gave
+      * the same (`docs/effects.md` D35 step 5a). An entry nothing answers is given `Default`, which a block performing
       * it reports as unbound.
       */
-    private def run(name: Sourced[String], index: Int, scope: Scope): CompilerIO[Unit] =
+    private def run(name: Sourced[String], index: Int, scope: Scope): CompilerIO[Int] =
       slots.find(_.parameterIndex == index).toSeq.flatMap(_.entries).traverse { entry =>
         scope.evidence.find(answers(_, entry)).fold(defaultBinding.pure[CompilerIO])(bindingOf(_, entry))
-      }.map(bindings => runs.update(index, runs.getOrElse(index, Seq.empty) :+ (name -> bindings)))
+      }.map { bindings =>
+        runs.update(index, runs.getOrElse(index, Seq.empty) :+ (name -> bindings))
+        variantsOf(index).indexOf(bindings)
+      }
 
-    /** The value's slots, each with what the runs of its parameter give ([[MonomorphicEffects.Slot.offered]]). Every run
-      * of one parameter must give the same: the block written at its slot is compiled once, against that.
+    /** The distinct bindings the runs of the parameter at `index` give so far, in the order of their first run. */
+    private def variantsOf(index: Int): Seq[Seq[GroundValue]] =
+      runs.getOrElse(index, Seq.empty).map(_._2).distinct
+
+    /** The value's slots, each with what the runs of its parameter give ([[MonomorphicEffects.Slot.variants]]). On the
+      * compile track the runs of one parameter must agree: its evaluator applies a callee to the arguments the checker
+      * typed, with no block per variant, and no compile-track effect has two implementations to differ by.
       */
     def slotsOffered: CompilerIO[Seq[MonomorphicEffects.Slot]] =
       slots.traverse { slot =>
-        runs.getOrElse(slot.parameterIndex, Seq.empty) match {
-          case Seq()                => slot.pure[CompilerIO]
-          case (_, first) +: others =>
-            others.find(_._2 != first) match {
-              case None                    => slot.copy(offered = Some(first)).pure[CompilerIO]
-              case Some((name, different)) =>
-                val ability = slot.entries.zip(first.zip(different)).collectFirst {
-                  case (entry, (a, b)) if a != b => entry.ability.abilityName
-                }
-                compilerError(
-                  name.as(
-                    s"'${name.value}' runs here with a different implementation of '${ability.getOrElse("")}' than at " +
-                      "its other runs, which is not supported yet."
-                  ),
-                  Seq(s"Bind the same implementation around every run of '${name.value}'.")
-                ) >> abort[MonomorphicEffects.Slot]
-            }
-        }
+        val variants = variantsOf(slot.parameterIndex)
+        if (platform == Platform.Compiler && variants.sizeIs > 1) {
+          val (name, different) = runs(slot.parameterIndex).filter(_._2 != variants.head).head
+          val ability           = slot.entries.zip(variants.head.zip(different)).collectFirst {
+            case (entry, (a, b)) if a != b => entry.ability.abilityName
+          }
+          compilerError(
+            name.as(
+              s"'${name.value}' runs here at compile time with a different implementation of " +
+                s"'${ability.getOrElse("")}' than at its other runs, which is not supported."
+            ),
+            Seq(s"Bind the same implementation around every run of '${name.value}'.")
+          ) >> abort[MonomorphicEffects.Slot]
+        } else slot.copy(variants = variants).pure[CompilerIO]
       }
 
     /** A `with`, as the resolver lowered it: its implementation is installed around its subject, closing over the
@@ -278,7 +309,7 @@ object EvidenceSpecialisation {
             callee    <- checkedAt(reference.valueName.value, reference.typeArguments)
             arguments <- withEvidence(reference.typeArguments, callee.effects.received, scope.evidence, head)
             walked    <- blocks(callee.copy(typeArguments = arguments), 0, args, scope)
-          } yield rebuilt(node, retarget(head, reference.copy(typeArguments = arguments)), walked)
+          } yield applied(node, retarget(head, reference.copy(typeArguments = arguments)), walked)
         case _                                                                                    =>
           args.traverse(walk(_, scope)).map(rebuilt(node, head, _))
       }
@@ -373,7 +404,7 @@ object EvidenceSpecialisation {
         arguments  <- withEvidence(forwarded, clause.effects.received.filter(r => perCall.contains(r.binderIndex)), scope.evidence, head)
         own        <- ownParameterCount(implementation.head)
         walked     <- blocks(clause.copy(typeArguments = arguments), own, args, scope)
-      } yield rebuilt(
+      } yield applied(
         node,
         retarget(
           head,
@@ -409,23 +440,25 @@ object EvidenceSpecialisation {
         )
       ).map(orv => SignatureView.of(orv.signature).binders.size)
 
-    /** Walk `args`, each one at a slot of `callee` — parameter `offset + index` — with what that slot gives it. */
+    /** Walk `args`, each one at a slot of `callee` — parameter `offset + index` — with what that slot gives it: a block
+      * once per variant of the callee's runs, in variant order (`docs/effects.md` D35 step 5a), anything else once.
+      */
     private def blocks(
         callee: Specialisation,
         offset: Int,
         args: Seq[Sourced[MonomorphicExpression]],
         scope: Scope
-    ): CompilerIO[Seq[Sourced[MonomorphicExpression]]] = {
+    ): CompilerIO[Seq[Seq[Sourced[MonomorphicExpression]]]] = {
       val slots = callee.effects.slots.map(slot => slot.parameterIndex -> slot).toMap
       args.zipWithIndex.traverse { case (arg, index) =>
         slots.get(index + offset) match {
           case Some(slot) =>
             for {
-              offered <- offeredBy(callee, slot)
-              closed  <- closedSlot(callee.vfqn, slot.parameterIndex)
-              walked  <- block(arg, offered, if (closed) scope.copy(evidence = Seq.empty) else scope)
+              variants <- offeredBy(callee, slot)
+              closed   <- closedSlot(callee.vfqn, slot.parameterIndex)
+              walked   <- variants.traverse(offered => block(arg, offered, if (closed) scope.copy(evidence = Seq.empty) else scope))
             } yield walked
-          case None       => walk(arg, scope)
+          case None       => walk(arg, scope).map(Seq(_))
         }
       }
     }
@@ -438,19 +471,16 @@ object EvidenceSpecialisation {
       getFactIfProduced(OperatorResolvedValue.Key(vfqn, platform))
         .map(_.exists(_.effectRow.parameterEffects.exists(slot => slot.parameterIndex == index && slot.closed)))
 
-    /** What `callee` gives a block at `slot`: the evidence its body's runs of the parameter find
-      * ([[MonomorphicEffects.Slot.offered]]), each entry at `Default` where nothing runs it — a body-less callee, or a
-      * parameter never run.
+    /** What `callee` gives a block at `slot`, per variant: the evidence its body's runs of the parameter find
+      * ([[MonomorphicEffects.Slot.variants]]), each entry at `Default` where nothing runs it — a body-less callee, or a
+      * parameter never run — in which case there is one.
       */
-    private def offeredBy(callee: Specialisation, slot: MonomorphicEffects.Slot): CompilerIO[Seq[(Entry, GroundValue)]] =
-      if (slot.entries.isEmpty) Seq.empty.pure[CompilerIO]
+    private def offeredBy(callee: Specialisation, slot: MonomorphicEffects.Slot): CompilerIO[Seq[Seq[(Entry, GroundValue)]]] =
+      if (slot.entries.isEmpty) Seq(Seq.empty).pure[CompilerIO]
       else
         specialisedAt(platform)(callee.vfqn, callee.typeArguments).map { specialised =>
-          specialised.slots.find(_.parameterIndex == slot.parameterIndex) match {
-            case Some(MonomorphicEffects.Slot(_, entries, Some(offered))) => entries.zip(offered)
-            case Some(MonomorphicEffects.Slot(_, entries, None))        => entries.map(_ -> defaultBinding)
-            case None                                                   => slot.entries.map(_ -> defaultBinding)
-          }
+          val found = specialised.slots.find(_.parameterIndex == slot.parameterIndex).getOrElse(slot)
+          (0 until found.copies).map(found.offered(_, defaultBinding))
         }
 
     /** A block at a callee's slot is given evidence for each entry the slot lists, at what the callee's runs give. */
@@ -546,6 +576,67 @@ object EvidenceSpecialisation {
         (head, args :+ argument)
       case _                                                           => (node, Seq.empty)
     }
+
+  /** `node`'s spine with its head replaced and each argument by its group: one argument keeps the application's type
+    * and position ([[rebuilt]]). Where a group holds a block per variant (`docs/effects.md` D35 step 5a), the head takes
+    * one parameter per block ([[withCopies]]), and each application's type is the codomain of its target's, every
+    * application for a group at the position of the one it replaces.
+    */
+  private def applied(
+      node: Sourced[MonomorphicExpression],
+      head: Sourced[MonomorphicExpression],
+      groups: Seq[Seq[Sourced[MonomorphicExpression]]]
+  ): Sourced[MonomorphicExpression] =
+    if (groups.forall(_.sizeIs == 1)) rebuilt(node, head, groups.map(_.head))
+    else {
+      val widened = head.as(
+        head.value.copy(expressionType =
+          withCopies(head.value.expressionType, groups.zipWithIndex.map((group, index) => index -> group.size))
+        )
+      )
+      applications(node).zip(groups).foldLeft(widened) { case (target, (application, group)) =>
+        group.foldLeft(target) { (inner, argument) =>
+          val tpe = inner.value.expressionType.asFunctionType.fold(inner.value.expressionType)(_._2)
+          application.as(MonomorphicExpression(tpe, MonomorphicExpression.FunctionApplication(inner, argument)))
+        }
+      }
+    }
+
+  /** The application nodes of a spine, innermost first. */
+  private def applications(node: Sourced[MonomorphicExpression]): Seq[Sourced[MonomorphicExpression]] =
+    node.value.expression match {
+      case MonomorphicExpression.FunctionApplication(target, _) => applications(target) :+ node
+      case _                                                    => Seq.empty
+    }
+
+  /** A function type whose parameter at each declared index takes `copies` of its domain in a row: a signature taking
+    * one block per variant of a slot (`docs/effects.md` D35 step 5a). One copy leaves a parameter as it is.
+    */
+  private[specialise] def withCopies(tpe: GroundValue, copies: Seq[(Int, Int)]): GroundValue =
+    copies.filter(_._2 > 1).sortBy(-_._1).foldLeft(tpe) { case (acc, (index, count)) => repeated(acc, index, count) }
+
+  private def repeated(tpe: GroundValue, index: Int, count: Int): GroundValue =
+    tpe.asFunctionType match {
+      case Some((domain, codomain)) if index == 0 => (1 until count).foldLeft(functionType(domain, codomain))((acc, _) => functionType(domain, acc))
+      case Some((domain, codomain))               => functionType(domain, repeated(codomain, index - 1, count))
+      case None                                   => tpe
+    }
+
+  private def functionType(domain: GroundValue, codomain: GroundValue): GroundValue =
+    GroundValue.Structure(WellKnownTypes.functionDataTypeFQN, Seq(domain, codomain), GroundValue.Type)
+
+  private def literal(
+      at: Sourced[?],
+      name: Sourced[String],
+      parameterType: GroundValue,
+      body: Sourced[MonomorphicExpression]
+  ): Sourced[MonomorphicExpression] =
+    at.as(
+      MonomorphicExpression(
+        functionType(parameterType, body.value.expressionType),
+        MonomorphicExpression.FunctionLiteral(name, parameterType, body)
+      )
+    )
 
   /** `node`'s spine with its head and arguments replaced, every application keeping the type and position it had. */
   private def rebuilt(

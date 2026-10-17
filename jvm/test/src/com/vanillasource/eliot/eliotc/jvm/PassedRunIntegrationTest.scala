@@ -76,17 +76,56 @@ class PassedRunIntegrationTest extends FullIntegrationTest {
     ).asserting(_ shouldBe "Hello, own!;")
   }
 
-  it should "not yet compile a definition whose runs are given different implementations" in {
-    compileForErrors(
+  "runs of one parameter given different implementations" should "each run the block on its own" in {
+    compileAndRun(
       s"""$terminal
          |def run(body uses *, Terminal: Unit) uses *: String = runWriterToLog(body with fixed)
          |def twice(body uses *, Terminal: Unit) uses *: String = run(body) ++ runWriterToLog(body with scripted("b"))
          |def main uses Console: Unit = printLine(twice(greet))""".stripMargin
-    ).asserting(
-      _ should include(
-        "'body' runs here with a different implementation of 'Terminal' than at its other runs, which is not supported yet."
-      )
-    )
+    ).asserting(_ shouldBe "Hello, fixed!;Hello, b!;")
+  }
+
+  it should "keep the parameters after the slot where they are" in {
+    compileAndRun(
+      s"""$terminal
+         |def twice(body uses *, Terminal: Unit, separator: String) uses *: String =
+         |   runWriterToLog(body with fixed) ++ separator ++ runWriterToLog(body with scripted("b"))
+         |def main uses Console: Unit = printLine(twice(greet, "|"))""".stripMargin
+    ).asserting(_ shouldBe "Hello, fixed!;|Hello, b!;")
+  }
+
+  it should "give one block per distinct implementation" in {
+    compileAndRun(
+      s"""$terminal
+         |def thrice(body uses *, Terminal: Unit) uses *: String =
+         |   runWriterToLog(body with fixed) ++ runWriterToLog(body with scripted("b")) ++ runWriterToLog(body with fixed)
+         |def main uses Console: Unit = printLine(thrice(greet))""".stripMargin
+    ).asserting(_ shouldBe "Hello, fixed!;Hello, b!;Hello, fixed!;")
+  }
+
+  it should "give a block passed on to two callees what each of them installs" in {
+    compileAndRun(
+      s"""$terminal
+         |def first(body uses *, Terminal: Unit) uses *: String = runWriterToLog(body with fixed)
+         |def second(body uses *, Terminal: Unit) uses *: String = runWriterToLog(body with scripted("b"))
+         |def both(body uses *, Terminal: Unit) uses *: String = first(body) ++ second(body)
+         |def outer(body uses *, Terminal: Unit) uses *: String = both(body)
+         |def main uses Console: Unit = printLine(outer(greet))""".stripMargin
+    ).asserting(_ shouldBe "Hello, fixed!;Hello, b!;")
+  }
+
+  it should "each run the block on its own in an implementation's clause taking parameters" in {
+    compileAndRun(
+      s"""$terminal
+         |effect Runner {
+         |   def go(body uses *, Terminal: Unit) uses *: String
+         |}
+         |implement twoWays(separator: String): Runner {
+         |   def go(body uses *, Terminal: Unit) uses *: String =
+         |      runWriterToLog(body with fixed) ++ separator ++ runWriterToLog(body with scripted("b"))
+         |}
+         |def main uses Console: Unit = printLine(go(greet) with twoWays("|"))""".stripMargin
+    ).asserting(_ shouldBe "Hello, fixed!;|Hello, b!;")
   }
 
   "a run of an entry the definition also declares" should "ride its caller's binding, its frame given where it runs" in {

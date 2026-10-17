@@ -136,7 +136,7 @@ class EffectDeclarations(platform: Platform, specialisation: (ValueFQN, Seq[Grou
               specialisation(discharger, arguments).map { value =>
                 value.effects.slots
                   .find(_.parameterIndex == slot.parameterIndex)
-                  .flatMap(found => found.offered.flatMap(offered => found.entries.zip(offered).find(_._1 == entry)))
+                  .flatMap(found => found.variants.headOption.flatMap(offered => found.entries.zip(offered).find(_._1 == entry)))
                   .fold(defaultBinding)(_._2)
               }
           }

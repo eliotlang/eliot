@@ -5,7 +5,7 @@ import com.vanillasource.eliot.eliotc.core.processor.{MetaTransferDesugarer, Met
 import com.vanillasource.eliot.eliotc.feedback.Logging
 import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, UnifiedModuleNames, ValueFQN}
 import com.vanillasource.eliot.eliotc.monomorphize.eval.Evaluator
-import com.vanillasource.eliot.eliotc.monomorphize.fact.{GroundValue, MonomorphicExpression, MonomorphicValue}
+import com.vanillasource.eliot.eliotc.monomorphize.fact.{GroundValue, MonomorphicEffects, MonomorphicExpression, MonomorphicValue}
 import com.vanillasource.eliot.eliotc.monomorphize.fact.GroundValue.Literal
 import com.vanillasource.eliot.eliotc.monomorphize.processor.EscalatingReducer
 import com.vanillasource.eliot.eliotc.platform.Platform
@@ -216,9 +216,14 @@ class RefinementChannelProcessor
       case true  =>
         getFactIfProduced(MonomorphicValue.Key(callee, calleeTypeArgs)).flatMap {
           case Some(mv) =>
-            mv.naturalArity match {
-              case Some(arity) if arity > 0 && appliedArgs >= arity =>
-                demandPrecondition(callNode, callee, argMetas.take(arity))
+            // The companion takes the declared parameters: a further variant's block (`docs/effects.md` D35 step 5a)
+            // is not one of them.
+            val copies   = MonomorphicEffects.copyPositions(mv.effects.slots)
+            val declared = argMetas.zipWithIndex.collect { case (meta, index) if !copies.contains(index) => meta }
+            val applied  = appliedArgs - copies.count(_ < appliedArgs)
+            mv.naturalArity.map(_ - copies.size) match {
+              case Some(arity) if arity > 0 && applied >= arity =>
+                demandPrecondition(callNode, callee, declared.take(arity))
               case Some(arity) if arity > 0                         =>
                 // A *partial* application of a `where`-bearing def is a function value with an undemandable precondition
                 // — the same escape as a bare reference (§2.1). Reject it loudly rather than let the partial value flow

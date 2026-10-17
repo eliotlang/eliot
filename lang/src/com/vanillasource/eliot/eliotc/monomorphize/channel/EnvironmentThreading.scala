@@ -53,7 +53,9 @@ import scala.util.chaining.*
   *     the frame of the evidence in scope for each.
   *   - **a block takes what its callee's runs give.** A row-typed slot's thunk took `unit`; it now takes the frames of
   *     the entries the slot lists, at what the callee's body runs the parameter with
-  *     ([[MonomorphicEffects.Slot.offered]]), and running the block passes them, found where it runs.
+  *     ([[MonomorphicEffects.Slot.variants]]), and running the block passes them, found where it runs. Runs giving
+  *     different evidence run different blocks, one per variant, which the specialisation pass wrote
+  *     ([[MonomorphicEffects.positions]]).
   *   - **a `with` installs its implementation around its subject**, as the resolver leaves it: its binder applied to the
   *     arguments it supplies and to its subject (`scripted$with(xs, greet)`, [[ImplementationParameters.binder]]). The
   *     arguments are bound to fresh parameters around the subject, and the implementation's frame is built where an
@@ -238,7 +240,11 @@ object EnvironmentThreading {
         received: Seq[Frame]
     ): CompilerIO[Sourced[MonomorphicExpression]] =
       for {
-        slots  <- value.effects.slots.traverse(slot => slotDomain(value, slot).map(slot.parameterIndex -> _)).map(_.toMap)
+        slots  <- MonomorphicEffects.positions(value.effects.slots).toSeq
+                    .traverse { case (position, (slot, variant)) =>
+                      slotDomain(slot, variant).map(position -> (slot.parameterIndex, variant, _))
+                    }
+                    .map(_.toMap)
         walked <- peel(body, 0, value.naturalArity.getOrElse(0), slots, Context(received.map(Evidence.Held(_)), Map.empty, Map.empty))
       } yield walked
 
@@ -246,15 +252,15 @@ object EnvironmentThreading {
         node: Sourced[MonomorphicExpression],
         index: Int,
         remaining: Int,
-        slots: Map[Int, Seq[GroundValue]],
+        slots: Map[Int, (Int, Int, Seq[GroundValue])],
         context: Context
     ): CompilerIO[Sourced[MonomorphicExpression]] =
       node.value.expression match {
         case MonomorphicExpression.FunctionLiteral(name, parameterType, inner) if remaining > 0 =>
           val (newType, inside) = slots.get(index) match {
-            case Some(domain) =>
+            case Some((slotIndex, variant, domain)) =>
               val retyped = blockType(parameterType, domain)
-              (retyped, context.declare(name.value, retyped, Some(index)))
+              (retyped, context.declare(name.value, retyped, Some((slotIndex, variant))))
             case None         => (parameterType, context.shadow(name.value))
           }
           peel(inner, index + 1, remaining - 1, slots, inside).map { walked =>
@@ -269,13 +275,13 @@ object EnvironmentThreading {
       }
 
     /** The lexical context: the evidence in scope innermost first, the parameters whose type the threading changed, and
-      * this definition's row-typed parameters by index — running one passes its frames. Every push of frames raises the
-      * depth, so two frames of one push are at the same distance.
+      * the parameters holding this definition's blocks, each with its slot's declared index and its variant — running
+      * one passes its frames. Every push of frames raises the depth, so two frames of one push are at the same distance.
       */
     private case class Context(
         evidence: Seq[Evidence],
         types: Map[String, GroundValue],
-        runs: Map[String, Int],
+        runs: Map[String, (Int, Int)],
         depth: Int = 0
     ) {
       def push(more: Seq[Frame]): Context =
@@ -286,7 +292,7 @@ object EnvironmentThreading {
 
       def shadow(name: String): Context  = copy(types = types - name, runs = runs - name)
 
-      def declare(name: String, tpe: GroundValue, run: Option[Int]): Context =
+      def declare(name: String, tpe: GroundValue, run: Option[(Int, Int)]): Context =
         copy(types = types.updated(name, tpe), runs = run.fold(runs - name)(runs.updated(name, _)))
     }
 
@@ -347,14 +353,16 @@ object EnvironmentThreading {
                            case None           => receivedParts(callee, reference.typeArguments, head, context)
                          }
             offset     = passed.own
-            slots      = callee.effects.slots.map(slot => slot.parameterIndex -> slot).toMap
+            positions  = MonomorphicEffects.positions(callee.effects.slots)
             walkedArgs <- args.zipWithIndex.traverse { case (arg, index) =>
-                            slots.get(index + offset) match {
-                              case Some(slot) => block(arg, callee, slot, context)
-                              case None       => walk(arg, context)
+                            positions.get(index + offset) match {
+                              case Some((slot, variant)) => block(arg, slot, variant, context)
+                              case None                  => walk(arg, context)
                             }
                           }
-            domains   <- callee.effects.slots.traverse(slot => slotDomain(callee, slot).map(slot.parameterIndex - offset -> _))
+            domains   <- positions.toSeq.traverse { case (position, (slot, variant)) =>
+                           slotDomain(slot, variant).map(position - offset -> _)
+                         }
             // The reference's own type, threaded: the parts it is passed ahead of it, and each slot retyped to the block
             // it now is. Read off the reference rather than the callee's signature, which the checker may have settled
             // differently at this use (a guarded return, a partial key).
@@ -458,17 +466,19 @@ object EnvironmentThreading {
                     }
       } yield Passed(received.flatMap(_.parts) ++ frame.own, frame.own.size)
 
-    /** A block at a callee's slot: the thunk the row phase wrapped it in now takes the frames the slot supplies. */
+    /** A block at a callee's slot, for one variant of its runs: the thunk the row phase wrapped it in now takes the
+      * frames that variant gives.
+      */
     private def block(
         arg: Sourced[MonomorphicExpression],
-        callee: Specialisation,
         slot: MonomorphicEffects.Slot,
+        variant: Int,
         context: Context
     ): CompilerIO[Sourced[MonomorphicExpression]] =
       arg.value.expression match {
         case MonomorphicExpression.FunctionLiteral(name, parameterType, body) =>
           for {
-            offered <- givenFrames(callee, slot, context, arg)
+            offered <- givenFrames(slot, variant)
             (frames, parts) = offered
             inner   <- walk(body, context.shadow(name.value).push(frames))
           } yield
@@ -492,17 +502,13 @@ object EnvironmentThreading {
           compilerAbort(arg.as("Internal: a block at a row-typed slot is not a thunk."))
       }
 
-    /** The frames a block at `slot` of `callee` is given, and the parts the block now takes as its parameters: one frame
-      * per entry the slot lists, at the binding `callee`'s runs give it ([[offered]]), held by fresh parameters — its
-      * clauses' frames and then its own parameters, given at each run.
+    /** The frames a block at `slot` is given for `variant`, and the parts the block now takes as its parameters: one
+      * frame per entry the slot lists, at the binding the callee's runs of that variant give it, held by fresh
+      * parameters — its clauses' frames and then its own parameters, given at each run.
       */
-    private def givenFrames(
-        callee: Specialisation,
-        slot: MonomorphicEffects.Slot,
-        context: Context,
-        arg: Sourced[?]
-    ): CompilerIO[(Seq[Frame], Seq[Part])] =
-      offered(callee, slot)
+    private def givenFrames(slot: MonomorphicEffects.Slot, variant: Int): CompilerIO[(Seq[Frame], Seq[Part])] =
+      slot
+        .offered(variant, defaultBinding)
         .traverse((entry, binding) => shapeOf(entry, binding).map(held(entry, binding, _)))
         .map(frames => (frames, frames.flatMap(_.parts)))
 
@@ -516,22 +522,16 @@ object EnvironmentThreading {
         unit: Sourced[MonomorphicExpression],
         context: Context
     ): CompilerIO[Sourced[MonomorphicExpression]] = {
-      val index = context.runs(name.value)
-      val slot  = mv.effects.slots.find(_.parameterIndex == index).getOrElse(MonomorphicEffects.Slot(index, Seq.empty))
+      val (index, variant) = context.runs(name.value)
+      val slot             = mv.effects.slots.find(_.parameterIndex == index).getOrElse(MonomorphicEffects.Slot(index, Seq.empty))
       for {
-        frames <- offered(mv, slot).traverse((entry, binding) => frameFor(context.evidence, entry, binding, name))
+        frames <- slot.offered(variant, defaultBinding).traverse((entry, binding) => frameFor(context.evidence, entry, binding, name))
         parts   = frames.flatMap(_.parts)
         retyped = context.types.get(name.value).fold(head)(tpe => head.as(head.value.copy(expressionType = tpe)))
       } yield
         if (parts.isEmpty) applyAll(retyped, Seq(unit), keepTypes = None)
         else applyAll(retyped, parts.map(partReference(name, _)), keepTypes = None)
     }
-
-    /** What a block at `slot` of `value` is given for each entry the slot lists: the binding of the evidence the runs of
-      * the parameter find in `value`'s body ([[MonomorphicEffects.Slot.offered]]), `Default` where nothing runs it.
-      */
-    private def offered(value: Specialisation, slot: MonomorphicEffects.Slot): Seq[(Entry, GroundValue)] =
-      slot.offered.fold(slot.entries.map(_ -> defaultBinding))(slot.entries.zip(_))
 
     /** The type a row-typed parameter takes once its block takes `domain`: `Unit => A` becomes `T₁ => … => A`. */
     private def blockType(parameterType: GroundValue, domain: Seq[GroundValue]): GroundValue =
@@ -540,19 +540,21 @@ object EnvironmentThreading {
         case _                                    => parameterType
       }
 
-    /** What a block at `slot` of `value` takes: the parts of the frames of the entries the slot lists, in order. */
-    private def slotDomain(value: Specialisation, slot: MonomorphicEffects.Slot): CompilerIO[Seq[GroundValue]] =
-      offered(value, slot).flatTraverse((entry, binding) => shapeOf(entry, binding).map(_.types))
+    /** What variant `variant`'s block at `slot` takes: the parts of the frames of the entries the slot lists, in order. */
+    private def slotDomain(slot: MonomorphicEffects.Slot, variant: Int): CompilerIO[Seq[GroundValue]] =
+      slot.offered(variant, defaultBinding).flatTraverse((entry, binding) => shapeOf(entry, binding).map(_.types))
 
-    /** A value's woven signature: the parts of the frames it receives, then its own parameters with each row-typed one
-      * retyped to the block it now is.
+    /** A value's woven signature: the parts of the frames it receives, then its own parameters with each block retyped
+      * to what it now takes — one per variant of a slot's runs, as the specialisation pass wrote them.
       */
     private def signatureOf(value: Specialisation): CompilerIO[GroundValue] =
       for {
         received <- value.effects.received.traverse { received =>
                       bindingAt(value.typeArguments, received, value.name).flatMap(shapeOf(received.entry, _)).map(_.types)
                     }
-        slots    <- value.effects.slots.traverse(slot => slotDomain(value, slot).map(slot.parameterIndex -> _))
+        slots    <- MonomorphicEffects.positions(value.effects.slots).toSeq.traverse { case (position, (slot, variant)) =>
+                      slotDomain(slot, variant).map(position -> _)
+                    }
       } yield {
         val own = slots.foldLeft(value.signature) { case (signature, (index, domain)) =>
           mapParameter(signature, index, blockType(_, domain))

@@ -87,7 +87,7 @@ lives now.
    a specialisation pass. Its order is in its record: the dependents' three definitions first (they compile today),
    then the lowering, the evidence, the specialisation pass, and the deletions — steps 1–5 built 2026-10-17, closing
    §8 items 44, 45, 48, 51, 56 and 57 and making item 60 loud, and step 6 (Part I and `CLAUDE.md` rewritten for
-   evidence) the same day; step 5a (item 62, decided 2026-10-17: a block copy per evidence) remains.
+   evidence) and step 5a (a block copy per evidence, closing §8 item 62) the same day. D35 is built.
 
 D20a, D20c and D3 stay open until decided; none blocks the steps above.
 
@@ -96,14 +96,14 @@ D20a, D20c and D3 stay open until decided; none blocks the steps above.
 - **Silent:** none known.
 - **Latent:** item 59 is a decision.
 - **Loud, at compile time:** §8 items 60 (now refused; the rule it needs is still a decision), 61 (reproduced; needs
-  a decision) and 62 (runs of one parameter given different implementations; decided, step 5a); a `catch` over a
+  a decision); a `catch` over a
   parameter spells its arguments (§7 item 2); a function-typed code parameter's own entries are never supplied (§7
   item 1).
-- **Decided, not built:** D35's step 5a (a block copy per evidence, closing §8 item 62); the rest of D35 is built.
+- **Decided, not built:** none.
 - **Undecided:** naming a set of effects in a clause (D20a), storing an effectful computation (D20c), `~`/`&` in user
   space (D3), the rules items 60 and 61 need. D31 and D32 are withdrawn (§11).
 - **Outside this document:** `v0.9` is the first release carrying `uses` (`v0.8` is tagged before it, and its release
-  workflow failed, so it publishes no assets); `v0.14` is the latest (`v0.13`, tagged before it, failed its release
+  workflow failed, so it publishes no assets); `v0.15` (D35 steps 1–6) is the latest (`v0.13` failed its release
   workflow the same way — the LSP did not compile clean — and publishes nothing); eliot-test `v0.5`, eliot-build and the docs site's
   install page depend on `v0.11`, which they need not leave. The site's generated `apidoc/` pages predate effects v6;
   eliot-test's own notes still say a row cannot be closed and list `runThrow` spellings that are now redundant. Two defects found while
@@ -360,8 +360,8 @@ also declares that effect — the declaration then speaks only for what the defi
 what the slot **lists**: an effect the code uses through `*` unlisted was answered where it was written, and a `with`
 for it is *"This `with` binds nothing: 'program' is code its caller wrote, and its use of 'X' was bound where it was
 written"*. A `with` after a definition's own clause is rejected: it would be a second spelling of `with` around the
-body. Runs of one parameter may install different implementations, by D35; until its step 5a builds the block copy
-that compiles them, they are refused after monomorphization (§8 item 62).
+body. Runs of one parameter may install different implementations: the block its caller wrote is compiled once per
+distinct implementation its runs install (§3.4, D35 step 5a).
 
 **A `with`'s arguments are values computed where it is written**, outside its binding: in
 `greet with scripted(answer) with scripted("outer")` the inner `answer` reads from `scripted("outer")`. Around a run of
@@ -782,9 +782,9 @@ What sits at that seam is **not** its shadow: `monomorphize/channel/SuppliedRowA
 **codegen precondition** via `getFactOrAbort`, rejecting a supplied entry whose type argument nothing determines
 (§2.2): *"Cannot tell which 'Throw' this call supplies … Write it out at the call"*. That check needs ground arguments
 and so cannot move earlier. The specialisation pass and the environment threading (§3.4) sit at the same seam and
-report the plumbing errors only they can see — runs of one parameter given different implementations (§8 item 62), two
-received entries that coincide at an instantiation — which are not effect verification either: every use they meet was
-checked by the walk.
+report the plumbing errors only they can see — two received entries that coincide at an instantiation, an
+implementation whose pattern does not match the entry it runs for — which are not effect verification either: every
+use they meet was checked by the walk.
 
 ### 3.4 Evidence — the three primitives, frames, and the specialisation pass
 
@@ -834,8 +834,8 @@ grow. Evidence comes into scope three ways, and a use is answered by the **neare
 - **given to a block by the callee running it** — at each run of a code parameter the block finds, for each entry its
   slot lists, the evidence nearest **the run**: a `with` around it, a discharger the run is passed on to, or, for a
   ridden entry with nothing nearer, the definition's own received evidence. The callee records it per slot
-  (`MonomorphicEffects.Slot.offered`, read off the callee's **specialised body**, never off its declaration), and a
-  caller's block is specialised against it. A run passed on to another callee's slot finds what that callee's runs
+  (`MonomorphicEffects.Slot.variants`, read off the callee's **specialised body**, never off its declaration), and a
+  caller's block is specialised against it — once per distinct evidence the runs give (below). A run passed on to another callee's slot finds what that callee's runs
   give, so `catch`'s slot offers what `runThrow`'s does. What the block uses through `*` unlisted it answers with the
   evidence where it was written, as a closure captures. So D22's meaning is plain capture — an unlisted effect is
   invisible to the callee because the block already holds its evidence, and a listed one is found where the code runs,
@@ -883,7 +883,7 @@ main                           = …(runStateToFinalState(5, cell -> { increment
   (`MonomorphicEffects`), and a definition receives one frame per entry of its declared row and per `~` constraint,
   ahead of its own parameters; a reference to it passes the frame of the evidence in scope for each.
 - **A block takes what its callee's runs give.** A row-typed slot's thunk takes the frames of the entries its slot
-  lists in place of `unit`, at the bindings the callee's runs give (`Slot.offered`), and each run passes the frames of
+  lists in place of `unit`, at the bindings the callee's runs give (`Slot.variants`), and each run passes the frames of
   the evidence it finds there. Running a block therefore consumes the entries its slot rides (§4): with nothing nearer,
   what it finds for one is the definition's received evidence.
 - **A dispatched operation gets its frame's parts.** A reference the pass dispatched to an implementation's clause
@@ -910,11 +910,28 @@ made inside the body that runs a block, and it is only ever over an effect the s
 callee, as in Koka, which compiles handlers by the same evidence passing (Xie and Leijen), and Effekt, whose
 second-class blocks are rule 3. That is the decided meaning of listing (D22).
 
-**Runs given different implementations** are not compiled yet. A block written at a slot is specialised once, against
-what every run of its parameter gives, so runs giving different evidence are refused after monomorphization — *"'body'
-runs here with a different implementation of 'Terminal' than at its other runs, which is not supported yet"* (§8 item
-62). D35 says they may differ, and its step 5a — a copy of the block per distinct evidence, each an extra hidden
-parameter of the callee — is decided and not built.
+**Runs given different implementations get a block each** (D35 step 5a, built 2026-10-17). The pass records, per
+slot, every distinct binding vector the runs of the parameter give, in the order of their first run — its
+**variants** (`MonomorphicEffects.Slot.variants`). The callee takes one block per variant: variant 0 is the parameter
+as written, each further variant a parameter right after it (`MonomorphicEffects.positions`, `variantName`), and each
+run is pointed at the parameter of the variant it gives. The caller writes the block once per variant, each copy
+specialised against that variant's evidence and threaded with its frames, so the copies' dispatch and their parts
+may differ:
+
+```
+twice(body, body$variant1) = run(_ -> body(unit)) ++ runWriterToLog(scripted$with("b", body$variant1(unit)))
+main                       = twice(_ -> greet[fixed](…), answer -> greet[scripted](answer))   -- after threading
+```
+
+A slot with one variant is exactly what it was, so a program whose runs agree compiles to the same bytes (every
+example jar byte-identical). Passing on composes: a run inside a block at another callee's slot is walked once per
+variant of that slot, so a definition passing its code to two callees gives the union of what they give. The cost is
+code size, one copy per distinct evidence and only where runs differ. Termination is the pass's own — no recursion,
+so finitely many variants. The copies share their source positions, so the refinement channel walks each, and a
+position whose copies disagree is ⊤, the reconcile pass's fail-safe for an ambiguous position; a `where` companion
+is matched against the declared arguments, the further variants dropped. The compile track compiles no copy: its
+evaluator applies a callee to the arguments the checker typed, and no compile-track effect has two implementations to
+differ by, so runs differing there stay an error.
 
 **Decided in the code while building, recorded for sign-off** (§11):
 
@@ -1211,7 +1228,7 @@ Each is stated, fail-safe, and either has a plan entry or is a deliberate trade.
 Each item is a defect to close or a decision to make, never a doc fix. Numbers are kept so citations resolve; closed
 items keep one line, and their full record is in git history (§13).
 
-**Open.** Found by the code review of 2026-10-15 (f78861cf..67eba060), item 62 by D35 step 5. *Reproduced* means a program was compiled and
+**Open.** Found by the code review of 2026-10-15 (f78861cf..67eba060). *Reproduced* means a program was compiled and
 run; *read* means found in the code, not yet reproduced — establishing it is the item's first step.
 
 | # | defect | severity | evidence |
@@ -1219,7 +1236,6 @@ run; *read* means found in the code, not yet reproduced — establishing it is t
 | 59 | §3.8 and CLAUDE.md say *"the checker holds no effect rule … no effect diagnostic"*, while `monomorphize/check` holds `AbilityResolver.isEffect` (since D35 step 5 only to leave an effect's operation to the specialisation pass; `reportUnboundEffect`, `reportUnmatchedBinding` and the named-implementation dispatch are gone), `DeclaredEntries.forwarded` (recorded by `AbilityResolver.record`, applied in `PostDrainQuoter`), `PostDrainQuoter.reachesFrames`/`threaded` and `TypeStackLoop.guardRead`; §3.4 itself names `PostDrainQuoter.threaded`. A decision: restate §3.8, or move them | decision | read |
 | 60 | a reference whose entry the call does not spell answers the nearest binding of its ability before the checker has typed it, while its frame is chosen after monomorphization by its entry at ground arguments: in `def guarded(body uses Throw[String]: Unit) uses Throw[Int]: String`, an argument `guarded(raise(1))` is written from the slot's `Throw[String]` binding, so rule 4's closed cut sees nothing, and then runs on the caller's `Throw[Int]` frame — the program compiles and `main`'s handler catches `1` past `guarded` entirely. Writing the frame from the binding instead (D32) would hand an `Int` to a `Throw[String]` handler: the root is that `raise`'s `E` is decided by the checker while the binding it answers is decided before it. Closing it needs a decision — the answering binding's spelled arguments written as the reference's undetermined ones (a determination from a declaration, which makes a generic `raise` in a body with two `Throw` entries take the nearest and be a type error for the other), or such a reference refused where two entries of its ability are in scope. Since D35 step 5 the program is refused, *"Nothing binds an implementation of the effect 'Throw' here"* at `raise(1)`: a closed slot's block sees only what its callee's runs give, which is `Throw[String]` | loud (was silent) | reproduced (2026-10-15, building D30; loud 2026-10-17) |
 | 61 | an anonymous implementation's clause cannot repeat a member's entry over the ability's own type parameters: `ability Describe[T] { def describe(t: T) uses Writer[List[T]]: String }` implemented for `Box` must spell `Writer[List[Box]]` (its `T` is out of scope), and entries compare as spelled (`DeclaredEntries.ofMember`/`forwarded`, D30), so dispatch never hands the clause the call's binding. Since item 50's rule it is refused at the clause (*"… performs the effect 'Writer' in 'describe', at other arguments than the ability's 'describe' declares it"*), before it was *"Nothing binds an implementation of the effect 'Writer' here"* at the operation. Whether a clause's entry is compared with its member's under the implementation's pattern (`T := Box`, read off the declarations) is a reading of D30 to decide | loud | reproduced (2026-10-16, closing item 50) |
-| 62 | runs of one code parameter given **different implementations** are refused after monomorphization (*"'body' runs here with a different implementation of 'Terminal' than at its other runs, which is not supported yet"*), where D35 says runs may differ: `def twice(body uses *, Terminal: Unit) uses *: String = run(body) ++ runWriterToLog(body with scripted("b"))` for `run` installing `fixed`. A block written at the slot is specialised once, against what every run gives (`MonomorphicEffects.Slot.offered`). **Decided 2026-10-17** (Robert): a copy of the block per distinct evidence, each an extra hidden parameter of the callee that its matching runs use, rather than evidence passed as a run-time value — D35 step 5a, not built. Before step 5 the same program was the run-agreement error, so nothing that compiled stops compiling | loud | reproduced (2026-10-17, `PassedRunIntegrationTest`); decided, not built |
 
 **Cleanup found by the same review.** Not defects — dead code and text that no longer describes the tree. Each was
 checked with a repository-wide grep, tests included.
@@ -1342,6 +1358,7 @@ checked with a repository-wide grep, tests included.
 | 51 | the parser accepted `with` on a value parameter and on a `data` field | 2026-10-17 by D35 step 5: a `with` on any parameter or field is refused, naming the `with` around the run |
 | 56 | the environment-entries rule was implemented twice, selected clauses differently from the row phase, and read a missing member as empty | 2026-10-17 by D35 step 5: `EffectDeclarations.environmentEntries` is `DeclaredEntries.environment` over the clauses the row phase selects, and a clause implementing no member defers to the conformance check |
 | 57 | five unreachable `getOrElse(defaultBinding)` fallbacks in the threading would have installed an effect `Default` silently | 2026-10-17 by D35 step 5: a received entry's binding missing from the key is an internal error |
+| 62 | runs of one code parameter given **different implementations** were refused after monomorphization (*"'body' runs here with a different implementation of 'Terminal' than at its other runs, which is not supported yet"*), where D35 says they may differ: `def twice(body uses *, Terminal: Unit) uses *: String = run(body) ++ runWriterToLog(body with scripted("b"))` for `run` installing `fixed` (found by D35 step 5) | 2026-10-17 by D35 step 5a: a block per variant of the runs, an extra parameter of the callee each, written once per variant by the caller (§3.4). The compile track still refuses it, since nothing there has two implementations to differ by (`PassedRunIntegrationTest`) |
 
 Items 9–13 were found 2026-10-05 while designing D20 and share one cause: a row on a slot both *marked a block* and
 *minted bindings*, and nothing kept the block inside the call or checked that the callee had the binding it handed
@@ -1778,7 +1795,7 @@ different *implementation* needs its own definition; different *data* per case i
 4. A private suite carries its own list: `refusals: Test` in `MockFileSystemTests` and `MockProcessTests`, two of the
    seven above.
 
-#### D35 — an implementation is evidence passed after monomorphization (decided 2026-10-16, built 2026-10-17 but for step 5a)
+#### D35 — an implementation is evidence passed after monomorphization (decided 2026-10-16, built 2026-10-17)
 
 **The question** (Robert, 2026-10-16, after D34): would a free-monad system work, be simpler and be right for Eliot —
 rows back in the type and monadic, effects composing as free-monad placeholders rather than transformers, the
@@ -2002,7 +2019,15 @@ oracle until step 4, where specialisation must restore them.
      domain; nothing before it changes types, since every copy has the block's checked type.
    - The cost is code size, one copy per distinct evidence at a slot, and only where runs differ: every slot in the
      corpus has one variant. Termination is the specialisation pass's own — no recursion, so finitely many variants.
-   Built, it closes §8 item 62 and deletes the "not supported yet" error.
+   Built, it closes §8 item 62 and deletes the "not supported yet" error. *Done 2026-10-17*, as described, in the
+   specialisation pass and the threading (`MonomorphicEffects.Slot.variants`, `positions`, `variantName`). The copies
+   live in the `MonomorphicValue` itself, not only after the threading, so the refinement channel walks each: they
+   share source positions, and a position whose copies disagree is ⊤ by the reconcile pass's existing rule. Two things
+   it needed beyond the list: the refinement channel's `where` check matches a callee's companion against its declared
+   arguments, dropping the further variants (a `where` over a definition with a code parameter is unprovable anyway
+   today, since a block has no meta); and the compile track keeps refusing differing runs, since its evaluator applies
+   a callee to the arguments the checker typed and no compile-track effect has two implementations. All 47 example
+   reports identical (jars included), eliot-test 193 and eliot-build 368 pass, `__.test` green.
 6. Part I rewritten (§3.1, §3.4, §3.5, §9) and the cornerstone in `CLAUDE.md`, then a release. *Done 2026-10-17*,
    before step 5a: the status, §1 rules 1 and 5, §2's `with` (one position, around the run), §2.2, §3.1 (the walk as
    the scope check, its resolution order answering rather than writing), §3.3, §3.4 (evidence, the specialisation
@@ -2320,7 +2345,7 @@ each lives:
 | D24 | §2's table and the parser's refusals, §2.1; the record in §11's closed decisions |
 | D25, and its steps 1–5 | §2's `implement` and `with`, §3.1, §3.4; the record in §11's closed decisions |
 | D26, and its steps 1–3 | §1 rule 5, §2, §3.1, §3.4, §3.5; the record in §11's closed decisions |
-| D35, and its steps 1–6 | §3.4 (evidence, the specialisation pass), §3.1 (the walk as the scope check), §2's `with`, §9; the record in §11 (step 5a not built) |
+| D35, and its steps 1–6 and 5a | §3.4 (evidence, the specialisation pass, a block per variant), §3.1 (the walk as the scope check), §2's `with`, §9; the record in §11 |
 | D20c (the open question), option 4 | §11 D20c |
 | §8 items 14–17 in comments and tests written on the option-5 line | §8 items 16–19 |
 | §7 item 7 before 2026-10-13 (undischarged control effect at `main`) | closed, §8 item 5 |

@@ -554,13 +554,15 @@ every citation of a condensed record (**D20**/**D21** rules and steps, **D20c op
 **There is no carrier, no monad, no `Id`, and nothing to infer** — if you are reading code or a comment that mentions
 one, it is history.
 
-**D35** (decided 2026-10-16, built 2026-10-17 but for step 5a; it reverses D33, and D34 is withdrawn) is what this
-cornerstone describes: an implementation is **evidence passed after monomorphization**, and static code is a
-**specialisation pass** (`monomorphize/specialise/`) that clones by constant evidence — so a jar is what the binding
-in the key used to give, and correctness never depends on the pass. Runs of one parameter given different
-implementations are refused for now (§8 item 62); decided, not built, is a copy of the block per distinct evidence, one
-extra hidden parameter each (D35 step 5a). A free-monad representation was evaluated and rejected (reasons in D35);
-D31 and D32 are withdrawn.
+**D35** (decided 2026-10-16, built 2026-10-17; it reverses D33, and D34 is withdrawn) is what this cornerstone
+describes: an implementation is **evidence passed after monomorphization**, and static code is a **specialisation
+pass** (`monomorphize/specialise/`) that clones by constant evidence — so a jar is what the binding in the key used to
+give, and correctness never depends on the pass. Runs of one parameter given different implementations get **a block
+each** (step 5a): the callee records its runs' distinct evidence as the slot's `variants`, takes one block parameter
+per variant right after the slot (`MonomorphicEffects.positions`, `variantName`), and the caller writes the block once
+per variant — in the `MonomorphicValue` itself, so the refinement channel walks every copy (shared positions that
+disagree are ⊤). A slot with one variant is unchanged, byte for byte. The compile track still refuses differing runs.
+A free-monad representation was evaluated and rejected (reasons in D35); D31 and D32 are withdrawn.
 
 **The surface is one clause in two positions.** On a **definition**, `uses Console, Throw[E]` is what its caller
 hands it. On a **parameter**, a clause makes the argument **code** the caller wrote, which the callee may call or pass
@@ -631,7 +633,7 @@ subject** (D23): infix, subject-first, loosest precedence, left-associative, as 
 parameter or a field it is a parse error naming the `with` around the run (D35). A `with` nothing escapes to is an
 error; one around a run of a code parameter installs its implementation for what the slot lists, even an entry the
 definition declares, and the block its caller wrote is compiled against it: a block is given what its callee's runs
-find (`MonomorphicEffects.Slot.offered`, read off the callee's specialised body), so a run **passed** to another
+find (`MonomorphicEffects.Slot.variants`, read off the callee's specialised body), so a run **passed** to another
 callee's slot runs on whatever that callee installs. `with` on a definition's own clause is rejected. **`with` is written almost nowhere**: a def declaring `uses Console` receives its binding from its
 caller up to `main`, and a `with` in production code is the same mistake as a hard-coded dependency.
 
@@ -684,7 +686,7 @@ nearer one around the run, and a listed effect is always the callee's to catch i
 D35 over D20c option 5). Evidence comes into scope three ways, and a use takes the **nearest answering its entry**
 (`EffectDeclarations.answers`): **received** — a definition's binding binders, at its own type arguments; **given to a
 block by the callee running it** — at each run of a code parameter, what the callee has in scope there for the entries
-the slot lists, recorded as `MonomorphicEffects.Slot.offered` off the callee's **specialised body**, never its
+the slot lists, recorded as `MonomorphicEffects.Slot.variants` off the callee's **specialised body**, never its
 declaration, so a run passed to another callee's slot finds what that callee's runs give (how `catch` learns
 `runThrow`'s `escaping`); what the block uses through `*` unlisted it answers with the evidence where it was written,
 as a closure captures; and **installed by a `with`**, at the `$with` binder call the resolver leaves around its subject,
