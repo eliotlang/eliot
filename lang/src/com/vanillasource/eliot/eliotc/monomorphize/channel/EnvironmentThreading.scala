@@ -1,6 +1,7 @@
 package com.vanillasource.eliot.eliotc.monomorphize.channel
 
 import cats.syntax.all.*
+import com.vanillasource.eliot.eliotc.ability.util.AbilityKind
 import com.vanillasource.eliot.eliotc.ast.fact.ImplementationParameters
 import com.vanillasource.eliot.eliotc.module.fact.{
   ModuleAbilities,
@@ -70,6 +71,15 @@ import scala.util.chaining.*
   * (`scripted$with(xs, greet)`, [[ImplementationParameters.binder]]): the arguments are bound to fresh parameters
   * around the subject, and a frame built for that implementation inside it holds them as its own parts. Every other
   * `with` reaches here as its binder around the subject alone, which is the subject.
+  *
+  * **Evidence beside the binding** (`docs/effects.md` D35 step 3). Alongside the frames, the walk carries what D35 says
+  * answers an operation — the **evidence** in scope for each entry — and checks it against the binding the row phase
+  * wrote, wherever an effect entry is consumed: a callee receiving it, a dispatched operation, and a run of a code
+  * parameter for each entry its slot lists. Evidence is *given* — received from the caller, or given to a block by a
+  * callee's slot, each checked where it was given — or *installed* by a `with`, whose binder call the resolver leaves
+  * in the body; an installed one answers every entry of its ability, and holds the evidence in scope at the `with` for
+  * the entries its implementation's clauses perform. A disagreement is a defect in one of the two, so it is an error,
+  * never a pick. Nothing is emitted for it: the code is still the binding's.
   *
   * Nothing here changes a definition that receives and supplies no environment: its frames have no parts, a block
   * with nothing to take keeps its `unit`, and the woven body is the monomorphic one.
@@ -163,6 +173,20 @@ object EnvironmentThreading {
     def parts: Seq[Part] = clauses.flatMap(_.parts) ++ own
   }
 
+  /** What answers an entry where it is performed, as D35 reads it ([[Threader.agree]]). */
+  private enum Evidence {
+
+    /** Received from the caller, or given to a block by a callee's slot: the frame it arrives as, whose binding was
+      * checked where it was given.
+      */
+    case Given(frame: Frame)
+
+    /** Installed by a `with` naming the implementation `marker` of `ability`, around its subject; `closure` is the
+      * evidence in scope at the `with`, which its implementation's clauses perform on.
+      */
+    case Installed(marker: ValueFQN, ability: AbilityFQN, closure: Seq[Evidence])
+  }
+
   /** What an implementation's environment is made of, before anything holds it: the clause entries with their
     * bindings and shapes, and the types of the implementation's own parameters.
     */
@@ -249,7 +273,7 @@ object EnvironmentThreading {
     ): CompilerIO[Sourced[MonomorphicExpression]] =
       for {
         slots  <- value.effects.slots.traverse(slot => slotDomain(value, slot).map(slot.parameterIndex -> _)).map(_.toMap)
-        walked <- peel(body, 0, value.naturalArity.getOrElse(0), slots, Context(received, Map.empty, Map.empty))
+        walked <- peel(body, 0, value.naturalArity.getOrElse(0), slots, Context(received, Map.empty, Map.empty, evidence = received.map(Evidence.Given(_))))
       } yield walked
 
     private def peel(
@@ -288,10 +312,18 @@ object EnvironmentThreading {
         types: Map[String, GroundValue],
         runs: Map[String, Int],
         supplied: Seq[Supplied] = Seq.empty,
-        depth: Int = 0
+        depth: Int = 0,
+        evidence: Seq[Evidence] = Seq.empty
     ) {
       def push(more: Seq[Frame]): Context =
-        copy(frames = more.map(_.copy(level = depth + 1)) ++ frames, depth = depth + 1)
+        copy(
+          frames = more.map(_.copy(level = depth + 1)) ++ frames,
+          depth = depth + 1,
+          evidence = more.map(Evidence.Given(_)) ++ evidence
+        )
+
+      def install(marker: ValueFQN, ability: AbilityFQN): Context =
+        copy(evidence = Evidence.Installed(marker, ability, evidence) +: evidence)
 
       def supply(marker: ValueFQN, own: Seq[Part], at: Sourced[?]): Context =
         copy(supplied = Supplied(marker, own, depth + 1, at) +: supplied, depth = depth + 1)
@@ -401,10 +433,15 @@ object EnvironmentThreading {
                      compilerAbort[Unit](head.as("Internal: an implementation's binder is not applied to its subject."))
                    else ().pure[CompilerIO]
         marker  <- markerOfBinder(binder, head)
+        ability <- abilityOfMarker(marker).flatMap {
+                     case Some(ability) => ability.pure[CompilerIO]
+                     case None          => compilerAbort[AbilityFQN](head.as("Internal: a `with` names no implementation."))
+                   }
         supplied = args.take(count)
         parts    = parameterTypes(head.value.expressionType, count).map(tpe => Part(fresh(), tpe))
         walked  <- supplied.traverse(walk(_, context))
-        subject <- walk(args(count), if (count == 0) context else context.supply(marker, parts, reference.valueName))
+        inside   = context.install(marker, ability)
+        subject <- walk(args(count), if (count == 0) inside else inside.supply(marker, parts, reference.valueName))
         rest    <- args.drop(count + 1).traverse(walk(_, context))
       } yield {
         val bound = parts.foldRight(subject) { (part, inner) =>
@@ -438,9 +475,10 @@ object EnvironmentThreading {
         context: Context
     ): CompilerIO[Passed] =
       callee.effects.received
-        .traverse(received =>
-          lookup(context, received.entry, typeArguments.lift(received.binderIndex).getOrElse(defaultBinding), at)
-        )
+        .traverse { received =>
+          val binding = typeArguments.lift(received.binderIndex).getOrElse(defaultBinding)
+          checkEvidence(context.evidence, received.entry, binding, at) >> lookup(context, received.entry, binding, at)
+        }
         .map(frames => Passed(frames.flatMap(_.parts), 0))
 
     /** A dispatched clause receives its own entries first — the clause row's frames come from the frame it was dispatched
@@ -453,6 +491,7 @@ object EnvironmentThreading {
         context: Context
     ): CompilerIO[Passed] =
       for {
+        _        <- checkEvidence(context.evidence, dispatch.entry, dispatch.binding, at)
         frame    <- lookup(context, dispatch.entry, dispatch.binding, at)
         perCall  <- memberDeclared(memberOf(clause.vfqn, dispatch.entry.ability))
         own      <- declaredEntries(clause.vfqn)
@@ -461,7 +500,9 @@ object EnvironmentThreading {
                       val callSite = own.get(received.binderIndex).exists(perCall.contains)
                       frame.clauses.find(candidate => candidate.entry == received.entry) match {
                         case Some(clauseFrame) if !callSite => clauseFrame.pure[CompilerIO]
-                        case _                              => lookup(context, received.entry, binding, at)
+                        case _                              =>
+                          checkEvidence(context.evidence, received.entry, binding, at) >>
+                            lookup(context, received.entry, binding, at)
                       }
                     }
       } yield Passed(received.flatMap(_.parts) ++ frame.own, frame.own.size)
@@ -606,10 +647,14 @@ object EnvironmentThreading {
       val slot  = mv.effects.slots.find(_.parameterIndex == index).getOrElse(MonomorphicEffects.Slot(index, Seq.empty))
       for {
         frames <- listed(mv, slot).flatMap(_.traverse {
-                    case Listed.Rides(entry, binding)         => lookup(context, entry, binding, name)
-                    case Listed.Supplied(entry, None)         => lookup(context, entry, defaultBinding, name)
+                    case Listed.Rides(entry, binding)         =>
+                      checkEvidence(context.evidence, entry, binding, name) >> lookup(context, entry, binding, name)
+                    case Listed.Supplied(entry, None)         =>
+                      checkEvidence(context.evidence, entry, defaultBinding, name) >>
+                        lookup(context, entry, defaultBinding, name)
                     case Listed.Supplied(entry, Some(marker)) =>
-                      slotGiven(context, entry, marker, name).flatMap {
+                      checkRunEvidence(context.evidence, entry, marker, index, name) >>
+                        slotGiven(context, entry, marker, name).flatMap {
                         case Some(frame) => frame.pure[CompilerIO]
                         case None        =>
                           for {
@@ -849,6 +894,134 @@ object EnvironmentThreading {
           case _                                                              => built(context, entry, binding, at, None)
         }
       }
+
+    /** Check the evidence in scope for `entry` against the `binding` the row phase wrote for it here (D35 step 3): the
+      * nearest that answers the entry must run the same implementation, and an installed one must hold, for each
+      * entry its implementation's clauses perform, evidence running what the binding's own type arguments say. Only
+      * an effect's entry is checked — a `~` constraint is the two-site search's, which nothing installs — and not in
+      * the guarded-return read, whose frames are the read's own.
+      */
+    private def checkEvidence(evidence: Seq[Evidence], entry: Entry, binding: GroundValue, at: Sourced[?]): CompilerIO[Unit] =
+      whenEffect(entry) {
+        if (unwritten(evidence, entry, binding)) ().pure[CompilerIO]
+        else evidenceFor(evidence, entry, binding, at).flatMap(agree(_, entry, binding, at))
+      }
+
+    /** Whether nothing was written to check: the compile track keys a value it reads at type level with its bindings
+      * left off (`Default`), and where no evidence answers the entry either, there is neither side to compare. The
+      * runtime track always writes an effect's binding (D26), so it is never excused.
+      */
+    private def unwritten(evidence: Seq[Evidence], entry: Entry, binding: GroundValue): Boolean =
+      track == Track.Compiler && !isNamed(binding) && !evidence.exists(answers(_, entry))
+
+    /** Check the evidence a run of this definition's code finds for an entry its slot supplies at the implementation
+      * `marker` the slot names: that implementation, with its clauses' evidence what the slot binds them to
+      * ([[clauseBinding]]).
+      *
+      * A `with` the hoisting moved onto the slot left its binder's call around the run, and one carried from a callee's
+      * slot arrives as that slot's given frame. A `with` **written** on the slot's clause entry has neither: it reads, as
+      * D35 reads it, as a `with` around every run, so the run is checked as installed there — unless something nearer
+      * decided the entry, which is then checked and reported. Step 5 refuses that spelling and deletes this reading.
+      */
+    private def checkRunEvidence(
+        evidence: Seq[Evidence],
+        entry: Entry,
+        marker: ValueFQN,
+        index: Int,
+        at: Sourced[?]
+    ): CompilerIO[Unit] =
+      whenEffect(entry) {
+        val found = evidence.find(answers(_, entry)) match {
+          case Some(near) if runs(near, marker)                  => near
+          case Some(near: Evidence.Installed)                    => near
+          case Some(near @ Evidence.Given(frame)) if frame.bySlot => near
+          case _                                                 => Evidence.Installed(marker, entry.ability, evidence)
+        }
+        for {
+          _        <- sameCode(found, entry, namedBinding(marker), at)
+          named    <- slotImplementations(mv, index)
+          clauses  <- namedClauses(marker)
+          expected <- clauses.traverse(clause => clauseBinding(mv, clause, named, marker).map(clause._1 -> _))
+          _        <- clauseEvidence(found, expected, at)
+        } yield ()
+      }
+
+    private def whenEffect(entry: Entry)(check: => CompilerIO[Unit]): CompilerIO[Unit] =
+      if (guarded) ().pure[CompilerIO]
+      else isEffect(entry.ability).flatMap(effect => if (effect) check else ().pure[CompilerIO])
+
+    /** The evidence `binding` was written against must agree with: its implementation, and for an installed one, its
+      * clauses' evidence at the bindings the written implementation's type arguments hold for them.
+      */
+    private def agree(found: Evidence, entry: Entry, binding: GroundValue, at: Sourced[?]): CompilerIO[Unit] =
+      sameCode(found, entry, binding, at) >>
+        shapeOf(entry, binding).flatMap(shape =>
+          clauseEvidence(found, shape.clauses.map((clauseEntry, clauseBinding, _) => clauseEntry -> clauseBinding), at)
+        )
+
+    private def sameCode(found: Evidence, entry: Entry, binding: GroundValue, at: Sourced[?]): CompilerIO[Unit] = {
+      val runs = found match {
+        case Evidence.Given(frame)             => frame.binding
+        case Evidence.Installed(marker, _, _) => namedBinding(marker)
+      }
+      if (sameImplementation(runs, binding)) ().pure[CompilerIO]
+      else
+        compilerAbort(
+          at.as(
+            s"Internal: the evidence for the effect '${entry.ability.abilityName}' here runs ${describe(runs)}, but " +
+              s"the binding written here is ${describe(binding)}."
+          )
+        )
+    }
+
+    /** An installed implementation's clauses run on the evidence at its `with`; a given one's were checked where it was
+      * given.
+      */
+    private def clauseEvidence(found: Evidence, expected: Seq[(Entry, GroundValue)], at: Sourced[?]): CompilerIO[Unit] =
+      found match {
+        case Evidence.Given(_)                      => ().pure[CompilerIO]
+        case Evidence.Installed(_, _, closure)      =>
+          expected.traverse_((clauseEntry, clauseBinding) => checkEvidence(closure, clauseEntry, clauseBinding, at))
+      }
+
+    /** Whether `evidence` answers `entry`: a given one that very entry, an installed one any of its ability. */
+    private def answers(evidence: Evidence, entry: Entry): Boolean =
+      evidence match {
+        case Evidence.Given(frame)             => frame.entry == entry
+        case Evidence.Installed(_, ability, _) => ability == entry.ability
+      }
+
+    /** Whether `evidence` runs the implementation `marker`. */
+    private def runs(evidence: Evidence, marker: ValueFQN): Boolean =
+      evidence match {
+        case Evidence.Given(frame)            => sameImplementation(frame.binding, namedBinding(marker))
+        case Evidence.Installed(installed, _, _) => installed == marker
+      }
+
+    /** The nearest evidence answering `entry`. */
+    private def evidenceFor(evidence: Seq[Evidence], entry: Entry, binding: GroundValue, at: Sourced[?]): CompilerIO[Evidence] =
+      evidence.find(answers(_, entry)) match {
+        case Some(found) => found.pure[CompilerIO]
+        case None        =>
+          compilerAbort(
+            at.as(
+              s"Internal: no evidence for the effect '${entry.ability.abilityName}' is in scope here, but the binding " +
+                s"written here is ${describe(binding)}."
+            )
+          )
+      }
+
+    private def isEffect(ability: AbilityFQN): CompilerIO[Boolean] =
+      effects.get(ability) match {
+        case Some(known) => known.pure[CompilerIO]
+        case None        =>
+          AbilityKind
+            .isEffect(ability, track.platform)
+            .map(_.getOrElse(false))
+            .flatTap(known => effects.update(ability, known).pure[CompilerIO])
+      }
+
+    private val effects: mutable.Map[AbilityFQN, Boolean] = mutable.Map.empty
 
     /** The nearest arguments a `with` supplied to the implementation `binding` names. */
     private def suppliedFor(context: Context, binding: GroundValue): Option[Supplied] =

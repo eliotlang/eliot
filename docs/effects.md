@@ -1895,7 +1895,17 @@ oracle until step 4, where specialisation must restore them.
 3. **Evidence threaded beside the written binding**: each entry's hidden argument carries code and environment, built
    at install sites and captured or given as point 3 says, with the threading checking, at every operation, that the
    evidence's implementation is the binding the write chose. A mismatch is a defect in one of the two, found before
-   either is trusted alone.
+   either is trusted alone. *Done 2026-10-17*, as a shadow in `EnvironmentThreading` (`Evidence`, `checkEvidence`):
+   jars must stay byte-identical until step 4, so the evidence is carried and checked, never emitted. It is *given*
+   (received, or given to a block by a callee's slot) or *installed* at a `with`'s binder call, holding the evidence
+   at the `with` for its implementation's clauses; it is checked where a callee receives an entry, at a dispatched
+   operation and its call-site entries, and at each run for the entries its slot lists. No disagreement in the
+   corpus (47 jars identical, eliot-test 193, eliot-build 368, `__.test` green), and a sabotaged check fails every
+   example, for given and installed evidence alike. Two readings it needed: a `with` **written** on a slot's clause
+   entry leaves no install site at the run, so it reads as installed there (D35's own reading of the spelling; it
+   fires only in the compiler's tests of that spelling, and step 5 deletes it); and a compile-track key with an
+   effect's binding left `Default` and nothing installed has neither side to compare (`unwritten`; never on the
+   runtime track).
 4. **Operations dispatched through evidence, and the specialisation pass**: the binding leaves the monomorphization
    key, and the pass clones by constant evidence. Jars byte-identical again, or each difference explained.
 5. **The deletions** above, and the slot `with` refused with a message naming the `with` around the run; §8 items
