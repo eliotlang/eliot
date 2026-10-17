@@ -2,19 +2,19 @@ package com.vanillasource.eliot.eliotc.monomorphize.fact
 
 import com.vanillasource.eliot.eliotc.resolve.fact.AbilityFQN
 
-/** What one specialisation's effects are at its ground arguments — the facts the **environment threading** at the
-  * `WovenValue` seam reads (effects D20c option 5, `docs/effects.md` §11).
+/** What one specialisation's effects are at its ground arguments — the facts the **specialisation pass** and the
+  * **environment threading** at the `WovenValue` seam read (`docs/effects.md` §3.4, D35).
   *
-  * An implementation is compile-time code and a runtime environment. The code is the binding the row phase writes and
-  * monomorphization specialises on, so a [[MonomorphicValue]] already carries it in its type arguments. The
-  * environment is threaded after monomorphization, and to thread it a reference has to find *which entry in scope*
-  * gives it — chosen at the entry's ground arguments, so that `{Throw[IoError], Throw[GitError]}` is two frames, not
-  * one. Those arguments are type expressions over the definition's binders, and only the checker's one evaluator may
-  * reduce them, so they are reduced here, at the end of the value's own monomorphization, and recorded.
+  * An implementation is **evidence**: its code and its environment, one value, found after monomorphization. The
+  * specialisation pass writes the code half into a [[MonomorphicValue]]'s type arguments from the evidence in scope;
+  * the threading passes the environment half from the same evidence. Both find *which entry in scope* answers a use
+  * at the entry's ground arguments, so that `{Throw[IoError], Throw[GitError]}` is two frames, not one. Those
+  * arguments are type expressions over the definition's binders, and only the checker's one evaluator may reduce them,
+  * so they are reduced here, at the end of the value's own monomorphization, and recorded.
   *
   * @param received
   *   The entries this definition **receives** from its caller — one per binding binder, which its declared row and its
-  *   `~` constraints mint — each with the binder's index, whose type argument is the binding the caller wrote.
+  *   `~` constraints mint — each with the binder's index, whose type argument holds the caller's evidence.
   * @param slots
   *   The entries each **row-typed parameter** declares, by parameter index: what a block passed there may be given.
   */

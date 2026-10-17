@@ -45,8 +45,7 @@ import scala.collection.mutable
   * ([[EffectDeclarations.bindingOf]]); a reference to an effect's member is dispatched to the clause of the
   * implementation the evidence runs, exactly as the checker dispatched it when the binding was in the key: a named
   * implementation at the type arguments its pattern takes at the entry, its clause's per-call entries at the call's
-  * evidence ([[DeclaredEntries.forwarded]]). Where the checked body already holds a named implementation — a `with` in
-  * this body wrote it — the evidence must run the same one.
+  * evidence ([[DeclaredEntries.forwarded]]).
   *
   * Nothing else changes: no node's type, no shape, so every expression the checker typed stays as it typed it. Every
   * piece of evidence is a constant here, since every binding in `typeArguments` and every `with` names a compile-time
