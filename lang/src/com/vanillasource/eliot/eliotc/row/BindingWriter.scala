@@ -508,15 +508,19 @@ object BindingWriter {
     * entry point binding `main`'s `FileSystem` holds no `Throw[IoError]`. The rest are the implementation's
     * **environment** ([[DeclaredEntries.environment]]), which the `with` must answer.
     *
-    * Empty — every entry answered at the `with`, as before — when any declaration it reads is unknown.
+    * Empty — every entry answered at the `with` — when any declaration it reads is unknown. Each is read through
+    * [[RowChecker.Universe.lookup]], so a demand-driven universe reports it missing and fetches it before the write is
+    * kept.
     */
   private def perCallBinders(marker: ValueFQN, ability: AbilityFQN, universe: RowChecker.Universe): Set[Int] =
     (for {
       orv         <- universe.lookup(marker)
       clauses     <- universe.clausesOf(marker)
-      performing   = clauses.flatMap(universe.lookup).filter(clause => DeclaredEntries.of(clause).nonEmpty)
+      // Every clause is consulted before any is missing, so a demand-driven universe fetches them all in one round.
+      read         = clauses.map(universe.lookup)
+      values      <- read.sequence
+      performing   = values.filter(clause => DeclaredEntries.of(clause).nonEmpty)
       implemented <- performing.traverse(clause => universe.lookup(memberOf(clause.vfqn, ability)).map(clause -> _))
-      _           <- Option.when(clauses.forall(universe.values.contains))(())
     } yield {
       val environment = DeclaredEntries.environment(implemented)
       DeclaredEntries.of(orv).collect { case (index, entry) if !environment.contains(entry) => index }.toSet
@@ -581,11 +585,10 @@ object BindingWriter {
     * its own (`ability Show[T] { def show(t: T): {Log} String }`) has its bindings at indices 0 and 2 with the
     * ability's `T` between them; [[Writer.writeBindings]] merges them with what the call determines for that `T`.
     *
-    * Private, and the only definition of where a binding sits. It was public while the post-mono accounting read it
-    * back to re-derive an instantiation's effects; that derivation retired with D7 (`docs/effects.md` §11), and the
-    * write's own walk — which is the scope check — is now the only reader.
+    * The only definition of where a binding sits. Besides the write, the evidence after monomorphization reads it
+    * (`docs/effects.md` D35), to build the binding an installed implementation stands for.
     */
-  private def phantoms(orv: OperatorResolvedValue): Seq[(Int, AbilityFQN)] =
+  def phantoms(orv: OperatorResolvedValue): Seq[(Int, AbilityFQN)] =
     SignatureView.of(orv.signature).binders.zipWithIndex.flatMap { case (binder, index) =>
       binder.parameterType.flatMap(declared => markedAbility(declared.value)).map(index -> _)
     }
@@ -1221,8 +1224,9 @@ object BindingWriter {
       * the same way when *it* was bound. An implementation with no clause row writes as the bare marker, exactly as
       * before.
       *
-      * A binder in `perCall` is one the dispatch replaces with the call's binding ([[perCallBinders]]), so nothing in
-      * scope need answer it: one with nothing in scope is written as `Default`, which nothing runs on.
+      * A binder in `perCall` is one the dispatch replaces with the call's binding ([[perCallBinders]]), so nothing runs
+      * on what is written there, and it is written as `Default` whatever is in scope: what stands there is part of the
+      * specialisation's identity, and the evidence after monomorphization (`docs/effects.md` D35) holds nothing for it.
       */
     private def boundImplementation(
         implementation: Sourced[ValueFQN],
@@ -1271,7 +1275,8 @@ object BindingWriter {
         byName.foldLeft(scope.defaulting(default.map((ability, arguments, _) => ability -> arguments), implementation)) {
           case (acc, (ability, arguments, marker)) =>
             acc.bind(Binding(ability, slotImplementation(marker.get, scope, rides, others), arguments = arguments))
-        }
+        },
+        abilityOf(implementation.value, universe).fold(Set.empty[Int])(perCallBinders(implementation.value, _, universe))
       )
     }
 
@@ -1357,14 +1362,16 @@ object BindingWriter {
             Option.unless(scope.signature)(reference.as(ValueReference(reference.as(WellKnownTypes.inferredTypeArgumentFQN)))),
             (index, ability) =>
               reference.as(
-                bindingFor(
-                  ability,
-                  entries.get(index).flatMap(spelledRendered(_, substitution)),
-                  entries.get(index).flatMap(spelledArguments(_, substitution ++ shared.holes)),
-                  effects.contains(ability) && !perCall.contains(index),
-                  reference,
-                  scope
-                )
+                if (perCall.contains(index)) defaultBinding(reference)
+                else
+                  bindingFor(
+                    ability,
+                    entries.get(index).flatMap(spelledRendered(_, substitution)),
+                    entries.get(index).flatMap(spelledArguments(_, substitution ++ shared.holes)),
+                    effects.contains(ability),
+                    reference,
+                    scope
+                  )
               )
           )
           marks.toSeq.filter(_._1 >= reach).sortBy(_._1).foreach { case (_, ability) =>

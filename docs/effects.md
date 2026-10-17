@@ -1907,7 +1907,17 @@ oracle until step 4, where specialisation must restore them.
    effect's binding left `Default` and nothing installed has neither side to compare (`unwritten`; never on the
    runtime track).
 4. **Operations dispatched through evidence, and the specialisation pass**: the binding leaves the monomorphization
-   key, and the pass clones by constant evidence. Jars byte-identical again, or each difference explained.
+   key, and the pass clones by constant evidence. Jars byte-identical again, or each difference explained. Built in
+   two halves. *First half done 2026-10-17*: the evidence produces the **exact** ground binding the write wrote —
+   an installed implementation is its marker applied to its binding binders at the evidence its `with` closed over
+   (`Default` at a per-call one and an ability's) and, before the last of them, to what its pattern takes at the
+   entry — and the shadow check compares the two with `==`. It needed one change to the write: a **per-call**
+   binder (an entry the member declares, which dispatch replaces with the call's binding) is now written `Default`
+   whatever is in scope, at a body `with` and at a slot's alike, and the write reads the clauses deciding which
+   binders are per-call through the universe's `lookup` (it read them with `contains`, so a demand-driven run never
+   fetched them and silently found none). Nothing runs on that binder, so only eliot-build's specialisation names
+   moved; all 47 example jars byte-identical, eliot-test 193 and eliot-build 368 pass. The second half moves the
+   binding out of the key.
 5. **The deletions** above, and the slot `with` refused with a message naming the `with` around the run; §8 items
    44, 45, 48, 56 and 57 rechecked as closed, and item 60 checked to fail loudly.
 6. Part I rewritten (§3.1, §3.4, §3.5, §9) and the cornerstone in `CLAUDE.md`, then a release.

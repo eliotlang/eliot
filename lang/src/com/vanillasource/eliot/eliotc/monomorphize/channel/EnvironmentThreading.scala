@@ -22,7 +22,7 @@ import com.vanillasource.eliot.eliotc.monomorphize.fact.{
   MonomorphicValue
 }
 import com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedExpression.SignatureView
-import com.vanillasource.eliot.eliotc.row.SlotBindings
+import com.vanillasource.eliot.eliotc.row.{BindingWriter, SlotBindings}
 import com.vanillasource.eliot.eliotc.row.fact.SlotBoundValue
 import com.vanillasource.eliot.eliotc.operator.fact.{OperatorResolvedExpression, OperatorResolvedValue}
 import com.vanillasource.eliot.eliotc.platform.Platform
@@ -623,9 +623,9 @@ object EnvironmentThreading {
                                 )
                               }
               own          <- namedOwn(entry, marker)
+              binding      <- slotBinding(callee, slot.parameterIndex, entry, marker)
             } yield {
-              val frame =
-                Frame(entry, namedBinding(marker), clauseFrames, own.map(tpe => Part(fresh(), tpe)), bySlot = true)
+              val frame = Frame(entry, binding, clauseFrames, own.map(tpe => Part(fresh(), tpe)), bySlot = true)
               (frame, frame.parts)
             }
         })
@@ -666,7 +666,8 @@ object EnvironmentThreading {
                                               )
                                             )
                             own          <- runArguments(context, entry, marker, name)
-                          } yield Frame(entry, namedBinding(marker), clauseFrames, own)
+                            binding      <- slotBinding(mv, index, entry, marker)
+                          } yield Frame(entry, binding, clauseFrames, own)
                       }
                   })
         parts   = frames.flatMap(_.parts)
@@ -755,12 +756,17 @@ object EnvironmentThreading {
         named: SlotNamed,
         marker: ValueFQN
     ): CompilerIO[GroundValue] =
-      declaredEntries(value.vfqn).map { own =>
+      declaredEntries(value.vfqn).flatMap { own =>
         clause._2
           .flatMap(spelled => own.collectFirst { case (index, declared) if declared == spelled => index })
-          .flatMap(value.typeArguments.lift)
-          .orElse(named.forClause(marker, clause._1.ability).map(namedBinding))
-          .getOrElse(defaultBinding)
+          .flatMap(value.typeArguments.lift) match {
+          case Some(binding) => binding.pure[CompilerIO]
+          case None          =>
+            named.forClause(marker, clause._1.ability) match {
+              case Some(other) => namedSlotBinding(value, named, clause._1, other)
+              case None        => defaultBinding.pure[CompilerIO]
+            }
+        }
       }
 
     /** Whether each entry of `slot` **rides** the definition's own row rather than being supplied by the slot (§2.2) —
@@ -904,7 +910,7 @@ object EnvironmentThreading {
     private def checkEvidence(evidence: Seq[Evidence], entry: Entry, binding: GroundValue, at: Sourced[?]): CompilerIO[Unit] =
       whenEffect(entry) {
         if (unwritten(evidence, entry, binding)) ().pure[CompilerIO]
-        else evidenceFor(evidence, entry, binding, at).flatMap(agree(_, entry, binding, at))
+        else evidenceFor(evidence, entry, binding, at).flatMap(found => agree(found, entry, binding, at) >> exactly(found, entry, binding, at))
       }
 
     /** Whether nothing was written to check: the compile track keys a value it reads at type level with its bindings
@@ -940,6 +946,7 @@ object EnvironmentThreading {
         for {
           _        <- sameCode(found, entry, namedBinding(marker), at)
           named    <- slotImplementations(mv, index)
+          _        <- slotBinding(mv, index, entry, marker).flatMap(exactly(found, entry, _, at))
           clauses  <- namedClauses(marker)
           expected <- clauses.traverse(clause => clauseBinding(mv, clause, named, marker).map(clause._1 -> _))
           _        <- clauseEvidence(found, expected, at)
@@ -958,6 +965,88 @@ object EnvironmentThreading {
         shapeOf(entry, binding).flatMap(shape =>
           clauseEvidence(found, shape.clauses.map((clauseEntry, clauseBinding, _) => clauseEntry -> clauseBinding), at)
         )
+
+    /** The ground binding `found` stands for must be exactly the one written for `entry` here: what step 4 puts in a
+      * specialisation's key is the evidence's binding, so a difference in any argument would be a different
+      * specialisation, not merely a different implementation.
+      */
+    private def exactly(found: Evidence, entry: Entry, binding: GroundValue, at: Sourced[?]): CompilerIO[Unit] =
+      bindingOf(found, entry).flatMap { built =>
+        if (built == binding) ().pure[CompilerIO]
+        else
+          compilerAbort(
+            at.as(
+              s"Internal: the evidence for the effect '${entry.ability.abilityName}' here stands for " +
+                s"${GroundValueRenderer.render(built)}, but the binding written here is ${GroundValueRenderer.render(binding)}."
+            )
+          )
+      }
+
+    /** The ground binding `evidence` stands for where it answers `entry` (`docs/effects.md` D35): what a given one
+      * arrived as, and for an installed one its implementation's marker applied to what the write puts there — each
+      * binding binder ([[BindingWriter.phantoms]]) at the evidence its `with` closed over, a per-call one and an
+      * ability's at `Default`, and each binder before the last binding at what its pattern takes at the entry.
+      */
+    private def bindingOf(evidence: Evidence, entry: Entry): CompilerIO[GroundValue] =
+      evidence match {
+        case Evidence.Given(frame)                  => frame.binding.pure[CompilerIO]
+        case Evidence.Installed(marker, ability, closure) =>
+          installedBinding(
+            marker,
+            ability,
+            entry,
+            clauseEntry => closure.find(answers(_, clauseEntry)).traverse(bindingOf(_, clauseEntry))
+          )
+      }
+
+    /** The ground binding of the implementation `marker` the slot `index` of `value` names for `entry`: its clauses at
+      * what the slot binds them to ([[clauseBinding]]).
+      */
+    private def slotBinding(value: Specialisation, index: Int, entry: Entry, marker: ValueFQN): CompilerIO[GroundValue] =
+      slotImplementations(value, index).flatMap(namedSlotBinding(value, _, entry, marker))
+
+    private def namedSlotBinding(value: Specialisation, named: SlotNamed, entry: Entry, marker: ValueFQN): CompilerIO[GroundValue] =
+      installedBinding(
+        marker,
+        entry.ability,
+        entry,
+        clauseEntry => namedClauses(marker).flatMap(_.find(_._1 == clauseEntry).traverse(clauseBinding(value, _, named, marker)))
+      )
+
+    private def installedBinding(
+        marker: ValueFQN,
+        ability: AbilityFQN,
+        entry: Entry,
+        clause: Entry => CompilerIO[Option[GroundValue]]
+    ): CompilerIO[GroundValue] =
+      for {
+        orv      <- getFactOrAbort(OperatorResolvedValue.Key(marker, track.platform))
+        marks     = BindingWriter.phantoms(orv).toMap
+        solved   <- NamedImplementationArguments.solve(
+                      ImplementationBinding.Implementation(marker, Seq.empty),
+                      entry.arguments,
+                      track.platform
+                    )
+        arguments = solved.getOrElse(SignatureView.of(orv.signature).binders.map(_ => defaultBinding))
+        received <- if (marks.isEmpty) Map.empty[Int, Entry].pure[CompilerIO]
+                    else track.specialisation(marker, arguments).map(_.effects.received.map(r => r.binderIndex -> r.entry).toMap)
+        declared <- declaredEntries(marker)
+        held     <- environmentEntries(marker, ability)
+        written  <- (0 to marks.keys.maxOption.getOrElse(-1)).toList.traverse { index =>
+                      marks.get(index) match {
+                        case None                                                                  =>
+                          arguments.lift(index).getOrElse(defaultBinding).pure[CompilerIO]
+                        case Some(_) if declared.get(index).exists(entry => !held.contains(entry)) =>
+                          defaultBinding.pure[CompilerIO]
+                        case Some(markAbility)                                                     =>
+                          isEffect(markAbility).flatMap {
+                            case true  =>
+                              received.get(index).flatTraverse(clause).map(_.getOrElse(defaultBinding))
+                            case false => defaultBinding.pure[CompilerIO]
+                          }
+                      }
+                    }
+      } yield GroundValue.Structure(marker, written, GroundValue.Type)
 
     private def sameCode(found: Evidence, entry: Entry, binding: GroundValue, at: Sourced[?]): CompilerIO[Unit] = {
       val runs = found match {
