@@ -5,7 +5,9 @@ import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.ability.fact.AbilityImplementation
 import com.vanillasource.eliot.eliotc.core.processor.MetaWhereDesugarer
 import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, Qualifier, Role, UnifiedModuleNames, ValueFQN}
+import com.vanillasource.eliot.eliotc.monomorphize.channel.EnvironmentThreading
 import com.vanillasource.eliot.eliotc.monomorphize.check.{MarkerGuardSignature, Track, TypeStackLoop}
+import com.vanillasource.eliot.eliotc.monomorphize.specialise.EvidenceSpecialisation
 import com.vanillasource.eliot.eliotc.monomorphize.domain.SemValue
 import com.vanillasource.eliot.eliotc.monomorphize.fact.{CompilerMonomorphicValue, GroundValue, NativeBinding}
 import com.vanillasource.eliot.eliotc.platform.Platform
@@ -116,13 +118,27 @@ class CompilerMonomorphicTypeCheckProcessor()
                              signatureOnly = signatureOnly,
                              injectedSignature = injectedSignature
                            )
+      // The read-back left every effect operation undispatched; the specialisation pass dispatches each from the
+      // evidence this key receives (`docs/effects.md` D35), and records what each code parameter's runs give.
+      specialised       <- EvidenceSpecialisation.specialiseBody(
+                             Platform.Compiler,
+                             EnvironmentThreading.Specialisation(
+                               key.vfqn,
+                               key.typeArguments,
+                               value.signature.as(key.vfqn.name),
+                               result.signature,
+                               result.body,
+                               result.effects
+                             ),
+                             guarded = false
+                           )
     } yield CompilerMonomorphicValue(
       key.vfqn,
       key.typeArguments,
       value.signature.as(key.vfqn.name),
       result.signature,
-      result.body,
-      result.effects
+      specialised.body,
+      specialised.effects
     )
   }
 

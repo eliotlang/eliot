@@ -30,8 +30,15 @@ object MonomorphicEffects {
   /** An entry the definition receives, bound by its type argument at `binderIndex`. */
   case class Received(binderIndex: Int, entry: Entry)
 
-  /** The entries the row-typed parameter at `parameterIndex` declares. */
-  case class Slot(parameterIndex: Int, entries: Seq[Entry])
+  /** The entries the row-typed parameter at `parameterIndex` declares.
+    *
+    * @param offered
+    *   The binding of the evidence each entry finds where this specialisation's body **runs** the parameter, in the
+    *   order of `entries` (`docs/effects.md` D35): what a block written at the slot is compiled against, read off the
+    *   callee's body rather than its declaration. [[None]] where nothing runs it — a body-less value, a parameter its
+    *   body never runs, or a specialisation the pass has not produced yet ([[CheckedValue]]).
+    */
+  case class Slot(parameterIndex: Int, entries: Seq[Entry], offered: Option[Seq[GroundValue]] = None)
 
   /** Where a reference the checker **dispatched** to an implementation's clause came from: the ability member's entry
     * at its ground ability-level arguments, and the binding it was dispatched on. The clause's own name says which

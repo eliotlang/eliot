@@ -3,9 +3,9 @@ package com.vanillasource.eliot.eliotc.monomorphize.specialise
 import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.ability.fact.NamedImplementationCheck
 import com.vanillasource.eliot.eliotc.ast.fact.ImplementationParameters
-import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, Qualifier, UnifiedModuleNames, ValueFQN}
+import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, Qualifier, UnifiedModuleNames, ValueFQN, WellKnownTypes}
 import com.vanillasource.eliot.eliotc.monomorphize.channel.EffectDeclarations
-import com.vanillasource.eliot.eliotc.monomorphize.channel.EffectDeclarations.{Evidence, Listed, defaultBinding}
+import com.vanillasource.eliot.eliotc.monomorphize.channel.EffectDeclarations.{Evidence, defaultBinding}
 import com.vanillasource.eliot.eliotc.monomorphize.channel.EnvironmentThreading.Specialisation
 import com.vanillasource.eliot.eliotc.monomorphize.check.{DeclaredEntries, ImplementationBinding, NamedImplementationArguments}
 import com.vanillasource.eliot.eliotc.monomorphize.fact.MonomorphicEffects.Entry
@@ -13,8 +13,10 @@ import com.vanillasource.eliot.eliotc.monomorphize.fact.{
   CheckedValue,
   GroundValue,
   GroundValueRenderer,
+  CompilerMonomorphicValue,
   MonomorphicEffects,
-  MonomorphicExpression
+  MonomorphicExpression,
+  MonomorphicValue
 }
 import com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedExpression.SignatureView
 import com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedValue
@@ -23,6 +25,8 @@ import com.vanillasource.eliot.eliotc.processor.CompilerIO.*
 import com.vanillasource.eliot.eliotc.resolve.fact.AbilityFQN
 import com.vanillasource.eliot.eliotc.source.content.Sourced
 import com.vanillasource.eliot.eliotc.source.content.Sourced.{compilerAbort, compilerError}
+
+import scala.collection.mutable
 
 /** **The specialisation pass** — `docs/effects.md` D35 step 4. The checker checks a value with its effect bindings left
   * out ([[CheckedValue]]); this walk puts them back from the **evidence** in scope, so the body it returns is the
@@ -51,37 +55,106 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced.{compilerAbort, com
   */
 object EvidenceSpecialisation {
 
-  def specialise(
-      checked: CheckedValue,
-      typeArguments: Seq[GroundValue]
-  ): CompilerIO[Option[Sourced[MonomorphicExpression.Expression]]] =
-    checked.runtime.traverse { body =>
-      val value = Specialisation(checked.vfqn, typeArguments, checked.name, checked.signature, checked.runtime, checked.effects)
-      new Specialiser().walk(
-        body.map(MonomorphicExpression(checked.signature, _)),
-        value.effects.received.map(received =>
-          Evidence.Given(received.entry, typeArguments.lift(received.binderIndex).getOrElse(defaultBinding))
-        )
-      ).map(_.map(_.expression))
+  /** The specialised body, and the value's effects with each slot's [[MonomorphicEffects.Slot.offered]] read off the runs
+    * of its parameter in that body.
+    */
+  case class Specialised(body: Option[Sourced[MonomorphicExpression.Expression]], effects: MonomorphicEffects)
+
+  /** The runtime track's specialisation of `checked` at `typeArguments`, whose effect bindings the checker left out. */
+  def specialise(checked: CheckedValue, typeArguments: Seq[GroundValue]): CompilerIO[Specialised] =
+    specialiseBody(
+      Platform.Runtime,
+      Specialisation(checked.vfqn, typeArguments, checked.name, checked.signature, checked.runtime, checked.effects),
+      guarded = false
+    )
+
+  /** `value`'s body specialised on `platform`'s track from the evidence it receives at its type arguments — or, for a
+    * **guarded** read of a signature, from what the guarded-return read discharges ([[Evidence.Discharged]]): a
+    * signature's control effects are its own, never its caller's.
+    */
+  def specialiseBody(platform: Platform, value: Specialisation, guarded: Boolean): CompilerIO[Specialised] =
+    value.body match {
+      case None       => Specialised(None, value.effects).pure[CompilerIO]
+      case Some(body) =>
+        val specialiser = new Specialiser(platform, value.effects.slots)
+        val initial     =
+          if (guarded) WellKnownTypes.guardDischargers.keys.toSeq.map((module, name) => Evidence.Discharged(AbilityFQN(module, name)))
+          else
+            value.effects.received.map(received =>
+              Evidence.Given(received.entry, value.typeArguments.lift(received.binderIndex).getOrElse(defaultBinding))
+            )
+        for {
+          walked <- specialiser.peel(body.map(MonomorphicExpression(value.signature, _)), 0, Scope(initial, Map.empty))
+          slots  <- specialiser.slotsOffered
+        } yield Specialised(Some(walked.map(_.expression)), value.effects.copy(slots = slots))
     }
 
-  /** A value's specialisation as the declarations are read here: its checked value at `typeArguments` with the
-    * bindings left out, carrying `typeArguments` themselves, which is what a slot's riding entries are read at.
+  /** The lexical scope of the walk: the evidence in scope, nearest first, and this value's own code parameters by name,
+    * with the index of the parameter each is — a reference to one applied to `unit` is a run of it.
     */
-  private def checkedAt(vfqn: ValueFQN, typeArguments: Seq[GroundValue]): CompilerIO[Specialisation] =
-    EffectBindings
-      .erased(vfqn, typeArguments)
-      .flatMap(erased => getFactOrAbort(CheckedValue.Key(vfqn, erased)))
-      .map(checked => Specialisation(vfqn, typeArguments, checked.name, checked.signature, checked.runtime, checked.effects))
+  private case class Scope(evidence: Seq[Evidence], runnable: Map[String, Int]) {
+    def offer(more: Seq[Evidence]): Scope = copy(evidence = more ++ evidence)
+    def shadow(name: String): Scope       = copy(runnable = runnable - name)
+  }
 
-  private class Specialiser {
-    private val declarations = EffectDeclarations(Platform.Runtime, checkedAt)
+  /** A value's specialisation as the declarations are read here: on the runtime track its checked value at
+    * `typeArguments` with the bindings left out, carrying `typeArguments` themselves; on the compile track, which keeps
+    * the bindings in its key, its compile-time monomorphization there.
+    */
+  private def specialisationAt(platform: Platform)(vfqn: ValueFQN, typeArguments: Seq[GroundValue]): CompilerIO[Specialisation] =
+    platform match {
+      case Platform.Runtime  =>
+        EffectBindings
+          .erased(vfqn, typeArguments)
+          .flatMap(erased => getFactOrAbort(CheckedValue.Key(vfqn, erased)))
+          .map(checked => Specialisation(vfqn, typeArguments, checked.name, checked.signature, checked.runtime, checked.effects))
+      case Platform.Compiler =>
+        getFactOrAbort(CompilerMonomorphicValue.Key(vfqn, typeArguments)).map(Specialisation.of)
+    }
+
+  /** A value's specialisation with its slots' [[MonomorphicEffects.Slot.offered]]: the pass's own output. */
+  private def specialisedAt(platform: Platform)(vfqn: ValueFQN, typeArguments: Seq[GroundValue]): CompilerIO[MonomorphicEffects] =
+    platform match {
+      case Platform.Runtime  => getFactOrAbort(MonomorphicValue.Key(vfqn, typeArguments)).map(_.effects)
+      case Platform.Compiler => getFactOrAbort(CompilerMonomorphicValue.Key(vfqn, typeArguments)).map(_.effects)
+    }
+
+  /** @param slots
+    *   The value's own code parameters' slots, whose runs the walk records ([[slotsOffered]]).
+    */
+  private class Specialiser(platform: Platform, slots: Seq[MonomorphicEffects.Slot]) {
+    private val declarations = EffectDeclarations(platform, specialisationAt(platform))
+    private val checkedAt    = specialisationAt(platform)
     import declarations.*
 
-    def walk(node: Sourced[MonomorphicExpression], evidence: Seq[Evidence]): CompilerIO[Sourced[MonomorphicExpression]] =
+    /** Whether an entry no evidence answers is left as the checker left it, undispatched: on the compile track, which is
+      * asked for a value at a **partial** key too — one whose binding binders are not all in it, so the entries they
+      * bind have no evidence — and reduces what it can, an undispatched operation staying stuck (the fail-safe
+      * direction: nothing reduces past it). On the runtime track every key is whole and the row phase has seen every
+      * entry answered, so a missing one is an error.
+      */
+    private val unanswerable: Boolean = platform == Platform.Compiler
+
+    /** Per slot, each run of its parameter: the reference, and the binding of the evidence each entry finds there. */
+    private val runs = mutable.Map.empty[Int, Seq[(Sourced[String], Seq[GroundValue])]]
+
+    /** Peel the value's own leading parameters, a code parameter's name runnable inside, and walk what they bind. */
+    def peel(node: Sourced[MonomorphicExpression], index: Int, scope: Scope): CompilerIO[Sourced[MonomorphicExpression]] =
       node.value.expression match {
         case MonomorphicExpression.FunctionLiteral(name, parameterType, body) =>
-          walk(body, evidence).map(walked =>
+          val inside =
+            if (slots.exists(_.parameterIndex == index)) scope.copy(runnable = scope.runnable.updated(name.value, index))
+            else scope.shadow(name.value)
+          peel(body, index + 1, inside).map(walked =>
+            node.as(node.value.copy(expression = MonomorphicExpression.FunctionLiteral(name, parameterType, walked)))
+          )
+        case _                                                               => walk(node, scope)
+      }
+
+    def walk(node: Sourced[MonomorphicExpression], scope: Scope): CompilerIO[Sourced[MonomorphicExpression]] =
+      node.value.expression match {
+        case MonomorphicExpression.FunctionLiteral(name, parameterType, body) =>
+          walk(body, scope.shadow(name.value)).map(walked =>
             node.as(node.value.copy(expression = MonomorphicExpression.FunctionLiteral(name, parameterType, walked)))
           )
         case _: MonomorphicExpression.FunctionApplication                    =>
@@ -89,18 +162,55 @@ object EvidenceSpecialisation {
           head.value.expression match {
             case reference: MonomorphicExpression.MonomorphicValueReference
                 if ImplementationParameters.isBinder(reference.valueName.value) =>
-              install(node, head, reference, args, evidence)
+              install(node, head, reference, args, scope)
             case reference: MonomorphicExpression.MonomorphicValueReference  =>
-              call(node, head, reference, args, evidence)
+              call(node, head, reference, args, scope)
+            case MonomorphicExpression.ParameterReference(name)
+                if scope.runnable.contains(name.value) && args.sizeIs == 1 && isUnit(args.head) =>
+              run(name, scope.runnable(name.value), scope).as(node)
             case _                                                            =>
               for {
-                walkedHead <- walk(head, evidence)
-                walkedArgs <- args.traverse(walk(_, evidence))
+                walkedHead <- walk(head, scope)
+                walkedArgs <- args.traverse(walk(_, scope))
               } yield rebuilt(node, walkedHead, walkedArgs)
           }
         case reference: MonomorphicExpression.MonomorphicValueReference      =>
-          call(node, node, reference, Seq.empty, evidence)
+          call(node, node, reference, Seq.empty, scope)
         case _                                                               => node.pure[CompilerIO]
+      }
+
+    /** A run of the code parameter at `index`: the binding of the evidence each entry its slot lists finds here, which
+      * is what the block written there is given. An entry nothing answers is given `Default`, which a block performing
+      * it reports as unbound.
+      */
+    private def run(name: Sourced[String], index: Int, scope: Scope): CompilerIO[Unit] =
+      slots.find(_.parameterIndex == index).toSeq.flatMap(_.entries).traverse { entry =>
+        scope.evidence.find(answers(_, entry)).fold(defaultBinding.pure[CompilerIO])(bindingOf(_, entry))
+      }.map(bindings => runs.update(index, runs.getOrElse(index, Seq.empty) :+ (name -> bindings)))
+
+    /** The value's slots, each with what the runs of its parameter give ([[MonomorphicEffects.Slot.offered]]). Every run
+      * of one parameter must give the same: the block written at its slot is compiled once, against that.
+      */
+    def slotsOffered: CompilerIO[Seq[MonomorphicEffects.Slot]] =
+      slots.traverse { slot =>
+        runs.getOrElse(slot.parameterIndex, Seq.empty) match {
+          case Seq()                => slot.pure[CompilerIO]
+          case (_, first) +: others =>
+            others.find(_._2 != first) match {
+              case None                    => slot.copy(offered = Some(first)).pure[CompilerIO]
+              case Some((name, different)) =>
+                val ability = slot.entries.zip(first.zip(different)).collectFirst {
+                  case (entry, (a, b)) if a != b => entry.ability.abilityName
+                }
+                compilerError(
+                  name.as(
+                    s"'${name.value}' runs here with a different implementation of '${ability.getOrElse("")}' than at " +
+                      "its other runs, which is not supported yet."
+                  ),
+                  Seq(s"Bind the same implementation around every run of '${name.value}'.")
+                ) >> abort[MonomorphicEffects.Slot]
+            }
+        }
       }
 
     /** A `with`, as the resolver lowered it: its implementation is installed around its subject, closing over the
@@ -112,10 +222,10 @@ object EvidenceSpecialisation {
         head: Sourced[MonomorphicExpression],
         reference: MonomorphicExpression.MonomorphicValueReference,
         args: Seq[Sourced[MonomorphicExpression]],
-        evidence: Seq[Evidence]
+        scope: Scope
     ): CompilerIO[Sourced[MonomorphicExpression]] =
       for {
-        orv     <- getFactOrAbort(OperatorResolvedValue.Key(reference.valueName.value, Platform.Runtime))
+        orv     <- getFactOrAbort(OperatorResolvedValue.Key(reference.valueName.value, platform))
         count    = SignatureView.of(orv.signature).parameters.size - 1
         marker  <- markerOf(reference.valueName)
         ability <- abilityOfMarker(marker).flatMap {
@@ -123,7 +233,7 @@ object EvidenceSpecialisation {
                      case None          => compilerAbort[AbilityFQN](head.as("Internal: a `with` names no implementation."))
                    }
         walked  <- args.zipWithIndex.traverse { case (arg, index) =>
-                     walk(arg, if (index == count) Evidence.Installed(marker, ability, evidence) +: evidence else evidence)
+                     walk(arg, if (index == count) scope.offer(Seq(Evidence.Installed(marker, ability, scope.evidence))) else scope)
                    }
       } yield rebuilt(node, head, walked)
 
@@ -144,16 +254,16 @@ object EvidenceSpecialisation {
         head: Sourced[MonomorphicExpression],
         reference: MonomorphicExpression.MonomorphicValueReference,
         args: Seq[Sourced[MonomorphicExpression]],
-        evidence: Seq[Evidence]
+        scope: Scope
     ): CompilerIO[Sourced[MonomorphicExpression]] =
       reference.valueName.value.name.qualifier match {
         case Qualifier.Ability(abilityName) =>
           val ability = AbilityFQN(reference.valueName.value.moduleName, abilityName)
           isEffect(ability).flatMap {
-            case true  => dispatch(node, head, reference, ability, args, evidence)
-            case false => written(node, head, reference, args, evidence)
+            case true  => dispatch(node, head, reference, ability, args, scope)
+            case false => written(node, head, reference, args, scope)
           }
-        case _                              => written(node, head, reference, args, evidence)
+        case _                              => written(node, head, reference, args, scope)
       }
 
     private def written(
@@ -161,17 +271,17 @@ object EvidenceSpecialisation {
         head: Sourced[MonomorphicExpression],
         reference: MonomorphicExpression.MonomorphicValueReference,
         args: Seq[Sourced[MonomorphicExpression]],
-        evidence: Seq[Evidence]
+        scope: Scope
     ): CompilerIO[Sourced[MonomorphicExpression]] =
-      getFactIfProduced(OperatorResolvedValue.Key(reference.valueName.value, Platform.Runtime)).flatMap {
+      getFactIfProduced(OperatorResolvedValue.Key(reference.valueName.value, platform)).flatMap {
         case Some(orv) if orv.paramConstraints.nonEmpty || orv.effectRow.parameterEffects.nonEmpty =>
           for {
             callee    <- checkedAt(reference.valueName.value, reference.typeArguments)
-            arguments <- withEvidence(reference.typeArguments, callee.effects.received, evidence, head)
-            walked    <- blocks(callee.copy(typeArguments = arguments), 0, args, evidence)
+            arguments <- withEvidence(reference.typeArguments, callee.effects.received, scope.evidence, head)
+            walked    <- blocks(callee.copy(typeArguments = arguments), 0, args, scope)
           } yield rebuilt(node, retarget(head, reference.copy(typeArguments = arguments)), walked)
         case _                                                                                    =>
-          args.traverse(walk(_, evidence)).map(rebuilt(node, head, _))
+          args.traverse(walk(_, scope)).map(rebuilt(node, head, _))
       }
 
     /** `typeArguments` with each effect entry `received` at the binding of the evidence answering it. */
@@ -187,11 +297,15 @@ object EvidenceSpecialisation {
           isEffect(entry.entry.ability).flatMap {
             case false => arguments.pure[CompilerIO]
             case true  =>
-              for {
-                found   <- evidenceAt(evidence, entry.entry, at)
-                binding <- bindingOf(found, entry.entry)
-                _       <- agrees(arguments(entry.binderIndex), binding, entry.entry, at)
-              } yield arguments.updated(entry.binderIndex, binding)
+              evidence.find(answers(_, entry.entry)) match {
+                case None if unanswerable => arguments.pure[CompilerIO]
+                case found                =>
+                  for {
+                    found   <- found.fold(evidenceAt(evidence, entry.entry, at))(_.pure[CompilerIO])
+                    binding <- bindingOf(found, entry.entry)
+                    _       <- agrees(arguments(entry.binderIndex), binding, entry.entry, at)
+                  } yield arguments.updated(entry.binderIndex, binding)
+              }
           }
       }
 
@@ -227,16 +341,18 @@ object EvidenceSpecialisation {
         reference: MonomorphicExpression.MonomorphicValueReference,
         ability: AbilityFQN,
         args: Seq[Sourced[MonomorphicExpression]],
-        evidence: Seq[Evidence]
+        scope: Scope
     ): CompilerIO[Sourced[MonomorphicExpression]] =
       for {
         arity   <- abilityArity(ability)
         entry    = Entry(ability, reference.typeArguments.take(arity).drop(1))
-        found    = evidence.find(answers(_, entry))
+        found    = scope.evidence.find(answers(_, entry))
         binding <- found.traverse(bindingOf(_, entry))
-        walked  <- ImplementationBinding.fromGround(binding.getOrElse(defaultBinding)) match {
+        walked  <- binding.flatMap(ImplementationBinding.fromGround) match {
                      case Some(implementation: ImplementationBinding.Implementation) =>
-                       dispatchTo(node, head, reference, entry, binding.get, implementation, args, evidence)
+                       dispatchTo(node, head, reference, entry, binding.get, implementation, args, scope)
+                     case None if unanswerable                                       =>
+                       args.traverse(walk(_, scope)).map(rebuilt(node, head, _))
                      case _                                                          =>
                        unboundEffect(head, ability)
                    }
@@ -250,20 +366,20 @@ object EvidenceSpecialisation {
         binding: GroundValue,
         implementation: ImplementationBinding.Implementation,
         args: Seq[Sourced[MonomorphicExpression]],
-        evidence: Seq[Evidence]
+        scope: Scope
     ): CompilerIO[Sourced[MonomorphicExpression]] = {
       val member = reference.valueName.value
       val method = implementation.method(member.name.name)
       for {
-        _          <- getFactOrAbort(NamedImplementationCheck.Key(implementation.head, Platform.Runtime))
-        solved     <- NamedImplementationArguments.solve(implementation, entry.arguments, Platform.Runtime).flatMap {
+        _          <- getFactOrAbort(NamedImplementationCheck.Key(implementation.head, platform))
+        solved     <- NamedImplementationArguments.solve(implementation, entry.arguments, platform).flatMap {
                         case Some(arguments) => arguments.pure[CompilerIO]
                         case None            => unmatchedBinding(head, entry, implementation)
                       }
-        names      <- getFactOrAbort(UnifiedModuleNames.Key(method.moduleName, Platform.Runtime))
+        names      <- getFactOrAbort(UnifiedModuleNames.Key(method.moduleName, platform))
         _          <- if (names.names.contains(method.name)) ().pure[CompilerIO] else missingClause(head, member, implementation)
-        memberOrv  <- getFactOrAbort(OperatorResolvedValue.Key(member, Platform.Runtime))
-        clauseOrv  <- getFactOrAbort(OperatorResolvedValue.Key(method, Platform.Runtime))
+        memberOrv  <- getFactOrAbort(OperatorResolvedValue.Key(member, platform))
+        clauseOrv  <- getFactOrAbort(OperatorResolvedValue.Key(method, platform))
         forwards    = DeclaredEntries.forwarded(memberOrv, clauseOrv)
         // A per-call entry of the clause is the call's (`docs/effects.md` §3.4): the evidence where the operation is
         // performed answers it, not the implementation's environment.
@@ -272,9 +388,9 @@ object EvidenceSpecialisation {
                       }
         clause     <- checkedAt(method, forwarded)
         perCall     = forwards.map(_._1).toSet
-        arguments  <- withEvidence(forwarded, clause.effects.received.filter(r => perCall.contains(r.binderIndex)), evidence, head)
+        arguments  <- withEvidence(forwarded, clause.effects.received.filter(r => perCall.contains(r.binderIndex)), scope.evidence, head)
         own        <- ownParameterCount(implementation.head)
-        walked     <- blocks(clause.copy(typeArguments = arguments), own, args, evidence)
+        walked     <- blocks(clause.copy(typeArguments = arguments), own, args, scope)
       } yield rebuilt(
         node,
         retarget(
@@ -294,10 +410,10 @@ object EvidenceSpecialisation {
       */
     private def ownParameterCount(marker: ValueFQN): CompilerIO[Int] = {
       val declaration = ImplementationParameters.of(marker)
-      getFactOrAbort(UnifiedModuleNames.Key(marker.moduleName, Platform.Runtime)).flatMap { names =>
+      getFactOrAbort(UnifiedModuleNames.Key(marker.moduleName, platform)).flatMap { names =>
         if (!names.names.contains(declaration.name)) 0.pure[CompilerIO]
         else
-          getFactOrAbort(OperatorResolvedValue.Key(declaration, Platform.Runtime))
+          getFactOrAbort(OperatorResolvedValue.Key(declaration, platform))
             .map(orv => SignatureView.of(orv.signature).parameters.size)
       }
     }
@@ -307,7 +423,7 @@ object EvidenceSpecialisation {
       getFactOrAbort(
         OperatorResolvedValue.Key(
           ValueFQN(ability.moduleName, QualifiedName(ability.abilityName, Qualifier.Ability(ability.abilityName))),
-          Platform.Runtime
+          platform
         )
       ).map(orv => SignatureView.of(orv.signature).binders.size)
 
@@ -316,37 +432,44 @@ object EvidenceSpecialisation {
         callee: Specialisation,
         offset: Int,
         args: Seq[Sourced[MonomorphicExpression]],
-        evidence: Seq[Evidence]
+        scope: Scope
     ): CompilerIO[Seq[Sourced[MonomorphicExpression]]] = {
       val slots = callee.effects.slots.map(slot => slot.parameterIndex -> slot).toMap
       args.zipWithIndex.traverse { case (arg, index) =>
         slots.get(index + offset) match {
-          case Some(slot) => block(arg, callee, slot, evidence)
-          case None       => walk(arg, evidence)
+          case Some(slot) => offeredBy(callee, slot).flatMap(block(arg, _, scope))
+          case None       => walk(arg, scope)
         }
       }
     }
 
-    /** A block at a callee's slot is given evidence for each entry the slot lists: one it rides at the caller's
-      * binding, which the callee received; one it supplies at the implementation the slot names, or at `Default`.
+    /** What `callee` gives a block at `slot`: the evidence its body's runs of the parameter find
+      * ([[MonomorphicEffects.Slot.offered]]), each entry at `Default` where nothing runs it — a body-less callee, or a
+      * parameter never run.
       */
+    private def offeredBy(callee: Specialisation, slot: MonomorphicEffects.Slot): CompilerIO[Seq[(Entry, GroundValue)]] =
+      if (slot.entries.isEmpty) Seq.empty.pure[CompilerIO]
+      else
+        specialisedAt(platform)(callee.vfqn, callee.typeArguments).map { specialised =>
+          specialised.slots.find(_.parameterIndex == slot.parameterIndex) match {
+            case Some(MonomorphicEffects.Slot(_, entries, Some(offered))) => entries.zip(offered)
+            case Some(MonomorphicEffects.Slot(_, entries, None))        => entries.map(_ -> defaultBinding)
+            case None                                                   => slot.entries.map(_ -> defaultBinding)
+          }
+        }
+
+    /** A block at a callee's slot is given evidence for each entry the slot lists, at what the callee's runs give. */
     private def block(
         arg: Sourced[MonomorphicExpression],
-        callee: Specialisation,
-        slot: MonomorphicEffects.Slot,
-        evidence: Seq[Evidence]
+        offered: Seq[(Entry, GroundValue)],
+        scope: Scope
     ): CompilerIO[Sourced[MonomorphicExpression]] =
       arg.value.expression match {
         case MonomorphicExpression.FunctionLiteral(name, parameterType, body) =>
-          for {
-            offered <- listed(callee, slot).flatMap(_.traverse {
-                        case Listed.Rides(entry, binding)         => Evidence.Given(entry, binding, bySlot = true).pure[CompilerIO]
-                        case Listed.Supplied(entry, None)         => Evidence.Given(entry, defaultBinding).pure[CompilerIO]
-                        case Listed.Supplied(entry, Some(marker)) =>
-                          slotBinding(callee, slot.parameterIndex, entry, marker).map(Evidence.Given(entry, _, bySlot = true))
-                      })
-            walked  <- walk(body, offered ++ evidence)
-          } yield arg.as(arg.value.copy(expression = MonomorphicExpression.FunctionLiteral(name, parameterType, walked)))
+          walk(body, scope.shadow(name.value).offer(offered.map((entry, binding) => Evidence.Given(entry, binding, bySlot = true))))
+            .map(walked =>
+              arg.as(arg.value.copy(expression = MonomorphicExpression.FunctionLiteral(name, parameterType, walked)))
+            )
         case _                                                                =>
           compilerAbort(arg.as("Internal: a block at a row-typed slot is not a thunk."))
       }
@@ -402,6 +525,12 @@ object EvidenceSpecialisation {
         case _                                                 => ability.abilityName
       }
   }
+
+  private def isUnit(node: Sourced[MonomorphicExpression]): Boolean =
+    node.value.expression match {
+      case MonomorphicExpression.MonomorphicValueReference(name, _, _) => name.value == WellKnownTypes.unitValueFQN
+      case _                                                           => false
+    }
 
   private def retarget(
       head: Sourced[MonomorphicExpression],

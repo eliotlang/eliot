@@ -76,13 +76,13 @@ class WithEscapeIntegrationTest extends FullIntegrationTest {
     )
   }
 
-  "a slot's with" should "handle its entry even when the definition declares the effect" in {
+  "a with around a run" should "handle its entry even when the definition declares the effect" in {
     compileAndRun(
       recording +
         """
-          |def capture(body uses *, Console with rec: Unit) uses *, Console: String = {
+          |def capture(body uses *, Console: Unit) uses *, Console: String = {
           |   printLine("own")
-          |   runWriterToLog(body)
+          |   runWriterToLog(body with rec)
           |}
           |
           |def main uses Console: Unit = printLine("log=" ++ capture(printLine("hi")))
@@ -94,7 +94,7 @@ class WithEscapeIntegrationTest extends FullIntegrationTest {
     compileForErrors(
       recording +
         """
-          |def capture(body uses *, Console with rec: Unit) uses *, Console: String = runWriterToLog(body)
+          |def capture(body uses *, Console: Unit) uses *, Console: String = runWriterToLog(body with rec)
           |
           |def main uses Console: Unit = printLine(capture(printLine("hi")))
           |""".stripMargin

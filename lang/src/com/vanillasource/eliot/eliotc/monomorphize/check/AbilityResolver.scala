@@ -116,17 +116,16 @@ class AbilityResolver(
           progressed <- refGroundE match {
                           case Right(groundArgs) if state.abilityResolutions.contains((abilityVfqn, groundArgs)) =>
                             pure(false)
-                          case Right(ground) if platform == Platform.Runtime                                   =>
-                            // The runtime track checks with effect bindings left out of the key, so an effect's
-                            // operation is left to the specialisation pass, which dispatches it on the evidence in
-                            // scope (`docs/effects.md` D35 step 4); a binding written in this body is not the key's.
+                          case Right(ground)                                                                   =>
+                            // An effect's operation is left to the specialisation pass, which dispatches it on the
+                            // evidence in scope (`docs/effects.md` D35): nothing in the key says which implementation
+                            // answers it — the runtime track checks with effect bindings left out, and the compile
+                            // track's are the caller's, while a block's are what the callee running it gives.
                             liftF(AbilityKind.isEffect(AbilityFQN(abilityVfqn.value.moduleName, abilityName), platform))
                               .flatMap {
                                 case Some(true) => pure(false)
                                 case _          => resolveGround(abilityVfqn, abilityName, ground)
                               }
-                          case Right(groundArgs)                                                               =>
-                            resolveGround(abilityVfqn, abilityName, groundArgs)
                           case Left(_)                                                                         =>
                             pure(false)
                         }

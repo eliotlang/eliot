@@ -173,9 +173,10 @@ class EnvironmentIntegrationTest extends FullIntegrationTest {
     ).asserting(_ shouldBe "once")
   }
 
-  // eliot-test's `mocked`: its slot binds `mockFileSystem`, whose clauses perform `Throw[IoError]`, while `mocked`
-  // itself declares only `Throw[AssertionError]`. The clause entry is supplied by the callee, not ridden from the caller.
-  "a slot's named implementation performing an effect the definition declares at other arguments" should
+  // eliot-test's `mocked`: it installs `mockFileSystem` around its body, whose clauses perform `Throw[IoError]`, while
+  // `mocked` itself declares only `Throw[AssertionError]`. The clause entry is the discharger's at the `with`, not the
+  // caller's.
+  "an implementation installed around a run performing an effect the definition declares at other arguments" should
     "be given that effect by the definition" in {
       compileAndRun(
         """import eliot.effect.Console
@@ -186,9 +187,9 @@ class EnvironmentIntegrationTest extends FullIntegrationTest {
           |   def readLine: Option[String] = None
           |}
           |
-          |def guarded(body uses *, Console with refusingConsole, Throw[String]: Unit) uses *, Throw[Bool]: String = {
+          |def guarded(body uses *, Console, Throw[String]: Unit) uses *, Throw[Bool]: String = {
           |   val outcome = catch[String, String]({
-          |      body
+          |      body with refusingConsole
           |      "finished"
           |   }, e -> e)
           |   if(outcome == "", raise(true)) else outcome

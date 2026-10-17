@@ -12,6 +12,7 @@ import com.vanillasource.eliot.eliotc.module.fact.{
   WellKnownTypes
 }
 import com.vanillasource.eliot.eliotc.monomorphize.channel.EnvironmentThreading
+import com.vanillasource.eliot.eliotc.monomorphize.specialise.EvidenceSpecialisation
 import com.vanillasource.eliot.eliotc.monomorphize.domain.{Env, MetaStore, SemValue}
 import com.vanillasource.eliot.eliotc.monomorphize.eval.{Evaluator, Quoter, SemExpressionEvaluator}
 import com.vanillasource.eliot.eliotc.monomorphize.fact.{
@@ -345,7 +346,7 @@ class PostDrainQuoter(
         structuralForm(SemExpression(expr.expressionType, expr.expression), threading.name) match {
           case None       => None.pure[CompilerIO]
           case Some(form) =>
-            val value = EnvironmentThreading.Specialisation(
+            val unspecialised = EnvironmentThreading.Specialisation(
               threading.vfqn,
               threading.typeArguments,
               threading.name,
@@ -353,12 +354,16 @@ class PostDrainQuoter(
               Some(form.map(_.expression)),
               threading.effects
             )
+            // Every effect operation is dispatched from the evidence in scope before the frames are threaded to it.
             val threadedValue =
-              if (threading.guarded) EnvironmentThreading.threadGuarded(value)
-              else
-                EnvironmentThreading
-                  .threadCompiled(value)
-                  .map(EnvironmentThreading.Threaded(value.signature, _, Seq.empty))
+              EvidenceSpecialisation.specialiseBody(platform, unspecialised, threading.guarded).flatMap { specialised =>
+                val value = unspecialised.copy(body = specialised.body, effects = specialised.effects)
+                if (threading.guarded) EnvironmentThreading.threadGuarded(value)
+                else
+                  EnvironmentThreading
+                    .threadCompiled(value)
+                    .map(EnvironmentThreading.Threaded(value.signature, _, Seq.empty))
+              }
             recover(
               threadedValue.map(result =>
                 result.body.map { body =>

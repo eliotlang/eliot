@@ -46,12 +46,12 @@ class GivenEffectIntegrationTest extends FullIntegrationTest {
     ).asserting(_ shouldBe "none")
   }
 
-  "a slot's named implementation" should "be given the effects its clauses perform" in {
+  "an implementation installed around a run" should "be given the effects its clauses perform" in {
     compileAndRun(
       recording +
         """
-          |def transcriptOf(program uses *, Console with recordingConsole: Unit) uses *: String =
-          |   runWriterToLog(program)
+          |def transcriptOf(program uses *, Console: Unit) uses *: String =
+          |   runWriterToLog(program with recordingConsole)
           |
           |def main uses Console: Unit = printLine(transcriptOf(printLine("hi")))
           |""".stripMargin
@@ -75,9 +75,9 @@ class GivenEffectIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       recording +
         """
-          |def transcriptOf(program uses *, Console with recordingConsole: Unit) uses *, Writer[String]: Unit = {
+          |def transcriptOf(program uses *, Console: Unit) uses *, Writer[String]: Unit = {
           |   tell("before;")
-          |   program
+          |   program with recordingConsole
           |}
           |
           |def main uses Console: Unit = printLine(runWriterToLog(transcriptOf(printLine("Bob"))))
@@ -89,20 +89,20 @@ class GivenEffectIntegrationTest extends FullIntegrationTest {
     compileForErrors(
       recording +
         """
-          |def transcriptOf(program uses *, Console with recordingConsole: Unit) uses *, Writer[String]: String =
-          |   runWriterToLog(program)
+          |def transcriptOf(program uses *, Console: Unit) uses *, Writer[String]: String =
+          |   runWriterToLog(program with recordingConsole)
           |
           |def main uses Console: Unit = printLine(runWriterToLog(tell(transcriptOf(printLine("Bob")))))
           |""".stripMargin
     ).asserting(_ should include("declares the effect 'Writer' but does not perform it"))
   }
 
-  "a computation passed to a slot binding an implementation" should "be bound as that slot binds" in {
+  "a computation passed to a callee that installs an implementation around its run" should "run on it" in {
     compileAndRun(
       recording +
         """
-          |def transcriptOf(program uses *, Console with recordingConsole: Unit) uses *: String =
-          |   runWriterToLog(program)
+          |def transcriptOf(program uses *, Console: Unit) uses *: String =
+          |   runWriterToLog(program with recordingConsole)
           |def relay(program uses *, Console: Unit) uses *: String = transcriptOf(program)
           |
           |def main uses Console: Unit = printLine(relay(printLine("hi")))
@@ -110,9 +110,9 @@ class GivenEffectIntegrationTest extends FullIntegrationTest {
     ).asserting(_ shouldBe "hi;")
   }
 
-  // D26: a run inside an actual is bound by the slot it stands in as a run passed to it directly is — the slot's
-  // `with` covers the whole actual — so `both`'s runs of `program` are bound to `recordingConsole` too.
-  "a computation run inside code passed to a slot binding an implementation" should "be bound as that slot binds" in {
+  // D35: a run inside code passed to a callee runs on what that callee's runs give it, so `both`'s runs of `program`
+  // are given `recordingConsole` too.
+  "a computation run inside code passed to a callee installing an implementation" should "run on it" in {
     compileAndRun(
       recording +
         """
@@ -120,8 +120,8 @@ class GivenEffectIntegrationTest extends FullIntegrationTest {
           |   first
           |   second
           |}
-          |def transcriptOf(program uses *, Console with recordingConsole: Unit) uses *: String =
-          |   runWriterToLog(program)
+          |def transcriptOf(program uses *, Console: Unit) uses *: String =
+          |   runWriterToLog(program with recordingConsole)
           |def relay(program uses *, Console: Unit) uses *: String = transcriptOf(both(program, program))
           |
           |def main uses Console: Unit = printLine(relay(printLine("hi")))

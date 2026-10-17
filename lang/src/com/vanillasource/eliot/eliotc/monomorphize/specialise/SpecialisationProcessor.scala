@@ -7,7 +7,8 @@ import com.vanillasource.eliot.eliotc.processor.common.SingleKeyTypeProcessor
 /** Produces a [[MonomorphicValue]] — the specialisation everything downstream reads — from the value the checker
   * checked with its effect bindings left out ([[CheckedValue]], [[EffectBindings]]), with every binding written and
   * every effect operation dispatched from the evidence in scope ([[EvidenceSpecialisation]], `docs/effects.md` D35
-  * step 4). The signature and the effect entries are the checked value's: no binding reaches either.
+  * step 4). The signature and the effect entries are the checked value's: no binding reaches either. What the runs of
+  * each code parameter give is read off the specialised body ([[com.vanillasource.eliot.eliotc.monomorphize.fact.MonomorphicEffects.Slot.offered]]).
   */
 class SpecialisationProcessor() extends SingleKeyTypeProcessor[MonomorphicValue.Key] {
 
@@ -15,9 +16,9 @@ class SpecialisationProcessor() extends SingleKeyTypeProcessor[MonomorphicValue.
     for {
       erased  <- EffectBindings.erased(key.vfqn, key.typeArguments)
       checked <- getFactOrAbort(CheckedValue.Key(key.vfqn, erased))
-      body    <- EvidenceSpecialisation.specialise(checked, key.typeArguments)
+      result  <- EvidenceSpecialisation.specialise(checked, key.typeArguments)
       _       <- registerFactIfClear(
-                   MonomorphicValue(key.vfqn, key.typeArguments, checked.name, checked.signature, body, checked.effects)
+                   MonomorphicValue(key.vfqn, key.typeArguments, checked.name, checked.signature, result.body, result.effects)
                  )
     } yield ()
 }

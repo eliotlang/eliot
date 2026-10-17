@@ -33,7 +33,7 @@ class CarriedSlotBindingIntegrationTest extends FullIntegrationTest {
   "a run passed to a slot that binds its entry" should "be bound as that slot binds" in {
     compileAndRun(
       s"""$terminal
-         |def run(body uses *, Terminal with fixed: Unit) uses *: String = runWriterToLog(body)
+         |def run(body uses *, Terminal: Unit) uses *: String = runWriterToLog(body with fixed)
          |def passing(body uses *, Terminal: Unit) uses *: String = run(body)
          |def main uses Console: Unit = printLine(passing(greet))""".stripMargin
     ).asserting(_ shouldBe "Hello, fixed!;")
@@ -61,7 +61,7 @@ class CarriedSlotBindingIntegrationTest extends FullIntegrationTest {
   it should "agree with a `with` around another run" in {
     compileAndRun(
       s"""$terminal
-         |def run(body uses *, Terminal with fixed: Unit) uses *: String = runWriterToLog(body)
+         |def run(body uses *, Terminal: Unit) uses *: String = runWriterToLog(body with fixed)
          |def twice(body uses *, Terminal: Unit) uses *: String = run(body) ++ runWriterToLog(body with fixed)
          |def main uses Console: Unit = printLine(twice(greet))""".stripMargin
     ).asserting(_ shouldBe "Hello, fixed!;Hello, fixed!;")
@@ -70,7 +70,7 @@ class CarriedSlotBindingIntegrationTest extends FullIntegrationTest {
   it should "not bind a run under a `with` of its own" in {
     compileAndRun(
       s"""$terminal
-         |def run(body uses *, Terminal with fixed: Unit) uses *: String = runWriterToLog(body)
+         |def run(body uses *, Terminal: Unit) uses *: String = runWriterToLog(body with fixed)
          |def passing(body uses *, Terminal: Unit) uses *: String = runWriterToLog(run(body with scripted("own")))
          |def main uses Console: Unit = printLine(passing(greet))""".stripMargin
     ).asserting(_ shouldBe "Hello, own!;")
@@ -79,7 +79,7 @@ class CarriedSlotBindingIntegrationTest extends FullIntegrationTest {
   it should "bind the same implementation as the definition's other runs" in {
     compileForErrors(
       s"""$terminal
-         |def run(body uses *, Terminal with fixed: Unit) uses *: String = runWriterToLog(body)
+         |def run(body uses *, Terminal: Unit) uses *: String = runWriterToLog(body with fixed)
          |def twice(body uses *, Terminal: Unit) uses *: String = run(body) ++ runWriterToLog(body with scripted("b"))
          |def main uses Console: Unit = printLine(twice(greet))""".stripMargin
     ).asserting(_ should include("'body' runs here with a different implementation of 'Terminal' than at its other runs."))
@@ -88,7 +88,7 @@ class CarriedSlotBindingIntegrationTest extends FullIntegrationTest {
   it should "bind the implementation the definition's slot names" in {
     compileForErrors(
       s"""$terminal
-         |def run(body uses *, Terminal with fixed: Unit) uses *: String = runWriterToLog(body)
+         |def run(body uses *, Terminal: Unit) uses *: String = runWriterToLog(body with fixed)
          |implement other: Terminal {
          |   def write(line: String): Unit = unit
          |   def read: String = "other"
@@ -103,7 +103,7 @@ class CarriedSlotBindingIntegrationTest extends FullIntegrationTest {
   "a run of an entry the definition also declares" should "ride its caller's binding, its frame given where it runs" in {
     compileAndRun(
       s"""$terminal
-         |def run(body uses *, Terminal with fixed: Unit) uses *: String = runWriterToLog(body)
+         |def run(body uses *, Terminal: Unit) uses *: String = runWriterToLog(body with fixed)
          |def passing(body uses *, Terminal: Unit) uses *, Terminal: String = {
          |   write("<")
          |   run(body)
@@ -131,7 +131,7 @@ class CarriedSlotBindingIntegrationTest extends FullIntegrationTest {
         |   body
         |}
         |
-        |def mocked(body uses *, Mocking with recording: Unit) uses *: String = runStateToFinalState("", twice(body))
+        |def mocked(body uses *, Mocking: Unit) uses *: String = runStateToFinalState("", twice(body with recording))
         |
         |def main uses Console: Unit = printLine(mocked(note("b")))""".stripMargin
     ).asserting(_ shouldBe "bb")

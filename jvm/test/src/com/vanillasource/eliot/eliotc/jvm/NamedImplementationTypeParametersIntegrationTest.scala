@@ -73,10 +73,10 @@ class NamedImplementationTypeParametersIntegrationTest extends FullIntegrationTe
     ).asserting(_ shouldBe "7\n> 7")
   }
 
-  it should "be solved on a slot, whose implementation's constraint is an ability and needs nothing given" in {
+  it should "be solved around a run, whose implementation's constraint is an ability and needs nothing given" in {
     compileAndRun(
       s"""$source
-         |def shown[A](body uses *, Source[A] with showing: String) uses *: String = body
+         |def shown[A](body uses *, Source[A]: String) uses *: String = body with showing
          |def main uses Console: Unit = printLine(shown[Int](pick(1)) ++ " " ++ shown[String](pick("a")))""".stripMargin
     ).asserting(_ shouldBe "1 a")
   }

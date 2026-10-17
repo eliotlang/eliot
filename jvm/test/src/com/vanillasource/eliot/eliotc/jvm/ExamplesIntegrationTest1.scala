@@ -336,16 +336,16 @@ def main uses Console: Unit = printLine("Hello World!")""")
     ).asserting(_ shouldBe "Hello, Bob!;")
   }
 
-  // A harness taking the program at a slot and returning a nullary `data TestResult`. The `with` on the *slot's type*
-  // is the only way a callee binds calls it cannot see, and the effects the double's clauses perform are supplied and
-  // discharged inside the callee — `runWriterToLog` here — which is why the caller writes nothing but the program.
-  it should "let a harness take a program at a with-bound slot and return a nullary data type" in {
+  // A harness taking the program as code and returning a nullary `data TestResult`. A `with` around the run binds the
+  // calls it cannot see, and the effects the double's clauses perform are supplied and discharged inside the callee —
+  // `runWriterToLog` here — which is why the caller writes nothing but the program.
+  it should "let a harness take a program, bind its double around the run and return a nullary data type" in {
     compileAndRun(
       namedImplementation +
         """
           |data TestResult(label: String, failure: Option[String])
           |
-          |def transcriptOf(program uses *, Terminal with session: Unit) uses *: String = runWriterToLog(program)
+          |def transcriptOf(program uses *, Terminal: Unit) uses *: String = runWriterToLog(program with session)
           |
           |def expect(label: String, expected: String, actual: String): TestResult =
           |   if(expected == actual, TestResult(label, None))

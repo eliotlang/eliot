@@ -2,13 +2,13 @@ package com.vanillasource.eliot.eliotc.monomorphize.channel
 
 import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.ability.util.AbilityKind
-import com.vanillasource.eliot.eliotc.module.fact.{ModuleAbilities, QualifiedName, Qualifier, ValueFQN}
+import com.vanillasource.eliot.eliotc.module.fact.{ModuleAbilities, QualifiedName, Qualifier, ValueFQN, WellKnownTypes}
 import com.vanillasource.eliot.eliotc.monomorphize.channel.EnvironmentThreading.Specialisation
 import com.vanillasource.eliot.eliotc.monomorphize.check.{DeclaredEntries, ImplementationBinding, NamedImplementationArguments}
 import com.vanillasource.eliot.eliotc.monomorphize.fact.MonomorphicEffects.Entry
 import com.vanillasource.eliot.eliotc.monomorphize.fact.{GroundValue, MonomorphicEffects}
 import com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedExpression.SignatureView
-import com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedValue
+import com.vanillasource.eliot.eliotc.operator.fact.{OperatorResolvedExpression, OperatorResolvedValue}
 import com.vanillasource.eliot.eliotc.platform.Platform
 import com.vanillasource.eliot.eliotc.processor.CompilerIO.*
 import com.vanillasource.eliot.eliotc.resolve.fact.AbilityFQN
@@ -184,7 +184,7 @@ class EffectDeclarations(platform: Platform, specialisation: (ValueFQN, Seq[Grou
     */
   def bindingOf(evidence: Evidence, entry: Entry): CompilerIO[GroundValue] =
     evidence match {
-      case Evidence.Given(_, binding, _)          => binding.pure[CompilerIO]
+      case Evidence.Given(_, binding, _)                => binding.pure[CompilerIO]
       case Evidence.Installed(marker, ability, closure) =>
         installedBinding(
           marker,
@@ -192,6 +192,39 @@ class EffectDeclarations(platform: Platform, specialisation: (ValueFQN, Seq[Grou
           entry,
           clauseEntry => closure.find(answers(_, clauseEntry)).traverse(bindingOf(_, clauseEntry))
         )
+      case Evidence.Discharged(ability)                 => dischargedBinding(ability, entry)
+    }
+
+  /** What the platform's discharger of `ability` gives a block performing `entry` — `runThrow`'s slot for a
+    * `Throw[String]`, at `E := String` — which is what the guarded-return read installs for a signature's own control
+    * effect (`docs/effects.md` D26): the read *is* that discharge, run by the compiler. Each of the discharger's binders
+    * is what the slot's entry spelled over it takes at `entry`, and `Type` otherwise — the block it runs is a
+    * signature's, whose value is a type.
+    */
+  def dischargedBinding(ability: AbilityFQN, entry: Entry): CompilerIO[GroundValue] =
+    WellKnownTypes.guardDischargers.get((ability.moduleName, ability.abilityName)) match {
+      case None             => defaultBinding.pure[CompilerIO]
+      case Some(discharger) =>
+        getFactOrAbort(OperatorResolvedValue.Key(discharger, platform)).flatMap { orv =>
+          orv.effectRow.parameterEffects.find(_.effects.exists(_.abilityFQN == ability)) match {
+            case None       => defaultBinding.pure[CompilerIO]
+            case Some(slot) =>
+              val spelled   = slot.effects.find(_.abilityFQN == ability).toSeq.flatMap(_.typeArgs)
+              val solved    = spelled.zip(entry.arguments).collect {
+                case (OperatorResolvedExpression.ParameterReference(name), argument) => name.value -> argument
+              }.toMap
+              val marked    = BindingWriter.phantoms(orv).map(_._1).toSet
+              val arguments = SignatureView.of(orv.signature).binders.zipWithIndex.map { (binder, index) =>
+                if (marked.contains(index)) defaultBinding else solved.getOrElse(binder.name.value, GroundValue.Type)
+              }
+              specialisation(discharger, arguments).map { value =>
+                value.effects.slots
+                  .find(_.parameterIndex == slot.parameterIndex)
+                  .flatMap(found => found.offered.flatMap(offered => found.entries.zip(offered).find(_._1 == entry)))
+                  .fold(defaultBinding)(_._2)
+              }
+          }
+        }
     }
 
   /** The ground binding of the implementation `marker` the slot `index` of `value` names for `entry`: its clauses at
@@ -248,14 +281,10 @@ class EffectDeclarations(platform: Platform, specialisation: (ValueFQN, Seq[Grou
     evidence match {
       case Evidence.Given(arrived, _, _)     => arrived == entry
       case Evidence.Installed(_, ability, _) => ability == entry.ability
+      case Evidence.Discharged(ability)      => ability == entry.ability
     }
 
   /** Whether `evidence` runs the implementation `marker`. */
-  def runs(evidence: Evidence, marker: ValueFQN): Boolean =
-    evidence match {
-      case Evidence.Given(_, binding, _)    => sameImplementation(binding, namedBinding(marker))
-      case Evidence.Installed(installed, _, _) => installed == marker
-    }
 
   def isEffect(ability: AbilityFQN): CompilerIO[Boolean] =
     effects.get(ability) match {
@@ -345,6 +374,9 @@ object EffectDeclarations {
       * evidence in scope at the `with`, which its implementation's clauses perform on.
       */
     case Installed(marker: ValueFQN, ability: AbilityFQN, closure: Seq[Evidence])
+
+    /** What a guarded signature's read discharges `ability` with: the platform discharger's ([[dischargedBinding]]). */
+    case Discharged(ability: AbilityFQN)
   }
 
   /** What a block is given for one entry its slot lists. */
