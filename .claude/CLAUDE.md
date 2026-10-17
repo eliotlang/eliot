@@ -548,7 +548,11 @@ every citation of a condensed record (**D20**/**D21** rules and steps, **D20c op
 **There is no carrier, no monad, no `Id`, and nothing to infer** — if you are reading code or a comment that mentions
 one, it is history.
 
-**Decided 2026-10-16, not built: D35** (`docs/effects.md` §11), reversing D33 of the same day (D34 withdrawn). An
+**Decided 2026-10-16, steps 1–4 built 2026-10-17: D35** (`docs/effects.md` §11), reversing D33 of the same day (D34
+withdrawn). Step 4 took the binding out of the runtime track's check: the checker produces `CheckedValue` at a key with
+every effect binding `Default` and leaves effect operations undispatched, and the specialisation pass
+(`monomorphize/specialise/`) produces `MonomorphicValue` at the full key from the evidence in scope; the compile track
+still keys and dispatches on the binding. An
 implementation's code and environment will be passed together as **evidence** after monomorphization — one hidden
 argument per entry, built where a `with` installs it, captured by a code argument for what it uses through `*` and
 given by the callee at each run for what its slot lists — and static code will be a **specialisation pass** that clones

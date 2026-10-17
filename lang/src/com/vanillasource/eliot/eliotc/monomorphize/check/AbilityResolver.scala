@@ -116,39 +116,56 @@ class AbilityResolver(
           progressed <- refGroundE match {
                           case Right(groundArgs) if state.abilityResolutions.contains((abilityVfqn, groundArgs)) =>
                             pure(false)
+                          case Right(ground) if platform == Platform.Runtime                                   =>
+                            // The runtime track checks with effect bindings left out of the key, so an effect's
+                            // operation is left to the specialisation pass, which dispatches it on the evidence in
+                            // scope (`docs/effects.md` D35 step 4); a binding written in this body is not the key's.
+                            liftF(AbilityKind.isEffect(AbilityFQN(abilityVfqn.value.moduleName, abilityName), platform))
+                              .flatMap {
+                                case Some(true) => pure(false)
+                                case _          => resolveGround(abilityVfqn, abilityName, ground)
+                              }
                           case Right(groundArgs)                                                               =>
-                            val key = (abilityVfqn, groundArgs)
-                            ImplementationBinding.split(groundArgs) match {
-                              case (patternArgs, Some(impl: ImplementationBinding.Implementation)) =>
-                                // A named implementation is never searched, so its conformance to the ability is
-                                // checked here, where a binding first dispatches to it.
-                                liftF(
-                                  getFactOrAbort(NamedImplementationCheck.Key(impl.head, platform)) >>
-                                    NamedImplementationArguments.solve(impl, patternArgs, platform)
-                                ).flatMap {
-                                  case Some(typeArguments) =>
-                                    val method = impl.method(abilityVfqn.value.name.name)
-                                    liftF(getFactOrAbort(UnifiedModuleNames.Key(method.moduleName, platform))).flatMap {
-                                      case names if names.names.contains(method.name) =>
-                                        record(abilityVfqn.value, key, (method, typeArguments)).as(true)
-                                      case _                                         =>
-                                        reportMissingClause(abilityVfqn, abilityName, impl)
-                                    }
-                                  case None                =>
-                                    reportUnmatchedBinding(abilityVfqn, abilityName, impl, patternArgs)
-                                }
-                              case (patternArgs, _)                                      =>
-                                liftF(AbilityKind.isEffect(AbilityFQN(abilityVfqn.value.moduleName, abilityName), platform))
-                                  .flatMap {
-                                    case Some(true) => reportUnboundEffect(abilityVfqn, abilityName)
-                                    case _          => searchAndRecord(abilityVfqn, abilityName, key, patternArgs)
-                                  }
-                            }
+                            resolveGround(abilityVfqn, abilityName, groundArgs)
                           case Left(_)                                                                         =>
                             pure(false)
                         }
         } yield progressed
       case _                              => pure(false)
+    }
+  }
+
+  /** Resolve a reference at its ground ability-level arguments, recorded under them. */
+  private def resolveGround(
+      abilityVfqn: Sourced[ValueFQN],
+      abilityName: String,
+      groundArgs: Seq[GroundValue]
+  ): CheckIO[Boolean] = {
+    val key = (abilityVfqn, groundArgs)
+    ImplementationBinding.split(groundArgs) match {
+      case (patternArgs, Some(impl: ImplementationBinding.Implementation)) =>
+        // A named implementation is never searched, so its conformance to the ability is checked here, where a
+        // binding first dispatches to it.
+        liftF(
+          getFactOrAbort(NamedImplementationCheck.Key(impl.head, platform)) >>
+            NamedImplementationArguments.solve(impl, patternArgs, platform)
+        ).flatMap {
+          case Some(typeArguments) =>
+            val method = impl.method(abilityVfqn.value.name.name)
+            liftF(getFactOrAbort(UnifiedModuleNames.Key(method.moduleName, platform))).flatMap {
+              case names if names.names.contains(method.name) =>
+                record(abilityVfqn.value, key, (method, typeArguments)).as(true)
+              case _                                         =>
+                reportMissingClause(abilityVfqn, abilityName, impl)
+            }
+          case None                =>
+            reportUnmatchedBinding(abilityVfqn, abilityName, impl, patternArgs)
+        }
+      case (patternArgs, _)                                                =>
+        liftF(AbilityKind.isEffect(AbilityFQN(abilityVfqn.value.moduleName, abilityName), platform)).flatMap {
+          case Some(true) => reportUnboundEffect(abilityVfqn, abilityName)
+          case _          => searchAndRecord(abilityVfqn, abilityName, key, patternArgs)
+        }
     }
   }
 

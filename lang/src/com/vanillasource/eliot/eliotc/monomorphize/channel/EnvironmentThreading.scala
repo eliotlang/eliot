@@ -11,6 +11,7 @@ import com.vanillasource.eliot.eliotc.module.fact.{
   ValueFQN,
   WellKnownTypes
 }
+import com.vanillasource.eliot.eliotc.monomorphize.channel.EffectDeclarations.{Evidence, Listed, defaultBinding}
 import com.vanillasource.eliot.eliotc.monomorphize.check.{DeclaredEntries, ImplementationBinding, NamedImplementationArguments}
 import com.vanillasource.eliot.eliotc.monomorphize.fact.MonomorphicEffects.Entry
 import com.vanillasource.eliot.eliotc.monomorphize.fact.{
@@ -173,19 +174,8 @@ object EnvironmentThreading {
     def parts: Seq[Part] = clauses.flatMap(_.parts) ++ own
   }
 
-  /** What answers an entry where it is performed, as D35 reads it ([[Threader.agree]]). */
-  private enum Evidence {
-
-    /** Received from the caller, or given to a block by a callee's slot: the frame it arrives as, whose binding was
-      * checked where it was given.
-      */
-    case Given(frame: Frame)
-
-    /** Installed by a `with` naming the implementation `marker` of `ability`, around its subject; `closure` is the
-      * evidence in scope at the `with`, which its implementation's clauses perform on.
-      */
-    case Installed(marker: ValueFQN, ability: AbilityFQN, closure: Seq[Evidence])
-  }
+  /** The evidence a frame in scope is: given, at its binding. */
+  private def evidenceOf(frame: Frame): Evidence = Evidence.Given(frame.entry, frame.binding, frame.bySlot)
 
   /** What an implementation's environment is made of, before anything holds it: the clause entries with their
     * bindings and shapes, and the types of the implementation's own parameters.
@@ -196,19 +186,9 @@ object EnvironmentThreading {
 
   private val emptyShape = Shape(Seq.empty, Seq.empty)
 
-  /** What a block is given for one entry its slot lists. */
-  private enum Listed {
-
-    /** An entry the slot supplies, at the implementation its `with` names, or the default. */
-    case Supplied(entry: Entry, named: Option[ValueFQN])
-
-    /** An entry the slot rides: the block's code for it is the caller's `binding`, and its frame is the run site's. */
-    case Rides(entry: Entry, binding: GroundValue)
-  }
-
-  private val defaultBinding: GroundValue = ImplementationBinding.defaultGround
-
   private class Threader(mv: Specialisation, track: Track, guarded: Boolean) {
+    private val declarations = EffectDeclarations(track.platform, track.specialisation)
+    import declarations.*
     private var counter = 0
 
     private def fresh(): String = {
@@ -273,7 +253,7 @@ object EnvironmentThreading {
     ): CompilerIO[Sourced[MonomorphicExpression]] =
       for {
         slots  <- value.effects.slots.traverse(slot => slotDomain(value, slot).map(slot.parameterIndex -> _)).map(_.toMap)
-        walked <- peel(body, 0, value.naturalArity.getOrElse(0), slots, Context(received, Map.empty, Map.empty, evidence = received.map(Evidence.Given(_))))
+        walked <- peel(body, 0, value.naturalArity.getOrElse(0), slots, Context(received, Map.empty, Map.empty, evidence = received.map(evidenceOf)))
       } yield walked
 
     private def peel(
@@ -319,7 +299,7 @@ object EnvironmentThreading {
         copy(
           frames = more.map(_.copy(level = depth + 1)) ++ frames,
           depth = depth + 1,
-          evidence = more.map(Evidence.Given(_)) ++ evidence
+          evidence = more.map(evidenceOf) ++ evidence
         )
 
       def install(marker: ValueFQN, ability: AbilityFQN): Context =
@@ -507,51 +487,6 @@ object EnvironmentThreading {
                     }
       } yield Passed(received.flatMap(_.parts) ++ frame.own, frame.own.size)
 
-    /** The ability member an implementation's clause implements. */
-    private def memberOf(clause: ValueFQN, ability: AbilityFQN): ValueFQN =
-      ValueFQN(ability.moduleName, QualifiedName(clause.name.name, Qualifier.Ability(ability.abilityName)))
-
-    private type Declared = DeclaredEntries.Declared
-
-    /** The entries an ability member declares beyond its own ability — `FileSystem.readFile`'s `{Throw[IoError]}`. Each
-      * call performs them on the caller's binding, so their frames come from the call site, never from the
-      * implementation's environment, even where the implementation's clause repeats them.
-      */
-    private def memberDeclared(member: ValueFQN): CompilerIO[Set[Declared]] =
-      memberRows.get(member) match {
-        case Some(declared) => declared.pure[CompilerIO]
-        case None           =>
-          getFactIfProduced(OperatorResolvedValue.Key(member, track.platform))
-            .map(_.fold(Set.empty[Declared])(DeclaredEntries.ofMember))
-            .flatTap(declared => memberRows.update(member, declared).pure[CompilerIO])
-      }
-
-    private val memberRows: mutable.Map[ValueFQN, Set[Declared]] = mutable.Map.empty
-
-    /** The effect entries a definition performs itself, by the index of the binder each binds ([[DeclaredEntries]]). */
-    private def declaredEntries(vfqn: ValueFQN): CompilerIO[Map[Int, Declared]] =
-      getFactIfProduced(OperatorResolvedValue.Key(vfqn, track.platform))
-        .map(_.fold(Map.empty[Int, Declared])(DeclaredEntries.of))
-
-    /** The effect entries an implementation's **environment** holds: those one of its clauses performs itself while the
-      * member it implements does not declare them. `recordingConsole`'s `printLine` performs `Writer[String]`, which
-      * `Console.printLine` does not declare, so the implementation holds a `Writer` frame from where it is bound;
-      * `FileSystem`'s clauses perform `Throw[IoError]`, which every member declares, so it holds none and each call
-      * brings its own.
-      */
-    private def environmentEntries(marker: ValueFQN, ability: AbilityFQN): CompilerIO[Set[Declared]] =
-      getFactOrAbort(ModuleAbilities.Key(marker.moduleName, track.platform)).flatMap { abilities =>
-        abilities.implementations
-          .filter(impl => impl.vfqn.name.qualifier == marker.name.qualifier && impl.methodName != impl.abilityName)
-          .traverse { impl =>
-            for {
-              own      <- declaredEntries(impl.vfqn)
-              declared <- memberDeclared(memberOf(impl.vfqn, ability))
-            } yield own.values.toSet -- declared
-          }
-          .map(_.flatten.toSet)
-      }
-
     /** A block at a callee's slot: the thunk the row phase wrapped it in now takes the frames the slot supplies. */
     private def block(
         arg: Sourced[MonomorphicExpression],
@@ -719,105 +654,6 @@ object EnvironmentThreading {
         case None                        => Seq.empty.pure[CompilerIO]
       }
 
-    /** Every entry `slot` lists, as what the block is given for it: an entry it **supplies**, with the implementation
-      * the slot names for it with `with`, read off the slot's declared type; or an entry it **rides**, with `value`'s
-      * own binding for it. An entry the slot names an implementation for is supplied even when `value` declares it too
-      * (`docs/effects.md` D23): the slot's `with` handles it.
-      */
-    private def listed(value: Specialisation, slot: MonomorphicEffects.Slot): CompilerIO[Seq[Listed]] =
-      for {
-        named <- slotImplementations(value, slot.parameterIndex)
-        rides <- ridingFlags(value, slot)
-        listing <- slot.entries.zip(rides).zipWithIndex.traverse {
-                   case ((entry, rides), index) if !rides || named.forEntry(index, entry.ability, rides).isDefined =>
-                     (Listed.Supplied(entry, named.forEntry(index, entry.ability, rides)): Listed).pure[CompilerIO]
-                   case ((entry, _), _)                                                                            =>
-                     value.effects.received.find(_.entry == entry) match {
-                       case Some(received) =>
-                         (Listed.Rides(
-                           entry,
-                           value.typeArguments.lift(received.binderIndex).getOrElse(defaultBinding)
-                         ): Listed).pure[CompilerIO]
-                       case None           =>
-                         compilerAbort[Listed](value.name.as("Internal: a ridden entry is not among the received ones."))
-                     }
-                 }
-      } yield listing
-
-    /** The binding the implementation `marker` a slot names performs `clause` on: the definition's own, where its row
-      * has the entry spelled as the clause spells it (`docs/effects.md` D30) — the caller writes its binding there, which
-      * it also hands the definition — and otherwise what the slot binds the clause's ability to, which is what the
-      * caller writes for a clause the slot supplies: another implementation the slot `named`, or the default (D26).
-      * Either way the frame is given where the block runs (D20c, decided (b)).
-      */
-    private def clauseBinding(
-        value: Specialisation,
-        clause: (Entry, Option[Declared]),
-        named: SlotNamed,
-        marker: ValueFQN
-    ): CompilerIO[GroundValue] =
-      declaredEntries(value.vfqn).flatMap { own =>
-        clause._2
-          .flatMap(spelled => own.collectFirst { case (index, declared) if declared == spelled => index })
-          .flatMap(value.typeArguments.lift) match {
-          case Some(binding) => binding.pure[CompilerIO]
-          case None          =>
-            named.forClause(marker, clause._1.ability) match {
-              case Some(other) => namedSlotBinding(value, named, clause._1, other)
-              case None        => defaultBinding.pure[CompilerIO]
-            }
-        }
-      }
-
-    /** Whether each entry of `slot` **rides** the definition's own row rather than being supplied by the slot (§2.2) —
-      * decided as the declaration spells it, never at ground arguments: `raising[E](…, body: {Throw[E]} Unit):
-      * {Throw[AssertionError]} Unit` supplies `Throw[E]` even where `E` is `AssertionError`, so the block's frame is the
-      * slot's. An entry list that does not line up with the declaration's is a failure, never a guess.
-      */
-    private def ridingFlags(value: Specialisation, slot: MonomorphicEffects.Slot): CompilerIO[Seq[Boolean]] =
-      getFactOrAbort(OperatorResolvedValue.Key(value.vfqn, track.platform)).flatMap { orv =>
-        val row      = orv.effectRow.returnEffects.map(entry => (entry.abilityFQN, entry.typeArgs.map(_.render))).toSet
-        val declared = orv.effectRow.parameterEffects.find(_.parameterIndex == slot.parameterIndex).toSeq.flatMap(_.effects)
-        if (declared.size != slot.entries.size)
-          compilerAbort(value.name.as("Internal: a row-typed parameter's entries did not reduce to ground arguments."))
-        else declared.map(entry => row.contains((entry.abilityFQN, entry.typeArgs.map(_.render)))).pure[CompilerIO]
-      }
-
-    /** The implementations a slot's declared type names with `with`, by ability. The row phase strips them from the
-      * signature it hands on, so they are read off the bound declaration, as the row phase read them.
-      */
-    private def slotImplementations(value: Specialisation, index: Int): CompilerIO[SlotNamed] =
-      getFactOrAbort(SlotBoundValue.Key(value.vfqn, track.platform)).flatMap { bound =>
-        val named = SignatureView.of(bound.value.signature).parameters.lift(index).toSeq.flatMap(tpe => SlotBindings.of(tpe.value))
-        named
-          .traverse(n => abilityOfMarker(n.implementation.value).map(_.map(n.implementation.value -> _)))
-          .map(abilities => SlotNamed(named, abilities.flatten.toMap))
-      }
-
-    /** The implementations a slot names, and which entries each binds ([[SlotBindings]]). */
-    private case class SlotNamed(named: Seq[SlotBindings.Named], abilities: Map[ValueFQN, AbilityFQN]) {
-      def forEntry(index: Int, ability: AbilityFQN, declared: Boolean): Option[ValueFQN] =
-        SlotBindings.forEntry(named, index, ability, declared, abilities.get).map(_.value)
-
-      def forClause(implementation: ValueFQN, ability: AbilityFQN): Option[ValueFQN] =
-        SlotBindings.forClause(named, implementation, ability, abilities.get).map(_.value)
-    }
-
-    private def abilityOfMarker(marker: ValueFQN): CompilerIO[Option[AbilityFQN]] =
-      getFactIfProduced(OperatorResolvedValue.Key(marker, track.platform)).map(_.flatMap(_.name.value.qualifier match {
-        case com.vanillasource.eliot.eliotc.resolve.fact.Qualifier.AbilityImplementation(ability, _, _) => Some(ability)
-        case _                                                                                          => None
-      }))
-
-    /** The entries a named implementation's clauses perform, each with its spelling, at the bindings a slot's `with`
-      * writes for them.
-      */
-    private def namedClauses(marker: ValueFQN): CompilerIO[Seq[(Entry, Option[Declared])]] =
-      implementationClauses(marker, None).map(_.map((entry, _, spelled) => entry -> spelled))
-
-    private def namedBinding(marker: ValueFQN): GroundValue =
-      GroundValue.Structure(marker, Seq.empty, GroundValue.Type)
-
     /** The type a row-typed parameter takes once its block takes `domain`: `Unit => A` becomes `T₁ => … => A`. */
     private def blockType(parameterType: GroundValue, domain: Seq[GroundValue]): GroundValue =
       parameterType.asFunctionType match {
@@ -940,7 +776,7 @@ object EnvironmentThreading {
         val found = evidence.find(answers(_, entry)) match {
           case Some(near) if runs(near, marker)                  => near
           case Some(near: Evidence.Installed)                    => near
-          case Some(near @ Evidence.Given(frame)) if frame.bySlot => near
+          case Some(near @ Evidence.Given(_, _, bySlot)) if bySlot => near
           case _                                                 => Evidence.Installed(marker, entry.ability, evidence)
         }
         for {
@@ -982,75 +818,9 @@ object EnvironmentThreading {
           )
       }
 
-    /** The ground binding `evidence` stands for where it answers `entry` (`docs/effects.md` D35): what a given one
-      * arrived as, and for an installed one its implementation's marker applied to what the write puts there — each
-      * binding binder ([[BindingWriter.phantoms]]) at the evidence its `with` closed over, a per-call one and an
-      * ability's at `Default`, and each binder before the last binding at what its pattern takes at the entry.
-      */
-    private def bindingOf(evidence: Evidence, entry: Entry): CompilerIO[GroundValue] =
-      evidence match {
-        case Evidence.Given(frame)                  => frame.binding.pure[CompilerIO]
-        case Evidence.Installed(marker, ability, closure) =>
-          installedBinding(
-            marker,
-            ability,
-            entry,
-            clauseEntry => closure.find(answers(_, clauseEntry)).traverse(bindingOf(_, clauseEntry))
-          )
-      }
-
-    /** The ground binding of the implementation `marker` the slot `index` of `value` names for `entry`: its clauses at
-      * what the slot binds them to ([[clauseBinding]]).
-      */
-    private def slotBinding(value: Specialisation, index: Int, entry: Entry, marker: ValueFQN): CompilerIO[GroundValue] =
-      slotImplementations(value, index).flatMap(namedSlotBinding(value, _, entry, marker))
-
-    private def namedSlotBinding(value: Specialisation, named: SlotNamed, entry: Entry, marker: ValueFQN): CompilerIO[GroundValue] =
-      installedBinding(
-        marker,
-        entry.ability,
-        entry,
-        clauseEntry => namedClauses(marker).flatMap(_.find(_._1 == clauseEntry).traverse(clauseBinding(value, _, named, marker)))
-      )
-
-    private def installedBinding(
-        marker: ValueFQN,
-        ability: AbilityFQN,
-        entry: Entry,
-        clause: Entry => CompilerIO[Option[GroundValue]]
-    ): CompilerIO[GroundValue] =
-      for {
-        orv      <- getFactOrAbort(OperatorResolvedValue.Key(marker, track.platform))
-        marks     = BindingWriter.phantoms(orv).toMap
-        solved   <- NamedImplementationArguments.solve(
-                      ImplementationBinding.Implementation(marker, Seq.empty),
-                      entry.arguments,
-                      track.platform
-                    )
-        arguments = solved.getOrElse(SignatureView.of(orv.signature).binders.map(_ => defaultBinding))
-        received <- if (marks.isEmpty) Map.empty[Int, Entry].pure[CompilerIO]
-                    else track.specialisation(marker, arguments).map(_.effects.received.map(r => r.binderIndex -> r.entry).toMap)
-        declared <- declaredEntries(marker)
-        held     <- environmentEntries(marker, ability)
-        written  <- (0 to marks.keys.maxOption.getOrElse(-1)).toList.traverse { index =>
-                      marks.get(index) match {
-                        case None                                                                  =>
-                          arguments.lift(index).getOrElse(defaultBinding).pure[CompilerIO]
-                        case Some(_) if declared.get(index).exists(entry => !held.contains(entry)) =>
-                          defaultBinding.pure[CompilerIO]
-                        case Some(markAbility)                                                     =>
-                          isEffect(markAbility).flatMap {
-                            case true  =>
-                              received.get(index).flatTraverse(clause).map(_.getOrElse(defaultBinding))
-                            case false => defaultBinding.pure[CompilerIO]
-                          }
-                      }
-                    }
-      } yield GroundValue.Structure(marker, written, GroundValue.Type)
-
     private def sameCode(found: Evidence, entry: Entry, binding: GroundValue, at: Sourced[?]): CompilerIO[Unit] = {
       val runs = found match {
-        case Evidence.Given(frame)             => frame.binding
+        case Evidence.Given(_, binding, _)     => binding
         case Evidence.Installed(marker, _, _) => namedBinding(marker)
       }
       if (sameImplementation(runs, binding)) ().pure[CompilerIO]
@@ -1068,23 +838,9 @@ object EnvironmentThreading {
       */
     private def clauseEvidence(found: Evidence, expected: Seq[(Entry, GroundValue)], at: Sourced[?]): CompilerIO[Unit] =
       found match {
-        case Evidence.Given(_)                      => ().pure[CompilerIO]
+        case _: Evidence.Given                      => ().pure[CompilerIO]
         case Evidence.Installed(_, _, closure)      =>
           expected.traverse_((clauseEntry, clauseBinding) => checkEvidence(closure, clauseEntry, clauseBinding, at))
-      }
-
-    /** Whether `evidence` answers `entry`: a given one that very entry, an installed one any of its ability. */
-    private def answers(evidence: Evidence, entry: Entry): Boolean =
-      evidence match {
-        case Evidence.Given(frame)             => frame.entry == entry
-        case Evidence.Installed(_, ability, _) => ability == entry.ability
-      }
-
-    /** Whether `evidence` runs the implementation `marker`. */
-    private def runs(evidence: Evidence, marker: ValueFQN): Boolean =
-      evidence match {
-        case Evidence.Given(frame)            => sameImplementation(frame.binding, namedBinding(marker))
-        case Evidence.Installed(installed, _, _) => installed == marker
       }
 
     /** The nearest evidence answering `entry`. */
@@ -1099,18 +855,6 @@ object EnvironmentThreading {
             )
           )
       }
-
-    private def isEffect(ability: AbilityFQN): CompilerIO[Boolean] =
-      effects.get(ability) match {
-        case Some(known) => known.pure[CompilerIO]
-        case None        =>
-          AbilityKind
-            .isEffect(ability, track.platform)
-            .map(_.getOrElse(false))
-            .flatTap(known => effects.update(ability, known).pure[CompilerIO])
-      }
-
-    private val effects: mutable.Map[AbilityFQN, Boolean] = mutable.Map.empty
 
     /** The nearest arguments a `with` supplied to the implementation `binding` names. */
     private def suppliedFor(context: Context, binding: GroundValue): Option[Supplied] =
@@ -1198,31 +942,6 @@ object EnvironmentThreading {
       )
     }
 
-    private def sameImplementation(left: GroundValue, right: GroundValue): Boolean =
-      (ImplementationBinding.fromGround(left), ImplementationBinding.fromGround(right)) match {
-        case (Some(ImplementationBinding.Default), Some(ImplementationBinding.Default))                       => true
-        case (Some(ImplementationBinding.Implementation(a, _)), Some(ImplementationBinding.Implementation(b, _))) =>
-          a == b
-        case (None, None)                                                                                     => left == right
-        case _                                                                                                => false
-      }
-
-    private def isNamed(binding: GroundValue): Boolean =
-      ImplementationBinding.fromGround(binding) match {
-        case Some(_: ImplementationBinding.Implementation) => true
-        case _                                             => false
-      }
-
-    private def describe(binding: GroundValue): String =
-      ImplementationBinding.fromGround(binding) match {
-        case Some(ImplementationBinding.Implementation(head, _)) =>
-          head.name.qualifier match {
-            case Qualifier.AbilityImplementation(_, _, Some(name)) => s"the implementation '$name'"
-            case _                                                 => "the default implementation"
-          }
-        case _                                                   => "the default implementation"
-      }
-
     /** The shape of the environment of `binding` for `entry`: the implementation it runs on ([[implementationOf]]; none,
       * and so an empty shape, for `Default`), with its clause entries' shapes and its own parameters' types.
       */
@@ -1260,42 +979,6 @@ object EnvironmentThreading {
         case Some(named: ImplementationBinding.Implementation) =>
           NamedImplementationArguments.solve(named, entry.arguments, track.platform).map(_.map(named.head -> _))
         case _                                                 => none[(ValueFQN, Seq[GroundValue])].pure[CompilerIO]
-      }
-
-    /** The entries an implementation's environment holds frames of, with the bindings its type arguments hold for them
-      * — read off its marker's specialisation, whose clause row every clause carries: the effects its clauses perform
-      * ([[environmentEntries]]). Its `~` constraints hold none: an ability has no named implementation
-      * (`docs/effects.md` D29), so a constraint is the two-site search's, whose anonymous answer takes no parameters.
-      * `typeArguments` [[None]] is a slot's `with`, whose clause bindings the caller writes as `Default`. An
-      * implementation performing nothing needs no specialisation read at all.
-      */
-    private def implementationClauses(
-        marker: ValueFQN,
-        typeArguments: Option[Seq[GroundValue]]
-    ): CompilerIO[Seq[(Entry, GroundValue, Option[Declared])]] =
-      getFactOrAbort(OperatorResolvedValue.Key(marker, track.platform)).flatMap { orv =>
-        val performed = orv.effectRow.returnEffects.map(_.abilityFQN).toSet
-        val arguments =
-          typeArguments.getOrElse(Seq.fill(SignatureView.of(orv.signature).binders.size)(defaultBinding))
-        if (performed.isEmpty) Seq.empty.pure[CompilerIO]
-        else
-          for {
-            held   <- abilityOfImplementation(orv).fold(Set.empty[Declared].pure[CompilerIO])(environmentEntries(marker, _))
-            own    <- declaredEntries(marker)
-            ground <- track.specialisation(marker, arguments)
-          } yield ground.effects.received
-            .filter(received => performed.contains(received.entry.ability) && own.get(received.binderIndex).exists(held.contains))
-            .map(received =>
-              (received.entry, arguments.lift(received.binderIndex).getOrElse(defaultBinding), own.get(received.binderIndex))
-            )
-      }
-
-    private def abilityOfImplementation(
-        orv: OperatorResolvedValue
-    ): Option[AbilityFQN] =
-      orv.name.value.qualifier match {
-        case com.vanillasource.eliot.eliotc.resolve.fact.Qualifier.AbilityImplementation(ability, _, _) => Some(ability)
-        case _                                                                                          => None
       }
 
     /** The types of an implementation's own parameters at its type arguments, read off its parameters declaration's

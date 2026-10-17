@@ -458,6 +458,10 @@ object LangFactCodecs {
   given codec_com_vanillasource_eliot_eliotc_monomorphize_fact_MonomorphicExpression_MonomorphicValueReference
       : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.fact.MonomorphicExpression.MonomorphicValueReference] =
     FactCodec.derived
+  given codec_com_vanillasource_eliot_eliotc_monomorphize_fact_CheckedValue
+      : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.fact.CheckedValue] = FactCodec.derived
+  given codec_com_vanillasource_eliot_eliotc_monomorphize_fact_CheckedValue_Key
+      : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.fact.CheckedValue.Key] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_monomorphize_fact_MonomorphicValue
       : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.fact.MonomorphicValue] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_monomorphize_fact_MonomorphicValue_Key
@@ -521,6 +525,8 @@ object LangFactCodecs {
   val compilerMonomorphicValueCodec
       : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.fact.CompilerMonomorphicValue] =
     codec_com_vanillasource_eliot_eliotc_monomorphize_fact_CompilerMonomorphicValue
+  val checkedValueCodec: FactCodec[com.vanillasource.eliot.eliotc.monomorphize.fact.CheckedValue]                      =
+    codec_com_vanillasource_eliot_eliotc_monomorphize_fact_CheckedValue
   val monomorphicValueCodec: FactCodec[com.vanillasource.eliot.eliotc.monomorphize.fact.MonomorphicValue]              =
     codec_com_vanillasource_eliot_eliotc_monomorphize_fact_MonomorphicValue
   val namedValuesIndexCodec: FactCodec[com.vanillasource.eliot.eliotc.namedvalues.fact.NamedValuesIndex]               =
@@ -603,6 +609,7 @@ object LangFactCodecs {
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_monomorphize_channel_WovenValue_Key),
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_monomorphize_fact_BodyValueReferences_Key),
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_monomorphize_fact_CompilerMonomorphicValue_Key),
+    FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_monomorphize_fact_CheckedValue_Key),
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_monomorphize_fact_MonomorphicValue_Key)
   )
 }

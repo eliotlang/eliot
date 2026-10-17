@@ -27,6 +27,7 @@ import com.vanillasource.eliot.eliotc.monomorphize.channel.{
 }
 import com.vanillasource.eliot.eliotc.namedvalues.processor.{NamedValuesIndexProcessor, NamedValuesRewriteProcessor}
 import com.vanillasource.eliot.eliotc.monomorphize.fact.ContributedBinding
+import com.vanillasource.eliot.eliotc.monomorphize.specialise.SpecialisationProcessor
 import com.vanillasource.eliot.eliotc.monomorphize.processor.{
   BindingMergerProcessor,
   BodyValueReferencesProcessor,
@@ -114,6 +115,7 @@ object LangProcessors {
       ContributedBinding.userLabels
     ),
     MonomorphicTypeCheckProcessor(),
+    SpecialisationProcessor(),
     CompilerMonomorphicTypeCheckProcessor(),
     RefinementChannelProcessor(),
     SuppliedRowArgumentsProcessor(),

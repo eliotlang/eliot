@@ -1916,8 +1916,21 @@ oracle until step 4, where specialisation must restore them.
    whatever is in scope, at a body `with` and at a slot's alike, and the write reads the clauses deciding which
    binders are per-call through the universe's `lookup` (it read them with `contains`, so a demand-driven run never
    fetched them and silently found none). Nothing runs on that binder, so only eliot-build's specialisation names
-   moved; all 47 example jars byte-identical, eliot-test 193 and eliot-build 368 pass. The second half moves the
-   binding out of the key.
+   moved; all 47 example jars byte-identical, eliot-test 193 and eliot-build 368 pass. *Second half done
+   2026-10-17*: the runtime track's checker checks a value at its key with every **effect binding left out**
+   (`Default` there — `CheckedValue`, `specialise/EffectBindings`), and leaves every operation of an effect
+   undispatched, whatever binding its body wrote. The specialisation pass (`specialise/SpecialisationProcessor`,
+   `EvidenceSpecialisation`) produces the `MonomorphicValue` everything downstream reads, at the full key: it walks
+   the checked body with the evidence in scope — received at the key, given by a callee's slot, installed by a `with`'s
+   binder call — writes each callee's effect bindings from it, and dispatches each operation to the clause of the
+   implementation the evidence runs, the clause's per-call entries at the call's evidence; a named implementation the
+   body already wrote must be the evidence's. The pass clones on every constant evidence, which is today's rule, so
+   the specialisations are today's: all 47 example reports identical (jars, sizes, exit codes, output), eliot-test 193
+   and eliot-build 368 pass, `__.test` green. Measured on eliot-build's suite: 2804 checks for 2813 specialisations,
+   and the pass costs 0.65 s of a 45 s build. What the threading and the pass read off declarations is one class
+   (`channel/EffectDeclarations`). The compile track is unchanged — its key keeps the binding and its checker
+   dispatches, as its evaluator needs the code — and Part I still describes the binding as part of the key, which
+   step 6 rewrites.
 5. **The deletions** above, and the slot `with` refused with a message naming the `with` around the run; §8 items
    44, 45, 48, 56 and 57 rechecked as closed, and item 60 checked to fail loudly.
 6. Part I rewritten (§3.1, §3.4, §3.5, §9) and the cornerstone in `CLAUDE.md`, then a release.

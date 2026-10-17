@@ -76,6 +76,7 @@ object LangProgressDescriber extends ProgressDescriber {
       case BodyValueReferences.Key(vfqn, _)                => checking(vfqn.moduleName)
       case ContributedBinding.Key(vfqn, _)                 => checking(vfqn.moduleName)
       case NativeBinding.Key(vfqn, _)                      => checking(vfqn.moduleName)
+      case CheckedValue.Key(vfqn, _)                       => checking(vfqn.moduleName)
       case MonomorphicValue.Key(vfqn, _)                   => checking(vfqn.moduleName)
       case CompilerMonomorphicValue.Key(vfqn, _)           => checking(vfqn.moduleName)
       case AbilityImplementation.Key(ability, _, _)        => checking(ability.moduleName)
