@@ -89,7 +89,7 @@ lives now.
 21. **D35** (decided 2026-10-16, §11): an implementation is evidence passed after monomorphization, and static code is
    a specialisation pass. Its order is in its record: the dependents' three definitions first (they compile today),
    then the lowering, the evidence, the specialisation pass, and the deletions — steps 1–5 built 2026-10-17, closing
-   §8 items 44, 45, 48, 51, 56 and 57 and making item 60 loud; step 6 (Part I and `CLAUDE.md`) remains, and item 62.
+   §8 items 44, 45, 48, 51, 56 and 57 and making item 60 loud; step 5a (item 62, decided 2026-10-17: a block copy per evidence) and step 6 (Part I and `CLAUDE.md`) remain.
 
 D20a, D20c and D3 stay open until decided; none blocks the steps above.
 
@@ -98,10 +98,11 @@ D20a, D20c and D3 stay open until decided; none blocks the steps above.
 - **Silent:** none known.
 - **Latent:** item 59 is a decision.
 - **Loud, at compile time:** §8 items 60 (now refused; the rule it needs is still a decision), 61 (reproduced; needs
-  a decision) and 62 (runs of one parameter given different implementations, which D35 allows); a `catch` over a
+  a decision) and 62 (runs of one parameter given different implementations; decided, step 5a); a `catch` over a
   parameter spells its arguments (§7 item 2); a function-typed code parameter's own entries are never supplied (§7
   item 1).
-- **Decided, not built:** D35's step 6, Part I and `CLAUDE.md` rewritten for evidence (steps 1–5 are built).
+- **Decided, not built:** D35's step 5a (a block copy per evidence, closing §8 item 62) and step 6, Part I and
+  `CLAUDE.md` rewritten for evidence (steps 1–5 are built).
 - **Undecided:** naming a set of effects in a clause (D20a), storing an effectful computation (D20c), `~`/`&` in user
   space (D3), the rules items 60 and 61 need. D31 and D32 are withdrawn (§11).
 - **Outside this document:** `v0.9` is the first release carrying `uses` (`v0.8` is tagged before it, and its release
@@ -1203,7 +1204,7 @@ run; *read* means found in the code, not yet reproduced — establishing it is t
 | 59 | §3.8 and CLAUDE.md say *"the checker holds no effect rule … no effect diagnostic"*, while `monomorphize/check` holds `AbilityResolver.isEffect` (since D35 step 5 only to leave an effect's operation to the specialisation pass; `reportUnboundEffect`, `reportUnmatchedBinding` and the named-implementation dispatch are gone), `DeclaredEntries.forwarded` (recorded by `AbilityResolver.record`, applied in `PostDrainQuoter`), `PostDrainQuoter.reachesFrames`/`threaded` and `TypeStackLoop.guardRead`; §3.1 and §3.4 themselves name `AbilityResolver` and `PostDrainQuoter`. A decision: restate §3.8, or move them | decision | read |
 | 60 | a reference whose entry the call does not spell answers the nearest binding of its ability before the checker has typed it, while its frame is chosen after monomorphization by its entry at ground arguments: in `def guarded(body uses Throw[String]: Unit) uses Throw[Int]: String`, an argument `guarded(raise(1))` is written from the slot's `Throw[String]` binding, so rule 4's closed cut sees nothing, and then runs on the caller's `Throw[Int]` frame — the program compiles and `main`'s handler catches `1` past `guarded` entirely. Writing the frame from the binding instead (D32) would hand an `Int` to a `Throw[String]` handler: the root is that `raise`'s `E` is decided by the checker while the binding it answers is decided before it. Closing it needs a decision — the answering binding's spelled arguments written as the reference's undetermined ones (a determination from a declaration, which makes a generic `raise` in a body with two `Throw` entries take the nearest and be a type error for the other), or such a reference refused where two entries of its ability are in scope. Since D35 step 5 the program is refused, *"Nothing binds an implementation of the effect 'Throw' here"* at `raise(1)`: a closed slot's block sees only what its callee's runs give, which is `Throw[String]` | loud (was silent) | reproduced (2026-10-15, building D30; loud 2026-10-17) |
 | 61 | an anonymous implementation's clause cannot repeat a member's entry over the ability's own type parameters: `ability Describe[T] { def describe(t: T) uses Writer[List[T]]: String }` implemented for `Box` must spell `Writer[List[Box]]` (its `T` is out of scope), and entries compare as spelled (`DeclaredEntries.ofMember`/`forwarded`, D30), so dispatch never hands the clause the call's binding. Since item 50's rule it is refused at the clause (*"… performs the effect 'Writer' in 'describe', at other arguments than the ability's 'describe' declares it"*), before it was *"Nothing binds an implementation of the effect 'Writer' here"* at the operation. Whether a clause's entry is compared with its member's under the implementation's pattern (`T := Box`, read off the declarations) is a reading of D30 to decide | loud | reproduced (2026-10-16, closing item 50) |
-| 62 | runs of one code parameter given **different implementations** are refused after monomorphization (*"'body' runs here with a different implementation of 'Terminal' than at its other runs, which is not supported yet"*), where D35 says runs may differ: `def twice(body uses *, Terminal: Unit) uses *: String = run(body) ++ runWriterToLog(body with scripted("b"))` for `run` installing `fixed`. A block written at the slot is specialised once, against what every run gives (`MonomorphicEffects.Slot.offered`). Compiling it needs a choice: a copy of the block per distinct evidence, each an extra hidden parameter of the callee that its matching runs use (static, today's code otherwise), or evidence passed as a run-time value with indirect operations (D35's unspecialised form, which no target builds yet). Before step 5 the same program was the run-agreement error, so nothing that compiled stops compiling | loud | reproduced (2026-10-17, `PassedRunIntegrationTest`) |
+| 62 | runs of one code parameter given **different implementations** are refused after monomorphization (*"'body' runs here with a different implementation of 'Terminal' than at its other runs, which is not supported yet"*), where D35 says runs may differ: `def twice(body uses *, Terminal: Unit) uses *: String = run(body) ++ runWriterToLog(body with scripted("b"))` for `run` installing `fixed`. A block written at the slot is specialised once, against what every run gives (`MonomorphicEffects.Slot.offered`). **Decided 2026-10-17** (Robert): a copy of the block per distinct evidence, each an extra hidden parameter of the callee that its matching runs use, rather than evidence passed as a run-time value — D35 step 5a, not built. Before step 5 the same program was the run-agreement error, so nothing that compiled stops compiling | loud | reproduced (2026-10-17, `PassedRunIntegrationTest`); decided, not built |
 
 **Cleanup found by the same review.** Not defects — dead code and text that no longer describes the tree. Each was
 checked with a repository-wide grep, tests included.
@@ -1961,6 +1962,25 @@ oracle until step 4, where specialisation must restore them.
    frames are now its closure's, and which should go with a decision rather than quietly; and runs of one parameter
    **given different implementations** are refused after monomorphization (§8 item 62) rather than compiled, which the
    decision says they may be.
+5a. **Runs given different implementations, compiled by a copy of the block per evidence** (decided by Robert,
+   2026-10-17, for §8 item 62; not built). The other choice, evidence passed as a run-time value with indirect
+   operations, was declined: it is a second code shape for every target to build, and a block copy keeps every
+   operation a direct call, as the AVR north star wants. How it is built:
+   - **The callee records variants.** `MonomorphicEffects.Slot.offered` holds, per slot, every distinct binding vector
+     the runs of the parameter give, in the order of first run — a list of variants instead of one. A slot no run
+     reaches has none, and its entries are `Default` as today.
+   - **The callee takes one block per variant.** Variant 0 keeps the parameter as written; each further variant is a
+     hidden parameter right after it, and the pass points every run at the parameter of the variant it gives. A slot
+     with one variant is exactly today's, so a program whose runs agree compiles to the same bytes.
+   - **The caller writes the block once per variant.** The block at that slot is specialised against each variant's
+     evidence and passed in variant order; each copy is threaded with that variant's frames, so its parts may differ.
+   - **Passing on composes.** A run inside a block at another callee's slot is walked once per variant of that slot,
+     so a definition passing its code on gives the union of what the callees it passes it to give.
+   - **The woven signature follows.** The threading retypes the slot to one block per variant, at each variant's
+     domain; nothing before it changes types, since every copy has the block's checked type.
+   - The cost is code size, one copy per distinct evidence at a slot, and only where runs differ: every slot in the
+     corpus has one variant. Termination is the specialisation pass's own — no recursion, so finitely many variants.
+   Built, it closes §8 item 62 and deletes the "not supported yet" error.
 6. Part I rewritten (§3.1, §3.4, §3.5, §9) and the cornerstone in `CLAUDE.md`, then a release.
 
 

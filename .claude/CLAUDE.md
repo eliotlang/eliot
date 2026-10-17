@@ -556,7 +556,8 @@ a code parameter's slot is given is read off the **callee's body** — the evide
 recorded as `MonomorphicEffects.Slot.offered` — never off its declaration, and the threading takes each frame from the
 evidence that answers it. `with` is an expression on any subject; a `with` on a parameter or field is a parse error
 naming the `with` around the run. The write keeps its resolution order only as the scope check. Runs of one parameter
-given different implementations are refused for now (§8 item 62). Step 6 rewrites Part I and this cornerstone. A
+given different implementations are refused for now (§8 item 62); decided, not built, is a copy of the block per
+distinct evidence, one extra hidden parameter each (D35 step 5a). Step 6 rewrites Part I and this cornerstone. A
 free-monad representation was evaluated and rejected (reasons in D35). D31 and D32 are withdrawn.
 
 **The surface is one clause in two positions.** On a **definition**, `uses Console, Throw[E]` is what its caller
