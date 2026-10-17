@@ -1881,7 +1881,8 @@ oracle until step 4, where specialisation must restore them.
 
 1. **The dependents' three definitions** — `mocked` (eliot-test), `against` (eliot-build) and the example's
    `transcriptOf` — rewritten to a `with` around the run. They compile on the released compiler, so eliot-test and
-   eliot-build can release them first, and nothing later waits on a dependent.
+   eliot-build can release them first, and nothing later waits on a dependent. *Done 2026-10-17*: eliot-test 193 and
+   eliot-build 368 pass on eliot v0.11, and the example's jar is byte-identical.
 2. **Every `with` lowered to the `$with` call form**, so the threading sees each install site. The binding write is
    untouched; jars byte-identical.
 3. **Evidence threaded beside the written binding**: each entry's hidden argument carries code and environment, built

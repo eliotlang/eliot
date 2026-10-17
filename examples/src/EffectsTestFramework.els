@@ -1,10 +1,11 @@
 /**
- * A **miniature test framework** for effectful code, built out of a named implementation and one `with` on a slot's
- * clause entry. `EffectsFakeConsole` shows the mechanism on a single value; this is what it looks like once it is factored
- * into the two pieces a suite actually needs:
+ * A **miniature test framework** for effectful code, built out of a named implementation and one `with` around the run
+ * of a code parameter. `EffectsFakeConsole` shows the mechanism on a single value; this is what it looks like once it is
+ * factored into the two pieces a suite actually needs:
  *
- *   - `transcriptOf` — one helper whose slot *is* the seam. Its parameter's clause carries `with recordingConsole`, so
- *     the callee binds the code the caller writes there, and the caller writes nothing;
+ *   - `transcriptOf` — one helper whose code parameter *is* the seam. Its clause lists `Console`, which makes the
+ *     console the callee's to bind, and it runs the code the caller writes there `with recordingConsole`, so the caller
+ *     writes nothing;
  *   - `TestResult` — ordinary `data` a test returns, so a suite is a list of plain values to report on.
  *
  * Note what the production code does *not* have: no injected handler, no extra parameter, no test hook, not even a
@@ -41,10 +42,10 @@ implement recordingConsole: Console {
 
 // --- The framework: three definitions, no compiler support of its own. ----------------------------------------------
 
-// What a program using `Console` wrote, with no console involved. The `with` on the *slot's clause entry* binds the
-// code the caller writes there — the only way a callee binds calls it cannot see — and the `Writer[String]` the
-// double's clauses perform is supplied and discharged by `runWriterToLog`.
-def transcriptOf(program uses *, Console with recordingConsole: Unit) uses *: String = runWriterToLog(program)
+// What a program using `Console` wrote, with no console involved. Listing `Console` in the parameter's clause makes it
+// the callee's to bind — the only way a callee binds calls it cannot see — and the `with` around the run binds it; the
+// `Writer[String]` the double's clauses perform is supplied and discharged by `runWriterToLog`.
+def transcriptOf(program uses *, Console: Unit) uses *: String = runWriterToLog(program with recordingConsole)
 
 data TestResult(name: String, failure: Option[String])
 
