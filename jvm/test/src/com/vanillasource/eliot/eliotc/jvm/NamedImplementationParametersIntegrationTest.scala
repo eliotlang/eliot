@@ -168,7 +168,7 @@ class NamedImplementationParametersIntegrationTest extends FullIntegrationTest {
     ).asserting(_ shouldBe "[;Hello, inner!;")
   }
 
-  it should "bind the same implementation at every run" in {
+  it should "bind only the run it is around" in {
     compileForErrors(
       s"""$terminal
          |def both(body uses *, Terminal: Unit) uses *: String = runWriterToLog({
@@ -176,7 +176,9 @@ class NamedImplementationParametersIntegrationTest extends FullIntegrationTest {
          |   body
          |})
          |def main uses Console: Unit = printLine(both(greet))""".stripMargin
-    ).asserting(_ should include("'body' runs here with a different implementation of 'Terminal' than at its other runs."))
+    ).asserting(
+      _ should include("'body' may perform the effect 'Terminal' here, which this definition neither handles nor declares.")
+    )
   }
 
   "a `with` naming an implementation that takes parameters" should "supply them" in {
@@ -212,7 +214,7 @@ class NamedImplementationParametersIntegrationTest extends FullIntegrationTest {
       s"""$terminal
          |def run(body uses *, Terminal with scripted("a"): Unit) uses *: String = runWriterToLog(body)
          |def main uses Console: Unit = printLine(run(greet))""".stripMargin
-    ).asserting(_ should include("The implementation 'scripted' takes parameters, which a parameter's clause cannot supply."))
+    ).asserting(_ should include("no `with` on a parameter"))
   }
 
   "a `with` supplying arguments" should "name an implementation that takes parameters" in {

@@ -36,17 +36,13 @@ object ArgumentDefinition {
 
   extension (self: ArgumentDefinition) def render: String = self.name.show
 
-  /** A field's or a meta slot's binder: `name: Type`, with an optional trailing `with` chain on the type. A field holds
-    * a value, so it takes no `uses` clause (`docs/effects.md` D20 rule 6) — the parser stops at the keyword — and no
-    * row (`Expression.fieldTypeRunParser`).
+  /** A field's or a meta slot's binder: `name: Type`. A field holds a value, so it takes no `uses` clause
+    * (`docs/effects.md` D20 rule 6) — the parser stops at the keyword — and no row (`Expression.fieldTypeRunParser`).
     */
   given ASTComponent[ArgumentDefinition] = new ASTComponent[ArgumentDefinition] {
     // The argument type uses `typeRunParser` (the shared type-position parser), so an infix type operator reads bare
     // here — `f: A => B`. The run stops at the `,` separator and the closing `)` of the argument list (both reserved,
     // non-type-atom tokens), so a single-atom type is still returned verbatim and the list structure is unaffected.
-    // A trailing `with name` binds a named implementation to the slot (effects v6, landed dark — see
-    // [[Expression.WithBinding]]). Only a parameter's or a field's type admits it, which is why it is read here and not
-    // in `typeRunParser`: a def's own return type stops at the `with` keyword and fails to parse.
     override def parser: Parser[Sourced[Token], ArgumentDefinition] =
       acceptIf(isIdentifier, "argument name").flatMap(name => plainRest(name.map(_.content), Expression.fieldTypeRunParser))
   }
@@ -59,13 +55,15 @@ object ArgumentDefinition {
     * body uses *, Throw[E]: A              // ⤳ body: {Throw[E]} A     the same, plus Throw[E] the callee gives
     * body uses Throw[E]: A                 // ⤳ body: {Throw[E]} A     closed: Throw[E] and nothing else
     * action uses *: A => Unit              // ⤳ action: A => {} Unit   code of function type: the row on its codomain
-    * body uses *, Console with fake: Unit  // ⤳ body: {Console} Unit with fake
     * }}}
     *
-    * The clause is written onto the spelling the rest of the compiler already reads — a row on the slot's type, and its
-    * `with` chain after it — so no phase past this one learns the new surface; the one thing that spelling cannot say,
-    * that the row is closed, is [[ArgumentDefinition.closedRow]]. `*` comes first and at most once. A type that already
-    * carries a row as well is refused by the parser, as a row in any type is: the clause is the only spelling.
+    * The clause is written onto the spelling the rest of the compiler already reads — a row on the slot's type — so no
+    * phase past this one learns the new surface; the one thing that spelling cannot say, that the row is closed, is
+    * [[ArgumentDefinition.closedRow]]. `*` comes first and at most once. A type that already carries a row as well is
+    * refused by the parser, as a row in any type is: the clause is the only spelling.
+    *
+    * A parameter names no implementation: `body uses *, Console with fake: Unit` is refused ([[slotWith]]), since the
+    * code's effects are bound where it runs, by a `with` around the run (`body with fake`, `docs/effects.md` D35).
     */
   val parameter: Parser[Sourced[Token], ArgumentDefinition] = for {
     name     <- acceptIf(isIdentifier, "argument name")
@@ -83,36 +81,39 @@ object ArgumentDefinition {
       typeRunParser: Parser[Sourced[Token], Expression]
   ): Parser[Sourced[Token], ArgumentDefinition] = for {
     _              <- symbol(":")
-    typeRun        <- sourced(typeRunParser)
-    typeExpression <- Expression.typeWithBindings(typeRun)
+    typeExpression <- sourced(typeRunParser)
+    _              <- slotWith
   } yield ArgumentDefinition(name, typeExpression)
 
-  /** `uses [*] [, entry]*` on a parameter, each entry an ability reference with an optional `with` chain. */
+  /** A `with` on a parameter, after a clause entry or its type: refused as itself, naming the `with` around the run that
+    * replaced it (`docs/effects.md` D35), rather than whatever the parser would expect next.
+    */
+  private val slotWith: Parser[Sourced[Token], Unit] =
+    keyword("with")
+      .refusedAs[Unit](
+        "no `with` on a parameter, since code's effects are bound where it runs, by a `with` around the run in the " +
+          "body (`body with fake`)"
+      )
+      .optional()
+      .void
+
+  /** `uses [*] [, entry]*` on a parameter, each entry an ability reference. */
   private val usesClause: Parser[Sourced[Token], UsesClause] =
     keyword("uses") *> symbol("*").optional().flatMap {
       case Some(_) => (symbol(",") *> usesEntry).anyTimes().map(UsesClause(true, _))
       case None    => usesEntry.atLeastOnceSeparatedBy(symbol(",")).map(UsesClause(false, _))
     }
 
-  private type Entry = (UnresolvedAbilityConstraint[Sourced[Expression]], Seq[Sourced[Expression]])
+  private type Entry = UnresolvedAbilityConstraint[Sourced[Expression]]
 
   private val usesEntry: Parser[Sourced[Token], Entry] =
-    for {
-      entry    <- component[UnresolvedAbilityConstraint[Sourced[Expression]]]
-      bindings <- Expression.withBindings
-    } yield (entry, bindings)
+    component[UnresolvedAbilityConstraint[Sourced[Expression]]] <* slotWith
 
-  /** A parsed `uses` clause: whether it is open (`*`), and its entries with the implementations named on each. */
+  /** A parsed `uses` clause: whether it is open (`*`), and its entries. */
   private case class UsesClause(open: Boolean, entries: Seq[Entry]) {
 
-    /** The slot's type in today's spelling: the row on the codomain of an arrow type, on the type itself otherwise, and
-      * every named implementation as a `with` after it, in the order written.
-      */
-    def applyTo(typed: Sourced[Expression]): Sourced[Expression] =
-      Expression.applyEntryBindings(
-        rowed(typed),
-        entries.zipWithIndex.flatMap { case ((_, bindings), index) => bindings.map(_ -> Some(index)) }
-      )
+    /** The slot's type in today's spelling: the row on the codomain of an arrow type, on the type itself otherwise. */
+    def applyTo(typed: Sourced[Expression]): Sourced[Expression] = rowed(typed)
 
     /** The row goes on the final codomain of the run as written, never inside it: `String => (String => Unit)` is code
       * taking one argument and handing back a function value, so it is `String => {} (String => Unit)`. A nested run
@@ -124,7 +125,7 @@ object ArgumentDefinition {
     }
 
     private def onRow(typed: Sourced[Expression]): Sourced[Expression] =
-      typed.as(EffectfulType(entries.map(_._1), typed))
+      typed.as(EffectfulType(entries, typed))
   }
 
   private def isArrow(part: Sourced[Expression]): Boolean = part.value match {

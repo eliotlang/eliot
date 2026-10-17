@@ -43,7 +43,7 @@ import com.vanillasource.eliot.eliotc.operator.processor.OperatorResolverProcess
 import com.vanillasource.eliot.eliotc.processor.CompilerProcessor
 import com.vanillasource.eliot.eliotc.reconcile.processor.ReconcileProcessor
 import com.vanillasource.eliot.eliotc.resolve.processor.ValueResolver
-import com.vanillasource.eliot.eliotc.row.processor.{RowElaborationProcessor, SlotBindingProcessor}
+import com.vanillasource.eliot.eliotc.row.processor.RowElaborationProcessor
 import com.vanillasource.eliot.eliotc.saturate.processor.SaturatedValueProcessor
 import com.vanillasource.eliot.eliotc.termination.processor.RecursionCheckProcessor
 import com.vanillasource.eliot.eliotc.token.Tokenizer
@@ -98,7 +98,6 @@ object LangProcessors {
     NamedValuesIndexProcessor(),
     NamedValuesRewriteProcessor(),
     RecursionCheckProcessor(),
-    SlotBindingProcessor(),
     RowElaborationProcessor(),
     SaturatedValueProcessor(),
     AbilityImplementationProcessor(),

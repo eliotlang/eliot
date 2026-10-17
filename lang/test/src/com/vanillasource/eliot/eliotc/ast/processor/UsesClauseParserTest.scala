@@ -87,9 +87,13 @@ class UsesClauseParserTest extends ProcessorTest(new Tokenizer(), new ASTParser(
       .asserting(_ shouldBe Seq(("{Throw[E]} A", false)))
   }
 
-  it should "put each entry's implementation after the slot's type, in the order written" in {
-    argument("def mocked(body uses *, Mocking with recording, Calls with journal: Unit) uses *: Unit")
-      .asserting(_ shouldBe Seq(("{Mocking, Calls} Unit with recording with journal", false)))
+  it should "refuse a `with` after an entry, naming the `with` around the run" in {
+    errors("def mocked(body uses *, Mocking with recording, Calls: Unit) uses *: Unit").asserting(
+      _ shouldBe Seq(
+        "Expected no `with` on a parameter, since code's effects are bound where it runs, by a `with` around the run " +
+          "in the body (`body with fake`), but encountered keyword 'with'."
+      )
+    )
   }
 
   it should "reject `*` after an entry" in {

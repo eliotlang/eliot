@@ -15,7 +15,8 @@ import com.vanillasource.eliot.eliotc.operator.fact.{OperatorResolvedExpression,
 import com.vanillasource.eliot.eliotc.platform.Platform
 import com.vanillasource.eliot.eliotc.processor.CompilerIO.*
 import com.vanillasource.eliot.eliotc.processor.common.TransformationProcessor
-import com.vanillasource.eliot.eliotc.row.fact.{RowElaboratedValue, SlotBoundValue}
+import com.vanillasource.eliot.eliotc.row.fact.RowElaboratedValue
+import com.vanillasource.eliot.eliotc.termination.fact.RecursionCheckedValue
 import com.vanillasource.eliot.eliotc.resolve.fact.{AbilityFQN, Qualifier as ResolveQualifier}
 import com.vanillasource.eliot.eliotc.row.{BindingWriter, RowChecker}
 import com.vanillasource.eliot.eliotc.source.content.Sourced.compilerError
@@ -27,8 +28,8 @@ import scala.collection.mutable
   * every `with` is consumed. See [[BindingWriter]] for the rules; this processor only supplies the declared world it
   * needs and reports what it could not answer.
   *
-  * Placed after [[SlotBoundValue]] (which is after the recursion gate, which walks the *user's* reference graph) and
-  * before `SaturatedValueProcessor`, so everything from saturation onwards sees written bodies and signatures with no
+  * Placed after [[RecursionCheckedValue]] (the recursion gate walks the *user's* reference graph) and before
+  * `SaturatedValueProcessor`, so everything from saturation onwards sees written bodies and signatures with no
   * `with` left in them. A value that is not [[RowChecker.checkable]] — body-less, a `@Signature` twin, a type constructor or
   * a meta companion — is carried through unchanged.
   *
@@ -38,21 +39,20 @@ import scala.collection.mutable
   * a [[RowChecker.Universe]] that *reports* every name it misses, fetches exactly those, and repeats until a round
   * misses nothing new; the last round's universe is complete for this value by construction.
   *
-  * Every name is read as its [[SlotBoundValue]], the declaration whose slots name what their runs are bound by. The
-  * fetch is [[getFactIfProduced]] by design: a referenced name legitimately has none when its own definition aborted
-  * upstream or was rejected by the recursion gate, and a reference the write cannot read is simply left alone — the
+  * Every name is read as its [[OperatorResolvedValue]], its declaration. The fetch is [[getFactIfProduced]] by
+  * design: a referenced name legitimately has none when its own definition aborted upstream, and a reference the write cannot read is simply left alone — the
   * fail-safe direction, since an unwritten binder is caught by the checker rather than silently defaulted.
   */
 class RowElaborationProcessor
-    extends TransformationProcessor[SlotBoundValue.Key, RowElaboratedValue.Key](key =>
-      SlotBoundValue.Key(key.vfqn, key.platform)
+    extends TransformationProcessor[RecursionCheckedValue.Key, RowElaboratedValue.Key](key =>
+      RecursionCheckedValue.Key(key.vfqn, key.platform)
     ) {
 
   override protected def generateFromKeyAndFact(
       key: RowElaboratedValue.Key,
-      slotBound: SlotBoundValue
+      checked: RecursionCheckedValue
   ): CompilerIO[RowElaboratedValue] = {
-    val value = slotBound.value
+    val value = checked.value
     for {
       universe <- universeFor(value, key.platform)
       written   = BindingWriter.write(value, universe)
@@ -234,11 +234,11 @@ class RowElaborationProcessor
       if (fresh.isEmpty && freshClauses.isEmpty) universe.pure[CompilerIO]
       else
         for {
-          fetched <- fresh.toSeq.traverse(fqn => getFactIfProduced(SlotBoundValue.Key(fqn, platform)).map(fqn -> _))
+          fetched <- fresh.toSeq.traverse(fqn => getFactIfProduced(OperatorResolvedValue.Key(fqn, platform)).map(fqn -> _))
           clauses <- freshClauses.toSeq.traverse(marker => clausesOf(marker, platform).map(marker -> _))
           result  <- loop(
                        universe.copy(
-                         values = universe.values ++ fetched.collect { case (fqn, Some(bound)) => fqn -> bound.value },
+                         values = universe.values ++ fetched.collect { case (fqn, Some(orv)) => fqn -> orv },
                          clauses = universe.clauses ++ clauses
                        ),
                        attempted ++ fresh,

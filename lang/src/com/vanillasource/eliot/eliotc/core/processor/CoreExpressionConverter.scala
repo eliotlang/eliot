@@ -115,7 +115,7 @@ object CoreExpressionConverter {
             convertExpression(line.expression, typeContext, compilerTrackContext)
           )
         }))
-      case SourceExpression.WithBinding(subject, implementation, entry)                =>
+      case SourceExpression.WithBinding(subject, implementation)                =>
         // Effects v6 (`docs/effects.md` §9.3): the binding rides the tree as far as the `row` phase, which writes it
         // into every phantom binder inside the subject and erases the node. The name is carried as written and
         // resolved at `ImplementationNameResolver`; the parser guarantees the shape below (a bare, optionally
@@ -131,8 +131,7 @@ object CoreExpressionConverter {
             convertExpression(subject, typeContext, compilerTrackContext),
             name,
             moduleName,
-            arguments.map(convertExpression(_, typeContext = false, compilerTrackContext)),
-            entry
+            arguments.map(convertExpression(_, typeContext = false, compilerTrackContext))
           )
         )
       case _: SourceExpression.EffectfulType                                           =>

@@ -27,19 +27,14 @@ object OperatorResolvedExpression {
   ) extends OperatorResolvedExpression
 
   /** `subject with implementation` — effects v6's binding of a named implementation for the calls lexically inside
-    * `subject` (`docs/effects.md` §9.3). This is the last fact that carries it: the `row` phase writes the binding
-    * into every phantom binder inside the subject and erases the node, so no saturated, monomorphized or generated
-    * form ever sees one.
-    *
-    * On a code parameter's slot, `entry` says which entries of the slot's clause it binds: `Some(i)` the one entry at
-    * index `i`, as written after it — even one the definition also declares (`docs/effects.md` D23); [[None]] every
-    * entry of its ability the definition does not declare, and its named implementations' clause entries of that
-    * ability — a binding carried from a callee's slot, which supplies exactly those (D25 step 3, D26).
+    * `subject` (`docs/effects.md` §9.3), as the resolver leaves it: inside the call of its implementation's binder
+    * ([[com.vanillasource.eliot.eliotc.ast.fact.ImplementationParameters]]). This is the last fact that carries it: the
+    * `row` phase checks the scope it opens and erases the node, keeping the binder's call, where the evidence after
+    * monomorphization installs the implementation (`docs/effects.md` D35).
     */
   case class WithBinding(
       subject: Sourced[OperatorResolvedExpression],
-      implementation: Sourced[ValueFQN],
-      entry: Option[Int] = None
+      implementation: Sourced[ValueFQN]
   ) extends OperatorResolvedExpression
 
   /** Replace every free occurrence of the parameter named `paramName` with `replacement`. Respects shadowing by
@@ -67,8 +62,8 @@ object OperatorResolvedExpression {
         if (pn.value == paramName) body
         else body.map(substitute(_, paramName, replacement))
       FunctionLiteral(pn, newParamType, newBody)
-    case WithBinding(subject, implementation, entry)         =>
-      WithBinding(subject.map(substitute(_, paramName, replacement)), implementation, entry)
+    case WithBinding(subject, implementation)         =>
+      WithBinding(subject.map(substitute(_, paramName, replacement)), implementation)
     case _: IntegerLiteral | _: StringLiteral                =>
       expr
   }
@@ -86,7 +81,7 @@ object OperatorResolvedExpression {
       val inParamType = paramType.exists(pt => containsVar(pt.value, varName))
       val inBody      = pn.value != varName && containsVar(body.value, varName)
       inParamType || inBody
-    case WithBinding(subject, _, _)            => containsVar(subject.value, varName)
+    case WithBinding(subject, _)            => containsVar(subject.value, varName)
     case _: IntegerLiteral | _: StringLiteral  => false
   }
 
@@ -114,7 +109,7 @@ object OperatorResolvedExpression {
           case None     => s.pure[F]
         }
         withParam.flatMap(go(body.value, _))
-      case WithBinding(subject, _, _)          => go(subject.value, s)
+      case WithBinding(subject, _)          => go(subject.value, s)
       case _: IntegerLiteral | _: StringLiteral | _: ParameterReference =>
         s.pure[F]
     }
@@ -132,8 +127,8 @@ object OperatorResolvedExpression {
           .mapN(FunctionLiteral(paramName, _, _))
       case ValueReference(name, typeArgs)                               =>
         typeArgs.traverse(ta => f(ta.value).map(ta.as)).map(ValueReference(name, _))
-      case WithBinding(subject, implementation, entry)                  =>
-        f(subject.value).map(sub => WithBinding(subject.as(sub), implementation, entry))
+      case WithBinding(subject, implementation)                  =>
+        f(subject.value).map(sub => WithBinding(subject.as(sub), implementation))
       case _: IntegerLiteral | _: StringLiteral | _: ParameterReference => expr.pure[F]
     }
 
@@ -257,8 +252,8 @@ object OperatorResolvedExpression {
       ValueReference(name, typeArgs.map(ta => ta.map(fromExpression)))
     case MatchDesugaredExpression.FunctionLiteral(paramName, paramType, body) =>
       FunctionLiteral(paramName, paramType.map(_.map(fromExpression)), body.map(fromExpression))
-    case MatchDesugaredExpression.WithBinding(subject, implementation, entry) =>
-      WithBinding(subject.map(fromExpression), implementation, entry)
+    case MatchDesugaredExpression.WithBinding(subject, implementation) =>
+      WithBinding(subject.map(fromExpression), implementation)
     case MatchDesugaredExpression.FlatExpression(_)                           =>
       throw IllegalStateException("FlatExpression should not exist after operator resolution")
   }
@@ -275,7 +270,7 @@ object OperatorResolvedExpression {
       case ValueReference(name, typeArgs)                                     =>
         name.value.show +
           (if (typeArgs.isEmpty) "" else typeArgs.map(ta => ta.value.render).mkString("[", ", ", "]"))
-      case WithBinding(subject, implementation, _)                            =>
+      case WithBinding(subject, implementation)                            =>
         s"${subject.value.render} with ${implementation.value.show}"
     }
 }

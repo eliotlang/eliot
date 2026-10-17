@@ -13,7 +13,7 @@ import com.vanillasource.eliot.eliotc.platform.Platform
 import com.vanillasource.eliot.eliotc.processor.CompilerIO.*
 import com.vanillasource.eliot.eliotc.resolve.fact.AbilityFQN
 import com.vanillasource.eliot.eliotc.source.content.Sourced
-import com.vanillasource.eliot.eliotc.source.content.Sourced.compilerError
+import com.vanillasource.eliot.eliotc.source.content.Sourced.{compilerAbort, compilerError}
 
 /** The ability-resolution *saturation* concern (a checker collaborator, symmetrical with `carriers` / `guards`):
   * discovering every ability-qualified value reference and resolving each to its concrete impl, factored out of the
@@ -81,16 +81,10 @@ class AbilityResolver(
     *     pending for the next iteration. (A fallback that took them from the enclosing definition's first constraint of
     *     the same local ability name was never reached by the tests, the examples or the dependents, and was wrong for
     *     two entries of one ability; it was deleted, `docs/effects.md` §8 item 54.)
-    *   - The ground ability-level arguments may end in a **binding** ([[ImplementationBinding]], effects v6 §9.4 step
-    *     4): an implementation named there is recorded **directly** — its method of this reference's name, at the type
-    *     arguments its pattern takes at this reference's pattern arguments ([[NamedImplementationArguments]]), an
-    *     implementation whose pattern does not match them being an error here — with no search, no `where` filter and
-    *     no coherence question, since `with`
-    *     *replaces* the search rather than parameterising it; the `Default` marker (and no binding at all) goes to the
-    *     two-site search at the pattern arguments — for an **ability**. An effect has no default (`docs/effects.md`
-    *     D26), so a `Default` reaching one of its members is an error here ([[reportUnboundEffect]]). The resolution is keyed under the full
-    *     sliced arguments, binding included, so one span referenced under two bindings records two entries — exactly
-    *     as two carriers at one span do — and the post-drain quoter re-derives the same slice.
+    *   - An **effect**'s operation is left alone: the specialisation pass dispatches it from the evidence in scope
+    *     (`docs/effects.md` D35). An **ability**'s ground arguments begin with its binding, always `Default`
+    *     ([[ImplementationBinding]]), and the rest go to the two-site search; the resolution is keyed under the full
+    *     sliced arguments, so the post-drain quoter re-derives the same slice.
     *   - `resolveAbility` returning `None` at *ground* arguments is a failed **demand**: the [[AbilityImplementation]]
     *     fact's non-resolved outcome is read back and reported here, at this reference — the demand site — and the
     *     check aborts (see [[reportFailedDemand]]). Only an *absent* fact (the resolution aborted on an upstream error,
@@ -134,39 +128,22 @@ class AbilityResolver(
     }
   }
 
-  /** Resolve a reference at its ground ability-level arguments, recorded under them. */
+  /** Resolve a reference at its ground ability-level arguments, recorded under them. Only an **ability** reaches here,
+    * and its binding is always `Default`: an ability has no named implementation and is never bound with `with`
+    * (`docs/effects.md` D29), so it is answered by the two-site search alone. An effect's operation is the
+    * specialisation pass's to dispatch (D35).
+    */
   private def resolveGround(
       abilityVfqn: Sourced[ValueFQN],
       abilityName: String,
       groundArgs: Seq[GroundValue]
-  ): CheckIO[Boolean] = {
-    val key = (abilityVfqn, groundArgs)
+  ): CheckIO[Boolean] =
     ImplementationBinding.split(groundArgs) match {
-      case (patternArgs, Some(impl: ImplementationBinding.Implementation)) =>
-        // A named implementation is never searched, so its conformance to the ability is checked here, where a
-        // binding first dispatches to it.
-        liftF(
-          getFactOrAbort(NamedImplementationCheck.Key(impl.head, platform)) >>
-            NamedImplementationArguments.solve(impl, patternArgs, platform)
-        ).flatMap {
-          case Some(typeArguments) =>
-            val method = impl.method(abilityVfqn.value.name.name)
-            liftF(getFactOrAbort(UnifiedModuleNames.Key(method.moduleName, platform))).flatMap {
-              case names if names.names.contains(method.name) =>
-                record(abilityVfqn.value, key, (method, typeArguments)).as(true)
-              case _                                         =>
-                reportMissingClause(abilityVfqn, abilityName, impl)
-            }
-          case None                =>
-            reportUnmatchedBinding(abilityVfqn, abilityName, impl, patternArgs)
-        }
-      case (patternArgs, _)                                                =>
-        liftF(AbilityKind.isEffect(AbilityFQN(abilityVfqn.value.moduleName, abilityName), platform)).flatMap {
-          case Some(true) => reportUnboundEffect(abilityVfqn, abilityName)
-          case _          => searchAndRecord(abilityVfqn, abilityName, key, patternArgs)
-        }
+      case (_, Some(_: ImplementationBinding.Implementation)) =>
+        liftF(compilerAbort(abilityVfqn.as(s"Internal: the ability '$abilityName' is bound to a named implementation.")))
+      case (patternArgs, _)                                   =>
+        searchAndRecord(abilityVfqn, abilityName, (abilityVfqn, groundArgs), patternArgs)
     }
-  }
 
   /** The two-site search: resolve the ability at its ground pattern arguments and record the impl under `key`, or
     * report the failed demand. What every reference gets today, and what a `Default` binding asks for.
@@ -182,21 +159,6 @@ class AbilityResolver(
       case None       => reportFailedDemand(abilityVfqn, abilityName, patternArgs)
     }
 
-  /** A member of an effect reached with `Default`: nothing bound an implementation of it. The write reports an
-    * uncovered effect in a body, so what reaches here is a binding promised by a slot that names no implementation — a
-    * body-less discharger whose platform layer, which would name one, is not on the path.
-    */
-  private def reportUnboundEffect(ref: Sourced[ValueFQN], abilityName: String): CheckIO[Boolean] =
-    liftF(
-      compilerError(
-        ref.as(s"Nothing binds an implementation of the effect '$abilityName' here, and an effect has no default."),
-        Seq(
-          "An effect is bound by a `with`, by a parameter's slot that names an implementation, or by the caller of a " +
-            "definition declaring it; a body-less discharger's slot names one only where a platform layer bodies it."
-        )
-      ) >> abort[Boolean]
-    )
-
   /** Record a resolution, and which of the implementation method's binders take the call's binding instead of the
     * implementation's ([[DeclaredEntries.forwarded]]): the entries the member declares are the call's to bind
     * (`docs/effects.md` §3.4), whatever the implementation's clause, which restates them, was handed.
@@ -210,52 +172,6 @@ class AbilityResolver(
       forwards <- liftF(bindingForwards(member, impl._1))
       _        <- modify(_.recordAbilityResolution(key, impl).recordBindingForwards(member, impl._1, forwards))
     } yield ()
-
-  /** A `with` bound an implementation for an entry its pattern does not match: `with none`, for `implement[T] none:
-    * Source[Option[T]]`, where the reference performs `Source[Int]`. Reported at the reference, which is where the
-    * entry's arguments are known — inside whatever definition the `with`'s subject reached.
-    */
-  private def reportUnmatchedBinding(
-      ref: Sourced[ValueFQN],
-      abilityName: String,
-      impl: ImplementationBinding.Implementation,
-      patternArgs: Seq[GroundValue]
-  ): CheckIO[Boolean] = {
-    val name    = implementationName(impl, abilityName)
-    val entry   =
-      if (patternArgs.isEmpty) abilityName else patternArgs.map(GroundValueRenderer.render).mkString(s"$abilityName[", ", ", "]")
-    liftF(
-      compilerError(
-        ref.as(s"This performs '$entry' on the implementation '$name', which does not implement it."),
-        Seq(s"A `with` around a use of this definition binds '$name'; bind one that implements '$entry' instead.")
-      ) >> abort[Boolean]
-    )
-  }
-
-  /** A `with` bound an implementation with no clause for this reference's method on the path: the base's body-less
-    * `implement standardConsole: Console` where no platform layer bodies it (a library package's closure), which the
-    * entry point binds all the same (`docs/effects.md` D26). Reading the missing method would abort with no error, so
-    * the gap is reported here, at the reference.
-    */
-  private def reportMissingClause(
-      ref: Sourced[ValueFQN],
-      abilityName: String,
-      impl: ImplementationBinding.Implementation
-  ): CheckIO[Boolean] = {
-    val name = implementationName(impl, abilityName)
-    liftF(
-      compilerError(
-        ref.as(s"The implementation '$name' has no '${ref.value.name.name}' here."),
-        Seq(s"No layer on the path declares that clause of '$name'; a platform layer is what bodies it.")
-      ) >> abort[Boolean]
-    )
-  }
-
-  private def implementationName(impl: ImplementationBinding.Implementation, abilityName: String): String =
-    impl.head.name.qualifier match {
-      case Qualifier.AbilityImplementation(_, _, Some(name)) => name
-      case _                                                 => abilityName
-    }
 
   /** A ground-argument demand did not resolve. The producer
     * ([[com.vanillasource.eliot.eliotc.ability.processor.AbilityImplementationProcessor]]) registers the failed

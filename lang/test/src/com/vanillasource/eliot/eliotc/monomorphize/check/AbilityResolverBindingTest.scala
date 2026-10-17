@@ -36,12 +36,11 @@ import java.net.URI
 
 /** The read-the-argument arm of [[AbilityResolver]] (effects v6, `docs/effects.md` §9.4 step 4 / §10.1 step 6),
   * tested by **injection**: the references are built by hand with their ability-level arguments beginning with a
-  * binding, and the two-site search is a stub that records what it was asked.
+  * binding, and the two-site search is a stub that records what it was asked. Only an ability reaches the arm — an
+  * effect's operation is the specialisation pass's (D35) — so its binding is `Default`, and a named one is refused.
   *
-  * The facts are the named implementation's marker, `implement[E] loggingThrow: Throw[E]`'s, which the arm matches
-  * against the pattern arguments to solve the implementation's `E` (§8 item 30), its module's names, which say
-  * whether it has the referenced clause, and its conformance check (§8 item 42), taken as passed. No ability marker is registered, so the arity read falls back to "slice
-  * nothing" and a reference's whole argument list is its ability-level slice.
+  * No ability marker is registered, so the arity read falls back to "slice nothing" and a reference's whole argument
+  * list is its ability-level slice, and the ability is not known to be an effect.
   */
 class AbilityResolverBindingTest extends AnyFlatSpec with Matchers {
 
@@ -141,25 +140,9 @@ class AbilityResolverBindingTest extends AnyFlatSpec with Matchers {
     }
   }
 
-  "a reference bound to an implementation" should "resolve directly to that implementation's method" in {
-    resolve(Seq(implBinding, string))._1 shouldBe
-      Map((raise, Seq(implBinding, string)) ->
-        (ValueFQN(testModule, QualifiedName("raise", namedQualifier)), Seq(string)))
-  }
-
-  it should "never ask the two-site search" in {
-    resolve(Seq(implBinding, string))._2 shouldBe Seq.empty
-  }
-
-  it should "run at what its pattern takes at the pattern arguments, whatever the binding carries for it" in {
-    val unsolved = GroundValue.Structure(implMarker, Seq(GroundValue.Type), GroundValue.Type)
-    resolve(Seq(unsolved, string))._1 shouldBe
-      Map((raise, Seq(unsolved, string)) -> (ValueFQN(testModule, QualifiedName("raise", namedQualifier)), Seq(string)))
-  }
-
-  it should "report, at the reference, an implementation with no clause for it" in {
-    run(Seq(implBinding, string), Implementation(Seq.empty)).left.map(_.toList.map(_.message)) shouldBe
-      Left(List("The implementation 'loggingThrow' has no 'raise' here."))
+  "a reference bound to a named implementation" should "be refused, since an ability has none (D29)" in {
+    run(Seq(implBinding, string), Implementation(Seq("raise"))).left.map(_.toList.map(_.message)) shouldBe
+      Left(List("Internal: the ability 'Throw' is bound to a named implementation."))
   }
 
   "a reference bound to Default" should "search at the pattern arguments, with the binding stripped" in {

@@ -42,7 +42,7 @@ class Evaluator(
     // Effects v6: the `row` phase writes every phantom binder inside a `with`'s subject and erases the node, so one
     // reaching the evaluator is a front-end defect, not a program the user can write. Fail loudly rather than
     // silently evaluate the subject as if nothing were bound.
-    case OperatorResolvedExpression.WithBinding(_, implementation, _) =>
+    case OperatorResolvedExpression.WithBinding(_, implementation) =>
       throw IllegalStateException(
         s"A `with ${implementation.value}` binding survived row elaboration."
       )

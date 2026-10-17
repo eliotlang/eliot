@@ -19,7 +19,7 @@ class SpelledEntryIntegrationTest extends FullIntegrationTest {
       |
       |def pick[A](a: A) uses Source[A]: String = describe(a)
       |
-      |def handle(body uses *, Source[Int] with tagged("inner"): String) uses *: String = body
+      |def handle(body uses *, Source[Int]: String) uses *: String = body with tagged("inner")
       |""".stripMargin
 
   // §8 item 43: at `E := Int` the slot's `Source[E]` rode the definition's `Source[Int]` and the caller's `with` ran,

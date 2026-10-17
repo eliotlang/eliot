@@ -61,16 +61,12 @@ object Expression {
 
   /** `subject with implementation` — effects v6's binding of a named implementation to its subject
     * (`docs/effects.md` §9.3). Infix, subject-first, at the loosest precedence and left-associative: `c with a with b`
-    * is `(c with a) with b`, and `xs.sort.render with reverseOrd` applies to the whole chain. The same node serves both
-    * positions — an expression (`greeting("Bob") with recordingConsole`) and a parameter's or field's type
-    * (`body: {Console} Unit with mockConsole`); a `with` on a def's own return type or inside a row is a parse error by
-    * construction, since neither parser admits it. `implementation` is a bare, optionally module-qualified name.
-    *
-    * `entry` is the index of the `uses` clause entry a slot's `with` was written after, which is the one entry it binds
-    * (`docs/effects.md` D23); [[None]] in an expression.
+    * is `(c with a) with b`, and `xs.sort.render with reverseOrd` applies to the whole chain. It is an expression
+    * only (`greeting("Bob") with recordingConsole`): on a parameter or a field it is refused, naming the `with` around
+    * the run (`docs/effects.md` D35), and on a def's own return type or inside a row it is a parse error by
+    * construction. `implementation` is a bare, optionally module-qualified name.
     */
-  case class WithBinding(subject: Sourced[Expression], implementation: Sourced[Expression], entry: Option[Int] = None)
-      extends Expression
+  case class WithBinding(subject: Sourced[Expression], implementation: Sourced[Expression]) extends Expression
 
   case class MatchCase(pattern: Sourced[Pattern], body: Sourced[Expression])
 
@@ -118,7 +114,7 @@ object Expression {
         s"{${effects.map(renderAbilityConstraint).mkString(", ")}} ${resultType.value.render}"
       case BlockExpression(lines)                                                               =>
         lines.map(renderBlockLine).mkString("{ ", "; ", " }")
-      case WithBinding(subject, implementation, _)                                              =>
+      case WithBinding(subject, implementation)                                              =>
         s"${subject.value.render} with ${implementation.value.render}"
     }
 
@@ -257,23 +253,9 @@ object Expression {
 
   /** Fold a `with` chain onto its subject left-associatively: `c with a with b` is `(c with a) with b`. */
   def applyWithBindings(subject: Sourced[Expression], bindings: Seq[Sourced[Expression]]): Sourced[Expression] =
-    applyEntryBindings(subject, bindings.map(_ -> None))
-
-  /** [[applyWithBindings]] with each `with` marked by the clause entry it binds, if it binds one. */
-  def applyEntryBindings(
-      subject: Sourced[Expression],
-      bindings: Seq[(Sourced[Expression], Option[Int])]
-  ): Sourced[Expression] =
-    bindings.foldLeft(subject) { case (acc, (implementation, entry)) =>
-      Sourced.outline(Seq(acc, implementation)).as(WithBinding(acc, implementation, entry))
-    }
-
-  /** The `with name` chain on its own, for a `uses` clause entry (`body uses *, Console with fake: Unit`). */
-  def withBindings: Parser[Sourced[Token], Seq[Sourced[Expression]]] = withBindingsParser
-
-  /** [[withBindingsParser]] for a parameter's or field's type position (`x: T with name`). */
-  def typeWithBindings(typeExpression: Sourced[Expression]): Parser[Sourced[Token], Sourced[Expression]] =
-    withBindingsParser.map(applyWithBindings(typeExpression, _))
+    bindings.foldLeft(subject)((acc, implementation) =>
+      Sourced.outline(Seq(acc, implementation)).as(WithBinding(acc, implementation))
+    )
 
   /** An effect row, `{ Eff (, Eff)* } <type atom>`: each entry an ability reference (the same shape as a `~` ability
     * constraint), covering exactly the one type atom that follows. The brace may be empty, so that `{} A` is recognised

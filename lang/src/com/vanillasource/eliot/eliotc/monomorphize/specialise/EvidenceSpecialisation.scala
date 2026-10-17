@@ -127,10 +127,10 @@ object EvidenceSpecialisation {
     private val checkedAt    = specialisationAt(platform)
     import declarations.*
 
-    /** Whether an entry no evidence answers is left as the checker left it, undispatched: on the compile track, which is
-      * asked for a value at a **partial** key too — one whose binding binders are not all in it, so the entries they
-      * bind have no evidence — and reduces what it can, an undispatched operation staying stuck (the fail-safe
-      * direction: nothing reduces past it). On the runtime track every key is whole and the row phase has seen every
+    /** Whether an entry no evidence answers, or only `Default` does, is left as the checker left it, undispatched: on
+      * the compile track, which is asked for a value at a **partial** key too — one whose binding binders are not all
+      * in it — and at a key a type-level read wrote with `Default` bindings, and which reduces what it can, an
+      * undispatched operation staying stuck (the fail-safe direction: nothing reduces past it). On the runtime track every key is whole and the row phase has seen every
       * entry answered, so a missing one is an error.
       */
     private val unanswerable: Boolean = platform == Platform.Compiler
@@ -303,32 +303,15 @@ object EvidenceSpecialisation {
                   for {
                     found   <- found.fold(evidenceAt(evidence, entry.entry, at))(_.pure[CompilerIO])
                     binding <- bindingOf(found, entry.entry)
-                    _       <- agrees(arguments(entry.binderIndex), binding, entry.entry, at)
                   } yield arguments.updated(entry.binderIndex, binding)
               }
           }
       }
 
-    /** A named implementation the checked body already holds — a `with` in this body wrote it — must be the one the
-      * evidence runs; its own bindings may still be left out, so only the implementation is compared.
-      */
-    private def agrees(written: GroundValue, binding: GroundValue, entry: Entry, at: Sourced[?]): CompilerIO[Unit] =
-      ImplementationBinding.fromGround(written) match {
-        case Some(_: ImplementationBinding.Implementation) if !sameImplementation(written, binding) =>
-          compilerAbort(
-            at.as(
-              s"Internal: the evidence for the effect '${entry.ability.abilityName}' here runs ${describe(binding)}, but " +
-                s"the binding written here is ${describe(written)}."
-            )
-          )
-        case _                                                                                      => ().pure[CompilerIO]
-      }
-
     private def evidenceAt(evidence: Seq[Evidence], entry: Entry, at: Sourced[?]): CompilerIO[Evidence] =
       evidence.find(answers(_, entry)) match {
         case Some(found) => found.pure[CompilerIO]
-        case None        =>
-          compilerAbort(at.as(s"Internal: no evidence for the effect '${entry.ability.abilityName}' is in scope here."))
+        case None        => unbound(at, entry.ability) >> abort[Evidence]
       }
 
     /** An effect's member, dispatched on the evidence for its entry — the binding at its first ability-level argument,
@@ -351,7 +334,7 @@ object EvidenceSpecialisation {
         walked  <- binding.flatMap(ImplementationBinding.fromGround) match {
                      case Some(implementation: ImplementationBinding.Implementation) =>
                        dispatchTo(node, head, reference, entry, binding.get, implementation, args, scope)
-                     case None if unanswerable                                       =>
+                     case _ if unanswerable                                          =>
                        args.traverse(walk(_, scope)).map(rebuilt(node, head, _))
                      case _                                                          =>
                        unboundEffect(head, ability)
@@ -437,11 +420,24 @@ object EvidenceSpecialisation {
       val slots = callee.effects.slots.map(slot => slot.parameterIndex -> slot).toMap
       args.zipWithIndex.traverse { case (arg, index) =>
         slots.get(index + offset) match {
-          case Some(slot) => offeredBy(callee, slot).flatMap(block(arg, _, scope))
+          case Some(slot) =>
+            for {
+              offered <- offeredBy(callee, slot)
+              closed  <- closedSlot(callee.vfqn, slot.parameterIndex)
+              walked  <- block(arg, offered, if (closed) scope.copy(evidence = Seq.empty) else scope)
+            } yield walked
           case None       => walk(arg, scope)
         }
       }
     }
+
+    /** Whether `vfqn`'s parameter `index` takes code whose clause is **closed** (`docs/effects.md` §1 rule 4): a block
+      * there sees only what the callee gives it and what it installs itself, never its writer's evidence, so an effect
+      * the slot does not list is unbound there however the code is spelled (§8 item 60).
+      */
+    private def closedSlot(vfqn: ValueFQN, index: Int): CompilerIO[Boolean] =
+      getFactIfProduced(OperatorResolvedValue.Key(vfqn, platform))
+        .map(_.exists(_.effectRow.parameterEffects.exists(slot => slot.parameterIndex == index && slot.closed)))
 
     /** What `callee` gives a block at `slot`: the evidence its body's runs of the parameter find
       * ([[MonomorphicEffects.Slot.offered]]), each entry at `Default` where nothing runs it — a body-less callee, or a
@@ -466,7 +462,7 @@ object EvidenceSpecialisation {
     ): CompilerIO[Sourced[MonomorphicExpression]] =
       arg.value.expression match {
         case MonomorphicExpression.FunctionLiteral(name, parameterType, body) =>
-          walk(body, scope.shadow(name.value).offer(offered.map((entry, binding) => Evidence.Given(entry, binding, bySlot = true))))
+          walk(body, scope.shadow(name.value).offer(offered.map((entry, binding) => Evidence.Given(entry, binding))))
             .map(walked =>
               arg.as(arg.value.copy(expression = MonomorphicExpression.FunctionLiteral(name, parameterType, walked)))
             )
@@ -475,13 +471,16 @@ object EvidenceSpecialisation {
       }
 
     private def unboundEffect(at: Sourced[?], ability: AbilityFQN): CompilerIO[Sourced[MonomorphicExpression]] =
+      unbound(at, ability) >> abort[Sourced[MonomorphicExpression]]
+
+    private def unbound(at: Sourced[?], ability: AbilityFQN): CompilerIO[Unit] =
       compilerError(
         at.as(s"Nothing binds an implementation of the effect '${ability.abilityName}' here, and an effect has no default."),
         Seq(
-          "An effect is bound by a `with`, by a parameter's slot that names an implementation, or by the caller of a " +
-            "definition declaring it; a body-less discharger's slot names one only where a platform layer bodies it."
+          "An effect is bound by a `with` around its use, by the callee running the code it is written in, or by the " +
+            "caller of a definition declaring it; a body-less discharger gives one only where a platform layer bodies it."
         )
-      ) >> abort[Sourced[MonomorphicExpression]]
+      )
 
     /** A `with` bound an implementation for an entry its pattern does not match: `with none`, for `implement[T] none:
       * Source[Option[T]]`, where the reference performs `Source[Int]`.

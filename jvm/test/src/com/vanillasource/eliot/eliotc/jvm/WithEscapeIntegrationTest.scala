@@ -1,9 +1,8 @@
 package com.vanillasource.eliot.eliotc.jvm
 
 /** A `with` binds every effect of its ability that escapes its subject, and nothing discharged further down
-  * (`docs/effects.md` D23). Around a run of a code parameter it binds what the slot lists, and is that slot's `with`;
-  * on a slot it handles its entry even when the definition declares the effect; and one that nothing escapes to is an
-  * error, never a silent no-op (§8 items 1 and 20).
+  * (`docs/effects.md` D23). Around a run of a code parameter it binds what the slot lists, even an entry the definition
+  * declares (D35); and one that nothing escapes to is an error, never a silent no-op (§8 items 1 and 20).
   */
 class WithEscapeIntegrationTest extends FullIntegrationTest {
 
@@ -49,7 +48,7 @@ class WithEscapeIntegrationTest extends FullIntegrationTest {
     )
   }
 
-  it should "bind the same implementation at every run" in {
+  it should "bind only the run it is around" in {
     compileForErrors(
       recording +
         """
@@ -60,19 +59,8 @@ class WithEscapeIntegrationTest extends FullIntegrationTest {
           |
           |def main uses Console: Unit = printLine(capture(printLine("hi")))
           |""".stripMargin
-    ).asserting(_ should include("'body' runs here with a different implementation of 'Console' than at its other runs."))
-  }
-
-  it should "agree with the implementation its slot names" in {
-    compileForErrors(
-      recording +
-        """
-          |def capture(body uses *, Console with loud: Unit) uses *: String = runWriterToLog(body with rec)
-          |
-          |def main uses Console: Unit = printLine(capture(printLine("hi")))
-          |""".stripMargin
     ).asserting(
-      _ should include("The slot of 'body' names another implementation of 'Console' than the `with` around its runs.")
+      _ should include("'body' may perform the effect 'Console' here, which this definition neither handles nor declares.")
     )
   }
 

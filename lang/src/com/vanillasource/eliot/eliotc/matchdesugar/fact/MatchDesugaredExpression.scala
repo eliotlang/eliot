@@ -32,8 +32,7 @@ object MatchDesugaredExpression {
     */
   case class WithBinding(
       subject: Sourced[MatchDesugaredExpression],
-      implementation: Sourced[ValueFQN],
-      entry: Option[Int] = None
+      implementation: Sourced[ValueFQN]
   ) extends MatchDesugaredExpression
 
   def mapChildrenM[F[_]: Applicative](f: MatchDesugaredExpression => F[MatchDesugaredExpression])(
@@ -49,8 +48,8 @@ object MatchDesugaredExpression {
         parts.traverse(p => f(p.value).map(p.as)).map(FlatExpression.apply)
       case ValueReference(name, typeArgs)                               =>
         typeArgs.traverse(ta => f(ta.value).map(ta.as)).map(ValueReference(name, _))
-      case WithBinding(subject, implementation, entry)                  =>
-        f(subject.value).map(s => WithBinding(subject.as(s), implementation, entry))
+      case WithBinding(subject, implementation)                  =>
+        f(subject.value).map(s => WithBinding(subject.as(s), implementation))
       case _: IntegerLiteral | _: StringLiteral | _: ParameterReference => expr.pure[F]
     }
 
@@ -66,8 +65,8 @@ object MatchDesugaredExpression {
       FunctionLiteral(paramName, paramType.map(_.map(fromExpression)), body.map(fromExpression))
     case Expression.FlatExpression(parts)                       =>
       FlatExpression(parts.map(_.map(fromExpression)))
-    case Expression.WithBinding(subject, implementation, entry) =>
-      WithBinding(subject.map(fromExpression), implementation, entry)
+    case Expression.WithBinding(subject, implementation) =>
+      WithBinding(subject.map(fromExpression), implementation)
     case Expression.MatchExpression(_, _)                       =>
       throw IllegalStateException("MatchExpression should not exist after match desugaring")
     case Expression.BlockExpression(_)                          =>
@@ -87,7 +86,7 @@ object MatchDesugaredExpression {
         name.value.show +
           (if (typeArgs.isEmpty) "" else typeArgs.map(ta => ta.value.render).mkString("[", ", ", "]"))
       case FlatExpression(parts)                                               => parts.map(_.value.render).mkString(" ")
-      case WithBinding(subject, implementation, _)                             =>
+      case WithBinding(subject, implementation)                             =>
         s"${subject.value.render} with ${implementation.value.show}"
     }
 }

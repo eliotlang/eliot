@@ -11,9 +11,10 @@ implementations taking parameters as an effect's do, with a type parameter their
 those arguments (D27, 2026-10-15), and a `uses` clause listing effects only, so that no callee fixes an implementation
 for code its caller wrote unless the declaration can say all of it (D28, 2026-10-15), and an ability with no named
 implementation and no `with`, answered by its type alone (D29, 2026-10-15, reversing those named implementations and
-D27). **D35** (decided 2026-10-16, not built; it reverses D33 of the same day) changes how the code half below is
-decided: an implementation's code and environment will be passed together as evidence after monomorphization, and
-static code will be a specialisation pass, so the slot machinery goes while every program means what it does (§11).
+D27). **D35** (decided 2026-10-16, steps 1–5 built 2026-10-17; it reverses D33 of the same day) changes how the code
+half below is decided: an implementation's code and environment are passed together as evidence after
+monomorphization, and static code is a specialisation pass, so the slot machinery is gone while every program means
+what it does (§11). Part I below still describes the binding as written before monomorphization; step 6 rewrites it.
 An effect is an ability declared with the `effect` keyword. A definition's `uses` clause says what its caller hands it. An implementation has two halves: its **code**, a
 compile-time name written at every reference by a syntax-directed pass that reads declarations only, and its
 **environment** (an escape frame, a cell, its own parameters), a value threaded after monomorphization — on the
@@ -87,20 +88,20 @@ lives now.
 20. ~~**D34**~~ (proposed 2026-10-16, §11) — withdrawn the same day for D35.
 21. **D35** (decided 2026-10-16, §11): an implementation is evidence passed after monomorphization, and static code is
    a specialisation pass. Its order is in its record: the dependents' three definitions first (they compile today),
-   then the lowering, the evidence, the specialisation pass, and the deletions. Closes §8 items 44, 45, 48, 56 and 57.
+   then the lowering, the evidence, the specialisation pass, and the deletions — steps 1–5 built 2026-10-17, closing
+   §8 items 44, 45, 48, 51, 56 and 57 and making item 60 loud; step 6 (Part I and `CLAUDE.md`) remains, and item 62.
 
 D20a, D20c and D3 stay open until decided; none blocks the steps above.
 
 **Open, in order of severity.**
 
-- **Silent:** §8 items 60 (reproduced, an effect escapes a closed clause; needs a decision) and 44, and, read but
-  not reproduced, 48 and 51.
-- **Latent:** §8 items 56 and 57; item 59 is a decision.
-- **Loud, at compile time:** §8 items 45 (reproduced) and 61 (reproduced; needs a decision); a
-  `catch` over a parameter spells its arguments (§7 item 2); a function-typed code parameter's own entries are never
-  supplied (§7 item 1).
-- **Decided, not built:** D35 (an implementation is evidence passed after monomorphization; static code a
-  specialisation), which closes §8 items 44, 45, 48, 56 and 57 and reverses D33; D34 is withdrawn for it.
+- **Silent:** none known.
+- **Latent:** item 59 is a decision.
+- **Loud, at compile time:** §8 items 60 (now refused; the rule it needs is still a decision), 61 (reproduced; needs
+  a decision) and 62 (runs of one parameter given different implementations, which D35 allows); a `catch` over a
+  parameter spells its arguments (§7 item 2); a function-typed code parameter's own entries are never supplied (§7
+  item 1).
+- **Decided, not built:** D35's step 6, Part I and `CLAUDE.md` rewritten for evidence (steps 1–5 are built).
 - **Undecided:** naming a set of effects in a clause (D20a), storing an effectful computation (D20c), `~`/`&` in user
   space (D3), the rules items 60 and 61 need. D31 and D32 are withdrawn (§11).
 - **Outside this document:** `v0.9` is the first release carrying `uses` (`v0.8` is tagged before it, and its release
@@ -1194,21 +1195,15 @@ Each is stated, fail-safe, and either has a plan entry or is a deliberate trade.
 Each item is a defect to close or a decision to make, never a doc fix. Numbers are kept so citations resolve; closed
 items keep one line, and their full record is in git history (§13).
 
-**Open.** Items 44, 45, 48, 51, 56 and 57 close with D33 (§11, decided 2026-10-16) and are not fixed on their own.
-Found by the code review of 2026-10-15 (f78861cf..67eba060). *Reproduced* means a program was compiled and
+**Open.** Found by the code review of 2026-10-15 (f78861cf..67eba060), item 62 by D35 step 5. *Reproduced* means a program was compiled and
 run; *read* means found in the code, not yet reproduced — establishing it is the item's first step.
 
 | # | defect | severity | evidence |
 | --- | --- | --- | --- |
-| 44 | the threading hides a disagreement between a reference's binding and the nearest frame: `EnvironmentThreading.lookup` reports one only when the binding is `Default`, and builds a fresh frame for a differing **named** binding (`built`). §3.4: *"a disagreement is an error, never a silent pick"*. It is what lets item 43 run instead of failing | silent | read (seen through item 43) |
-| 45 | an implementation a slot names runs its clauses at `Default` for every type argument: `EnvironmentThreading.namedClauses` calls `implementationClauses(marker, None)`, which fills every binder with `defaultBinding`, while `namedOwn` solves them with `NamedImplementationArguments.solve` — item 30 promised the same solve *"at dispatch and in the environment threading alike"*. `implement[T ~ Show[T]] recording: Source[T] { def describe(t: T) uses Writer[List[T]]: String = … }` bound by `def captured(body uses *, Source[Int] with recording: String) uses *: List[Int] = runWriterToLog(body)` fails with *"The implementation 'writing' performs 'Writer' here, and nothing supplies the parameters it takes"*; at `Writer[List[String]]`, or as a body `with`, it works. On that path `constrained` is always empty, so such an implementation's `~` constraint bound to a named one never gets its frame (item 39's mechanism). The comment there (*"a slot's `with`, whose clause bindings the caller writes as `Default`"*) contradicts D26 | loud | reproduced |
-| 48 | the row phase finds a definition's value-parameter names two ways: `BindingWriter.valueParameterNames` peels **every** leading lambda and takes the last `n`, `RunWithHoister.parameterNames` caps the peel at binders plus parameters. With a function-alias return type and a lambda body (`def f(body uses *: Unit): Handler = s -> …`) the write keys `thunks`, `thunkNeeds` and `slotEntries` on `s` | silent | read |
-| 51 | the parser accepts `with` on a value parameter and on a `data` field (`ArgumentDefinition.plainRest` → `Expression.typeWithBindings`; `EffectSyntaxParserTest` pins *"bind a data field's type"*), while §2 allows `with` in an expression or after a clause entry only, and rule 6 gives a field no clause. Whether anything downstream rejects it is unchecked; if nothing does, it is item 1's silent no-op | silent? | read |
-| 56 | the environment-entries rule is implemented twice: `EnvironmentThreading.environmentEntries` re-implements `DeclaredEntries.environment` (92db28bc says they are shared), selects clauses by `methodName != abilityName` where `RowElaborationProcessor.clausesOf` uses `vfqn != marker`, and treats a missing member as an empty set (`getFactIfProduced`) where the row phase gives up on the implementation | latent | read |
-| 57 | unreachable fallbacks that would install an effect `Default` silently: `typeArguments.lift(received.binderIndex).getOrElse(defaultBinding)` in `EnvironmentThreading` (five sites); `TypeStackLoop.monomorphicEffects` already drops an out-of-range index. Fail-safe would be an internal abort | latent | read |
-| 59 | §3.8 and CLAUDE.md say *"the checker holds no effect rule … no effect diagnostic"*, while `monomorphize/check` holds `AbilityResolver.isEffect`/`reportUnboundEffect`/`reportUnmatchedBinding`, `DeclaredEntries.forwarded` (recorded by `AbilityResolver.record`, applied in `PostDrainQuoter`), `PostDrainQuoter.reachesFrames`/`threaded` and `TypeStackLoop.guardRead`; §3.1 and §3.4 themselves name `AbilityResolver` and `PostDrainQuoter`. A decision: restate §3.8, or move them | decision | read |
-| 60 | a reference whose entry the call does not spell answers the nearest binding of its ability before the checker has typed it, while its frame is chosen after monomorphization by its entry at ground arguments: in `def guarded(body uses Throw[String]: Unit) uses Throw[Int]: String`, an argument `guarded(raise(1))` is written from the slot's `Throw[String]` binding, so rule 4's closed cut sees nothing, and then runs on the caller's `Throw[Int]` frame — the program compiles and `main`'s handler catches `1` past `guarded` entirely. Writing the frame from the binding instead (D32) would hand an `Int` to a `Throw[String]` handler: the root is that `raise`'s `E` is decided by the checker while the binding it answers is decided before it. Closing it needs a decision — the answering binding's spelled arguments written as the reference's undetermined ones (a determination from a declaration, which makes a generic `raise` in a body with two `Throw` entries take the nearest and be a type error for the other), or such a reference refused where two entries of its ability are in scope | silent | reproduced (2026-10-15, building D30) |
+| 59 | §3.8 and CLAUDE.md say *"the checker holds no effect rule … no effect diagnostic"*, while `monomorphize/check` holds `AbilityResolver.isEffect` (since D35 step 5 only to leave an effect's operation to the specialisation pass; `reportUnboundEffect`, `reportUnmatchedBinding` and the named-implementation dispatch are gone), `DeclaredEntries.forwarded` (recorded by `AbilityResolver.record`, applied in `PostDrainQuoter`), `PostDrainQuoter.reachesFrames`/`threaded` and `TypeStackLoop.guardRead`; §3.1 and §3.4 themselves name `AbilityResolver` and `PostDrainQuoter`. A decision: restate §3.8, or move them | decision | read |
+| 60 | a reference whose entry the call does not spell answers the nearest binding of its ability before the checker has typed it, while its frame is chosen after monomorphization by its entry at ground arguments: in `def guarded(body uses Throw[String]: Unit) uses Throw[Int]: String`, an argument `guarded(raise(1))` is written from the slot's `Throw[String]` binding, so rule 4's closed cut sees nothing, and then runs on the caller's `Throw[Int]` frame — the program compiles and `main`'s handler catches `1` past `guarded` entirely. Writing the frame from the binding instead (D32) would hand an `Int` to a `Throw[String]` handler: the root is that `raise`'s `E` is decided by the checker while the binding it answers is decided before it. Closing it needs a decision — the answering binding's spelled arguments written as the reference's undetermined ones (a determination from a declaration, which makes a generic `raise` in a body with two `Throw` entries take the nearest and be a type error for the other), or such a reference refused where two entries of its ability are in scope. Since D35 step 5 the program is refused, *"Nothing binds an implementation of the effect 'Throw' here"* at `raise(1)`: a closed slot's block sees only what its callee's runs give, which is `Throw[String]` | loud (was silent) | reproduced (2026-10-15, building D30; loud 2026-10-17) |
 | 61 | an anonymous implementation's clause cannot repeat a member's entry over the ability's own type parameters: `ability Describe[T] { def describe(t: T) uses Writer[List[T]]: String }` implemented for `Box` must spell `Writer[List[Box]]` (its `T` is out of scope), and entries compare as spelled (`DeclaredEntries.ofMember`/`forwarded`, D30), so dispatch never hands the clause the call's binding. Since item 50's rule it is refused at the clause (*"… performs the effect 'Writer' in 'describe', at other arguments than the ability's 'describe' declares it"*), before it was *"Nothing binds an implementation of the effect 'Writer' here"* at the operation. Whether a clause's entry is compared with its member's under the implementation's pattern (`T := Box`, read off the declarations) is a reading of D30 to decide | loud | reproduced (2026-10-16, closing item 50) |
+| 62 | runs of one code parameter given **different implementations** are refused after monomorphization (*"'body' runs here with a different implementation of 'Terminal' than at its other runs, which is not supported yet"*), where D35 says runs may differ: `def twice(body uses *, Terminal: Unit) uses *: String = run(body) ++ runWriterToLog(body with scripted("b"))` for `run` installing `fixed`. A block written at the slot is specialised once, against what every run gives (`MonomorphicEffects.Slot.offered`). Compiling it needs a choice: a copy of the block per distinct evidence, each an extra hidden parameter of the callee that its matching runs use (static, today's code otherwise), or evidence passed as a run-time value with indirect operations (D35's unspecialised form, which no target builds yet). Before step 5 the same program was the run-agreement error, so nothing that compiled stops compiling | loud | reproduced (2026-10-17, `PassedRunIntegrationTest`) |
 
 **Cleanup found by the same review.** Not defects — dead code and text that no longer describes the tree. Each was
 checked with a repository-wide grep, tests included.
@@ -1325,6 +1320,12 @@ checked with a repository-wide grep, tests included.
 | 53 | "is this ability an effect?" was answered three ways — `ValueResolver.requireEffect`, `RowElaborationProcessor`'s and `AbilityResolver`'s `isEffect` — which differed on a member-less ability | 2026-10-16: one reading, `ability.util.AbilityKind` (a member declares the ability itself; read merged and unresolved, so the resolver can ask; unknown when no member could be read), and a member-less `effect` is refused at its declaration (`CoreProcessor`), since nothing records it as one and nothing could perform it. The local-name comparison is exact: a member lives in its ability's module, where that name is the local declaration |
 | 54 | `AbilityResolver` took a not-yet-ground reference's ability arguments from the enclosing definition's first constraint of the same local ability name | 2026-10-16, proved dead and deleted: instrumented to fail whenever it produced arguments, it was never reached by `./mill __.test`, the example sweep, eliot-test or eliot-build. With it went `CheckState.findConstraintTypeArgs`, the constraint-covered `None` resolution key and its lookup arm |
 | 55 | `MatchDesugarUtils.findAbilityMethodImpl` searched every implementation's method of that name, named ones included, in name-table order | 2026-10-16: it reads the anonymous implementations only, and its never-used "first candidate" arm is gone; `ModuleAbilities.namedImplementationMethodsOf` (named *by method*), `implementationMethodsOf` and `markersOf` are deleted |
+| 44 | the threading hid a disagreement between a reference's binding and the nearest frame: it reported one only for a `Default` binding, and built a fresh frame for a differing named one | 2026-10-17 by D35 step 5: a frame is the one the evidence answering its entry holds, the evidence the binding was written from, and a disagreement is an internal error |
+| 45 | an implementation a slot named ran its clauses at `Default` for every type argument (`namedClauses` read `implementationClauses(marker, None)`) | 2026-10-17 by D35 step 5: a slot names nothing; a block's frames are shaped from the binding its callee's runs give, its clauses at what the implementation's pattern takes there. The item's program, written with the `with` around the run, compiles and runs |
+| 48 | the row phase found a definition's value-parameter names two ways, and `BindingWriter`'s peeled every leading lambda, so a lambda body shifted them | 2026-10-17 by D35 step 5: the hoister's reading went with it, and the write's peels binders plus parameters only |
+| 51 | the parser accepted `with` on a value parameter and on a `data` field | 2026-10-17 by D35 step 5: a `with` on any parameter or field is refused, naming the `with` around the run |
+| 56 | the environment-entries rule was implemented twice, selected clauses differently from the row phase, and read a missing member as empty | 2026-10-17 by D35 step 5: `EffectDeclarations.environmentEntries` is `DeclaredEntries.environment` over the clauses the row phase selects, and a clause implementing no member defers to the conformance check |
+| 57 | five unreachable `getOrElse(defaultBinding)` fallbacks in the threading would have installed an effect `Default` silently | 2026-10-17 by D35 step 5: a received entry's binding missing from the key is an internal error |
 
 Items 9–13 were found 2026-10-05 while designing D20 and share one cause: a row on a slot both *marked a block* and
 *minted bindings*, and nothing kept the block inside the call or checked that the callee had the binding it handed
@@ -1754,7 +1755,7 @@ different *implementation* needs its own definition; different *data* per case i
 4. A private suite carries its own list: `refusals: Test` in `MockFileSystemTests` and `MockProcessTests`, two of the
    seven above.
 
-#### D35 — an implementation is evidence passed after monomorphization (decided 2026-10-16, not built)
+#### D35 — an implementation is evidence passed after monomorphization (decided 2026-10-16, steps 1–5 built 2026-10-17)
 
 **The question** (Robert, 2026-10-16, after D34): would a free-monad system work, be simpler and be right for Eliot —
 rows back in the type and monadic, effects composing as free-monad placeholders rather than transformers, the
@@ -1932,7 +1933,34 @@ oracle until step 4, where specialisation must restore them.
    dispatches, as its evaluator needs the code — and Part I still describes the binding as part of the key, which
    step 6 rewrites.
 5. **The deletions** above, and the slot `with` refused with a message naming the `with` around the run; §8 items
-   44, 45, 48, 56 and 57 rechecked as closed, and item 60 checked to fail loudly.
+   44, 45, 48, 56 and 57 rechecked as closed, and item 60 checked to fail loudly. *Done 2026-10-17*, in two commits.
+   First, what a block at a slot is given is read off the callee's **body**: the specialisation pass records, per
+   slot, the binding the evidence at each run of the parameter has (`MonomorphicEffects.Slot.offered`), and a caller's
+   block is specialised and threaded against that, never against the slot's declaration. The compile track works the
+   same way: the checker dispatches no effect's operation on either track, and the pass dispatches them from the
+   evidence a key receives — in `CompilerMonomorphicTypeCheckProcessor`, and inside the checker's reductions in
+   `PostDrainQuoter.threaded` — while a guarded signature's own control effect is answered by what its platform
+   discharger's runs give (`Evidence.Discharged`, replacing the write's `guardDischarge`). A compile-track key that does
+   not hold every binding, or holds `Default` for one, leaves the operation undispatched, as the checker did. Then the
+   deletions: the write writes `Default` at every binding binder and keeps its resolution order only as the scope check
+   (§4) — rule 5's "neither handles nor declares" now asks for a `with` or a supplying slot at the run, and a `with`'s
+   implementation's clause effects are still answered where it stands; `RunWithHoister`, `SlotBindings`,
+   `SlotBoundValue`/`SlotBindingProcessor`, `clausesGiven` and the promise check, the run-agreement error, `listed`,
+   the riding flags and every slot-name read in `EffectDeclarations`, `guardDischarge`, and the checker's named-
+   implementation dispatch with its three effect diagnostics (§8 item 59) are gone. The threading takes a frame from the
+   evidence that answers its entry — held (received, or given by a callee's run) or installed by a `with`, whose frame
+   is built from the `with`'s arguments and the frames its clauses find **at the `with`** — and a disagreement between
+   that evidence and the binding written from it is an internal error. A `with` on a parameter or a field is refused by
+   the parser, naming the `with` around the run, and recovery no longer restarts at `with`. A closed slot's block sees
+   only what its callee's runs give, which is what makes item 60 loud. All 47 example reports identical, eliot-test 193
+   and eliot-build 368 pass unchanged (their three definitions were rewritten in step 1), `__.test` green.
+   Three things the step kept, against the deletion list above: the **coinciding-frames** error (two received entries
+   that coincide at an instantiation) — the pass finds evidence by entry at ground arguments, so without it which of the
+   two an operation reaches would be a silent pick; `checkClauses` (a `with`'s implementation used below a nearer binding
+   of an effect its clauses perform), a rule on programs which the threading no longer needs, since a `with`'s clause
+   frames are now its closure's, and which should go with a decision rather than quietly; and runs of one parameter
+   **given different implementations** are refused after monomorphization (§8 item 62) rather than compiled, which the
+   decision says they may be.
 6. Part I rewritten (§3.1, §3.4, §3.5, §9) and the cornerstone in `CLAUDE.md`, then a release.
 
 

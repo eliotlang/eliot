@@ -669,12 +669,12 @@ class ValueResolver
       // (`scripted$with(List("Bob"), greet with scripted)`, [[ImplementationParameters]]): the checker types them as any
       // call's arguments, and they stand outside the `with`, so they see none of its bindings. A `with` on a parameter's
       // clause entry is not an install site and stays as it is written.
-      case WithBinding(subject, implementationName, moduleName, arguments, entry) =>
+      case WithBinding(subject, implementationName, moduleName, arguments) =>
         for {
           resolvedSubject <- resolveExpression(subject.value, runtime).map(subject.as)
           marker          <- ImplementationNameResolver.resolve(implementationName, moduleName)
           parameters      <- ImplementationNameResolver.parametersOf(marker)
-          bound            = Expression.WithBinding(resolvedSubject, implementationName.as(marker), entry)
+          bound            = Expression.WithBinding(resolvedSubject, implementationName.as(marker))
           lowered         <- parameters match {
             case ImplementationNameResolver.Parameters.None if arguments.isEmpty && !runtime =>
               bound.pure[ScopedIO]

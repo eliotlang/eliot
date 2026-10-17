@@ -7,7 +7,7 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
 import com.vanillasource.eliot.eliotc.token.Tokenizer
 
 /** Effects v6's surface, landed dark (`docs/effects.md` §10.1 step 4): `effect`, the named `implement`, and `with` in
-  * expression and type position parse into their own AST nodes. Rejection happens at core (see
+  * expression position parse into their own AST nodes, and a `with` on a parameter or a field is refused (D35). Rejection happens at core (see
   * `UnsupportedSyntaxCheckerTest`); here only the parse is pinned.
   */
 class EffectSyntaxParserTest extends ProcessorTest(new Tokenizer(), new ASTParser()) {
@@ -87,7 +87,7 @@ class EffectSyntaxParserTest extends ProcessorTest(new Tokenizer(), new ASTParse
 
   it should "nest as a whole under an outer binding" in {
     bodyNode("def a: X = c with a with b").asserting {
-      case Some(Expression.WithBinding(Sourced(_, _, Expression.WithBinding(_, inner, _)), outer, _)) =>
+      case Some(Expression.WithBinding(Sourced(_, _, Expression.WithBinding(_, inner)), outer)) =>
         (inner.value.render, outer.value.render) shouldBe ("a", "b")
       case other                                                                                => fail(s"unexpected: $other")
     }
@@ -100,7 +100,7 @@ class EffectSyntaxParserTest extends ProcessorTest(new Tokenizer(), new ASTParse
 
   it should "supply arguments to an implementation that takes parameters" in {
     bodyNode("def a: X = greet with scripted(name, 1)").asserting {
-      case Some(Expression.WithBinding(_, Sourced(_, _, Expression.FunctionApplication(None, name, None, arguments)), _)) =>
+      case Some(Expression.WithBinding(_, Sourced(_, _, Expression.FunctionApplication(None, name, None, arguments)))) =>
         (name.value, arguments.map(_.value.render)) shouldBe ("scripted", Seq("name", "1"))
       case other                                                                                                    => fail(s"unexpected: $other")
     }
@@ -118,15 +118,18 @@ class EffectSyntaxParserTest extends ProcessorTest(new Tokenizer(), new ASTParse
     }
   }
 
-  "with in type position" should "bind a parameter's type, after its clause's entry" in {
-    argumentType("def mocked(body uses *, Console with mockConsole: Unit) uses *: Unit")
-      .asserting(_ shouldBe Seq("{Console} Unit with mockConsole"))
+  "with in type position" should "be refused after a parameter's clause entry, naming the `with` around the run" in {
+    runEngineForErrors("def mocked(body uses *, Console with mockConsole: Unit) uses *: Unit")
+      .asserting(_.mkString should include("no `with` on a parameter"))
   }
 
-  it should "bind a data field's type" in {
-    ast("data Suite(cases: Unit with recordingConsole)")
-      .asserting(_.typeDefinitions.flatMap(_.constructors.toSeq.flatten.flatMap(_.fields.map(_.typeExpression.value.render)))
-        shouldBe Seq("Unit with recordingConsole"))
+  it should "be refused on a value parameter's type" in {
+    runEngineForErrors("def f(x: Unit with mock): Unit").asserting(_.mkString should include("no `with` on a parameter"))
+  }
+
+  it should "be refused on a data field's type" in {
+    runEngineForErrors("data Suite(cases: Unit with recordingConsole)")
+      .asserting(_.mkString should include("no `with` on a parameter"))
   }
 
   it should "be rejected on a def's own return type" in {

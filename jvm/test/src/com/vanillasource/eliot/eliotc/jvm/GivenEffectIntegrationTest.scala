@@ -62,11 +62,11 @@ class GivenEffectIntegrationTest extends FullIntegrationTest {
     compileForErrors(
       recording +
         """
-          |def silently(program uses *, Console with recordingConsole: Unit) uses *: Unit = program
+          |def silently(program uses *, Console: Unit) uses *: Unit = program with recordingConsole
           |
           |def main uses Console: Unit = silently(printLine("hi"))
           |""".stripMargin
-    ).asserting(_ should include("'program' may perform the effect 'Writer' here"))
+    ).asserting(_ should include("This value performs the effect 'Writer' but does not declare it"))
   }
 
   // docs/effects.md D20c, decided (b): an effect the named implementation performs that the definition also declares

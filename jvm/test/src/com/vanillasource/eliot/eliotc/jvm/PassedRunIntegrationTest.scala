@@ -1,10 +1,10 @@
 package com.vanillasource.eliot.eliotc.jvm
 
-/** A run of a code parameter passed to a callee's slot that binds one of its listed entries is a run under that
-  * slot's `with`, and the binding moves onto the definition's own slot as a written one would
-  * (`docs/effects.md` D25, step 3). That is what lets a pass-through discharger write no `with` of its own.
+/** A run of a code parameter passed on to a callee's slot is given what that callee's runs give (`docs/effects.md`
+  * D35): the evidence installed around the callee's own run, read off its body after monomorphization. That is what
+  * lets a pass-through discharger write no `with` of its own.
   */
-class CarriedSlotBindingIntegrationTest extends FullIntegrationTest {
+class PassedRunIntegrationTest extends FullIntegrationTest {
 
   private val terminal =
     """import eliot.effect.Console
@@ -30,7 +30,7 @@ class CarriedSlotBindingIntegrationTest extends FullIntegrationTest {
       |}
       |""".stripMargin
 
-  "a run passed to a slot that binds its entry" should "be bound as that slot binds" in {
+  "a run passed to a callee installing an implementation around its run" should "run on that implementation" in {
     compileAndRun(
       s"""$terminal
          |def run(body uses *, Terminal: Unit) uses *: String = runWriterToLog(body with fixed)
@@ -39,7 +39,7 @@ class CarriedSlotBindingIntegrationTest extends FullIntegrationTest {
     ).asserting(_ shouldBe "Hello, fixed!;")
   }
 
-  it should "carry a `with` around the callee's run, whose arguments stay there" in {
+  it should "run on the arguments the callee's `with` supplies" in {
     compileAndRun(
       s"""$terminal
          |def run(body uses *, Terminal: Unit) uses *: String = runWriterToLog(body with scripted("a"))
@@ -48,7 +48,7 @@ class CarriedSlotBindingIntegrationTest extends FullIntegrationTest {
     ).asserting(_ shouldBe "Hello, a!;")
   }
 
-  it should "carry it along a chain of pass-throughs" in {
+  it should "run on it along a chain of pass-throughs" in {
     compileAndRun(
       s"""$terminal
          |def run(body uses *, Terminal: Unit) uses *: String = runWriterToLog(body with scripted("a"))
@@ -58,7 +58,7 @@ class CarriedSlotBindingIntegrationTest extends FullIntegrationTest {
     ).asserting(_ shouldBe "Hello, a!;")
   }
 
-  it should "agree with a `with` around another run" in {
+  it should "agree with a `with` around another run of the same implementation" in {
     compileAndRun(
       s"""$terminal
          |def run(body uses *, Terminal: Unit) uses *: String = runWriterToLog(body with fixed)
@@ -67,7 +67,7 @@ class CarriedSlotBindingIntegrationTest extends FullIntegrationTest {
     ).asserting(_ shouldBe "Hello, fixed!;Hello, fixed!;")
   }
 
-  it should "not bind a run under a `with` of its own" in {
+  it should "not override a `with` around the run inside the block" in {
     compileAndRun(
       s"""$terminal
          |def run(body uses *, Terminal: Unit) uses *: String = runWriterToLog(body with fixed)
@@ -76,27 +76,16 @@ class CarriedSlotBindingIntegrationTest extends FullIntegrationTest {
     ).asserting(_ shouldBe "Hello, own!;")
   }
 
-  it should "bind the same implementation as the definition's other runs" in {
+  it should "not yet compile a definition whose runs are given different implementations" in {
     compileForErrors(
       s"""$terminal
          |def run(body uses *, Terminal: Unit) uses *: String = runWriterToLog(body with fixed)
          |def twice(body uses *, Terminal: Unit) uses *: String = run(body) ++ runWriterToLog(body with scripted("b"))
          |def main uses Console: Unit = printLine(twice(greet))""".stripMargin
-    ).asserting(_ should include("'body' runs here with a different implementation of 'Terminal' than at its other runs."))
-  }
-
-  it should "bind the implementation the definition's slot names" in {
-    compileForErrors(
-      s"""$terminal
-         |def run(body uses *, Terminal: Unit) uses *: String = runWriterToLog(body with fixed)
-         |implement other: Terminal {
-         |   def write(line: String): Unit = unit
-         |   def read: String = "other"
-         |}
-         |def passing(body uses *, Terminal with other: Unit) uses *: String = run(body)
-         |def main uses Console: Unit = printLine(passing(greet))""".stripMargin
     ).asserting(
-      _ should include("The slot of 'body' names another implementation of 'Terminal' than the `with` around its runs.")
+      _ should include(
+        "'body' runs here with a different implementation of 'Terminal' than at its other runs, which is not supported yet."
+      )
     )
   }
 
@@ -112,9 +101,9 @@ class CarriedSlotBindingIntegrationTest extends FullIntegrationTest {
     ).asserting(_ shouldBe "Hello, fixed!;\n<;")
   }
 
-  // D26: a slot's named implementation performs `State[String]` in its clauses, which the slot does not list; the
-  // definition supplies it through `runStateToFinalState`, whose slot names the platform's `holding`.
-  "a clause entry of a slot's implementation" should "be bound as the slot it runs in binds it" in {
+  // `recording` performs `State[String]` in its clauses, which the slot does not list; the `with` stands inside
+  // `runStateToFinalState`'s block, which gives it.
+  "a clause entry of an implementation installed around a run" should "be answered where the `with` stands" in {
     compileAndRun(
       """import eliot.effect.Console
         |
@@ -137,9 +126,9 @@ class CarriedSlotBindingIntegrationTest extends FullIntegrationTest {
     ).asserting(_ shouldBe "bb")
   }
 
-  // eliot-test's `mocked`: a carried binding names no entry, so it binds the supplied `Throw[Int]` and leaves the
-  // declared `Throw[String]` riding to the caller's `catch`.
-  "a binding carried for one entry of an ability" should "leave a declared entry of the same ability riding" in {
+  // eliot-test's `mocked`: `catch` gives the supplied `Throw[Int]`, and the declared `Throw[String]` rides to the
+  // caller's `catch`.
+  "a run given one entry of an ability" should "leave a declared entry of the same ability riding" in {
     compileAndRun(
       """import eliot.effect.Console
         |

@@ -185,7 +185,6 @@ object EffectSugarDesugarer {
       expr: Sourced[Expression]
   ): Option[(Int, Seq[UnresolvedAbilityConstraint[Sourced[Expression]]])] =
     expr.value match {
-      case WithBinding(subject, _, _)              => codomainRow(subject)
       case FlatExpression(parts) if parts.size > 1 =>
         val arrows = parts.count(isArrow)
         parts.last.value match {
@@ -237,20 +236,13 @@ object EffectSugarDesugarer {
       case _                                                                                              => false
     }
 
-  /** A slot's `with` chain wraps its row (`program: {Console} Unit with recordingConsole`), so both readers look
-    * *through* it — exactly as [[thunked]] does. Reading the row off the outside instead would leave the slot
-    * unrecorded, and the `row` phase reads that record to decide a slot is a computation at all: the actual would then
-    * be written in the caller's scope, and the very effects the `with` binds would be reported undeclared there.
-    */
   private def topLevelRowEntries(expr: Sourced[Expression]): Seq[UnresolvedAbilityConstraint[Sourced[Expression]]] =
     expr.value match {
-      case WithBinding(subject, _, _)      => topLevelRowEntries(subject)
       case EffectfulType(effects, _) => effects
       case _                         => Seq.empty
     }
 
   private def isRow(expr: Sourced[Expression]): Boolean = expr.value match {
-    case WithBinding(subject, _, _) => isRow(subject)
     case _: EffectfulType        => true
     case _                       => false
   }
@@ -271,17 +263,8 @@ object EffectSugarDesugarer {
       case _                 => false
     }
 
-  /** A parameter or field position: a top-level row becomes the thunk `Unit => A`; everything else is [[bare]].
-    *
-    * A slot's `with` chain (`body: {Console} Unit with mockConsole`, §9.3) is **kept wrapped around the thunk**: it is
-    * a declaration about the slot, and the `row` phase both reads it — to bind those implementations for the actual
-    * delivered there — and strips it from the signature. Keeping it in the type rather than in [[EffectRow]] is what
-    * lets it be a resolved `ValueFQN` by the time the write needs one, on the same fact chain every other reference
-    * rides.
-    */
+  /** A parameter or field position: a top-level row becomes the thunk `Unit => A`; everything else is [[bare]]. */
   private def thunked(expr: Sourced[Expression]): Sourced[Expression] = expr.value match {
-    case WithBinding(subject, implementation, entry) =>
-      expr.as(WithBinding(thunked(subject), implementation, entry))
     case EffectfulType(_, resultType)         =>
       expr.as(
         FunctionApplication(
@@ -297,8 +280,8 @@ object EffectSugarDesugarer {
   /** Erase every effect row from an expression, keeping its payload: a row is declaration metadata and never a type. */
   private def bare(expr: Sourced[Expression]): Sourced[Expression] = expr.value match {
     case EffectfulType(_, resultType)                             => bare(resultType)
-    case WithBinding(subject, implementation, entry)              =>
-      expr.as(WithBinding(bare(subject), implementation, entry))
+    case WithBinding(subject, implementation)              =>
+      expr.as(WithBinding(bare(subject), implementation))
     case FunctionApplication(moduleName, name, genericArgs, args) =>
       expr.as(FunctionApplication(moduleName, name, genericArgs.map(_.map(bare)), args.map(bare)))
     case FunctionLiteral(parameters, body)                        =>
@@ -330,7 +313,7 @@ object EffectSugarDesugarer {
   private def collectRows(expr: Sourced[Expression]): Seq[Sourced[EffectfulType]] = expr.value match {
     case et @ EffectfulType(effects, resultType)       =>
       (expr.as(et) +: effects.flatMap(_.typeArgs.flatMap(collectRows))) ++ collectRows(resultType)
-    case WithBinding(subject, _, _)                    => collectRows(subject)
+    case WithBinding(subject, _)                    => collectRows(subject)
     case FunctionApplication(_, _, genericArgs, args)  =>
       genericArgs.getOrElse(Seq.empty).flatMap(collectRows) ++ args.flatMap(collectRows)
     case FunctionLiteral(parameters, body)             =>
