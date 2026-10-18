@@ -34,3 +34,10 @@ type Inferred
  * re-derived from the shape of a signature.
  */
 type Implementation[A] = Type
+
+/**
+ * The **mark** on a binder the compiler mints for a code parameter's handle: the type of a handle the callee's body
+ * hands the code its caller wrote (`docs/effects.md` D36). It is an alias for `Type`, so no type decision is made on it;
+ * only the compiler writes it.
+ */
+type Handed = Type

@@ -77,6 +77,17 @@ object WellKnownTypes {
       QualifiedName("Implementation", Qualifier.Type)
     )
 
+  /** The **mark** a *handed* binder carries as its declared type — `type Handed = Type` in `eliot.lang.Implementation`,
+    * on the new effect path (`docs/effects.md` D36 point 6).
+    *
+    * A code parameter's listed entries are its block's parameters, and the type of each is what the callee's body hands
+    * it: a binder the desugar appends to the callee's generic list, which no declaration determines and no caller
+    * writes. The callee's own check solves it from its runs; a caller reads it off the callee's checked value at the
+    * rest of its arguments. Recognised by this FQN, and reduced to `Type` by definitional equality.
+    */
+  val handedTypeFQN: ValueFQN =
+    ValueFQN(ModuleName(defaultSystemPackage, "Implementation"), QualifiedName("Handed", Qualifier.Type))
+
   /** The ability-constraint combinator `&` — `infix left type &[A, B]` in `eliot.lang.Ability`, the one name the `~`
     * constraint syntax resolves rather than recognises (`docs/effects-syntax-userspace.md` §4 stage 1).
     *

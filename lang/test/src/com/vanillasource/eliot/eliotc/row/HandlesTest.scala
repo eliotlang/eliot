@@ -39,8 +39,13 @@ class HandlesTest extends ProcessorTest(LangProcessors(handles = true)*) {
 
   private def woven(source: String, name: String = "test", typeArguments: Seq[GroundValue] = Seq.empty): IO[Seq[TestError]] =
     runGenerator(source, WovenValue.Key(ValueFQN(testModuleName, default(name)), typeArguments), systemImports)
-      .map { (errors, _) =>
+      .map { (errors, facts) =>
         if (sys.env.contains("HANDLES_DEBUG")) errors.foreach(e => println(s"${e.message} ${e.description.mkString(" | ")} @ ${e.sourceRange}"))
+        if (sys.env.contains("HANDLES_DEBUG")) facts.values.foreach {
+          case r: com.vanillasource.eliot.eliotc.row.fact.RowElaboratedValue if r.value.vfqn.moduleName == testModuleName =>
+            println(s"ROW ${r.value.vfqn.name.name}: ${r.value.runtime.map(b => com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedExpression.render(b.value))}")
+          case _ => ()
+        }
         toTestErrors(errors)
       }
 
@@ -92,6 +97,60 @@ class HandlesTest extends ProcessorTest(LangProcessors(handles = true)*) {
       "failString",
       Seq(failingType(stringType), failingType(numType))
     ).asserting(_ shouldBe Seq("This value declares the effect 'Fail[Num]' but does not perform it." at "Fail"))
+  }
+
+  "a block" should "take the handle its callee's body hands it" in {
+    references(
+      failing + """def guarded[A](body uses *, Fail[String]: A) uses *: A = body with failing("guarded")
+                  |def test: String = guarded(fail("x"))
+                  |""".stripMargin,
+      "test",
+      "guarded"
+    ).asserting(_ shouldBe Seq(Seq(stringType, failingType(stringType))))
+  }
+
+  it should "dispatch an operation on the handle it was handed" in {
+    targets(
+      failing + """def guarded[A](body uses *, Fail[String]: A) uses *: A = body with failing("guarded")
+                  |def test: String = guarded(fail("x"))
+                  |""".stripMargin,
+      "test",
+      "fail"
+    ).asserting(_ shouldBe Seq(Qualifier.AbilityImplementation("Fail", "Failing$Handle[E], E", None)))
+  }
+
+  private val catching =
+    """def anyOf[E]: E
+      |def pick[A](a: A, b: A): A
+      |def catching[E, A](body uses *, Fail[E]: A, fallback: A) uses *: A = body with failing(anyOf)
+      |""".stripMargin
+
+  it should "decide its callee's type arguments by what every hole it could answer agrees on" in {
+    references(failing + catching + "def test: String = catching(fail(one), \"fallback\")\n", "test", "catching")
+      .asserting(_ shouldBe Seq(Seq(numType, stringType, failingType(numType))))
+  }
+
+  it should "be nearer than the definition's own handle for the same entry" in {
+    references(
+      failing + catching + "def inner(n: Num) uses Fail[Num]: String = pick(catching(fail(n), \"caught\"), fail(n))\n",
+      "inner",
+      "catching",
+      Seq(failingType(numType))
+    ).asserting(_ shouldBe Seq(Seq(numType, stringType, failingType(numType))))
+  }
+
+  it should "be refused when the holes it could answer disagree" in {
+    woven(
+      failing + catching +
+        """def two(n: Num) uses Fail[String], Fail[Num]: String = pick(fail("s"), fail(n))
+          |def test: String = catching(two(one), "fallback")
+          |""".stripMargin
+    ).asserting(
+      _ shouldBe Seq(
+        "Which handle answers 'Fail[String]' depends on type arguments nothing here decides." at "two(one)",
+        "Which handle answers 'Fail[Num]' depends on type arguments nothing here decides." at "two(one)"
+      )
+    )
   }
 
   private def failingType(argument: GroundValue): GroundValue =

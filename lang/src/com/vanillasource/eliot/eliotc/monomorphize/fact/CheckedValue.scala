@@ -29,6 +29,9 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
   *   The checked body, its effects' operations undispatched.
   * @param effects
   *   The value's effect entries at ground arguments, which no binding reaches either.
+  * @param handed
+  *   On the new effect path, the types of the handles this value's body hands the code of each of its code parameters,
+  *   for its handed binders its key leaves open (`docs/effects.md` D36 point 6) — what a caller reads them off.
   */
 case class CheckedValue(
     vfqn: ValueFQN,
@@ -36,7 +39,8 @@ case class CheckedValue(
     name: Sourced[QualifiedName],
     signature: GroundValue,
     runtime: Option[Sourced[MonomorphicExpression.Expression]],
-    effects: MonomorphicEffects
+    effects: MonomorphicEffects,
+    handed: Seq[GroundValue] = Seq.empty
 ) extends CompilerFact {
   override def key(): CompilerFactKey[CheckedValue] = CheckedValue.Key(vfqn, typeArguments)
 }

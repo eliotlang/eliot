@@ -200,7 +200,7 @@ object ProcessorTest {
     * available." at the declaration, so it is part of every stub prelude, exactly as the real
     * `stdlib/eliot/src/eliot/lang/Implementation.els` is part of every layer.
     */
-  val implementationStubContent: String = "type Default\ntype Inferred\ntype Implementation[A] = Type"
+  val implementationStubContent: String = "type Default\ntype Inferred\ntype Implementation[A] = Type\ntype Handed = Type"
 
   val boolImportContent: String =
     "type Bool\ndef true: Bool\ndef false: Bool\ninfix def &&(a: Bool, b: Bool): Bool"

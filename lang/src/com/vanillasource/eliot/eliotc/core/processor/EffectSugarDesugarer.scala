@@ -110,15 +110,26 @@ object EffectSugarDesugarer {
       }
       val (before, after)              = adapted.splitAt(mintAt(function))
       val declared                     = declaredEffectRow(function)
-      val ownArgs                      =
-        function.args.map(arg => arg.copy(typeExpression = parameterType(function)(arg.typeExpression)))
+      // On the new effect path a code parameter listing entries takes one handle per entry, each of a type the callee's
+      // body hands it: a *handed* binder, appended after every other binder so a key without them is a prefix.
+      val (handed, ownArgs)            = function.args.foldLeft((Seq.empty[GenericParameter], Seq.empty[ArgumentDefinition])) {
+        case ((minted, done), arg) =>
+          handedEntries(function, arg, handles) match {
+            case Seq()   => (minted, done :+ arg.copy(typeExpression = parameterType(function)(arg.typeExpression)))
+            case entries =>
+              val binders = entries.map(entry =>
+                GenericParameter(entry.abilityName.as(names.fresh(handedPrefix)), handedMark(entry.abilityName), Seq.empty)
+              )
+              (minted ++ binders, done :+ arg.copy(typeExpression = handedType(binders, arg.typeExpression)))
+          }
+      }
       val (heldHandles, userArgs)      = ownArgs.span(arg => Handles.isParameter(arg.name.value))
       val rowHandles                   =
         if (handles) rowBinders.map(binder => ArgumentDefinition(binder.name.map(Handles.parameter), binder.name.as(typeExpr(binder.name))))
         else Seq.empty
 
       function.copy(
-        genericParameters = before ++ rowBinders ++ constraintBinders ++ after,
+        genericParameters = before ++ rowBinders ++ constraintBinders ++ after ++ handed,
         args = heldHandles ++ rowHandles ++ userArgs,
         typeDefinition = bare(function.typeDefinition),
         body = function.body.map(bare),
@@ -127,6 +138,49 @@ object EffectSugarDesugarer {
         effectRow = declared.copy(returnEffects = function.effectRow.returnEffects ++ declared.returnEffects)
       )
     }
+
+  /** The binder name minted for a code parameter's handle on the new effect path. */
+  private val handedPrefix = "Handed"
+
+  /** The entries a parameter's own clause lists, when on the new effect path it takes a handle for each: a top-level
+    * row with entries, on an ordinary definition (a meta companion's parameters are payloads, never code).
+    */
+  private def handedEntries(
+      function: FunctionDefinition,
+      arg: ArgumentDefinition,
+      handles: Boolean
+  ): Seq[UnresolvedAbilityConstraint[Sourced[Expression]]] =
+    if (!handles || isMetaCompanion(function)) Seq.empty else topLevelRowEntries(arg.typeExpression)
+
+  /** A code parameter's type on the new effect path: one handle per entry, then its result — `body uses *, Throw[E]: A`
+    * is `Handed => A`.
+    */
+  private def handedType(binders: Seq[GenericParameter], expr: Sourced[Expression]): Sourced[Expression] =
+    expr.value match {
+      case EffectfulType(_, resultType) =>
+        binders.foldRight(bare(resultType)) { (binder, result) =>
+          expr.as(
+            FunctionApplication(
+              Some(expr.as(WellKnownTypes.functionDataTypeFQN.moduleName.show)),
+              expr.as(WellKnownTypes.functionDataTypeFQN.name.name),
+              Some(Seq(binder.name.as(typeExpr(binder.name)), result)),
+              Seq.empty
+            )
+          )
+        }
+      case _                            => bare(expr)
+    }
+
+  /** The mark on a handed binder ([[WellKnownTypes.handedTypeFQN]]), module-qualified so it needs no import. */
+  private def handedMark(anchor: Sourced[?]): Sourced[Expression] =
+    anchor.as(
+      FunctionApplication(
+        Some(anchor.as(WellKnownTypes.handedTypeFQN.moduleName.show)),
+        anchor.as(WellKnownTypes.handedTypeFQN.name.name),
+        None,
+        Seq.empty
+      )
+    )
 
   /** Where the minted binders go in the generic list: `0` for an ordinary definition, and for an **ability member**
     * past the whole run of [[GenericParameter.abilityLevel]] binders

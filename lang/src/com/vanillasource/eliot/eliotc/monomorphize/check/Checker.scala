@@ -522,11 +522,14 @@ class Checker(
         svOpt  <- liftF(getFactIfProduced(SaturatedValue.Key(vfqn.value, platform)))
         result <- svOpt match {
                     case Some(sv) =>
+                      val handed = HandedBinders.of(sv.value.signature)
                       // Read the *saturated* signature, so a callee's parameter-position bare omittable references
                       // (e.g. bare `Int`) present as ordinary leading generic binders that the instantiation machinery
                       // solves from this call's arguments. Signatures reference only their own parameters or top-level
                       // values, so they evaluate under an empty env — outer-session bindings are not in scope.
                       for {
+                        _                <- modify(st => st.copy(handedBinders = st.handedBinders.updated(vfqn.value, handed)))
+                                              .whenA(handed.nonEmpty)
                         // The Step-6 callee flip: when this reference fully applies the callee (an argument per binder)
                         // and every argument is ground, read the callee's reduced ground signature from its signature
                         // twin's mono (`CompilerMonomorphicValue(callee@Signature, groundArgs)`) instead of evaluating the

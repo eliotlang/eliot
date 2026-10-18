@@ -53,7 +53,10 @@ class MonomorphicTypeCheckProcessor()
                              resolveAbility = resolveAbilityImpl,
                              track = Track.Runtime,
                              reduceInstance = ReducedBindingClosure.reduceInstance(_, _),
-                             injectedSignature = injectedSignature
+                             injectedSignature = injectedSignature,
+                             readHanded = Some((callee, arguments) =>
+                               getFactOrAbort(CheckedValue.Key(callee, arguments)).map(_.handed)
+                             )
                            )
     } yield CheckedValue(
       key.vfqn,
@@ -61,7 +64,8 @@ class MonomorphicTypeCheckProcessor()
       value.signature.as(key.vfqn.name),
       result.signature,
       result.body,
-      result.effects
+      result.effects,
+      result.handed
     )
   }
 

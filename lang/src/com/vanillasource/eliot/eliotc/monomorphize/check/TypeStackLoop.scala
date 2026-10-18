@@ -43,7 +43,11 @@ class TypeStackLoop(
     // args)`), fed in **mandatorily** by the processor (C1/C2). [[establishSignature]] binds the type arguments (leftover
     // binders to fresh metas, re-inflating the twin's `Param`s) and re-inflates it — the one way a value mono obtains its
     // signature. `None` only for a signature twin computing itself (`signatureOnly`, which does not read it).
-    injectedSignature: Option[GroundValue] = None
+    injectedSignature: Option[GroundValue] = None,
+    // The new effect path (`docs/effects.md` D36 point 6): a callee's handed types at its other type arguments, read off
+    // its checked value on this track ([[HandedBinders]]). `None` reads nothing, which only a value with no reference
+    // to a callee with handed binders can afford.
+    readHanded: Option[(ValueFQN, Seq[GroundValue]) => CompilerIO[Seq[GroundValue]]] = None
 ) {
   import TypeStackLoop.AbilityRef
 
@@ -110,10 +114,13 @@ class TypeStackLoop(
       // Collect all ability-qualified value references from the checked body. These drive the saturation tier of the
       // post-drain pipeline below. (The signature's own ability refs were resolved by the twin's mono, not re-walked here.)
       abilityRefs = runtime.toSeq.flatMap(checker.abilityResolver.collectAbilityRefs)
+      handedRefs <- inspect(state => runtime.toSeq.flatMap(body => HandedBinders.references(body.value, state.handedBinders)))
 
       // Post-drain resolution + quoter assembly (shared with the signature twin): drain-and-resolve every metavariable,
       // abort on any unification error, then build the `PostDrainQuoter` over the drain-resolved impl bindings.
-      quoter    <- drainAndBuildQuoter(resolvedValue, abilityRefs, returnMeta, monoEnv)
+      quoter    <- drainAndBuildQuoter(resolvedValue, abilityRefs, returnMeta, monoEnv, handedRefs, runtime.isDefined)
+      ownHanded <- inspect(_.ownHanded.map(_._2))
+      handed    <- liftF(ownHanded.traverse(quoter.quoteSem(_, resolvedValue.name)))
       choices   <- inspect(_.handleChoices)
       runtime   <- pure(runtime.map(_.map(HandleHoleResolver.fill(_, choices))))
       groundSig <- liftF(quoter.quoteSem(checkSig, resolvedValue.signature))
@@ -133,7 +140,8 @@ class TypeStackLoop(
     } yield TypeStackLoop.Result(
       groundSig,
       monoBody.map(sourcedMono => sourcedMono.as(sourcedMono.value.expression)),
-      effects
+      effects,
+      handed
     )
 
   /** This specialisation's effect entries at their ground arguments ([[MonomorphicEffects]]), for the environment
@@ -373,10 +381,12 @@ class TypeStackLoop(
       resolvedValue: OperatorResolvedValue,
       abilityRefs: Seq[AbilityRef],
       returnMeta: Option[SemValue.VMeta],
-      monoEnv: Env
+      monoEnv: Env,
+      handedRefs: Seq[HandedBinders.Reference] = Seq.empty,
+      hasBody: Boolean = true
   ): CheckIO[PostDrainQuoter] =
     for {
-      _                    <- runPostDrainResolution(resolvedValue, abilityRefs, returnMeta)
+      _                    <- runPostDrainResolution(resolvedValue, abilityRefs, returnMeta, handedRefs, hasBody)
       state                <- get
       _                    <- state.unifier.errors.reverse.traverse_(err => liftF(reportUnifyError(err, state)))
       _                    <- if (state.unifier.errors.nonEmpty) liftF(abort[Unit]) else pure(())
@@ -408,13 +418,17 @@ class TypeStackLoop(
   private def runPostDrainResolution(
       resolvedValue: OperatorResolvedValue,
       abilityRefs: Seq[AbilityRef],
-      returnMeta: Option[SemValue.VMeta]
+      returnMeta: Option[SemValue.VMeta],
+      handedRefs: Seq[HandedBinders.Reference],
+      hasBody: Boolean
   ): CheckIO[Unit] =
     for {
-      _ <- resolveAbilitiesToFixedPoint(abilityRefs)
+      _ <- resolveAbilitiesToFixedPoint(abilityRefs, handedRefs)
       _ <- checker.carriers.verifyCarrierKinds
       _ <- returnMeta.traverse_(failOnUndeterminedDeferredReturn(_, resolvedValue))
       _ <- modify(s => s.withUnifier(s.unifier.drain()))
+      // A handed type is never defaulted: its runs decide it, or nothing does ([[HandedBinders.own]]).
+      _ <- HandedBinders.own(hasBody, resolvedValue.name)
       _ <- defaultUnsolvedMetas
       // Fail-safe (TODO.md): any constraint still postponed after the finalizer is an equality obligation the check
       // never discharged. Flush the queue to hard mismatch errors (triaging benign, now-defaulted constraints away
@@ -434,11 +448,16 @@ class TypeStackLoop(
     * the placement and the carrier, so the runtime track produces no deferral to resolve: the obligations, the resolver
     * and the splice-restart are gone (docs/effects-as-rows.md A.11.8 step 1) and this is a plain fixpoint again.
     */
-  private def resolveAbilitiesToFixedPoint(abilityRefs: Seq[AbilityRef]): CheckIO[Unit] = {
+  private def resolveAbilitiesToFixedPoint(
+      abilityRefs: Seq[AbilityRef],
+      handedRefs: Seq[HandedBinders.Reference]
+  ): CheckIO[Unit] = {
     def loop: CheckIO[Unit] =
       for {
         _         <- modify(s => s.withUnifier(s.unifier.drain()))
-        abilities <- checker.abilityResolver.resolveAbilities(abilityRefs)
+        resolved  <- checker.abilityResolver.resolveAbilities(abilityRefs)
+        read      <- readHanded.fold(pure(false))(HandedBinders.read(handedRefs, _))
+        abilities  = resolved || read
         holes     <- checker.handleHoles.resolveCertain
         agreed    <- if (abilities || holes) pure(false) else checker.handleHoles.resolveByAgreement
         _         <- if (abilities || holes || agreed) loop
@@ -517,6 +536,8 @@ class TypeStackLoop(
                               } yield ()
                           }
                         }
+          handed      = HandedBinders.of(resolvedValue.signature).filter(paramMetas.contains)
+          _          <- modify(_.copy(ownHanded = handed.map(i => binders(i).name.value -> paramMetas(i))))
         } yield Evaluator.groundToSemPiParam(groundSig, i => paramMetas.getOrElse(i, VType))
     }
   }
@@ -566,7 +587,8 @@ object TypeStackLoop {
   case class Result(
       signature: GroundValue,
       body: Option[Sourced[MonomorphicExpression.Expression]],
-      effects: MonomorphicEffects = MonomorphicEffects.empty
+      effects: MonomorphicEffects = MonomorphicEffects.empty,
+      handed: Seq[GroundValue] = Seq.empty
   )
 
   /** Static convenience wrapper — constructs a [[TypeStackLoop]] and runs its [[process]]. */
@@ -579,7 +601,8 @@ object TypeStackLoop {
       reduceInstance: (ValueFQN, Seq[GroundValue]) => CompilerIO[Option[SemValue]] = (_, _) =>
         none[SemValue].pure[CompilerIO],
       signatureOnly: Boolean = false,
-      injectedSignature: Option[GroundValue] = None
+      injectedSignature: Option[GroundValue] = None,
+      readHanded: Option[(ValueFQN, Seq[GroundValue]) => CompilerIO[Seq[GroundValue]]] = None
   ): CompilerIO[Result] =
     new TypeStackLoop(
       fetchBinding,
@@ -587,7 +610,8 @@ object TypeStackLoop {
       track,
       reduceInstance,
       signatureOnly,
-      injectedSignature
+      injectedSignature,
+      readHanded
     )
       .process(typeArguments, resolvedValue)
 

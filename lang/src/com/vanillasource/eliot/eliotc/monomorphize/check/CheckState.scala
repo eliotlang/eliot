@@ -74,6 +74,11 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
   *   [[HandleHoleResolver]]).
   * @param handleChoices
   *   The handle each decided hole took, by hole id.
+  * @param handedBinders
+  *   The indices of each referenced callee's *handed* binders (`docs/effects.md` D36 point 6), the types of the handles
+  *   its body hands its blocks, which this check reads off the callee's checked value.
+  * @param ownHanded
+  *   This value's own handed binders its key leaves open, by name, each the metavariable its runs solve.
   */
 case class CheckState(
     gamma: Env,
@@ -86,7 +91,9 @@ case class CheckState(
     bindingForwards: Map[(ValueFQN, ValueFQN), Seq[(Int, Int)]] = Map.empty,
     sharedHoles: Map[BigInt, VMeta] = Map.empty,
     handleHoles: Seq[HandleHoleResolver.Hole] = Seq.empty,
-    handleChoices: Map[Int, String] = Map.empty
+    handleChoices: Map[Int, String] = Map.empty,
+    handedBinders: Map[ValueFQN, Seq[Int]] = Map.empty,
+    ownHanded: Seq[(String, SemValue)] = Seq.empty
 ) {
 
   /** Record a higher-kinded type-parameter instantiation meta with its expected kind, for post-drain verification. */
