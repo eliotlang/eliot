@@ -130,7 +130,9 @@ class TypeStackLoop(
       // The compiler track reduces its body (`reduceSourced`); the runtime track keeps it structural (`quoteSourced`).
       // Narrow-representation reconciliation happens in the backend's `ExpressionCodeGenerator` off the refinement
       // channel, so the body is read back directly.
-      effects   <- monomorphicEffects(resolvedValue, typeArguments, quoter, monoEnv)
+      // On the new effect path a handle is an ordinary parameter, so there are no entries to thread: every threading
+      // the compile track's reductions run is then a no-op.
+      effects   <- if (handles) pure(MonomorphicEffects.empty) else monomorphicEffects(resolvedValue, typeArguments, quoter, monoEnv)
       threading  = PostDrainQuoter.Threading(
                      resolvedValue.vfqn,
                      typeArguments,
@@ -258,7 +260,7 @@ class TypeStackLoop(
       resolvedValue: OperatorResolvedValue,
       typeArguments: Seq[GroundValue]
   ): Option[PostDrainQuoter.Threading] =
-    Option.when(track.platform == Platform.Compiler)(
+    Option.when(track.platform == Platform.Compiler && !handles)(
       PostDrainQuoter.Threading(
         resolvedValue.vfqn,
         typeArguments,

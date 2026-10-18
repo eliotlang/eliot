@@ -244,12 +244,19 @@ object BindingWriter {
       .flatten
       .map(writer.walkDefinition(_, scope, view.binders.size + view.parameters.size))
     val overstated = body.toSeq.flatMap(_ => overDeclared(orv, writer.consumed.toSet))
-    val signature  =
-      writer.walkDefinition(
-        orv.signature,
-        Scope(received, Set.empty, signature = true),
-        view.binders.size
-      )
+    // A signature's scope holds none of the definition's handles, which are its value parameters. What its return
+    // performs and nothing in it discharges is the guarded-return read's to discharge: on the new effect path a
+    // `raise` there is run inside the compile track's `runThrow`, whose `Either` the guard read then reads
+    // (`docs/effects.md` D36 point 9).
+    val signatureScope = Scope(if (handles) received.map(_.copy(handle = None)) else received, Set.empty, signature = true)
+    val guarded        =
+      if (!handles) orv.signature
+      else {
+        val probe = new Writer(universe, handles)
+        probe.walkDefinition(orv.signature, signatureScope, view.binders.size)
+        guardDischarged(orv.signature, probe.uncovered.toSet)
+      }
+    val signature  = writer.walkDefinition(guarded, signatureScope, view.binders.size)
     Written(
       orv.copy(runtime = body.orElse(orv.runtime), signature = signature),
       writer.violations.toSeq,
@@ -353,6 +360,25 @@ object BindingWriter {
       )
     }
   }
+
+  /** A signature whose return is run inside the discharger of each control effect it performs uncovered — on the new
+    * effect path, the guarded-return read of `Throw` ([[WellKnownTypes.guardDischargers]]): `if(C, T) else raise("…")`
+    * is read as `runThrow(if(C, T) else raise("…"))`, whose `Right(t)` or `Left("…")` is the guard's verdict.
+    */
+  private def guardDischarged(signature: Sourced[OperatorResolvedExpression], uncovered: Set[AbilityFQN])
+      : Sourced[OperatorResolvedExpression] =
+    WellKnownTypes.guardDischargers
+      .collectFirst { case ((module, name), discharger) if name == "Throw" && uncovered(AbilityFQN(module, name)) => discharger }
+      .fold(signature) { discharger =>
+        val view = SignatureView.of(signature)
+        signature.as(
+          view
+            .withReturnType(
+              FunctionApplication(view.returnType.as(ValueReference(view.returnType.as(discharger))), view.returnType)
+            )
+            .toExpression
+        )
+      }
 
   /** The handle parameters a definition takes, in order: its leading value parameters whose type is one of its
     * binding binders for an **effect** (`docs/effects.md` D36 point 3), as the binder's index and ability. A definition
@@ -774,7 +800,7 @@ object BindingWriter {
               val (written, holes, writtenBy) = writeBindings(expr.as(head), callee.value, existing, scope, args)
               unappliedEffectful(callee, args.size + applied, scope).foreach(violations += _)
               val substitution     =
-                if (handles && !scope.signature) writtenBy
+                if (handles) writtenBy
                 else universe.lookup(callee.value).fold(Map.empty)(orv => callSubstitution(orv, existing, args))
               val adjusted         = args.zipWithIndex.map { case (arg, index) =>
                 walkArgument(arg, callee.value, index, scope, substitution)
@@ -1190,7 +1216,7 @@ object BindingWriter {
               walkCode(arg, base, cb.arity)
             case None                  => walk(arg, scope)
           }
-        case Some((calleeOrv, slot)) if handles && !scope.signature && slot.nonEmpty =>
+        case Some((calleeOrv, slot)) if handles && slot.nonEmpty =>
           // The new effect path (`docs/effects.md` D36 point 6): the code is a block taking one handle per entry its
           // slot lists, all equally near, of whatever type the callee's body hands it. What it uses through `*` it
           // captures from here; a closed slot's block captures nothing.
@@ -1320,11 +1346,11 @@ object BindingWriter {
           val effects          = orv.effectRow.returnEffects.map(_.abilityFQN).toSet
           val marks            = phantoms(orv).toMap
           val binders          = SignatureView.of(orv.signature).binders
-          val handled          = if (handles && !scope.signature) handleParameters(orv) else Seq.empty
+          val handled          = if (handles) handleParameters(orv) else Seq.empty
           // On the new effect path what a slot's entry stands for is the checker's to decide, by the hole rule, so it is
           // never read off the actual's declared row here (`docs/effects.md` D36, which replaces A6's reading).
           val supplied         =
-            if (existing.nonEmpty || (handles && !scope.signature)) existing
+            if (existing.nonEmpty || handles) existing
             else suppliedArguments(orv, args, marks.keySet)
           val entries          = entryArguments(orv)
           val substitution     = substitutionOf(orv, marks.keySet, supplied)
@@ -1336,7 +1362,7 @@ object BindingWriter {
           // call determines nothing — and the entry the hole asks for is spelled with what is written there.
           // So does a block's, which a listing slot hands its code: `catch`'s `E`.
           val named            = (handled.flatMap((index, _) => entries.getOrElse(index, Seq.empty)) ++
-            (if (handles && !scope.signature) orv.effectRow.parameterEffects.flatMap(_.effects.flatMap(_.typeArgs))
+            (if (handles) orv.effectRow.parameterEffects.flatMap(_.effects.flatMap(_.typeArgs))
              else Seq.empty))
           val reachTo          = (handled.map(_._1) ++ binders.zipWithIndex.collect {
             case (binder, i) if named.exists(containsVar(_, binder.name.value)) => i
@@ -1345,7 +1371,7 @@ object BindingWriter {
             binders.size,
             marks,
             determined,
-            Option.unless(scope.signature)(_ =>
+            Option.when(handles || !scope.signature)(_ =>
               if (handles) reference.as(keyedHole(reference))
               else reference.as(ValueReference(reference.as(WellKnownTypes.inferredTypeArgumentFQN)))
             ),
@@ -1768,7 +1794,13 @@ object BindingWriter {
           )
       }
 
+    /** The effects some reference performs with nothing in scope answering them — in a signature, what its
+      * guarded-return read discharges.
+      */
+    val uncovered: mutable.Set[AbilityFQN] = mutable.Set.empty
+
     private def reportUncovered(ability: AbilityFQN, at: Sourced[?], scope: Scope): Unit =
+      uncovered += ability
       if (!scope.signature)
         violations += Violation(
           at.as(
