@@ -2333,6 +2333,23 @@ platform's. Naming works only for the platform dischargers, and there it costs t
    gate is eliot-test, eliot-build and the examples' behaviour, every jar difference explained rather than refused.
    Erasure is then an optimization of its own: a field-less handle is no parameter, argument, allocation or capture; a
    single-field handle is passed as its field, recursively, so `MockConsole[Holding[Recording]]` is passed as the cell.
+3. **No new syntax, and no qualifier** (Robert, 2026-10-18: "We can not introduce 2 new syntax elements, what is, in
+   the developer's mind a simple DI problem"; "make that an error, we don't need that case"). D36 adds nothing to the
+   surface: a developer declares a dependency with `uses`, marks code a callee runs with a parameter's `uses`, provides
+   an implementation with `with`, and writes `effect` and `implement name(params): E` as today. Holes, handle
+   parameters, handle types and which handle answers a use are the compiler's and never written. In particular:
+   - **No slot names an implementation** — point 6's `Throw[E] by escaping` (and its alternatives) is gone with
+     decision 1, not deferred.
+   - **Two equally near handles that both answer are an error, and there is no syntax to choose between them** — what
+     a DI framework spells with a qualifier (`@Named`). It arises when two entries of one clause, or two parameters of
+     one block, meet at an instantiation: `def f[E](…) uses Throw[E], Throw[String]: A` at `E := String` is *"two
+     handles answer `Throw[String]` here: 'f''s `Throw[E]` at `E := String` and its `Throw[String]`"*, at the use, by
+     use-site verification. The fix is a distinct type — an error type of one's own, which the `Throw` documentation
+     already advises — never a name for a handle. Two identically spelled entries in one clause are the error at the
+     declaration.
+   - The one disambiguation a program can need, a candidate's unsolved type argument that two holes would solve
+     differently (point 4's agreement rule), is answered by **ordinary type arguments** (`catch[IoError, Unit]`), which
+     exist today.
 
 **Read alongside** (no surface change): an implementation's clause entry spelled as its member spells one, under the
 implementation's pattern, is the **call's** — a handle parameter of the instance method, filled at each operation's
@@ -2556,6 +2573,11 @@ Numbers are kept so citations resolve; the record of each is in git history (§1
   Reversed 2026-10-14 by D25 (§11): a default is what is inserted where nothing is written, and nothing that inserts
   one has arguments; an implementation with parameters is named. Nor the platform's control effects as the one
   exception, nor the platform's implementation's name written on every pass-through slot (D25, "Rejected").
+- **Syntax for wiring: naming the implementation a slot supplies, or a qualifier choosing between handles.** Closed
+  2026-10-18 by D36's revision (§11, decision 3): a slot's handle types are its callee's body's
+  (`Throw[E] by escaping`, `escaping[E]` in place of the entry and `Throw[E] with escaping` all go), and two equally
+  near handles that both answer are an error whose fix is a distinct type, never a name for a handle (`@Named`). Effects
+  are a dependency-injection problem in the developer's mind, and `uses` and `with` are its whole surface.
 - **A bindings field on `ValueReference`, a scoping node, or a consulted-set component on the mono key** as
   the carrier of a binding. Decided 2026-09-08 against, for the phantom binder (§3.1): the key already
   carries one argument per binder, and transitivity is a ground-value tree.
