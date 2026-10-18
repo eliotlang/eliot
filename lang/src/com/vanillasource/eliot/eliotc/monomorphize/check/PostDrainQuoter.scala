@@ -835,13 +835,14 @@ class PostDrainQuoter(
     * implementation's `printLine` on `recordingConsole`, not on what the implementation was resolved with.
     */
   private def forwarded[A](member: ValueFQN, method: ValueFQN, implArguments: Seq[A], callArguments: Seq[A]): Seq[A] =
-    bindingForwards.getOrElse((member, method), Seq.empty).foldLeft(
-      if (handles) implArguments ++ callArguments.drop(abilityArities.getOrElse(member, callArguments.size))
-      else implArguments
-    ) {
-      case (acc, (clauseIndex, memberIndex)) =>
-        callArguments.lift(memberIndex).filter(_ => acc.isDefinedAt(clauseIndex)).fold(acc)(acc.updated(clauseIndex, _))
-    }
+    // On the new effect path (`docs/effects.md` D36) a clause's binders follow its member's after its instance's
+    // (`row/Captures`), so the call's method-level arguments, its handles' types among them, are simply appended.
+    if (handles) implArguments ++ callArguments.drop(abilityArities.getOrElse(member, callArguments.size))
+    else
+      bindingForwards.getOrElse((member, method), Seq.empty).foldLeft(implArguments) {
+        case (acc, (clauseIndex, memberIndex)) =>
+          callArguments.lift(memberIndex).filter(_ => acc.isDefinedAt(clauseIndex)).fold(acc)(acc.updated(clauseIndex, _))
+      }
 
   private def lookupResolution(
       vfqn: Sourced[ValueFQN],

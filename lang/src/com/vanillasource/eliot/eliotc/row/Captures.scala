@@ -3,6 +3,7 @@ package com.vanillasource.eliot.eliotc.row
 import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.ast.fact.Handles
 import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, Qualifier, ValueFQN, WellKnownTypes}
+import com.vanillasource.eliot.eliotc.monomorphize.check.HandedBinders
 import com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedExpression.*
 import com.vanillasource.eliot.eliotc.operator.fact.{OperatorResolvedExpression, OperatorResolvedValue}
 import com.vanillasource.eliot.eliotc.resolve.fact.{AbilityFQN, Qualifier as ResolveQualifier}
@@ -96,8 +97,18 @@ object Captures {
           instance <- universe.lookup(ValueFQN(orv.vfqn.moduleName, QualifiedName(ability.abilityName, orv.vfqn.name.qualifier)))
           pattern   = SignatureView.of(instance.signature).parameters.map(_.value)
           declared <- memberEntries(ability, orv.vfqn.name.name, pattern, universe)
+          member   <- universe.lookup(ValueFQN(ability.moduleName, QualifiedName(orv.vfqn.name.name, Qualifier.Ability(ability.abilityName))))
+          marker   <- universe.lookup(ValueFQN(ability.moduleName, QualifiedName(ability.abilityName, Qualifier.Ability(ability.abilityName))))
           fields   <- universe.lookup(ValueFQN(orv.vfqn.moduleName, QualifiedName(Handles.captures, orv.vfqn.name.qualifier)))
-        } yield shaped(orv, body, declared, entriesOf(fields))
+        } yield shaped(
+          orv,
+          body,
+          declared,
+          entriesOf(fields),
+          member,
+          SignatureView.of(marker.signature).binders.size,
+          SignatureView.of(instance.signature).binders.size
+        )
       case _ => None
     }
 
@@ -105,7 +116,10 @@ object Captures {
       orv: OperatorResolvedValue,
       body: Sourced[OperatorResolvedExpression],
       declared: Seq[Entry],
-      fields: Seq[Entry]
+      fields: Seq[Entry],
+      member: OperatorResolvedValue,
+      abilityArity: Int,
+      instanceArity: Int
   ): OperatorResolvedValue = {
     val view            = SignatureView.of(orv.signature)
     val marks           = BindingWriter.phantoms(orv).toMap
@@ -169,12 +183,51 @@ object Captures {
       )
     }
     val newBody         = newNames.foldRight(bound)((name, acc) => FunctionLiteral(body.as(name), None, body.as(acc)))
-    val newBinders      = view.binders ++ ordered.collect { case Right(k) =>
+    // The binders in the order dispatch hands a clause its type arguments (`PostDrainQuoter`'s `forwarded`): its
+    // instance's, then its member's method-level binders mirrored — at a binder for an entry the member declares, the
+    // clause's handle for it (or an unused one), and at any other, the clause's own binder of the same rank — then a
+    // block's handed binders, then the captured entries' binders, which the fields' types solve.
+    val binderAt        = view.parameters.zipWithIndex.collect {
+      case (Sourced(_, _, ParameterReference(name)), position) if binderIndex.contains(name.value) =>
+        position -> binderIndex(name.value)
+    }.toMap
+    val handleBinders   = handles.map((position, _) => binderAt(position)).toSet
+    val handed          = HandedBinders.of(orv.signature).toSet
+    val unused          = (k: Int) =>
       SignatureView.Binder(orv.signature.as(unusedBinder(k)), Some(orv.signature.as(ValueReference(orv.signature.as(WellKnownTypes.typeFQN)))))
-    }
+    val memberHandles   = BindingWriter.handleParameters(member).drop(1).map(_._1).zipWithIndex.toMap
+    val memberHanded    = HandedBinders.of(member.signature).toSet
+    val clauseOwn       = view.binders.indices.drop(instanceArity).filterNot(i => handleBinders(i) || handed(i))
+    val (mirrored, rest) =
+      SignatureView.of(member.signature).binders.indices.drop(abilityArity).filterNot(memberHanded).foldLeft(
+        (Seq.empty[SignatureView.Binder], clauseOwn)
+      ) { case ((acc, own), index) =>
+        memberHandles.get(index) match {
+          case Some(k) =>
+            val binder = ordered(k) match {
+              case Left(position) => view.binders(binderAt(position))
+              case Right(k)       => unused(k)
+            }
+            (acc :+ binder, own)
+          case None    => own.headOption.fold((acc, own))(next => (acc :+ view.binders(next), own.tail))
+        }
+      }
+    val newBinders      =
+      view.binders.take(instanceArity) ++ mirrored ++ rest.map(view.binders) ++
+        view.binders.indices.filter(handed).map(view.binders) ++
+        capturedHandles.map((position, _) => view.binders(binderAt(position)))
+    // A binder marked for an effect stands for the entry of the same rank among that effect's entries
+    // (`BindingWriter.entryArguments`), so the row follows the binders' new order.
+    val entryOf         = BindingWriter.phantoms(orv).groupBy(_._2).toSeq.flatMap { (ability, binders) =>
+      val written = orv.effectRow.returnEffects.filter(_.abilityFQN == ability)
+      if (written.size != binders.size) Seq.empty else binders.map(_._1).zip(written)
+    }.toMap
+    val reordered       = newBinders.flatMap(binder => entryOf.get(binderIndex.getOrElse(binder.name.value, -1)))
+    val newRow          = reordered ++ orv.effectRow.returnEffects.filterNot(entry => reordered.exists(_ eq entry))
     orv.copy(
       signature = orv.signature.as(view.copy(binders = newBinders, parameters = newParameters).toExpression),
-      runtime = Some(body.as(newBody))
+      runtime = Some(body.as(newBody)),
+      effectRow = orv.effectRow.copy(returnEffects = newRow)
     )
   }
 
