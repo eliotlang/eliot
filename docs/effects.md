@@ -1544,6 +1544,29 @@ and uses in `row` (`BindingWriter`). What is new:
    with its handle arguments replaced by holes; **2b**, items 1, 2 and 5, measured on the corpus under the switch —
    every hole resolves, the agreement rule accepts every unspelled discharger, every block's handle types are read,
    and eliot-test, eliot-build and the examples behave as today, every jar difference explained.
+
+   **Progress (2026-10-18).** 2a and 2b were built together, on the real surface, rather than 2a first on a spelling
+   of holes: a test-only spelling of a hole would have been thrown away, and the surface tests survive the switch. The
+   switch is `LangProcessors(handles = …)`, defaulting to `-Deliot.effects.handles=true` or
+   `ELIOT_EFFECTS_HANDLES=true` (`LangPlugin.handlesRequested`). Under it **all 46 runnable examples build and print
+   exactly what the old path prints**, `lang`'s suite differs in 4 of 1038 tests (old-path shapes), and `jvm`'s in
+   about 45 of 655; `./mill __.test` on the old path is green. Built: points 1–8 (`row/HandlesTest`), the hole rule
+   (`check/HandleHoleResolver`), a block's handle types (`check/HandedBinders`), captures (`row/Captures`). Choices
+   made in the code, for sign-off with the readings above:
+   - a block's handle type is a **handed binder** (marked `Implementation::Handed`, after every other binder); the
+     callee's check at the rest of its key solves it, and a caller reads `CheckedValue.handed` /
+     `CompilerMonomorphicValue.handed` there;
+   - **captures**: which entries a clause captures needs its member, in another file, so the core desugar gives the
+     handle a field per entry any clause writes and the `row` phase decides; a field nothing captures holds `unit`
+     until erasure;
+   - only a layer that **bodies** a named implementation mints its handle `data`;
+   - the `row` phase no longer reads a slot's type arguments off the actual's declared row (A6) on this path;
+   - a guarded signature's uncovered `Throw` is read as `runThrow(…)`, the `Either` the guard read already discharges.
+
+   Left for 2b: a guarded signature's compile-track reduction (`if`/`else`/`runThrow` inside it mismatch); triage of
+   the jvm suite's failures — D35-only behaviour (a block per variant, D30 spelling messages, the "nearer binding"
+   check) against real gaps (an ability member declaring an effect, named implementations with type parameters in a
+   pattern); eliot-test and eliot-build under the switch; the jar difference.
 3. **The switch and the deletions together**: the default flips, the switch and D35's machinery go, Part I is rewritten
    in capability terms, §12's restated entries and the cornerstone in `CLAUDE.md`; then a release.
 4. **Erasure**, measured against today's jar.
