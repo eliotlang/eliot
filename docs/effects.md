@@ -6,12 +6,12 @@ This is the effect system's single document. It has two subjects that must not b
   before monomorphization to an ability over a handle type, a `uses` entry to a handle parameter, a named
   implementation to a `data` and its instance, and the checker gives each use the nearest handle in lexical scope whose
   entry answers it. Part I describes it and is the authority for the tree.
-- **The plan** — D36 (§11) is built, erasure included (step 4, 2026-10-18); what is left is a release.
+- **The plan** — D36 (§11) is built, erasure included (step 4, 2026-10-18), and released as `v0.18`.
 
 **Status (2026-10-18).** The tree: D20/D21's `uses` surface with D22–D29 and D36 built — every effect implementation
 named, `main` run with a generated `with` per entry, a clause listing effects only, abilities never bound with `with`,
 handles passed as values and chosen by the checker by type (§3.3), a block's handle types read off its callee, handles erased at the codegen seam (§3.4). D35's
-evidence, specialisation pass and threading are deleted. Latest release `v0.17` (D36 without erasure).
+evidence, specialisation pass and threading are deleted. Latest release `v0.18`, which carries all of D36.
 
 An effect is an ability declared with the `effect` keyword. A definition's `uses` clause says what its caller hands
 it, as handles. Before monomorphization one syntax-directed walk does all the plumbing and checks by name; the checker
@@ -30,7 +30,7 @@ history; §13 says where.
 1. ~~**D36 step 2**~~ (§11): the new path beside the old, measured on the corpus — done 2026-10-18.
 2. ~~**D36 step 3**~~: the switch, the deletions and Part I — done 2026-10-18, released as `v0.17`.
 3. ~~**D36 step 4**~~: erasure — done 2026-10-18 (§3.4): the examples' jars are 22.3% smaller than `v0.17`'s and 5.2%
-   smaller than D35's. Next is a release.
+   smaller than D35's. Released as `v0.18`.
 
 The seven readings D36 needed were signed off by Robert on 2026-10-18 (§11, D36, "Signed off"). D20a, D20c and D3
 stay open; none blocks the steps above.
