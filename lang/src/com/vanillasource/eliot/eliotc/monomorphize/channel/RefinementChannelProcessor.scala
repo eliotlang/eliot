@@ -1,6 +1,7 @@
 package com.vanillasource.eliot.eliotc.monomorphize.channel
 
 import cats.syntax.all.*
+import com.vanillasource.eliot.eliotc.ast.fact.Handles
 import com.vanillasource.eliot.eliotc.core.processor.{MetaTransferDesugarer, MetaWhereDesugarer}
 import com.vanillasource.eliot.eliotc.feedback.Logging
 import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, UnifiedModuleNames, ValueFQN}
@@ -89,10 +90,26 @@ class RefinementChannelProcessor
     // machinery at a pure boundary, so the flow already sees the bare literal.
     for {
       result <- mv.runtime match {
-                  case Some(body) => walkFlow(body.as(MonomorphicExpression(mv.signature, body.value)))
+                  case Some(body) => walkDefinition(body.as(MonomorphicExpression(mv.signature, body.value)))
                   case None       => Flow(None, Seq.empty).pure[CompilerIO]
                 }
     } yield RefinementTable(key.vfqn, key.typeArguments, result.records)
+  }
+
+  /** A definition's leading **handle** parameters (`docs/effects.md` D36) are walked through as the parameters they
+    * are, not as a lambda: an effect reaches a body as a handle, which neither carries a meta nor makes the body a
+    * lambda's, so a body taking only handles records exactly as one taking nothing (`main`).
+    */
+  private def walkDefinition(node: Sourced[MonomorphicExpression]): CompilerIO[Flow] =
+    node.value.expression match {
+      case MonomorphicExpression.FunctionLiteral(_, parameterType, body) if isHandle(parameterType) =>
+        walkDefinition(body).map(inner => Flow(None, inner.records ++ recordAt(node, None)))
+      case _                                                                                        => walkFlow(node)
+    }
+
+  private def isHandle(tpe: GroundValue): Boolean = tpe match {
+    case GroundValue.Structure(fqn, _, _) => Handles.isDataType(fqn.name.name)
+    case _                                => false
   }
 
   /** Compute one node's flow interval and record it (when known), descending per the propagation rules in the class

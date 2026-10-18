@@ -109,18 +109,6 @@ class LangPlugin extends CompilerPlugin {
 
 object LangPlugin {
 
-  /** The internal system property selecting the new effect path (`docs/effects.md` D36, [[LangProcessors]]'s
-    * `handles`): `-Deliot.effects.handles=true`. Internal and temporary — it goes when the new path becomes the only
-    * one.
-    */
-  val handlesProperty: String = "eliot.effects.handles"
-
-  /** Whether the new effect path is asked for: [[handlesProperty]], or the environment variable `ELIOT_EFFECTS_HANDLES`,
-    * which a forked test JVM inherits without the notice a JVM prints for `JAVA_TOOL_OPTIONS`.
-    */
-  def handlesRequested: Boolean =
-    sys.props.get(handlesProperty).contains("true") || sys.env.get("ELIOT_EFFECTS_HANDLES").contains("true")
-
   /** Every source root: the positional `<path>` program and every `--path` layer. Both the runtime and compile-time
     * mount pools are derived from this one list (see `initialize` and [[eliotCompilerOverlay]]).
     */

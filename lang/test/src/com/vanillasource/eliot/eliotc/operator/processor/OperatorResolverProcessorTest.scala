@@ -318,15 +318,16 @@ class OperatorResolverProcessorTest
   // --- effect-set sugar `{E} A` (effects v6 §9.4 step 2). There is no hand-written equivalent to compare against any
   // more — the carrier form this pair used to mirror is gone — so the shape is asserted directly. ---
 
-  "effect-set sugar" should "mark the minted binder with the ability it binds, thunk a row parameter, and leave the return bare" in {
+  "effect-set sugar" should "mark the minted binder with the ability it binds, take its handle, hand the code a handle for what its slot lists, and leave the return bare" in {
     val source =
       "data Str\ndata Unt\neffect Suspend { def delay(value: Str): Str }\n" +
         "def sugar(x uses *, Suspend: Str) uses *, Suspend: Unt"
     runEngineForResolvedValue(source, "sugar").asserting { sugar =>
       (signatureShow(sugar), constraintShow(sugar)) shouldBe (
         "(eliot.lang.Implementation::Implementation^Type(Test::Suspend^Suspend) :: Impl) -> " +
-          "eliot.lang.Function::Function^Type(" +
-          "eliot.lang.Function::Function^Type(eliot.lang.Unit::Unit^Type)(Test::Str^Type))(Test::Unt^Type)",
+          "(eliot.lang.Implementation::Handed^Type :: Handed) -> " +
+          "eliot.lang.Function::Function^Type(Impl)(eliot.lang.Function::Function^Type(" +
+          "eliot.lang.Function::Function^Type(Handed)(Test::Str^Type))(Test::Unt^Type))",
         Map("Impl" -> List(("Suspend", List("Impl"))))
       )
     }

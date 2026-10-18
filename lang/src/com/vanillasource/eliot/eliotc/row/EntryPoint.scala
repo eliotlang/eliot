@@ -1,6 +1,7 @@
 package com.vanillasource.eliot.eliotc.row
 
 import cats.syntax.all.*
+import com.vanillasource.eliot.eliotc.ast.fact.Handles
 import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, Qualifier, UnifiedModuleNames, ValueFQN}
 import com.vanillasource.eliot.eliotc.processor.CompilerIO.*
 import com.vanillasource.eliot.eliotc.resolve.fact.{AbilityFQN, ResolvedValue}
@@ -33,22 +34,47 @@ object EntryPoint {
       resolved        <- getFactOrAbort(ResolvedValue.Key(main))
       effects          = resolved.effectRow.returnEffects.map(_.abilityFQN).distinct
       implementations <- effects.traverse(standardImplementation)
-      _               <- effects.zip(implementations).collect { case (effect, None) => effect }.traverse_ { effect =>
-                           compilerError(
-                             resolved.name.as(
-                               s"'main' uses the effect '${effect.abilityName}', which the platform has no standard " +
-                                 "implementation of."
-                             ),
-                             Seq("Handle it inside 'main': discharge it, or bind an implementation with `with`.")
-                           )
+      _               <- effects.zip(implementations).traverse_ {
+                           case (effect, Standard.Missing)           =>
+                             compilerError(
+                               resolved.name.as(
+                                 s"'main' uses the effect '${effect.abilityName}', which the platform has no standard " +
+                                   "implementation of."
+                               ),
+                               Seq("Handle it inside 'main': discharge it, or bind an implementation with `with`.")
+                             )
+                           case (effect, Standard.Unbodied(name))    =>
+                             compilerError(
+                               resolved.name.as(
+                                 s"'main' uses the effect '${effect.abilityName}', whose standard implementation " +
+                                   s"'$name' has no body here."
+                               ),
+                               Seq(s"No layer on the path bodies '$name'; a platform layer is what bodies it.")
+                             )
+                           case (_, Standard.Bodied(_))              => ().pure[CompilerIO]
                          }
-      _               <- abort[Unit].whenA(implementations.contains(None))
+      bodied           = implementations.collect { case Standard.Bodied(implementation) => implementation }
+      _               <- abort[Unit].whenA(bodied.size != implementations.size)
     } yield s"def main: Unit = ${main.moduleName.show}::${main.name.name}" +
-      implementations.flatten.map(i => s" with ${i.moduleName.show}::${i.name.name}").mkString
+      bodied.map(i => s" with ${i.moduleName.show}::${i.name.name}").mkString
 
-  private def standardImplementation(effect: AbilityFQN): CompilerIO[Option[ValueFQN]] = {
+  /** What the effect's module offers as its standard implementation. */
+  private enum Standard {
+    case Missing
+    case Unbodied(name: String)
+    case Bodied(implementation: ValueFQN)
+  }
+
+  /** The base declares `implement standardConsole: Console` body-less; only a layer bodying it mints its handle `data`
+    * (`docs/effects.md` D36 point 2), so a program on a path with no platform layer has nothing to run it with.
+    */
+  private def standardImplementation(effect: AbilityFQN): CompilerIO[Standard] = {
     val implementation = standardImplementationOf(effect)
-    getFactOrAbort(UnifiedModuleNames.Key(effect.moduleName))
-      .map(names => Option.when(names.names.contains(implementation.name))(implementation))
+    val handle         = QualifiedName(Handles.dataType(implementation.name.name), Qualifier.Default)
+    getFactOrAbort(UnifiedModuleNames.Key(effect.moduleName)).map { names =>
+      if (!names.names.contains(implementation.name)) Standard.Missing
+      else if (!names.names.contains(handle)) Standard.Unbodied(implementation.name.name)
+      else Standard.Bodied(implementation)
+    }
   }
 }

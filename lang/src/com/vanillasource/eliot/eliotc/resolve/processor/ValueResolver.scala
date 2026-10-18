@@ -42,7 +42,7 @@ import com.vanillasource.eliot.eliotc.resolve.processor.ValueResolverScope.*
 import com.vanillasource.eliot.eliotc.source.content.Sourced
 import com.vanillasource.eliot.eliotc.source.content.Sourced.compilerAbort
 
-class ValueResolver(handles: Boolean = false)
+class ValueResolver(handles: Boolean = true)
     extends TransformationProcessor[UnifiedModuleValue.Key, ResolvedValue.Key](key =>
       UnifiedModuleValue.Key(key.vfqn, key.platform)
     )

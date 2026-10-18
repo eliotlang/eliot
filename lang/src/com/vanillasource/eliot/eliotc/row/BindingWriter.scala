@@ -225,7 +225,7 @@ object BindingWriter {
     * is the error, which is the whole of the scope check — the synthesized entry point included, which binds every
     * effect of `main`'s clause with `with` ([[EntryPoint]]).
     */
-  def write(original: OperatorResolvedValue, universe: RowChecker.Universe, handles: Boolean = false): Written = {
+  def write(original: OperatorResolvedValue, universe: RowChecker.Universe, handles: Boolean = true): Written = {
     // On the new effect path an implementation's clause is shaped as its member is, and what it captures is bound from
     // its handle ([[Captures.clause]]); every other value is written as it is.
     val orv        = Option.when(handles)(Captures.clause(original, universe)).flatten.getOrElse(original)
@@ -959,6 +959,16 @@ object BindingWriter {
             )
           )
         (abilityOf(implementation.value, universe), universe.lookup(implementation.value)) match {
+          // Only a layer that bodies the implementation mints its handle `data`: without one on the path — the base's
+          // `implement standardConsole: Console` and no platform layer — there is nothing to install.
+          case (Some(_), Some(marker)) if universe.lookup(handleConstructor(marker, implementation.value)).isEmpty =>
+            val name = implementationName(implementation.value)
+            violations += Violation(
+              implementation.as(s"The implementation '$name' has no body here."),
+              Seq(s"No layer on the path bodies '$name'; a platform layer is what bodies it.")
+            )
+            // The value is refused; the subject is left unwritten rather than reported again for what it performs.
+            expr
           case (Some(ability), Some(marker)) =>
             val view    = SignatureView.of(marker.signature)
             // The data takes the implementation's own type parameters, never the binding a `~` constraint on one mints.
@@ -1039,6 +1049,10 @@ object BindingWriter {
       withs += 1
       withs
     }
+
+    /** The constructor of the handle `data` the implementation `marker` lowers to, in its module. */
+    private def handleConstructor(marker: OperatorResolvedValue, implementation: ValueFQN): ValueFQN =
+      ValueFQN(marker.vfqn.moduleName, QualifiedName(Handles.dataType(implementationName(implementation)), Qualifier.Default))
 
     /** A named implementation's own name, off its marker's qualifier. */
     private def implementationName(marker: ValueFQN): String =

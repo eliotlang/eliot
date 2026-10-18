@@ -74,7 +74,7 @@ class PostDrainQuoter(
     reduceInstance: (ValueFQN, Seq[GroundValue]) => CompilerIO[Option[SemValue]],
     // The new effect path (`docs/effects.md` D36): a dispatched clause also takes the call's method-level type
     // arguments, its handles' types among them, after its instance's.
-    handles: Boolean = false
+    handles: Boolean = true
 ) {
 
   private val erasedParams: Set[String]            = monoEnv.names.toSet

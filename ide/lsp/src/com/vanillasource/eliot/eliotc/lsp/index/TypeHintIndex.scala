@@ -1,6 +1,7 @@
 package com.vanillasource.eliot.eliotc.lsp.index
 
 import cats.syntax.all.*
+import com.vanillasource.eliot.eliotc.ast.fact.Handles
 import com.vanillasource.eliot.eliotc.core.processor.MetaConstructorDesugarer
 import com.vanillasource.eliot.eliotc.module.fact.{ModuleName, ValueFQN}
 import com.vanillasource.eliot.eliotc.monomorphize.channel.RefinementTable
@@ -141,12 +142,43 @@ object TypeHintIndex {
       topHint ++ fromExpression(body.value, intervals)
     }
 
+  /** A node's hint is the type the user wrote: a **handle** (`docs/effects.md` D36) is how an effect reaches its use,
+    * not something the source spells, so a node of a handle's type — a hole, a `with`'s handle — has none, and a
+    * handle parameter is left off the front of a function type: `printLine` reads `String -> Unit`, and a block its
+    * callee hands a handle reads as the value it computes.
+    */
   private def fromNode(
       node: Sourced[MonomorphicExpression],
       intervals: Map[PositionRange, (BigInt, BigInt)]
   ): Seq[Hint] =
-    Hint(node.uri, node.range, node.value.expressionType, intervals.get(node.range)) +:
-      fromExpression(node.value.expression, intervals)
+    Option
+      .unless(isHandle(node.value.expressionType) || appliesHandle(node.value.expression))(
+        // A reference is hinted at its name: the call it heads may give its node the whole call's range.
+        node.value.expression match {
+          case MonomorphicExpression.MonomorphicValueReference(name, _, _) =>
+            Hint(node.uri, name.range, withoutHandles(node.value.expressionType), intervals.get(name.range))
+          case _                                                          =>
+            Hint(node.uri, node.range, withoutHandles(node.value.expressionType), intervals.get(node.range))
+        }
+      )
+      .toSeq ++ fromExpression(node.value.expression, intervals)
+
+  /** An application handing over a handle: what it computes is its target's, which the target's hint shows. */
+  private def appliesHandle(expression: MonomorphicExpression.Expression): Boolean = expression match {
+    case MonomorphicExpression.FunctionApplication(_, argument) => isHandle(argument.value.expressionType)
+    case _                                                      => false
+  }
+
+  private def isHandle(tpe: GroundValue): Boolean = tpe match {
+    case GroundValue.Structure(fqn, _, _) => Handles.isDataType(fqn.name.name)
+    case _                                => false
+  }
+
+  private def withoutHandles(tpe: GroundValue): GroundValue =
+    tpe.asFunctionType match {
+      case Some((domain, codomain)) if isHandle(domain) => withoutHandles(codomain)
+      case _                                            => tpe
+    }
 
   private def fromExpression(
       expression: MonomorphicExpression.Expression,

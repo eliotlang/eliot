@@ -1,8 +1,7 @@
 package com.vanillasource.eliot.eliotc.jvm
 
-/** Whether a slot's entry rides the definition's own row or is supplied by the slot, and whether an entry answers
-  * another, is decided as the declarations spell them, never at the arguments a call or an instantiation determines
-  * (`docs/effects.md` D30). So a slot means the same thing at every instantiation.
+/** Which handle answers an entry is the checker's, by the entry's type after evaluation (`docs/effects.md` D36, which
+  * replaced D30's comparison as spelled): the nearest handle in lexical scope whose entry answers it.
   */
 class SpelledEntryIntegrationTest extends FullIntegrationTest {
 
@@ -22,18 +21,15 @@ class SpelledEntryIntegrationTest extends FullIntegrationTest {
       |def handle(body uses *, Source[Int]: String) uses *: String = body with tagged("inner")
       |""".stripMargin
 
-  // §8 item 43: at `E := Int` the slot's `Source[E]` rode the definition's `Source[Int]` and the caller's `with` ran,
-  // while at any other `E` it was supplied and the callee's `inner` ran. Spelled, `Source[E]` is not `Source[Int]`, so
-  // it is supplied at every `E`, and handing it to a slot supplying `Source[Int]` gives it nothing.
-  "a slot entry spelled apart from the definition's own" should "be supplied at every instantiation" in {
-    compileForErrors(
+  // §8 item 43: the block is handed what `handled`'s run of it hands it — `handle`'s `inner` — while `handled`'s own
+  // `pick(1)` takes the caller's `outer`.
+  "a slot entry spelled apart from the definition's own" should "be handed what the callee's run hands it" in {
+    compileAndRun(
       s"""$source
          |def handled[E](body uses *, Source[E]: String) uses *, Source[Int]: String = handle(body) ++ "|" ++ pick(1)
          |
          |def main uses Console: Unit = printLine(handled[Int](pick(5)) with tagged("outer"))""".stripMargin
-    ).asserting(
-      _ should include("'body' may perform the effect 'Source' here, which this definition neither handles nor declares.")
-    )
+    ).asserting(_ shouldBe "inner|outer")
   }
 
   // §2.2's own example: `Throw[E]` is supplied even where `E` is the declared `Throw[String]`'s argument, so the
@@ -72,7 +68,7 @@ class SpelledEntryIntegrationTest extends FullIntegrationTest {
         |
         |def main uses Console: Unit = printLine(foldEither(e -> "left", a -> "right", runThrow[Int, Unit](guarded(failing))))
         |""".stripMargin
-    ).asserting(_ should include("This uses the effect 'Throw' inside an argument whose `uses` clause is closed"))
+    ).asserting(_ should include("No handle in scope here answers 'Throw[Int]'."))
   }
 
   // §8 item 47: the over-declaration check was per ability, so a second entry of one ability passed for free.
@@ -87,6 +83,6 @@ class SpelledEntryIntegrationTest extends FullIntegrationTest {
         |
         |def main uses Console: Unit = printLine(foldEither(e -> "left", a -> "right", runThrow[Int, Unit](runThrow[String, Unit](both).foldEither(e -> unit, a -> a))))
         |""".stripMargin
-    ).asserting(_ should include("This value declares the effect 'Throw' but does not perform it."))
+    ).asserting(_ should include("This value declares the effect 'Throw[String]' but does not perform it."))
   }
 }

@@ -90,14 +90,14 @@ class WithArgumentTypingIntegrationTest extends FullIntegrationTest {
     compileForErrors(
       s"""$source
          |def main uses Console: Unit = printLine(pick("s") with mapping(x -> show(x + 1)))""".stripMargin
-    ).asserting(_ should include("Type mismatch."))
+    ).asserting(_ should include("No handle in scope here answers 'Source[String]'."))
   }
 
-  it should "still be typed from themselves where the entries disagree" in {
+  it should "be refused, asking for the type arguments, where the entries disagree" in {
     compileForErrors(
       s"""$source
          |def main uses Console: Unit = printLine({ pickInt(1) ++ pickString("s") } with mapping(x -> show(x)))""".stripMargin
-    ).asserting(_ should include("this `with` supplies (Type -> String)"))
+    ).asserting(_ should include("Which handle answers 'Source[Int]' depends on type arguments nothing here decides."))
   }
 
   "an implementation with a type parameter its pattern does not take" should "be refused at its declaration" in {

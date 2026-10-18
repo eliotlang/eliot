@@ -94,7 +94,7 @@ class GivenEffectIntegrationTest extends FullIntegrationTest {
           |
           |def main uses Console: Unit = printLine(runWriterToLog(tell(transcriptOf(printLine("Bob")))))
           |""".stripMargin
-    ).asserting(_ should include("declares the effect 'Writer' but does not perform it"))
+    ).asserting(_ should include("declares the effect 'Writer[String]' but does not perform it"))
   }
 
   "a computation passed to a callee that installs an implementation around its run" should "run on it" in {

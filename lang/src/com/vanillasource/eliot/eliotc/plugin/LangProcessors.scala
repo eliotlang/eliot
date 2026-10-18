@@ -87,7 +87,7 @@ object LangProcessors {
       systemModules: Seq[ModuleName] = ModuleName.defaultSystemModules,
       maxNestedRepeats: Int = UsedNamesProcessor.DefaultMaxNestedRepeats,
       extraNativeBindingLabels: Seq[String] = Seq.empty,
-      handles: Boolean = LangPlugin.handlesRequested
+      handles: Boolean = true
   ): Seq[CompilerProcessor] = Seq(
     Tokenizer(),
     ASTParser(),

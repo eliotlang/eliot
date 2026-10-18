@@ -23,13 +23,14 @@ class EnvironmentIntegrationTest extends FullIntegrationTest {
     ).asserting(_ shouldBe "Bob;")
   }
 
-  it should "be rejected where a nearer discharge of an effect it performs stands between it and its use" in {
-    compileForErrors(
+  // D36: a captured entry is the handle in scope at the `with`, so a nearer discharge around the use is not consulted.
+  it should "write into the discharge at the `with` even where a nearer one stands between it and its use" in {
+    compileAndRun(
       s"""import eliot.effect.Console
          |$recordingConsole
          |def main uses Console: Unit =
          |   printLine(runWriterToLog(printLine(runWriterToLog(printLine("Bob"))) with recordingConsole))""".stripMargin
-    ).asserting(_ should include("and a nearer binding of 'Writer' stands between them"))
+    ).asserting(_ shouldBe "Bob;;")
   }
 
   it should "not count a nearer discharge of the same effect at other arguments as standing between" in {

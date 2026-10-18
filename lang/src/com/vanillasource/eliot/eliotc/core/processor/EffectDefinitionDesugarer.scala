@@ -23,6 +23,6 @@ import com.vanillasource.eliot.eliotc.ast.fact.{AbilityMembers, EffectDefinition
   */
 object EffectDefinitionDesugarer {
 
-  def desugar(effect: EffectDefinition, handles: Boolean = false): Seq[FunctionDefinition] =
+  def desugar(effect: EffectDefinition, handles: Boolean = true): Seq[FunctionDefinition] =
     AbilityMembers.lower(effect.name, effect.genericParameters, effect.functions, performsItself = true, handles)
 }

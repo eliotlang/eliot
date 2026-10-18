@@ -67,7 +67,7 @@ object EffectSugarDesugarer {
     *   the definition takes ([[Handles.parameter]]), after the handles it already takes (an effect member's own) and
     *   before its own parameters, so a call hands it the handle its caller has in scope for the entry.
     */
-  def desugar(function: FunctionDefinition, handles: Boolean = false): FunctionDefinition =
+  def desugar(function: FunctionDefinition, handles: Boolean = true): FunctionDefinition =
     if (signatureAndBodyRows(function).isEmpty && unprocessedConstraints(function).isEmpty) function
     else {
       val anchor                       = function.name

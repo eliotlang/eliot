@@ -30,7 +30,7 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced.compilerAbort
   * already passed, so nothing is threaded here, and no row entry is supplied, so there is nothing for the first
   * precondition to check.
   */
-class WovenValueProcessor(handles: Boolean = false)
+class WovenValueProcessor(handles: Boolean = true)
     extends TransformationProcessor[MonomorphicValue.Key, WovenValue.Key](key =>
       MonomorphicValue.Key(key.vfqn, key.typeArguments)
     ) {

@@ -70,17 +70,16 @@ class TypeHintIndexCompileTest extends AsyncFlatSpec with AsyncIOSpec with Match
     renderedTypesAt(greetingPosition).asserting(_ should contain("Unit"))
   }
 
-  // A computation delivered to a discharger's slot is a **thunk** under effects v6 — the row lowers to `Unit -> A` —
-  // and that is what hover shows. There is no carrier stack to render as a pinned row any more, and no inverter to
-  // render it with; what the user sees is the type the program actually has.
-  it should "render a captured computation as the thunk it is" in {
-    renderedTypesAt(guardedPosition).asserting(_ should contain("Unit -> String"))
+  // A computation delivered to a discharger's slot is a block taking the handle its callee hands it
+  // (`docs/effects.md` D36), and a handle is not something the source spells: hover shows the value it computes.
+  it should "render a captured computation as the value it computes" in {
+    renderedTypesAt(guardedPosition).asserting(_ should contain("String"))
   }
 
   // The same capture under a *pure* return reads identically, which is the point: discharge is a runtime frame now,
   // so nothing about the enclosing definition's own row changes the type at this position.
-  it should "render the same thunk for a capture under a pure return" in {
-    renderedTypesAt(pureGuardedPosition).asserting(_ should contain("Unit -> String"))
+  it should "render the same for a capture under a pure return" in {
+    renderedTypesAt(pureGuardedPosition).asserting(_ should contain("String"))
   }
 
   /** The effects-as-channel §9 gate: hover never shows carrier machinery. Swept over *every* position of the
@@ -96,10 +95,14 @@ class TypeHintIndexCompileTest extends AsyncFlatSpec with AsyncIOSpec with Match
     renderedTypesAcross(signLineNumber, signLine.length).asserting(_.filter(machinery) shouldBe Seq.empty)
   }
 
-  // The same sweep, positively: the computation `else` discharges *is* present at that line, as the thunk it lowers
-  // to. Without this the machinery assertion above would also pass on a line the index simply failed to cover.
+  // The same sweep, positively: the computation `else` discharges *is* present at that line, as the value it
+  // computes. Without this the machinery assertion above would also pass on a line the index simply failed to cover.
   it should "render the discharged computation of an if..else at the line it is written" in {
-    renderedTypesAcross(signLineNumber, signLine.length).asserting(_ should contain("Unit -> String"))
+    renderedTypesAcross(signLineNumber, signLine.length).asserting(_ should contain("String"))
+  }
+
+  it should "never surface a handle anywhere in a definition performing effects" in {
+    renderedTypesAcross(3, line1.length).asserting(_.filter(_.contains("$Handle")) shouldBe Seq.empty)
   }
 
   it should "report nothing where there is no expression node" in {

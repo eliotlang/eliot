@@ -633,19 +633,31 @@ class CoreProcessorTest extends ProcessorTest(Tokenizer(), ASTParser(), CoreProc
   // is an implementation. Three rewrites and nothing else: the return row vanishes onto a binder, a `~` constraint
   // gains that binder as its **first** type argument, and a top-level row in a parameter or a `data` field thunks to
   // `Unit => A`.
-  "effect-row sugar" should "mint one marked binder for the row and thunk a rowed parameter" in {
+  // `docs/effects.md` D36: the row's binder is the handle's type, taken by a handle parameter ahead of the others, and
+  // the rowed parameter is a block taking the handle its slot lists, of the type the callee's body hands it (`Handed`).
+  "effect-row sugar" should "mint one marked binder for the row, take its handle, and hand a rowed parameter one" in {
     namedValue("def f(x uses *, Suspend: String) uses *, Suspend: Unit").asserting { nv =>
       nv.signature.value.structure shouldBe Lambda(
         "Impl",
         App(QualRef("Implementation", "eliot.lang.Implementation"), Ref("Suspend", T)),
-        App(App(Ref("Function", T), thunk(Ref("String", T))), Ref("Unit", T))
+        Lambda(
+          "Handed",
+          QualRef("Handed", "eliot.lang.Implementation"),
+          App(
+            App(Ref("Function", T), Ref("Impl", T)),
+            App(
+              App(Ref("Function", T), App(App(QualRef("Function", "eliot.lang.Function"), Ref("Handed", T)), Ref("String", T))),
+              Ref("Unit", T)
+            )
+          )
+        )
       )
     }
   }
 
-  it should "record the binder as a binding in its declared type, and nowhere else" in {
+  it should "record the binder as a binding in its declared type, and the handed binder as unmarked" in {
     namedValue("def f(x uses *, Suspend: String) uses *, Suspend: Unit")
-      .asserting(binderMarks(_) shouldBe Seq("Impl" -> Some("Suspend")))
+      .asserting(binderMarks(_) shouldBe Seq("Impl" -> Some("Suspend"), "Handed" -> None))
   }
 
   it should "constrain the binder by the row's ability, applied to itself" in {

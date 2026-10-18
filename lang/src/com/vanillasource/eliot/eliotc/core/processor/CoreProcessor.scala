@@ -21,7 +21,7 @@ import com.vanillasource.eliot.eliotc.processor.common.TransformationProcessor
   *   - Converts data definitions into constructor and accessor functions
   *   - Represents all types as levels in ExpressionStacks
   */
-class CoreProcessor(handles: Boolean = false)
+class CoreProcessor(handles: Boolean = true)
     extends TransformationProcessor[SourceAST.Key, CoreAST.Key](key => SourceAST.Key(key.uri))
     with Logging {
 

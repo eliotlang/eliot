@@ -15,7 +15,7 @@ import com.vanillasource.eliot.eliotc.processor.common.SingleKeyTypeProcessor
   * handle's type, an ordinary type argument the checker checks the value at, and each operation is an ability method
   * the checker dispatched by that type. The specialisation is the checked value itself.
   */
-class SpecialisationProcessor(handles: Boolean = false) extends SingleKeyTypeProcessor[MonomorphicValue.Key] {
+class SpecialisationProcessor(handles: Boolean = true) extends SingleKeyTypeProcessor[MonomorphicValue.Key] {
 
   override protected def generateFact(key: MonomorphicValue.Key): CompilerIO[Unit] =
     if (handles)

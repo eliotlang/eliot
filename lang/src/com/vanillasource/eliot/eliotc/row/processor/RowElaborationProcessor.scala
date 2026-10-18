@@ -44,7 +44,7 @@ import scala.collection.mutable
   * design: a referenced name legitimately has none when its own definition aborted upstream, and a reference the write cannot read is simply left alone — the
   * fail-safe direction, since an unwritten binder is caught by the checker rather than silently defaulted.
   */
-class RowElaborationProcessor(handles: Boolean = false)
+class RowElaborationProcessor(handles: Boolean = true)
     extends TransformationProcessor[RecursionCheckedValue.Key, RowElaboratedValue.Key](key =>
       RecursionCheckedValue.Key(key.vfqn, key.platform)
     ) {
@@ -116,7 +116,9 @@ class RowElaborationProcessor(handles: Boolean = false)
         }
       // On the new effect path a named implementation's clause lives in an anonymous instance keyed by its handle, and
       // what it performs beyond its member is captured where it is bound ([[com.vanillasource.eliot.eliotc.row.Captures]]).
-      case ResolveQualifier.AbilityImplementation(_, _, None) if handles && isHandleClause(value)               =>
+      // Its own declarations (`$captures`) are no clause and have no member.
+      case ResolveQualifier.AbilityImplementation(_, _, None)
+          if handles && (isHandleClause(value) || Handles.isDeclaration(value.vfqn.name.name)) =>
         ().pure[CompilerIO]
       case ResolveQualifier.AbilityImplementation(ability, _, None)                                            =>
         anonymousClauseEntries(value, ability, platform)
@@ -256,7 +258,10 @@ class RowElaborationProcessor(handles: Boolean = false)
       if (fresh.isEmpty && freshClauses.isEmpty) universe.pure[CompilerIO]
       else
         for {
-          fetched <- fresh.toSeq.traverse(fqn => getFactIfProduced(OperatorResolvedValue.Key(fqn, platform)).map(fqn -> _))
+          fetched <- fresh.toSeq.traverse(fqn => declared(fqn, platform).flatMap(present =>
+                       if (present) getFactIfProduced(OperatorResolvedValue.Key(fqn, platform)).map(fqn -> _)
+                       else (fqn -> Option.empty[OperatorResolvedValue]).pure[CompilerIO]
+                     ))
           clauses <- freshClauses.toSeq.traverse(marker => clausesOf(marker, platform).map(marker -> _))
           result  <- loop(
                        universe.copy(
@@ -272,6 +277,13 @@ class RowElaborationProcessor(handles: Boolean = false)
     // The value itself is part of its own universe: the write reads its own declaration for the bindings it receives.
     loop(RowChecker.Universe(Map(value.vfqn -> value)), Set.empty, Set.empty)
   }
+
+  /** Whether any file of `fqn`'s module declares it. The write probes names that may be absent by design — a named
+    * implementation's handle `data` and `$captures`, which only a layer bodying the implementation mints — and asking
+    * for an absent value would report "Could not find" in the module's file.
+    */
+  private def declared(fqn: ValueFQN, platform: Platform): CompilerIO[Boolean] =
+    getFactOrAbort(UnifiedModuleNames.Key(fqn.moduleName, platform)).map(_.names.contains(fqn.name))
 
   private def clausesOf(marker: ValueFQN, platform: Platform): CompilerIO[Seq[ValueFQN]] =
     getFactOrAbort(ModuleAbilities.Key(marker.moduleName, platform)).map(

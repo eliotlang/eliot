@@ -43,7 +43,7 @@ object AbilityMembers {
       commonGenericParameters: Seq[GenericParameter],
       functions: Seq[FunctionDefinition],
       performsItself: Boolean,
-      handles: Boolean = false
+      handles: Boolean = true
   ): Seq[FunctionDefinition] = {
     val qualifier     = Qualifier.Ability(name.value)
     val bindingBinder = GenericParameter(

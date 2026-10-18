@@ -50,7 +50,7 @@ class TypeStackLoop(
     readHanded: Option[(ValueFQN, Seq[GroundValue]) => CompilerIO[Seq[GroundValue]]] = None,
     // The new effect path (`docs/effects.md` D36): no environment is threaded on either track, since a frame is a
     // handle's field and a handle is passed as any value is.
-    handles: Boolean = false
+    handles: Boolean = true
 ) {
   import TypeStackLoop.AbilityRef
 
@@ -612,7 +612,7 @@ object TypeStackLoop {
       signatureOnly: Boolean = false,
       injectedSignature: Option[GroundValue] = None,
       readHanded: Option[(ValueFQN, Seq[GroundValue]) => CompilerIO[Seq[GroundValue]]] = None,
-      handles: Boolean = false
+      handles: Boolean = true
   ): CompilerIO[Result] =
     new TypeStackLoop(
       fetchBinding,

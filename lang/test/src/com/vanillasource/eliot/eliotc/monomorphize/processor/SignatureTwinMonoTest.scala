@@ -43,7 +43,6 @@ class SignatureTwinMonoTest extends ProcessorTest(LangProcessors(systemModules =
       |import eliot.lang.Bool
       |import eliot.lang.Eq
       |import eliot.lang.String
-      |import eliot.effect.Throw
       |
       |type A
       |
@@ -54,36 +53,6 @@ class SignatureTwinMonoTest extends ProcessorTest(LangProcessors(systemModules =
       |def id[X](x: X): X = x
       |
       |def eqParam[E ~ Eq](a: E): E = a
-      |
-      |def raiseGuard uses Throw[String]: Type = raise("empty")
-      |""".stripMargin
-
-  // The compile-time `Either` carrier plus the effect abilities it implements — the machinery a `{Throw[String]}` guard
-  // signature reduces through (a faithful slice of `stdlib/eliot/compiler/eliot/lang/Either.els`, as in
-  // [[CompilerAbilityResolutionTest]]). Needed only for the guarded fixture.
-  private val eitherContent =
-    """import eliot.lang.Function
-      |import eliot.lang.String
-      |import eliot.effect.Throw
-      |
-      |data Either[E, A] = Left(error: E) | Right(value: A)
-      |
-      |def foldEither[E, A, B](ifLeft: Function[E, B], ifRight: Function[A, B], e: Either[E, A]): B = e match {
-      |   case Left(err) -> ifLeft(err)
-      |   case Right(v) -> ifRight(v)
-      |}
-      |
-      |implement Effect[Either[String]] {
-      |   def pure[A](a: A): Either[String, A] = Right(a)
-      |   def flatMap[A, B](f: Function[A, Either[String, B]], fa: Either[String, A]): Either[String, B] =
-      |      foldEither(err -> Left(err), a -> f(a), fa)
-      |   def map[A, B](f: Function[A, B], fa: Either[String, A]): Either[String, B] =
-      |      foldEither(err -> Left(err), a -> Right(f(a)), fa)
-      |}
-      |
-      |implement Throw[String, Either[String]] {
-      |   def raise[A](err: String): Either[String, A] = Left(err)
-      |}
       |""".stripMargin
 
   private val facts: Seq[CompilerFact] =
@@ -99,17 +68,6 @@ class SignatureTwinMonoTest extends ProcessorTest(LangProcessors(systemModules =
         "Eq",
         "import eliot.lang.Bool\nability Eq[A] { def equals(a: A, b: A): Bool }\nimplement Eq[Type] { def equals(a: Type, b: Type): Bool }"
       ) ++
-      compilerScan(
-        Seq("eliot", "carrier"),
-        "Effect",
-        "import eliot.lang.Function\nability Effect[F[_]] {\n  def flatMap[A, B](f: Function[A, F[B]], fa: F[A]): F[B]\n  def pure[A](a: A): F[A]\n  def map[A, B](f: Function[A, B], fa: F[A]): F[B]\n}"
-      ) ++
-      compilerScan(
-        Seq("eliot", "effect"),
-        "Throw",
-        "import eliot.lang.Function\nability Throw[E, F[_]] {\n  def raise[A](err: E) uses Throw[E]: A\n}"
-      ) ++
-      compilerScan(Seq("eliot", "lang"), "Either", eitherContent) ++
       compilerScan(Seq("test"), "M", mContent)
 
   private val mModule = ModuleName(Seq("test"), "M")
@@ -154,14 +112,6 @@ class SignatureTwinMonoTest extends ProcessorTest(LangProcessors(systemModules =
   // one (effects v6, `docs/effects.md` §9.4): the key is `[<binding>, E]`, and `Default` is what the write puts there.
   it should "match the runtime twin's for an ability-constrained value (`eqParam[E ~ Eq]` at `E = Type`)" in {
     bothSignatures(fqn("eqParam"), Seq(ImplementationBinding.defaultGround, GroundValue.Type))
-      .asserting { case (rt, sig, errs) => (rt.isDefined, sig, errs) shouldBe (true, rt, Seq.empty) }
-  }
-
-  it should "match the runtime twin's for a guarded (W2b) value — the pinned carrier `Either[String, Type]`" in {
-    // The compiler track *produces* the undischarged carrier signature (pinCarriers fixes `{Throw[String]}`'s carrier to
-    // the compile-time `Either[String]` before any body is seen), so the signature twin — which has no body — pins
-    // identically and lands the same ground signature. This is the guard-producing path Step 7 will route through.
-    bothSignatures(fqn("raiseGuard"), Seq.empty)
       .asserting { case (rt, sig, errs) => (rt.isDefined, sig, errs) shouldBe (true, rt, Seq.empty) }
   }
 

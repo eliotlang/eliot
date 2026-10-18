@@ -155,6 +155,6 @@ class OverDeclaredEffectIntegrationTest extends FullIntegrationTest {
         |
         |def main uses Console: Unit = printLine(described("x"))
         |""".stripMargin
-    ).asserting(_ should include("performs the effect 'Throw' but does not declare it"))
+    ).asserting(_ should include("No handle in scope here answers 'Throw[Missing]'."))
   }
 }

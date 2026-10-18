@@ -24,8 +24,8 @@ class PackageSessionCompileTest extends AsyncFlatSpec with AsyncIOSpec with Matc
                           |def main uses Console: Unit = printLine("Hello World!")""".stripMargin
 
   private val unrunnable =
-    "The implementation 'standardConsole' has no 'printLine' here.\n" +
-      "No layer on the path declares that clause of 'standardConsole'; a platform layer is what bodies it."
+    "'main' uses the effect 'Console', whose standard implementation 'standardConsole' has no body here.\n" +
+      "No layer on the path bodies 'standardConsole'; a platform layer is what bodies it."
 
   private val broken = """def broken: String = nosuch"""
 

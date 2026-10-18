@@ -29,13 +29,12 @@ history; §13 says where.
 
 **Next, in order.**
 
-1. **D36 step 2a** (§11): the hole rule and the block-type read in the checker, tested as `ProcessorTest`s on the
-   step-1 spike's program with its handle arguments replaced by holes.
-2. **D36 step 2b**: the desugar beside today's pipeline, behind an internal switch, measured on the corpus.
-3. **D36 step 3**: the switch with the deletions, Part I rewritten, a release. Then **step 4**, erasure.
+1. ~~**D36 step 2**~~ (§11): the new path beside the old behind an internal switch, measured on the corpus — done
+   2026-10-18.
+2. **D36 step 3**: the switch with the deletions, Part I rewritten, a release. Then **step 4**, erasure.
 
-Seven readings D36 needs await Robert's sign-off before Part I is rewritten (§11, D36, "To sign off"). D20a, D20c and
-D3 stay open; none blocks the steps above.
+The seven readings D36 needed were signed off by Robert on 2026-10-18 (§11, D36, "Signed off"). D20a, D20c and D3
+stay open; none blocks the steps above.
 
 **Open, in order of severity.**
 
@@ -1466,7 +1465,7 @@ entry, in the checker: point 4's errors and a handle parameter no hole takes. St
 monomorphization, the specialisation pass, the threading), since evidence is an ordinary value before it and
 specialisation is the key's; the choice among handles made in the checker, by type; and D35 step 5a.
 
-**To sign off** — readings the conversation did not name; Part I is not rewritten until they are:
+**Signed off** (Robert, 2026-10-18, all seven) — readings the conversation had not named, which Part I is rewritten to:
 
 1. **D30**, entries compared as spelled: replaced by comparison after evaluation, in the checker.
 2. **§12, "a handler as a marker type"**: point 2's data type is a marker type per handler and point 3's type parameter
@@ -1596,7 +1595,8 @@ and uses in `row` (`BindingWriter`). What is new:
    because its unspelled `raise(NotFetched(…))` consumed every `Throw` binding by name; the hole rule checks by entry and
    refuses it ("declares the effect 'Throw[GitError]' but does not perform it"). Either eliot-build spells that one
    declaration's clause without the alias (what the measurement above did), or an entry that arrives through a row alias
-   is exempt from the exact half of the check. Not decided.
+   is exempt from the exact half of the check. **Decided (Robert, 2026-10-18): the check stays exact** — eliot-build
+   spells that declaration's clause without the alias when it moves to the release that carries D36.
 
    **The jar difference** is all the handles' data representation, which point 11 defers to erasure: over the 46
    examples, +22.2% bytes (693 312 ⤳ 847 542), +22.8% classes (1 217 ⤳ 1 494) and +20.6% instructions — per handle a
@@ -1605,6 +1605,21 @@ and uses in `row` (`BindingWriter`). What is new:
 
 3. **The switch and the deletions together**: the default flips, the switch and D35's machinery go, Part I is rewritten
    in capability terms, §12's restated entries and the cornerstone in `CLAUDE.md`; then a release.
+
+   **The flip (2026-10-18).** The new path is the default and the environment switch is gone. The 18 tests step 2b
+   listed were rewritten to the new path's reading: D35 step 5a's block copies are the refusal point 6 names, a
+   capture takes the handle at its `with` even where a nearer discharge stands around the use (formerly "a nearer
+   binding stands between them"), and the hole rule's own wording. The suites step 2b had not run found three gaps,
+   each closed:
+   - the row phase's probes of names only a bodying layer mints (`$captures`, a handle `data`) reported "Could not
+     find" in a library file — its universe now asks the module's names before it asks for a value;
+   - a `main` on a path with no platform layer failed with no diagnostic: the entry point reports an effect whose
+     standard implementation no layer bodies at `main`, and a written `with` of one is reported at the `with`;
+   - the refinement channel walked a definition taking handles as a lambda's body, discarding its records (every
+     effectful `main` lost its ranges); it now walks through leading handle parameters, and LSP hover leaves handles
+     out of what it shows.
+
+   All 46 examples behave identically; the jars are as step 2b measured (+22.3% bytes before erasure).
 4. **Erasure**, measured against today's jar.
 
 ### Open questions
