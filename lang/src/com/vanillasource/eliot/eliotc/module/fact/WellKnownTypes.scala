@@ -195,6 +195,14 @@ object WellKnownTypes {
         ValueFQN(ModuleName(effectPackage, "Abort"), QualifiedName("runAbort", Qualifier.Default))
     )
 
+  /** `eliot.effect.Abort::else` and `eliot.effect.Throw`'s `raise`: on the new effect path (`docs/effects.md` D36) a
+    * guarded signature's uncovered `abort` is read as `… else raise("…")`, so the guarded-return read has one verdict
+    * shape, `runThrow`'s `Right(t)` or `Left("…")`, for both control effects.
+    */
+  val abortElseFQN: ValueFQN = ValueFQN(ModuleName(effectPackage, "Abort"), QualifiedName("else", Qualifier.Default))
+  val throwRaiseFQN: ValueFQN =
+    ValueFQN(ModuleName(effectPackage, "Throw"), QualifiedName("raise", Qualifier.Ability("Throw")))
+
   /** `escapeIntrinsic[K, A, R](body uses *, E: A, onExit uses *: K => R, onValue uses *: A => R) uses *: R` in each
     * control effect's overlay module: runs `body` with a fresh frame and answers `onValue` of its result, or `onExit`
     * of what an `exitIntrinsic` through that frame carried.

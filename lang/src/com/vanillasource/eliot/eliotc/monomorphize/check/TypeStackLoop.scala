@@ -223,7 +223,10 @@ class TypeStackLoop(
       monoEnv    <- inspect(_.rho)
       checked    <- checker.check(bodyExpr, VType)
       abilityRefs = checker.abilityResolver.collectAbilityRefs(bodyExpr.as(checked))
-      quoter     <- drainAndBuildQuoter(resolvedValue, abilityRefs, None, monoEnv)
+      handedRefs <- inspect(state => HandedBinders.references(checked, state.handedBinders))
+      quoter     <- drainAndBuildQuoter(resolvedValue, abilityRefs, None, monoEnv, handedRefs)
+      choices    <- inspect(_.handleChoices)
+      checked    <- pure(HandleHoleResolver.fill(checked, choices))
       // The signature's ground read-back. Reduce the **raw** evaluated arrow chain first (renormalising natives as it
       // quotes): this settles an ordinary type, a bare `{Throw[String]}` carrier return, a type-level `match` (whose
       // pattern binder the match reduction binds — the check would freeze it to a neutral), a W3 under-applied hole,

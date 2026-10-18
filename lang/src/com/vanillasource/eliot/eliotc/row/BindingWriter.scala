@@ -4,7 +4,7 @@ import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.ast.fact.{EffectRow, Handles, ImplementationParameters}
 import com.vanillasource.eliot.eliotc.core.fact.RoleHint
 import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, Qualifier, Role, ValueFQN, WellKnownTypes}
-import com.vanillasource.eliot.eliotc.monomorphize.check.DeclaredEntries
+import com.vanillasource.eliot.eliotc.monomorphize.check.{DeclaredEntries, GuardChannel}
 import com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedExpression.*
 import com.vanillasource.eliot.eliotc.operator.fact.{OperatorResolvedExpression, OperatorResolvedValue}
 import com.vanillasource.eliot.eliotc.resolve.fact.{AbilityConstraint, AbilityFQN, Qualifier as ResolveQualifier}
@@ -362,23 +362,37 @@ object BindingWriter {
   }
 
   /** A signature whose return is run inside the discharger of each control effect it performs uncovered — on the new
-    * effect path, the guarded-return read of `Throw` ([[WellKnownTypes.guardDischargers]]): `if(C, T) else raise("…")`
-    * is read as `runThrow(if(C, T) else raise("…"))`, whose `Right(t)` or `Left("…")` is the guard's verdict.
+    * effect path, the guarded-return read ([[WellKnownTypes.guardDischargers]]): `if(C, T) else raise("…")` is read as
+    * `runThrow(if(C, T) else raise("…"))`, whose `Right(t)` or `Left("…")` is the guard's verdict. An uncovered `abort`
+    * is a rejection with no message of its author's, so `if(C, T)` is read as `runThrow(if(C, T) else raise("A type
+    * guard rejected this use."))`: one verdict shape for both control effects.
     */
   private def guardDischarged(signature: Sourced[OperatorResolvedExpression], uncovered: Set[AbilityFQN])
-      : Sourced[OperatorResolvedExpression] =
-    WellKnownTypes.guardDischargers
-      .collectFirst { case ((module, name), discharger) if name == "Throw" && uncovered(AbilityFQN(module, name)) => discharger }
-      .fold(signature) { discharger =>
-        val view = SignatureView.of(signature)
-        signature.as(
-          view
-            .withReturnType(
-              FunctionApplication(view.returnType.as(ValueReference(view.returnType.as(discharger))), view.returnType)
-            )
-            .toExpression
-        )
+      : Sourced[OperatorResolvedExpression] = {
+    def discharger(name: String): Option[ValueFQN] =
+      WellKnownTypes.guardDischargers.collectFirst {
+        case ((module, effect), fqn) if effect == name && uncovered(AbilityFQN(module, effect)) => fqn
       }
+    val view                                                                                = SignatureView.of(signature)
+    val at                                                                                  = view.returnType
+    def call(fqn: ValueFQN, arguments: Sourced[OperatorResolvedExpression]*): Sourced[OperatorResolvedExpression] =
+      arguments.foldLeft(at.as(ValueReference(at.as(fqn)): OperatorResolvedExpression))((target, argument) =>
+        at.as(FunctionApplication(target, argument))
+      )
+    val aborting = discharger("Abort").map(_ =>
+      call(
+        WellKnownTypes.abortElseFQN,
+        at,
+        call(WellKnownTypes.throwRaiseFQN, at.as(StringLiteral(at.as(GuardChannel.fallbackRejectionMessage))))
+      )
+    )
+    val throwing = discharger("Throw").orElse(aborting.flatMap(_ =>
+      WellKnownTypes.guardDischargers.collectFirst { case ((_, "Throw"), fqn) => fqn }
+    ))
+    throwing.fold(signature)(runThrow =>
+      signature.as(view.withReturnType(call(runThrow, aborting.getOrElse(at)).value).toExpression)
+    )
+  }
 
   /** The handle parameters a definition takes, in order: its leading value parameters whose type is one of its
     * binding binders for an **effect** (`docs/effects.md` D36 point 3), as the binder's index and ability. A definition
