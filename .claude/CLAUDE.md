@@ -559,8 +559,14 @@ before monomorphization to an **ability over a handle type**, a `uses` entry to 
 value parameter, a named implementation to a `data` (its parameters as fields) and that ability's instance, `with` to
 a handle in scope for its subject, and `*` to closure capture. The one decision — which handle answers a use — is the
 checker's: **the nearest handle in lexical scope whose entry answers it after evaluation** (36 eliot-build
-declarations carry two or more `Throw` entries, so a choice by effect name alone cannot work). A slot that supplies an
-entry names its implementation in its signature. Until D36 is built, what follows describes the tree.
+declarations carry two or more `Throw` entries, so a choice by effect name alone cannot work). **Revised 2026-10-18**:
+the mechanism is **capability passing** — dependency injection checked statically and scoped lexically, with
+second-class handles (Effekt's *effects as capabilities* is the nearest prior art) — so reason about a design question
+in dependency terms, and keep *effect* for what the user is promised (purity is the absence of `uses`). A block's
+handle types are **what its callee's body hands it**, read at the callee's key — no slot names an implementation,
+because an implementation capturing a handle (`mockConsole uses State[Recording]`) has a generic type no signature can
+spell — and erasing field-less handles follows the switch rather than gating it. Until D36 is built, what follows
+describes the tree.
 
 **D35** (decided 2026-10-16, built 2026-10-17; it reverses D33, and D34 is withdrawn) is what this cornerstone
 describes: an implementation is **evidence passed after monomorphization**, and static code is a **specialisation

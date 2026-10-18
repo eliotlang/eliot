@@ -1,6 +1,6 @@
 # Effects in Eliot — the design, and what is left to do
 
-**Status (2026-10-17).** This is the effect system's single document. What the tree builds is effects v6 (2026-09-09)
+**Status (2026-10-18).** This is the effect system's single document. What the tree builds is effects v6 (2026-09-09)
 in D20/D21's `uses` surface (2026-10-09/10) with D20c option 5's environments (2026-10-12), D22's reading of a listed
 effect, D23's reading of `with`, D24's `uses *` on a definition, compile-track frames and named implementations with
 parameters (2026-10-13), the control effects as named implementations their dischargers bind with `with`, and D26's
@@ -11,8 +11,10 @@ it reverses D33): an implementation's code and environment are passed together a
 monomorphization, and static code is a **specialisation pass**, so a binding is decided where the code runs and never
 written into it beforehand. **D36** (decided 2026-10-17, not built) replaces that mechanism: an effect desugars to an
 ability over a handle type, a `uses` entry to a handle parameter, a named implementation to a `data` and its instance,
-and the checker gives each use the nearest handle in lexical scope whose entry answers it (§11). Until it is built,
-this paragraph and Part I describe D35.
+and the checker gives each use the nearest handle in lexical scope whose entry answers it (§11). Revised 2026-10-18:
+the mechanism is **capability passing** — dependency injection, checked statically and scoped lexically, with
+second-class handles — so *effect* names what a user is promised, not how it works; a block's handle types are what its
+callee's body hands it, and erasure follows the switch. Until it is built, this paragraph and Part I describe D35.
 An effect is an ability declared with the `effect` keyword. A definition's `uses` clause says what its caller hands
 it. An implementation is **code** (its operations) and an **environment** (an escape frame, a cell, its own
 parameters), one value — the evidence — which is installed by a `with`, received from a caller or given to a block by
@@ -93,9 +95,10 @@ lives now.
    evidence) and step 5a (a block copy per evidence, closing §8 item 62) the same day. D35 is built.
 22. **D36** (decided 2026-10-17, §11): an effect desugars to an ability over a handle, and a use takes the nearest
    handle in lexical scope whose entry answers it, decided by the checker. Its order is in its record, starting with a
-   hand-desugared spike; the spelling of a slot's supplied implementation is settled before its step 2, and six
-   readings it needs (D30, three §12 entries, §3.8, D35's `$with` lowering) await Robert's sign-off. Built, it closes
-   §8 items 59, 60 and 61.
+   hand-desugared spike (done 2026-10-17). Revised 2026-10-18: the callee's body types its blocks (no slot names an
+   implementation, so no spelling is left to settle), and erasure follows the switch; next is its step 2, the desugar
+   and the checker's two pieces measured on the corpus. Six readings it needs (D30, three §12 entries, §3.8, D35's
+   `$with` lowering) await Robert's sign-off. Built, it closes §8 items 59, 60 and 61.
 
 D20a, D20c and D3 stay open until decided; none blocks the steps above.
 
@@ -107,7 +110,7 @@ D20a, D20c and D3 stay open until decided; none blocks the steps above.
   single `Throw[Option[Int]]` (D36's finding); a `catch` over a
   parameter spells its arguments (§7 item 2); a function-typed code parameter's own entries are never supplied (§7
   item 1).
-- **Decided, not built:** D36 (§11), with six readings awaiting sign-off and a spelling to settle.
+- **Decided, not built:** D36 (§11, revised 2026-10-18), with six readings awaiting sign-off.
 - **Undecided:** naming a set of effects in a clause (D20a), storing an effectful computation (D20c), `~`/`&` in user
   space (D3). D31 and D32 are withdrawn (§11).
 - **Outside this document:** `v0.9` is the first release carrying `uses` (`v0.8` is tagged before it, and its release
@@ -2142,7 +2145,8 @@ answers a use — is the checker's**, made as ability resolution makes its choic
    **supplies names its implementation in the callee's signature**, because the block's parameter type must be known
    where the block is checked: `runThrow`'s slot names `escaping`, declared abstract in the base beside an abstract
    `ThrowFrame[E]` (today it is declared only in the jvm layer and the compiler overlay). Runs of one slot therefore
-   share one handle type, and a run handing it another is an ordinary type error at that run.
+   share one handle type, and a run handing it another is an ordinary type error at that run. *Its naming half is
+   reversed by the revision of 2026-10-18 below: the callee's body types its blocks.*
 7. **Rules 2 and 3 are a second-class rule on handles**: a handle, or a closure capturing one, stands only where code
    may — a run, a slot, a `with`'s subject — never in a field, a result or a value lambda. A handle's own fields may
    hold handles (point 2), since the holder is itself second-class. Checked before monomorphization by the walk, as
@@ -2182,7 +2186,7 @@ it supplies, and with it D35 step 5a (one handle type per slot; no slot in the c
 
 **It keeps** rules 1–6, D22 (as capture), D23, D24, D25 (as fields), D26, D28, D29, the three primitives and their
 frames, `CarrierKindChecker`, and the surface: no program in the corpus changes except a discharger's slot naming its
-implementation.
+implementation — *and since the revision of 2026-10-18 not even that.*
 
 **It deletes**, when built: `row/BindingWriter`'s resolution order and write (keeping its second-class check and the
 thunk-and-apply), the `Implementation[A]` mark (§9), `Default` as an effect binding, the `$with`/`$parameters` binders
@@ -2196,15 +2200,17 @@ thunk-and-apply), the `Implementation[A]` mark (§9), `Default` as an effect bin
 
 - **A parameter per entry**, where D35 passes one only for control entries: an interpretation handle is a field-less
   constant for every `standard…` implementation, so the backend must **erase a field-less handle** — no parameter, no
-  argument — to keep today's code, on the JVM for jar parity and on AVR, where a parameter is a register.
+  argument — to keep today's code, on the JVM for jar parity and on AVR, where a parameter is a register. *Moved
+  after the switch by the revision of 2026-10-18.*
 - **The hole rule**, new code in the checker; its meta case (point 4) is the riskiest part.
 - **Naming supplied implementations.** About 25 slots in the corpus list entries (a single-line count, so a lower
   bound); only the supplying ones change: the platform dischargers (`runThrow`, `runAbort`, `runStateToPair`,
   `runWriterToPair`, `provide`), eliot-test's `mocked`, eliot-build's `against` and the example's `transcriptOf`.
+  *Gone with the revision of 2026-10-18: nothing is named.*
 
 **To settle before step 2:** the spelling of a slot's supplied implementation — `body uses *, Throw[E] by escaping: A`,
 or the implementation in place of the entry, `body uses *, escaping[E]: A`. A third, `Throw[E] with escaping`, would
-reverse D35 step 5's refusal of `with` on a parameter.
+reverse D35 step 5's refusal of `with` on a parameter. *Lapsed with the revision of 2026-10-18.*
 
 **Order.** Each step leaves eliot-test and eliot-build green and every example behaving the same; jars are compared at
 every step and each difference explained.
@@ -2259,6 +2265,101 @@ every step and each difference explained.
 4. **The switch**: the desugar emits handle parameters, a `data` per named implementation, the instances and the
    holes; the backend erases field-less handles; the specialisation pass and the threading stop running.
 5. **The deletions**, Part I, §12's restated entries and the cornerstone in `CLAUDE.md`; then a release.
+
+*Steps 2–5 are replaced by the revision's order below.*
+
+##### D36 revised — the callee's body types its blocks, and erasure follows the switch (2026-10-18)
+
+**What the mechanism is.** Under D36 nothing in the plumbing is effect-specific any more: it is **capability
+passing**, dependency injection checked statically and scoped lexically. An implementation is a component; its `with`
+arguments are its configuration; an implementation whose clauses use other effects (`mockConsole uses
+State[Recording]`) is constructor injection; a `uses` entry declares a dependency; the hole rule resolves it by type,
+nearest binding first; a `with` provides one for a scope; `main`'s generated `with standard…` is the composition root.
+The control effects fit unchanged: `Throw`, `Abort`, `State`, `Writer` and `Dep` are components whose fields are a
+frame or a cell, and the non-local exit or the mutation is the platform primitive's, not the effect system's. That is
+what Koka's evidence passing compiles tail-resumptive and abortive handlers to, and Eliot never had any other kind
+(general resumption is closed in §12). Three things make it more than a DI container, and they are what the user is
+promised: **handles are second-class** (rules 2 and 3 — a handle may hold a frame that is dead after its discharger
+returns, which is Effekt's *effects as capabilities* design, the nearest prior art, with second-class blocks and
+capabilities passed lexically); **propagation is checked and complete**, up to `main`, with no other way to reach the
+world, since natives are platform-private; and **absence means something** — purity is the absence of `uses`,
+totality the absence of `Inf`. So the surface and the user documentation keep the word *effect*, which is what a user
+gets, while design questions are asked in dependency terms: which binding answers a dependency (the nearest in scope, by
+type), who builds a component's dependencies (whoever provides it, at the `with`), and what a block receives (what its
+callee hands it). The split from abilities is then plain: an ability is searched globally, like a type class; an effect
+is passed lexically, like a dependency. Part I is rewritten in these terms when D36 is built.
+
+**The finding.** What a handle carries comes in three kinds. A `with`'s arguments (`scripted("Bob")`) are fields typed
+by the implementation's declaration, and an environment a primitive makes (a frame, a cell) is a field typed by the
+primitive; neither is a problem. The third is a **handle the implementation captures**, one per clause entry its
+member does not declare, and it makes the handle's type generic:
+
+```eliot
+implement mockConsole: Console { def printLine(s: String) uses State[Recording]: Unit = … }
+// ⤳ data MockConsole[S](state: S)            -- S: whatever State handle is in scope at the `with`
+//   implement[S ~ State[Recording]] Console[MockConsole[S]] { … }
+```
+
+Inside a body that is harmless — `S` is unified at the `with`. It breaks point 6, which writes a supplied handle's
+type into the callee's signature: `mocked`'s block receives `MockConsole[S]` with `S` the handle `runStateToValue`
+hands its own block, a type made inside two other dischargers' bodies, which naming `mockConsole` in the slot cannot
+spell. The same holds for eliot-build's `against` (`tablePackages` captures `Dep[Universe]`) and the example's
+`transcriptOf` (`recordingConsole` captures `Writer[String]`) — every discharger in the corpus that is not the
+platform's. Naming works only for the platform dischargers, and there it costs the base an abstract `escaping`,
+`aborting`, `holding`, `writing` and `providing` with their frame types, and every pass-through (`catch`, `else`,
+`runStateToValue`, …) repeating the name.
+
+**Decided** (Robert, 2026-10-18, "ok, update doc", on the two proposals below):
+
+1. **The callee's body types its blocks** — replacing point 6's naming. In the callee, each entry a code parameter
+   lists is a type to solve: a run hands the block a handle — a hole at the run, filled by point 4 from the callee's
+   scope — and that decides the type, as an initializer gives a `val` its type. Every run, and every pass of the code
+   to another callee's slot, must agree (one type per slot entry, as point 6 already said; a disagreement is a type
+   error at the run). A caller reads the solution at the callee's key. So `runThrow` hands `obj` an `Escaping[E]`, `if`
+   hands `value` its own received `Abort` handle, and `mocked` hands `body` a `MockConsole[…]` no one writes.
+   - **Ride versus supply is no longer a concept**: a block gets whatever its callee passes, its own received handle
+     or one it made. Nothing is named in a slot, the base is untouched, and the spelling question lapses.
+   - The block is **not in the callee's key**, so the callee is not cloned per block (D31's measured cost) and the
+     block is not copied per variant (D35 step 5a).
+   - **The caller's check does not wait for it.** A hole compares *entries*, which are read from declarations; a
+     handle's *type* is needed only to dispatch an operation, which is already post-drain. Inside a block the handle's
+     type stays an application to be reduced until the drain has solved the callee's type arguments (`catch`'s `E`,
+     from the block's own `raise`), and is then read at the callee's key. With no recursion there is no cycle: a
+     callee's check never needs its caller's block. In a session with no platform the callee has no body to read; its
+     block's handle type stays abstract, as `ThrowFrame` is there, and no dispatch is asked for.
+   - A callee that never runs or passes a code parameter leaves its type unsolved; that is the "declares but does not
+     perform" error on the slot.
+2. **Erasure follows the switch.** The switch ships with handles as data — about 12% more jar on the spike — and the
+   gate is eliot-test, eliot-build and the examples' behaviour, every jar difference explained rather than refused.
+   Erasure is then an optimization of its own: a field-less handle is no parameter, argument, allocation or capture; a
+   single-field handle is passed as its field, recursively, so `MockConsole[Holding[Recording]]` is passed as the cell.
+
+**Read alongside** (no surface change): an implementation's clause entry spelled as its member spells one, under the
+implementation's pattern, is the **call's** — a handle parameter of the instance method, filled at each operation's
+call; any other entry is **captured** at the `with`, a field. Inside the operation the method's own handle parameters
+are nearer than the fields, so a misread entry is never chosen over the call's and shows as a capture no hole takes:
+loud. `mockProcess.run`'s `Throw[IoError]` is the call's and its `State[Recording]` and `Throw[AssertionError]` are
+captured; item 61's `Writer[List[T]]` at `T := Box` is the call's.
+
+**The system is then** one desugar (effect to ability over a handle, implementation to `data` and instance, entry to
+handle parameter, call, operation and run to holes, `with` to a bound handle, `main` to the constructed `standard…`
+handles), which the step-1 spike showed today's checker accepts; **one rule** applied at four sites — an operation
+call, a call of a `uses` definition, a run of a code parameter, and an implementation's captures at its `with`; and
+**one read**, a block's handle types from its callee. Nothing new in the backend until erasure. The checker's two new
+pieces are the hard part: point 4's meta case (`catch`'s `E` when two raises inside it would disagree), still the
+riskiest, and a handle type that stays unreduced until post-drain.
+
+**It adds to the readings to sign off:** §12's "carrier inference" — a block's handle type is solved by equality at
+the callee's runs, with no join, deciding no binding (which handle answers a use is point 4's, by entry). And it
+drops one: D30's ride versus supply, which is no longer a comparison of any kind.
+
+**Order** (replacing steps 2–5; the gate as point 2 says):
+
+2. **The desugar and the checker's two pieces**, measured on the corpus before anything switches: every hole
+   resolves, the agreement rule accepts every unspelled discharger, every block's handle types are read.
+3. **The switch and the deletions together**: D35's machinery goes (the list under *It deletes*), Part I is rewritten
+   in capability terms, §12's restated entries and the cornerstone in `CLAUDE.md`; then a release.
+4. **Erasure**, measured against today's jar.
 
 **Awaiting sign-off:** the four choices made in the code while building option 5 (§3.4, "Decided in the code"). A
 fifth, an anonymous implementation's parameters as part of its pattern key, lapsed with D25's step 5.
@@ -2420,7 +2521,8 @@ Numbers are kept so citations resolve; the record of each is in git history (§1
   one failure: a carrier metavariable captured by first-contact unification. Under v6 the class is still
   prohibited in its restated form (§5 rule 3): a binding is filled by `with`, declaration, slot or default, never
   joined. *D36's hole — the nearest lexical handle whose entry answers, by type — is read as not inference of a
-  binding; to sign off.*
+  binding; nor is its revision's block handle type, solved by equality at the callee's runs with no join; to sign
+  off.*
 - **A second, post-monomorphization effect verifier.** Retired 2026-09-10 by measurement (D7): what a
   monomorphic body can still say about effects is strictly less than what the declaration walk already said, because
   an operation call is by then a call to an implementation method, which declares no row. (Not about the
