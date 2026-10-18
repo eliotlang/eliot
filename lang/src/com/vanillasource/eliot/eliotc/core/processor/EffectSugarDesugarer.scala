@@ -129,7 +129,11 @@ object EffectSugarDesugarer {
         else Seq.empty
 
       function.copy(
-        genericParameters = before ++ rowBinders ++ constraintBinders ++ after ++ handed,
+        // On the new effect path a `~` constraint's binder comes before the row's: an implementation's clause then
+        // starts with exactly its instance's binders, which dispatch hands it by position, row or no row.
+        genericParameters =
+          if (handles) before ++ constraintBinders ++ rowBinders ++ after ++ handed
+          else before ++ rowBinders ++ constraintBinders ++ after ++ handed,
         args = heldHandles ++ rowHandles ++ userArgs,
         typeDefinition = bare(function.typeDefinition),
         body = function.body.map(bare),
