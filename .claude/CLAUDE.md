@@ -548,9 +548,10 @@ design (§1 the user rules, §2 the surface, §3 the mechanism, §4 the scope ch
 §7 the live limitations; §3.4 is evidence, the specialisation pass, the primitives and the environment threading);
 Part II is what is left (§8 where
 the tree diverges from Part I, §9 the binding binder marked by its declared type `Implementation[A]`, §10 the gate and
-method, §11 the open and decided-but-unbuilt decisions — **D20a** naming a set of effects, **D20c** storing an open
-computation); Part III holds §12's **do-not-re-propose** list and §13, which maps
-every citation of a condensed record (**D20**/**D21** rules and steps, **D20c option 5**, **(b)**, **D22**) to Part I.
+method, §11 the decisions — **D36**, the plan, then the open questions (**D20a** naming a set of effects, **D20c**
+storing an open computation, **D3**) and every earlier decision one entry each); Part III holds §12's
+**do-not-re-propose** list and §13, which maps every citation of a condensed record to where it lives now (the full
+text before the 2026-10-18 compaction is `git show 14b61527:docs/effects.md`).
 **There is no carrier, no monad, no `Id`, and nothing to infer** — if you are reading code or a comment that mentions
 one, it is history.
 
