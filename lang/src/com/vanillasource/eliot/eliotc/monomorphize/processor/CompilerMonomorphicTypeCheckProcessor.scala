@@ -30,7 +30,7 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced.compilerError
   * This processor never mentions [[MonomorphicValue]] / its key, so the `compiler-mono → runtime-mono` fact edge cannot
   * exist; the two tracks are acyclic by construction.
   */
-class CompilerMonomorphicTypeCheckProcessor()
+class CompilerMonomorphicTypeCheckProcessor(handles: Boolean = false)
     extends TransformationProcessor[SaturatedValue.Key, CompilerMonomorphicValue.Key](key =>
       // Both roles' monos read the **runtime** value's `SaturatedValue` (signature-unification Phase E): a `Signature`
       // mono checks that same value's signature expression (`processSignatureTwin`), so there is no separate front-end
@@ -116,29 +116,38 @@ class CompilerMonomorphicTypeCheckProcessor()
                              track = Track.Compiler,
                              reduceInstance = ReducedBindingClosure.reduceInstance(_, _),
                              signatureOnly = signatureOnly,
-                             injectedSignature = injectedSignature
+                             injectedSignature = injectedSignature,
+                             readHanded = Some((callee, arguments) =>
+                               getFactOrAbort(CompilerMonomorphicValue.Key(callee, arguments)).map(_.handed)
+                             ),
+                             handles = handles
                            )
       // The read-back left every effect operation undispatched; the specialisation pass dispatches each from the
-      // evidence this key receives (`docs/effects.md` D35), and records what each code parameter's runs give.
-      specialised       <- EvidenceSpecialisation.specialiseBody(
-                             Platform.Compiler,
-                             EnvironmentThreading.Specialisation(
-                               key.vfqn,
-                               key.typeArguments,
-                               value.signature.as(key.vfqn.name),
-                               result.signature,
-                               result.body,
-                               result.effects
-                             ),
-                             guarded = false
-                           )
+      // evidence this key receives (`docs/effects.md` D35), and records what each code parameter's runs give. On the new
+      // effect path the checker already dispatched each by its handle's type, so there is nothing to specialise.
+      specialised       <-
+        if (handles) EvidenceSpecialisation.Specialised(result.body, result.effects, result.signature).pure[CompilerIO]
+        else
+          EvidenceSpecialisation.specialiseBody(
+            Platform.Compiler,
+            EnvironmentThreading.Specialisation(
+              key.vfqn,
+              key.typeArguments,
+              value.signature.as(key.vfqn.name),
+              result.signature,
+              result.body,
+              result.effects
+            ),
+            guarded = false
+          )
     } yield CompilerMonomorphicValue(
       key.vfqn,
       key.typeArguments,
       value.signature.as(key.vfqn.name),
       result.signature,
       specialised.body,
-      specialised.effects
+      specialised.effects,
+      result.handed
     )
   }
 

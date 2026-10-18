@@ -4,6 +4,7 @@ import cats.Id
 import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.ast.fact.{
   EffectRow,
+  Handles,
   ImplementationParameters,
   PrecedenceDeclaration as AstPrecedenceDeclaration,
   UnresolvedAbilityConstraint,
@@ -41,7 +42,7 @@ import com.vanillasource.eliot.eliotc.resolve.processor.ValueResolverScope.*
 import com.vanillasource.eliot.eliotc.source.content.Sourced
 import com.vanillasource.eliot.eliotc.source.content.Sourced.compilerAbort
 
-class ValueResolver
+class ValueResolver(handles: Boolean = false)
     extends TransformationProcessor[UnifiedModuleValue.Key, ResolvedValue.Key](key =>
       UnifiedModuleValue.Key(key.vfqn, key.platform)
     )
@@ -91,6 +92,17 @@ class ValueResolver
                              )
       _                   <- reportNamedRowMisuses(resolvedSignature, resolvedRuntime, namedValue)
       received             = receiveBindings(resolvedSignature, resolvedConstraints, resolvedEffectRow, namedRow)
+      // On the new effect path (`docs/effects.md` D36 point 3) each received entry is a handle parameter too, after the
+      // handles the definition already takes and before its own parameters.
+      handled              =
+        if (handles && namedRow.nonEmpty)
+          withHandleParameters(
+            received.signature,
+            resolvedRuntime,
+            resolvedEffectRow.returnEffects.size,
+            resolvedBinderNames(received.signature.value).takeRight(namedRow.size)
+          )
+        else (received.signature, resolvedRuntime)
       _                   <- debug[ScopedIO](s"Resolved ${key.vfqn.show} type: ${received.signature.value.render}")
       _                   <- debug[ScopedIO](
                                s"Resolved ${key.vfqn.show} runtime: ${resolvedRuntime.map(_.value.render).getOrElse("<abstract>")}"
@@ -98,8 +110,8 @@ class ValueResolver
     } yield ResolvedValue(
       unifiedValue.vfqn,
       resolvedName,
-      resolvedRuntime,
-      received.signature,
+      handled._2,
+      handled._1,
       received.paramConstraints,
       namedValue.fixity,
       resolvedPrecedence,
@@ -338,6 +350,60 @@ class ValueResolver
         effectRow.copy(returnEffects = effectRow.returnEffects ++ entries)
       )
     }
+
+  /** A signature and body with a handle parameter for each of `binders` (`docs/effects.md` D36), typed by its binder and
+    * named after it ([[Handles.parameter]]), placed after the first `held` parameters — the handles the definition
+    * already takes.
+    */
+  private def withHandleParameters(
+      signature: Sourced[Expression],
+      runtime: Option[Sourced[Expression]],
+      held: Int,
+      binders: Seq[String]
+  ): (Sourced[Expression], Option[Sourced[Expression]]) = {
+    def inSignature(expr: Sourced[Expression], skip: Int, binding: Boolean): Sourced[Expression] =
+      expr.value match {
+        case Expression.FunctionLiteral(name, Some(kind), body) if binding                =>
+          expr.as(Expression.FunctionLiteral(name, Some(kind), inSignature(body, skip, binding = true)))
+        case Expression.FunctionApplication(Sourced(_, _, Expression.FunctionApplication(function, domain)), codomain)
+            if skip > 0 && isFunction(function.value) =>
+          expr.as(
+            Expression.FunctionApplication(
+              expr.as(Expression.FunctionApplication(function, domain)),
+              inSignature(codomain, skip - 1, binding = false)
+            )
+          )
+        case _                                                                           =>
+          binders.foldRight(expr) { (binder, codomain) =>
+            expr.as(
+              Expression.FunctionApplication(
+                expr.as(
+                  Expression.FunctionApplication(
+                    expr.as(Expression.ValueReference(expr.as(functionDataTypeFQN))),
+                    expr.as(Expression.ParameterReference(expr.as(binder)))
+                  )
+                ),
+                codomain
+              )
+            )
+          }
+      }
+    def inBody(expr: Sourced[Expression], skip: Int): Sourced[Expression] =
+      expr.value match {
+        case Expression.FunctionLiteral(name, kind, body) if skip > 0 =>
+          expr.as(Expression.FunctionLiteral(name, kind, inBody(body, skip - 1)))
+        case _                                                        =>
+          binders.foldRight(expr)((binder, body) =>
+            expr.as(Expression.FunctionLiteral(expr.as(Handles.parameter(binder)), None, body))
+          )
+      }
+    (inSignature(signature, held, binding = true), runtime.map(inBody(_, held)))
+  }
+
+  private def isFunction(expr: Expression): Boolean = expr match {
+    case Expression.ValueReference(name, _) => name.value == functionDataTypeFQN
+    case _                                  => false
+  }
 
   /** The generic binder names of an already-resolved signature — its leading annotated [[Expression.FunctionLiteral]]
     * run, the same reading [[collectGenericParamsFromExpr]] makes of the unresolved one.

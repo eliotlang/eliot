@@ -37,7 +37,7 @@ sealed trait Track {
   def readBackBody(
       quoter: PostDrainQuoter,
       srcSem: Sourced[SemExpression],
-      threading: PostDrainQuoter.Threading
+      threading: Option[PostDrainQuoter.Threading]
   ): CompilerIO[Sourced[MonomorphicExpression]]
 
 }
@@ -57,7 +57,7 @@ object Track {
     override def readBackBody(
         quoter: PostDrainQuoter,
         srcSem: Sourced[SemExpression],
-        threading: PostDrainQuoter.Threading
+        threading: Option[PostDrainQuoter.Threading]
     ): CompilerIO[Sourced[MonomorphicExpression]] = quoter.quoteSourced(srcSem)
   }
 
@@ -87,13 +87,14 @@ object Track {
       } yield result
 
     /** Reduce the body, threaded as the value's specialisation: a control effect it runs gets its frame along the
-      * declared chain (`docs/effects.md` §3.4).
+      * declared chain (`docs/effects.md` §3.4). On the new effect path there is nothing to thread (`None`): a frame is
+      * a handle's field, passed as any value is.
       */
     override def readBackBody(
         quoter: PostDrainQuoter,
         srcSem: Sourced[SemExpression],
-        threading: PostDrainQuoter.Threading
-    ): CompilerIO[Sourced[MonomorphicExpression]] = quoter.reduceSourced(srcSem, Some(threading))
+        threading: Option[PostDrainQuoter.Threading]
+    ): CompilerIO[Sourced[MonomorphicExpression]] = quoter.reduceSourced(srcSem, threading)
 
   }
 }

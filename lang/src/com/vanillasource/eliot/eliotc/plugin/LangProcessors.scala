@@ -98,7 +98,7 @@ object LangProcessors {
     UnifiedModuleValueProcessor(),
     ModuleConstructorsProcessor(),
     ModuleAbilitiesProcessor(),
-    ValueResolver(),
+    ValueResolver(handles),
     BlockDesugaringProcessor(),
     MatchDesugaringProcessor(),
     OperatorResolverProcessor(),
@@ -120,9 +120,9 @@ object LangProcessors {
       ContributedBinding.langNativeLabels ++ extraNativeBindingLabels,
       ContributedBinding.userLabels
     ),
-    MonomorphicTypeCheckProcessor(),
+    MonomorphicTypeCheckProcessor(handles),
     SpecialisationProcessor(handles),
-    CompilerMonomorphicTypeCheckProcessor(),
+    CompilerMonomorphicTypeCheckProcessor(handles),
     RefinementChannelProcessor(),
     SuppliedRowArgumentsProcessor(),
     // R2 meta-transfer accounting. Landed but not yet armed: nothing demands its fact in a normal build, so it is

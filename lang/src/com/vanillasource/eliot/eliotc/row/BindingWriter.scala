@@ -917,7 +917,9 @@ object BindingWriter {
         (abilityOf(implementation.value, universe), universe.lookup(implementation.value)) match {
           case (Some(ability), Some(marker)) =>
             val view    = SignatureView.of(marker.signature)
-            val keys    = view.binders.map(binder => binder.name.value -> keyedHole(implementation)).toMap
+            // The data takes the implementation's own type parameters, never the binding a `~` constraint on one mints.
+            val own     = unmarkedBinders(marker)
+            val keys    = own.map(_ -> keyedHole(implementation)).toMap
             val entry   = HandleHole.Entry(
               ability,
               view.parameters.map(pattern =>
@@ -937,7 +939,7 @@ object BindingWriter {
                       QualifiedName(Handles.dataType(implementationName(implementation.value)), Qualifier.Default)
                     )
                   ),
-                  view.binders.map(binder => implementation.as(keys(binder.name.value)))
+                  own.map(name => implementation.as(keys(name)))
                 )
               ),
               supplied.map(walk(_, scope))

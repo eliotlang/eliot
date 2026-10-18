@@ -105,7 +105,7 @@ object NamedImplementationDesugarer {
       )
       val pattern     = handleType +: implementation.pattern
       val qualifier   = Qualifier.AbilityImplementation(abilityName, pattern.map(_.value.render).mkString(", "), None)
-      val methods     = implementation.functions.map { f =>
+      val methods     = implementation.functions.map(ImplementationRows.own).map { f =>
         if (f.name.value.qualifier == Qualifier.Type)
           f.copy(
             name = f.name.map(n => QualifiedName(n.name, qualifier)),
@@ -147,12 +147,18 @@ object NamedImplementationDesugarer {
         anchor.as(Expression.FunctionApplication(None, anchor.as("Type"), None, Seq.empty)),
         None
       )
-      DataDefinitionDesugarer.desugar(data) ++
-        (methods ++
-          ImplementationParameters.declaration(anchor, named, implementation.genericParameters, implementation.parameters, Seq.empty) :+
-          instance :+ namedMarker :+ nameMarker :+
+      // Only a layer that bodies the implementation mints its handle: the `data` lowers to values with bodies of their
+      // own, which two layers could not both supply. The base's `implement standardConsole: Console`, and its
+      // `standardFileSystem` whose clauses carry no body, only declare the name a `with` resolves to.
+      val bodied      = implementation.functions.exists(f => f.name.value.qualifier != Qualifier.Type && f.body.isDefined)
+      val declaration =
+        (ImplementationParameters
+          .declaration(anchor, named, implementation.genericParameters, implementation.parameters, Seq.empty)
+          .toSeq :+ namedMarker :+ nameMarker :+
           ImplementationParameters.binder(anchor, named, implementation.genericParameters, implementation.parameters))
           .map(_ -> RoleHint.NoHint)
+      if (bodied) DataDefinitionDesugarer.desugar(data) ++ (methods :+ instance).map(_ -> RoleHint.NoHint) ++ declaration
+      else declaration
     }
 
   /** A clause's body with each of the implementation's parameters bound to its field of the clause's own handle, so

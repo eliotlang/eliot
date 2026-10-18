@@ -68,6 +68,24 @@ object ImplementationRows {
         case _                                       => expr.as(Expression.EffectfulType(row, expr))
       }
 
+  /** The definition with only the row entries it wrote itself, undoing [[carrying]]: on the new effect path
+    * (`docs/effects.md` D36) a clause is an instance method shaped like its member, and the union only ever served the
+    * old path's single list of binders.
+    */
+  def own(definition: FunctionDefinition): FunctionDefinition =
+    if (definition.carriedEffects.isEmpty) definition
+    else
+      definition.typeDefinition.value match {
+        case Expression.EffectfulType(effects, resultType) =>
+          val kept = effects.filterNot(entry => definition.carriedEffects.contains(UnresolvedAbilityConstraint.key(entry)))
+          definition.copy(
+            typeDefinition =
+              if (kept.isEmpty) resultType else definition.typeDefinition.as(Expression.EffectfulType(kept, resultType)),
+            carriedEffects = Set.empty
+          )
+        case _                                             => definition.copy(carriedEffects = Set.empty)
+      }
+
   private def entriesOf(expr: Sourced[Expression]): Seq[UnresolvedAbilityConstraint[Sourced[Expression]]] =
     expr.value match {
       case Expression.EffectfulType(effects, _) => effects

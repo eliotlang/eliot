@@ -52,7 +52,7 @@ object EscalatingReducer {
       argMetas: Seq[SemValue]
   ): CompilerIO[Option[GroundValue]] =
     getFactIfProduced(CompilerMonomorphicValue.Key(vfqn, typeArguments)).flatMap {
-      case Some(cmv @ CompilerMonomorphicValue(_, _, _, _, Some(_), _)) =>
+      case Some(cmv @ CompilerMonomorphicValue(_, _, _, _, Some(_), _, _)) =>
         // Threaded, a body passes frames to its callees, which must then be threaded too: link each one reduced at its
         // instantiation from the start, as `PostDrainQuoter.reduceThreaded` does, rather than the raw one-hop binding
         // that takes no frame — so there is nothing left to escalate to.

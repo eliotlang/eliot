@@ -47,7 +47,10 @@ class TypeStackLoop(
     // The new effect path (`docs/effects.md` D36 point 6): a callee's handed types at its other type arguments, read off
     // its checked value on this track ([[HandedBinders]]). `None` reads nothing, which only a value with no reference
     // to a callee with handed binders can afford.
-    readHanded: Option[(ValueFQN, Seq[GroundValue]) => CompilerIO[Seq[GroundValue]]] = None
+    readHanded: Option[(ValueFQN, Seq[GroundValue]) => CompilerIO[Seq[GroundValue]]] = None,
+    // The new effect path (`docs/effects.md` D36): no environment is threaded on either track, since a frame is a
+    // handle's field and a handle is passed as any value is.
+    handles: Boolean = false
 ) {
   import TypeStackLoop.AbilityRef
 
@@ -136,7 +139,7 @@ class TypeStackLoop(
                      effects,
                      guarded = false
                    )
-      monoBody  <- runtime.traverse(srcSem => liftF(track.readBackBody(quoter, srcSem, threading)))
+      monoBody  <- runtime.traverse(srcSem => liftF(track.readBackBody(quoter, srcSem, Option.unless(handles)(threading))))
     } yield TypeStackLoop.Result(
       groundSig,
       monoBody.map(sourcedMono => sourcedMono.as(sourcedMono.value.expression)),
@@ -602,7 +605,8 @@ object TypeStackLoop {
         none[SemValue].pure[CompilerIO],
       signatureOnly: Boolean = false,
       injectedSignature: Option[GroundValue] = None,
-      readHanded: Option[(ValueFQN, Seq[GroundValue]) => CompilerIO[Seq[GroundValue]]] = None
+      readHanded: Option[(ValueFQN, Seq[GroundValue]) => CompilerIO[Seq[GroundValue]]] = None,
+      handles: Boolean = false
   ): CompilerIO[Result] =
     new TypeStackLoop(
       fetchBinding,
@@ -611,7 +615,8 @@ object TypeStackLoop {
       reduceInstance,
       signatureOnly,
       injectedSignature,
-      readHanded
+      readHanded,
+      handles
     )
       .process(typeArguments, resolvedValue)
 

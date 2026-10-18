@@ -18,7 +18,7 @@ import com.vanillasource.eliot.eliotc.saturate.fact.SaturatedValue
   * It checks a value at type arguments whose effect bindings are left out ([[CheckedValue]], `docs/effects.md` D35
   * step 4); the specialisation pass puts them back.
   */
-class MonomorphicTypeCheckProcessor()
+class MonomorphicTypeCheckProcessor(handles: Boolean = false)
     extends TransformationProcessor[SaturatedValue.Key, CheckedValue.Key](key => SaturatedValue.Key(key.vfqn)) {
 
   /** A callee's binding. A callee whose own definition was rejected has none, on either track, and is skipped: the
@@ -56,7 +56,8 @@ class MonomorphicTypeCheckProcessor()
                              injectedSignature = injectedSignature,
                              readHanded = Some((callee, arguments) =>
                                getFactOrAbort(CheckedValue.Key(callee, arguments)).map(_.handed)
-                             )
+                             ),
+                             handles = handles
                            )
     } yield CheckedValue(
       key.vfqn,

@@ -48,7 +48,8 @@ case class CompilerMonomorphicValue(
     name: Sourced[QualifiedName],
     signature: GroundValue,
     reduced: Option[Sourced[MonomorphicExpression.Expression]],
-    effects: MonomorphicEffects = MonomorphicEffects.empty
+    effects: MonomorphicEffects = MonomorphicEffects.empty,
+    handed: Seq[GroundValue] = Seq.empty
 ) extends CompilerFact {
   override def key(): CompilerFactKey[CompilerMonomorphicValue] =
     CompilerMonomorphicValue.Key(vfqn, typeArguments)
