@@ -170,10 +170,23 @@ class HandleHoleResolver {
 
   private def solved(unifier: Unifier): Int = unifier.metaStore.entries.count(_._2.isDefined)
 
+  /** Take `candidate` for `hole`: the hole's type is the handle's. Only a run of a code parameter can disagree here —
+    * its block's handle type is one per slot entry, which every run hands it (`docs/effects.md` D36 point 6), while
+    * every other position's type is fresh — so a mismatch is two runs handing it different implementations.
+    */
   private def commit(hole: Hole, candidate: Candidate, after: Unifier): CheckIO[Unit] =
     modify(state =>
       state
-        .withUnifier(after.unify(hole.handleType, candidate.handleType, hole.at.as("Type mismatch.")))
+        .withUnifier(
+          after.unify(
+            hole.handleType,
+            candidate.handleType,
+            hole.at.as(
+              "This run of the code is handed another implementation than another run of it: every run of one code " +
+                "parameter must be handed the same."
+            )
+          )
+        )
         .copy(handleChoices = state.handleChoices.updated(hole.id, candidate.name.value))
     )
 }

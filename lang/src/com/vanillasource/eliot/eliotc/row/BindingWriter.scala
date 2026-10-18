@@ -980,14 +980,17 @@ object BindingWriter {
             val held    = fields.map { case ((fieldAbility, arguments), isCaptured) =>
               val key = keyedHole(implementation)
               val arg =
-                if (isCaptured)
+                if (isCaptured) {
+                  // The by-name half of the scope check (`docs/effects.md` D36): a captured entry with no handle of its
+                  // effect in scope at all is what this definition performs and does not declare.
+                  if (candidates(fieldAbility, scope).isEmpty) reportUncovered(fieldAbility, implementation, scope)
                   handleHole(
                     implementation,
                     fieldAbility,
                     arguments.map(argument => implementation.as(substituted(argument, keys))),
                     scope
                   )
-                else unitValue(implementation)
+                } else unitValue(implementation)
               (key, arg)
             }
             val entry   = HandleHole.Entry(
