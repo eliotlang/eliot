@@ -24,7 +24,7 @@
 # Traps this script exists to encode (reference_verification_harness_recipes):
 #   - the compiler's main class is `…eliotc.compiler.Main`, not `…eliotc.Main`;
 #   - `build.mill` appends the layer paths, so a direct invocation must pass all three `--path`s;
-#   - `target/.eliot-cache` must go between compiles or stale facts replay;
+#   - the cache (`target/.eliot-*`) must go between compiles or stale facts replay;
 #   - examples reading stdin behave differently on a tty, so stdin is always /dev/null;
 #   - a pre-change baseline must be swept from a PRISTINE `out/` (stash the change, `./mill compile`,
 #     sweep, unstash) — this script does not do that for you.
@@ -93,7 +93,7 @@ trap 'rm -rf "$tmp"' EXIT
 compiled=0
 for module in "${modules[@]}"; do
   jar="$REPO/target/$module.jar"
-  rm -rf "$REPO/target/.eliot-cache" "$jar"
+  rm -rf "$REPO"/target/.eliot-* "$jar"
 
   java -cp "$classpath" com.vanillasource.eliot.eliotc.compiler.Main \
     jvm exe-jar examples/src/ -m "$module" \

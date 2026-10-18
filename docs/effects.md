@@ -1563,10 +1563,46 @@ and uses in `row` (`BindingWriter`). What is new:
    - the `row` phase no longer reads a slot's type arguments off the actual's declared row (A6) on this path;
    - a guarded signature's uncovered `Throw` is read as `runThrow(…)`, the `Either` the guard read already discharges.
 
-   Left for 2b: a guarded signature's compile-track reduction (`if`/`else`/`runThrow` inside it mismatch); triage of
-   the jvm suite's failures — D35-only behaviour (a block per variant, D30 spelling messages, the "nearer binding"
-   check) against real gaps (an ability member declaring an effect, named implementations with type parameters in a
-   pattern); eliot-test and eliot-build under the switch; the jar difference.
+   **2b, measured (2026-10-18).** Under the switch **all 46 runnable examples print what the old path prints**,
+   **eliot-test's suite and eliot-build's print exactly what they print on the old path** (193 and 368 cases), the
+   latter after one declaration is changed (below), and `./mill __.test` on the old path stays green. `lang` differs in 2
+   of 1039 tests and `jvm` in 16 of 655, every one an old-path shape, a D36 reversal or the same rejection worded by
+   the hole rule:
+   - D35 step 5a (5 tests): runs of one code parameter handed different implementations are now the error point 6
+     names — "This run of the code is handed another implementation than another run of it";
+   - D30 (3) and D35's "a nearer binding stands between them" (1): entries compare after evaluation, and a capture is
+     lexical, so these compile or are refused by the hole rule;
+   - `SuppliedRowArgumentsProcessor` (1), which this decision deletes;
+   - 6 rejections the hole rule words itself ("No handle in scope here answers 'Source[Int]'. In scope: …", "declares
+     the effect 'Throw[String]'", with its arguments).
+
+   Fixed for it, each a choice for sign-off with the readings above:
+   - a guarded signature reads its callees' handed types and fills its holes before the read-back; an uncovered
+     `abort` is read as `… else raise("A type guard rejected this use.")` inside `runThrow`, so both control effects give
+     the guard read one verdict shape, with the old path's message;
+   - an anonymous `implement` block's marker carries no clause row on this path, and conformance compares member and
+     clause without the handles of other effects;
+   - **a named implementation's type parameter its handle's value does not fix** — one no parameter type and no clause
+     entry mentions — is left out of the handle `data` and keyed afresh at each hole the `with` is offered to, so one
+     `with showing` still serves `Source[Int]` and `Source[String]` (§8 item 30); one a field fixes is one per handle;
+   - D29's refusal of an implementation type parameter its pattern does not take is made in `core` on this path, since
+     nothing demands the named marker's `row` phase;
+   - a clause's binders mirror its member's after its instance's, its captured handles' last, and a `~` constraint's
+     binder is minted before the row's on this path, so dispatch's positional type arguments land where they belong;
+   - a capture with no handle of its effect in scope is the by-name "performs … but does not declare it".
+
+   **For Robert — a corpus change.** eliot-build's `cachedDescriptorTextAt` is typed `Offline[Option[String]]`, a row
+   alias including `Throw[GitError]`, and nothing in its body performs `Throw[GitError]`. The old path accepted it
+   because its unspelled `raise(NotFetched(…))` consumed every `Throw` binding by name; the hole rule checks by entry and
+   refuses it ("declares the effect 'Throw[GitError]' but does not perform it"). Either eliot-build spells that one
+   declaration's clause without the alias (what the measurement above did), or an entry that arrives through a row alias
+   is exempt from the exact half of the check. Not decided.
+
+   **The jar difference** is all the handles' data representation, which point 11 defers to erasure: over the 46
+   examples, +22.2% bytes (693 312 ⤳ 847 542), +22.8% classes (1 217 ⤳ 1 494) and +20.6% instructions — per handle a
+   `data` class, its `PatternMatch` instance and accessor lambdas, and per `with` the lambda binding its handle. The
+   smallest programs grow most (HelloWorld +50%: `StandardConsole$Handle` and `main`'s binding lambda).
+
 3. **The switch and the deletions together**: the default flips, the switch and D35's machinery go, Part I is rewritten
    in capability terms, §12's restated entries and the cornerstone in `CLAUDE.md`; then a release.
 4. **Erasure**, measured against today's jar.
