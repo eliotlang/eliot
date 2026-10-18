@@ -1,7 +1,14 @@
 package com.vanillasource.eliot.eliotc.core.processor
 
 import cats.syntax.all.*
-import com.vanillasource.eliot.eliotc.ast.fact.{EffectRow, FunctionDefinition, GenericParameter, UnresolvedAbilityConstraint}
+import com.vanillasource.eliot.eliotc.ast.fact.{
+  ArgumentDefinition,
+  EffectRow,
+  FunctionDefinition,
+  GenericParameter,
+  Handles,
+  UnresolvedAbilityConstraint
+}
 import com.vanillasource.eliot.eliotc.ast.fact.Expression
 import com.vanillasource.eliot.eliotc.ast.fact.Expression.*
 import com.vanillasource.eliot.eliotc.module.fact.{Qualifier, WellKnownTypes}
@@ -53,8 +60,14 @@ object EffectSugarDesugarer {
   /** The binder name minted for a row entry or a `~` constraint. Nothing reads it: it is written positionally. */
   private val binderPrefix = "Impl"
 
-  /** Rewrite one function definition — see the object comment. */
-  def desugar(function: FunctionDefinition): FunctionDefinition =
+  /** Rewrite one function definition — see the object comment.
+    *
+    * @param handles
+    *   The new effect path (`docs/effects.md` D36): each row entry's binder is also the type of a **handle parameter**
+    *   the definition takes ([[Handles.parameter]]), after the handles it already takes (an effect member's own) and
+    *   before its own parameters, so a call hands it the handle its caller has in scope for the entry.
+    */
+  def desugar(function: FunctionDefinition, handles: Boolean = false): FunctionDefinition =
     if (signatureAndBodyRows(function).isEmpty && unprocessedConstraints(function).isEmpty) function
     else {
       val anchor                       = function.name
@@ -97,10 +110,16 @@ object EffectSugarDesugarer {
       }
       val (before, after)              = adapted.splitAt(mintAt(function))
       val declared                     = declaredEffectRow(function)
+      val ownArgs                      =
+        function.args.map(arg => arg.copy(typeExpression = parameterType(function)(arg.typeExpression)))
+      val (heldHandles, userArgs)      = ownArgs.span(arg => Handles.isParameter(arg.name.value))
+      val rowHandles                   =
+        if (handles) rowBinders.map(binder => ArgumentDefinition(binder.name.map(Handles.parameter), binder.name.as(typeExpr(binder.name))))
+        else Seq.empty
 
       function.copy(
         genericParameters = before ++ rowBinders ++ constraintBinders ++ after,
-        args = function.args.map(arg => arg.copy(typeExpression = parameterType(function)(arg.typeExpression))),
+        args = heldHandles ++ rowHandles ++ userArgs,
         typeDefinition = bare(function.typeDefinition),
         body = function.body.map(bare),
         // An ability member arrives with the row its membership implies already recorded
@@ -152,7 +171,10 @@ object EffectSugarDesugarer {
     */
   private def declaredEffectRow(
       function: FunctionDefinition
-  ): EffectRow[UnresolvedAbilityConstraint[Sourced[Expression]]] =
+  ): EffectRow[UnresolvedAbilityConstraint[Sourced[Expression]]] = {
+    // A parameter is counted among the definition's own: the handles an effect member already takes are not
+    // (`docs/effects.md` D36), so every index here is the same on both effect paths.
+    val args = function.args.dropWhile(arg => Handles.isParameter(arg.name.value))
     EffectRow(
       (returnRowEntries(function) ++ namedRowEntries(function)).distinctBy(constraintKey),
       // A meta companion's parameters are not thunked ([[parameterType]]), so they must not be recorded as row
@@ -160,20 +182,21 @@ object EffectSugarDesugarer {
       // doing that against a bare parameter is exactly the mismatch it would cause.
       if (isMetaCompanion(function)) Seq.empty
       else
-        function.args.zipWithIndex.collect {
+        args.zipWithIndex.collect {
           case (arg, index) if isRow(arg.typeExpression) =>
             EffectRow.ParameterEffects(index, topLevelRowEntries(arg.typeExpression), arg.closedRow)
         },
       callbackEffects =
         if (isMetaCompanion(function)) Seq.empty
         else
-          function.args.zipWithIndex.flatMap { case (arg, index) =>
+          args.zipWithIndex.flatMap { case (arg, index) =>
             codomainRow(arg.typeExpression).map { case (arity, entries) =>
               EffectRow.CallbackEffects(index, arity, entries, arg.closedRow)
             }
           },
-      returnArity = function.args.size
+      returnArity = args.size
     )
+  }
 
   /** The row in a function type's **final codomain** — `A => {} B`, `A => B => {Log} C` — with the number of arrows
     * before it, when the type is an arrow chain ending in one. That row marks the parameter as code the callee calls,

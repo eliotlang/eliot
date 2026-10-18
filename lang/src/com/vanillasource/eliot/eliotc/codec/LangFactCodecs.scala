@@ -287,6 +287,15 @@ object LangFactCodecs {
       : FactCodec[com.vanillasource.eliot.eliotc.operator.processor.TokenClassifier.Operand] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_operator_fact_OperatorResolvedExpression
       : FactCodec[com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedExpression] = FactCodec.derived
+  given codec_com_vanillasource_eliot_eliotc_operator_fact_OperatorResolvedExpression_HandleHole_Entry
+      : FactCodec[com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedExpression.HandleHole.Entry] =
+    FactCodec.derived
+  given codec_com_vanillasource_eliot_eliotc_operator_fact_OperatorResolvedExpression_HandleHole_Candidate
+      : FactCodec[com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedExpression.HandleHole.Candidate] =
+    FactCodec.derived
+  given codec_com_vanillasource_eliot_eliotc_operator_fact_OperatorResolvedExpression_HandleHole
+      : FactCodec[com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedExpression.HandleHole] =
+    FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_operator_fact_OperatorResolvedExpression_WithBinding
       : FactCodec[com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedExpression.WithBinding] =
     FactCodec.derived

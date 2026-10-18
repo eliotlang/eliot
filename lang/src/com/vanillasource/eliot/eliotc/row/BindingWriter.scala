@@ -1,7 +1,7 @@
 package com.vanillasource.eliot.eliotc.row
 
 import cats.syntax.all.*
-import com.vanillasource.eliot.eliotc.ast.fact.{EffectRow, ImplementationParameters}
+import com.vanillasource.eliot.eliotc.ast.fact.{EffectRow, Handles, ImplementationParameters}
 import com.vanillasource.eliot.eliotc.core.fact.RoleHint
 import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, Qualifier, Role, ValueFQN, WellKnownTypes}
 import com.vanillasource.eliot.eliotc.monomorphize.check.DeclaredEntries
@@ -113,8 +113,16 @@ object BindingWriter {
       bySlot: Boolean = false,
       arguments: Option[Seq[String]] = None,
       clauses: Seq[Binding.Clause] = Seq.empty,
-      serial: Long = Binding.nextSerial()
-  )
+      serial: Long = Binding.nextSerial(),
+      handle: Option[HandleHole.Candidate] = None,
+      group: Option[Long] = None
+  ) {
+
+    /** Which bindings are equally near: those put in scope by one binder — a definition's own handles, one block's
+      * parameters. A binding of its own is its own group.
+      */
+    def distance: Long = group.getOrElse(serial)
+  }
 
   /** What [[Writer.sharedHoles]] adds to one reference: the type arguments it writes past the call's own, and the
     * keyed hole each keyed binder stands for, by name.
@@ -209,9 +217,9 @@ object BindingWriter {
     * is the error, which is the whole of the scope check — the synthesized entry point included, which binds every
     * effect of `main`'s clause with `with` ([[EntryPoint]]).
     */
-  def write(orv: OperatorResolvedValue, universe: RowChecker.Universe): Written = {
-    val writer     = new Writer(universe)
-    val received   = receivedBindings(orv)
+  def write(orv: OperatorResolvedValue, universe: RowChecker.Universe, handles: Boolean = false): Written = {
+    val writer     = new Writer(universe, handles)
+    val received   = receivedBindings(orv, handles)
     val scope      = Scope(
       received,
       thunkParameters(orv),
@@ -307,16 +315,52 @@ object BindingWriter {
 
   /** The bindings a definition receives from its caller — resolution-order step 2 — one per phantom binder of its own
     * signature, naming that binder.
+    *
+    * On the new effect path (`handles`) an effect's binding is a **handle parameter** too, and every handle the
+    * definition receives is equally near ([[Binding.group]]).
     */
-  private def receivedBindings(orv: OperatorResolvedValue): Seq[Binding] = {
+  private def receivedBindings(orv: OperatorResolvedValue, handles: Boolean): Seq[Binding] = {
     val entries = entryArguments(orv)
+    val binders = SignatureView.of(orv.signature).binders
+    val effects = orv.effectRow.returnEffects.map(_.abilityFQN).toSet
+    val group   = Binding.nextSerial()
     phantoms(orv).map { case (index, ability) =>
       Binding(
         ability,
         received = Some(index),
-        arguments = entries.get(index).map(_.map(_.render))
+        arguments = entries.get(index).map(_.map(_.render)),
+        handle = Option
+          .when(handles && effects.contains(ability))(entries.get(index))
+          .flatten
+          .map(arguments =>
+            HandleHole.Candidate(
+              binders(index).name.map(Handles.parameter),
+              HandleHole.Entry(ability, arguments.map(binders(index).name.as(_)))
+            )
+          ),
+        group = Some(group)
       )
     }
+  }
+
+  /** The handle parameters a definition takes, in order: its leading value parameters whose type is one of its
+    * binding binders for an **effect** (`docs/effects.md` D36 point 3), as the binder's index and ability. A definition
+    * on the old effect path takes none.
+    */
+  private def handleParameters(orv: OperatorResolvedValue): Seq[(Int, AbilityFQN)] = {
+    val view    = SignatureView.of(orv.signature)
+    val effects = orv.effectRow.returnEffects.map(_.abilityFQN).toSet
+    val marks   = phantoms(orv).toMap
+    view.parameters
+      .map(_.value match {
+        case ParameterReference(name) =>
+          Some(view.binders.indexWhere(_.name.value === name.value)).filter(_ >= 0).flatMap(index =>
+            marks.get(index).filter(effects.contains).map(index -> _)
+          )
+        case _                        => None
+      })
+      .takeWhile(_.isDefined)
+      .flatten
   }
 
   /** The names of this definition's row-typed value parameters: a reference to one runs it. */
@@ -596,7 +640,7 @@ object BindingWriter {
       case _                                                     => None
     })
 
-  private class Writer(universe: RowChecker.Universe) {
+  private class Writer(universe: RowChecker.Universe, handles: Boolean) {
     val violations: mutable.Buffer[Violation] = mutable.Buffer.empty
 
     /** The binder indices of the **received** bindings some reference was written from ([[overDeclared]]). */
@@ -701,16 +745,17 @@ object BindingWriter {
           head match {
             case ValueReference(callee, existing) if ImplementationParameters.isBinder(callee.value) &&
                   universe.lookup(callee.value).isDefined =>
-              walkSupplied(expr, expr.as(head), callee, existing, args, scope, applied)
+              if (handles && !scope.signature) walkHandleWith(expr, callee, args, scope, applied)
+              else walkSupplied(expr, expr.as(head), callee, existing, args, scope, applied)
             case ValueReference(callee, existing)                                   =>
-              val written      = writeBindings(expr.as(head), callee.value, existing, scope, args)
+              val (written, holes) = writeBindings(expr.as(head), callee.value, existing, scope, args)
               unappliedEffectful(callee, args.size + applied, scope).foreach(violations += _)
-              val substitution =
+              val substitution     =
                 universe.lookup(callee.value).fold(Map.empty)(orv => callSubstitution(orv, existing, args))
-              val adjusted     = args.zipWithIndex.map { case (arg, index) =>
+              val adjusted         = args.zipWithIndex.map { case (arg, index) =>
                 walkArgument(arg, callee.value, index, scope, substitution)
               }
-              expr.as(applyChain(written, adjusted))
+              expr.as(applyChain(written, holes ++ adjusted))
             case ParameterReference(selector) if selector.value === matchSelector =>
               expr.as(applyChain(walk(expr.as(head), scope), args.map(walkCode(_, scope, Int.MaxValue))))
             case _                                                                  =>
@@ -738,7 +783,7 @@ object BindingWriter {
           val binding   = Binding(ability, byWith = true, clauses = clauses)
           // The implementation's own clause entries are answered where the `with` stands — the scope check of what
           // installing it performs — except a per-call one, which each operation's call answers.
-          writeBindings(implementation.as(ValueReference(implementation)), implementation.value, Seq.empty, scope, Seq.empty, perCall)
+          writeBindings(implementation.as(ValueReference(implementation)), implementation.value, Seq.empty, scope, Seq.empty, perCall)._1
           val written = walk(subject, scope.bind(binding), applied)
           if (!scope.signature && !used.contains(binding.serial))
             violations += unusedWith(subject, implementation, ability, scope)
@@ -782,7 +827,7 @@ object BindingWriter {
           if (existing.isEmpty) marker.fold(Seq.empty)(suppliedTypeArguments(callee, _, entries)) else existing,
           scope,
           args
-        )
+        )._1
       if (position < 0) expr.as(applyChain(written(Seq.empty, None), args.map(walk(_, scope))))
       else {
         if (position != declared) {
@@ -811,6 +856,93 @@ object BindingWriter {
         )
       }
     }
+
+    /** A `with` on the new effect path (`docs/effects.md` D36 point 5): the handle its implementation's `data` holds,
+      * bound around its subject as an ordinary `let`, where every hole in the subject may take it.
+      *
+      * {{{
+      * scripted$with(answer, greet("Bob") with scripted)
+      *   ⟶ ($with1 -> greet(?Console{$with1: Console | …}, "Bob"))(scripted$Handle(answer))
+      * }}}
+      *
+      * The arguments are computed where the `with` is written, outside its binding, as before. The handle's entry is
+      * the implementation's pattern, its type parameters keyed holes written at the data's constructor, so the checker
+      * reads them off the arguments and the uses alike.
+      */
+    private def walkHandleWith(
+        expr: Sourced[OperatorResolvedExpression],
+        callee: Sourced[ValueFQN],
+        args: Seq[Sourced[OperatorResolvedExpression]],
+        scope: Scope,
+        applied: Int
+    ): Sourced[OperatorResolvedExpression] = {
+      val position = args.indexWhere(_.value match {
+        case WithBinding(_, named) => ImplementationParameters.binderOf(named.value) == callee.value
+        case _                     => false
+      })
+      if (position < 0) expr.as(applyChain(expr.as(ValueReference(callee)), args.map(walk(_, scope))))
+      else {
+        val declared                             =
+          universe.lookup(callee.value).fold(0)(orv => SignatureView.of(orv.signature).parameters.size - 1)
+        val (supplied, rest)                     = args.splitAt(position)
+        val WithBinding(subject, implementation) = rest.head.value: @unchecked
+        if (position != declared)
+          violations += Violation(
+            args(position).as(
+              s"The implementation '${implementationName(implementation.value)}' takes $declared parameter" +
+                s"${if (declared == 1) "" else "s"}, but this `with` supplies $position."
+            )
+          )
+        (abilityOf(implementation.value, universe), universe.lookup(implementation.value)) match {
+          case (Some(ability), Some(marker)) =>
+            val view    = SignatureView.of(marker.signature)
+            val keys    = view.binders.map(binder => binder.name.value -> keyedHole(implementation)).toMap
+            val entry   = HandleHole.Entry(
+              ability,
+              view.parameters.map(pattern =>
+                pattern.as(keys.foldLeft(pattern.value) { case (acc, (name, key)) => substitute(acc, name, key) })
+              )
+            )
+            val name    = implementation.as(s"$$with${nextWith()}")
+            val binding = Binding(ability, byWith = true, handle = Some(HandleHole.Candidate(name, entry)))
+            val bound   = walk(subject, scope.shadow(name.value).bind(binding), applied + rest.size - 1)
+            if (!used.contains(binding.serial)) violations += unusedWith(subject, implementation, ability, scope)
+            val handle  = applyChain(
+              implementation.as(
+                ValueReference(
+                  implementation.as(
+                    ValueFQN(
+                      marker.vfqn.moduleName,
+                      QualifiedName(Handles.dataType(implementationName(implementation.value)), Qualifier.Default)
+                    )
+                  ),
+                  view.binders.map(binder => implementation.as(keys(binder.name.value)))
+                )
+              ),
+              supplied.map(walk(_, scope))
+            )
+            val let     = FunctionApplication(implementation.as(FunctionLiteral(name, None, bound)), implementation.as(handle))
+            expr.as(applyChain(implementation.as(let), rest.tail.map(walk(_, scope))))
+          case _                             =>
+            violations += Violation(implementation.as("This name is not an implementation."))
+            walk(subject, scope, applied)
+        }
+      }
+    }
+
+    private var withs: Long = 0
+
+    private def nextWith(): Long = {
+      withs += 1
+      withs
+    }
+
+    /** A named implementation's own name, off its marker's qualifier. */
+    private def implementationName(marker: ValueFQN): String =
+      marker.name.qualifier match {
+        case Qualifier.AbilityImplementation(_, _, Some(name)) => name
+        case _                                                 => marker.name.name
+      }
 
     /** The type arguments of the binder `callee` of the implementation `marker` that the `entries` a `with` binds
       * decide: the implementation's pattern matched against each entry's arguments, as the two-site search matches an
@@ -1108,40 +1240,84 @@ object BindingWriter {
         scope: Scope,
         args: Seq[Sourced[OperatorResolvedExpression]],
         perCall: Set[Int] = Set.empty
-    ): Sourced[OperatorResolvedExpression] =
+    ): (Sourced[OperatorResolvedExpression], Seq[Sourced[OperatorResolvedExpression]]) =
       universe.lookup(callee) match {
-        case None      => reference
+        case None      => (reference, Seq.empty)
         case Some(orv) =>
           val effects          = orv.effectRow.returnEffects.map(_.abilityFQN).toSet
           val marks            = phantoms(orv).toMap
+          val binders          = SignatureView.of(orv.signature).binders
+          val handled          = if (handles && !scope.signature) handleParameters(orv) else Seq.empty
           val supplied         = if (existing.isEmpty) suppliedArguments(orv, args, marks.keySet) else existing
           val entries          = entryArguments(orv)
           val substitution     = substitutionOf(orv, marks.keySet, supplied)
-          val shared           = sharedHoles(orv, marks, supplied, entries, substitution, reference, scope)
+          val shared           =
+            if (handled.nonEmpty) SharedHoles(Seq.empty, Map.empty)
+            else sharedHoles(orv, marks, supplied, entries, substitution, reference, scope)
           val determined       = supplied ++ shared.written
+          // A handle's entry names the callee's binders, so every binder it names is written — a keyed hole where the
+          // call determines nothing — and the entry the hole asks for is spelled with what is written there.
+          val reachTo          = handled.foldLeft(-1) { case (acc, (index, _)) =>
+            val named = binders.zipWithIndex.collect {
+              case (binder, i) if entries.getOrElse(index, Seq.empty).exists(containsVar(_, binder.name.value)) => i
+            }
+            (index +: named).foldLeft(acc)(math.max)
+          }
           val (written, reach) = mergeTypeArguments(
-            SignatureView.of(orv.signature).binders.size,
+            binders.size,
             marks,
             determined,
-            Option.unless(scope.signature)(reference.as(ValueReference(reference.as(WellKnownTypes.inferredTypeArgumentFQN)))),
+            Option.unless(scope.signature)(_ =>
+              if (handled.nonEmpty) reference.as(keyedHole(reference))
+              else reference.as(ValueReference(reference.as(WellKnownTypes.inferredTypeArgumentFQN)))
+            ),
+            reachTo,
             (index, ability) => {
               if (!perCall.contains(index)) bindingFor(
                 ability,
-                entries.get(index).flatMap(spelledRendered(_, substitution)),
+                if (handled.nonEmpty) None else entries.get(index).flatMap(spelledRendered(_, substitution)),
                 entries.get(index).flatMap(spelledArguments(_, substitution ++ shared.holes)),
                 effects.contains(ability),
                 reference,
                 scope
               )
-              reference.as(defaultBinding(reference))
+              if (handled.exists(_._1 == index)) reference.as(keyedHole(reference))
+              else reference.as(defaultBinding(reference))
             }
           )
           marks.toSeq.filter(_._1 >= reach).sortBy(_._1).foreach { case (_, ability) =>
             violations += unreachableBinding(orv, ability, reference)
           }
-          if (written.isEmpty) reference
-          else reference.as(ValueReference(nameOf(reference), written))
+          val writtenBy        = binders.map(_.name.value).zip(written.map(_.value)).toMap
+          val holes            = handled.map { case (index, ability) =>
+            val asked = HandleHole.Entry(
+              ability,
+              entries
+                .getOrElse(index, Seq.empty)
+                .map(argument =>
+                  reference.as(writtenBy.foldLeft(argument) { case (acc, (name, value)) => substitute(acc, name, value) })
+                )
+            )
+            reference.as(HandleHole(asked, candidates(ability, scope)))
+          }
+          (if (written.isEmpty) reference else reference.as(ValueReference(nameOf(reference), written)), holes)
       }
+
+    /** The handles in `scope` that may answer an entry of `ability`, nearest first, grouped by the binder that put them
+      * in scope. A handle beyond a value is left out: a value may use no effect bound outside it, which the scope
+      * check reports by name ([[bindingFor]]).
+      */
+    private def candidates(ability: AbilityFQN, scope: Scope): Seq[Seq[HandleHole.Candidate]] =
+      scope.bindings
+        .filter(binding => binding.ability == ability && !binding.beyondValue)
+        .flatMap(binding => binding.handle.map(binding.distance -> _))
+        .foldLeft(Seq.empty[(Long, Seq[HandleHole.Candidate])]) {
+          case (groups :+ ((distance, group)), (next, candidate)) if distance == next =>
+            groups :+ (distance -> (group :+ candidate))
+          case (groups, (next, candidate))                                             =>
+            groups :+ (next -> Seq(candidate))
+        }
+        .map(_._2)
 
     /** The **keyed holes** of a reference whose entry a `with` binds but whose arguments this call does not spell
       * (`docs/effects.md` §8 item 36): `pick(1) with mapping(x -> show(x))`, for `def pick[A](a: A) uses Source[A]`,
@@ -1221,17 +1397,18 @@ object BindingWriter {
         binderCount: Int,
         marks: Map[Int, AbilityFQN],
         determined: Seq[Sourced[OperatorResolvedExpression]],
-        hole: Option[Sourced[OperatorResolvedExpression]],
+        hole: Option[Int => Sourced[OperatorResolvedExpression]],
+        reachTo: Int,
         binding: (Int, AbilityFQN) => Sourced[OperatorResolvedExpression]
     ): (Seq[Sourced[OperatorResolvedExpression]], Int) = {
-      val lastBinding       = marks.keys.maxOption.getOrElse(-1)
+      val lastBinding       = math.max(marks.keys.maxOption.getOrElse(-1), reachTo)
       val (slots, leftover) = (0 until binderCount).foldLeft(
         (Seq.empty[Option[Sourced[OperatorResolvedExpression]]], determined)
       ) { case ((acc, rest), index) =>
         marks.get(index) match {
           case Some(ability) => (acc :+ Some(binding(index, ability)), rest)
           case None          =>
-            (acc :+ rest.headOption.orElse(hole.filter(_ => index < lastBinding)), rest.drop(1))
+            (acc :+ rest.headOption.orElse(hole.filter(_ => index <= reachTo || index < lastBinding).map(_(index))), rest.drop(1))
         }
       }
       val reached = slots.takeWhile(_.isDefined).flatten

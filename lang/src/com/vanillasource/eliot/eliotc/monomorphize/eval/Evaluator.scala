@@ -49,6 +49,11 @@ class Evaluator(
 
     case OperatorResolvedExpression.FunctionLiteral(paramName, _, body) =>
       NbeEvaluator.Term.FunctionLiteral(paramName.value, body.value)
+
+    // A handle position (`docs/effects.md` D36): a runtime value the checker fills after the drain, so evaluated before
+    // that it is an unknown runtime value, as an unbound parameter is — no type depends on a handle's value.
+    case _: OperatorResolvedExpression.HandleHole =>
+      NbeEvaluator.Term.ParameterReference("$hole$")
   }
 }
 

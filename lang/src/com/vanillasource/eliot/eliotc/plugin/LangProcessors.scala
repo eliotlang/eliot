@@ -75,16 +75,23 @@ import com.vanillasource.eliot.eliotc.used.UsedNamesProcessor
   *     extra native processor onto this list passes that processor's label here so the [[BindingMergerProcessor]]
   *     consults it. The base labels ([[ContributedBinding.langNativeLabels]]) are always included — the contributors
   *     that own them are always in this list.
+  *   - `handles` — the **new effect path** being built beside the old one (`docs/effects.md` D36, order step 2): an
+  *     effect desugars to an ability over a handle type, a `uses` entry to a handle parameter, a named implementation to
+  *     a `data` and that ability's instance, and the checker fills each handle position with the nearest handle in
+  *     lexical scope whose entry answers it. Off by default, so `master` builds as before; `LangPlugin` turns it on
+  *     from the internal system property [[LangPlugin.handlesProperty]], never a CLI word, since the CLI is a
+  *     compatibility promise.
   */
 object LangProcessors {
   def apply(
       systemModules: Seq[ModuleName] = ModuleName.defaultSystemModules,
       maxNestedRepeats: Int = UsedNamesProcessor.DefaultMaxNestedRepeats,
-      extraNativeBindingLabels: Seq[String] = Seq.empty
+      extraNativeBindingLabels: Seq[String] = Seq.empty,
+      handles: Boolean = false
   ): Seq[CompilerProcessor] = Seq(
     Tokenizer(),
     ASTParser(),
-    CoreProcessor(),
+    CoreProcessor(handles),
     ModuleNamesProcessor(),
     ModuleValueProcessor(systemModules),
     UnifiedModuleNamesProcessor(),
@@ -98,7 +105,7 @@ object LangProcessors {
     NamedValuesIndexProcessor(),
     NamedValuesRewriteProcessor(),
     RecursionCheckProcessor(),
-    RowElaborationProcessor(),
+    RowElaborationProcessor(handles),
     SaturatedValueProcessor(),
     AbilityImplementationProcessor(),
     AbilityImplementationCheckProcessor(),
@@ -114,14 +121,14 @@ object LangProcessors {
       ContributedBinding.userLabels
     ),
     MonomorphicTypeCheckProcessor(),
-    SpecialisationProcessor(),
+    SpecialisationProcessor(handles),
     CompilerMonomorphicTypeCheckProcessor(),
     RefinementChannelProcessor(),
     SuppliedRowArgumentsProcessor(),
     // R2 meta-transfer accounting. Landed but not yet armed: nothing demands its fact in a normal build, so it is
     // dormant until wired as a `WovenValue` precondition (docs/total-meta-transfers.md §P2).
     MetaTransferAccountingProcessor(),
-    WovenValueProcessor(),
+    WovenValueProcessor(handles),
     UsedNamesProcessor(maxNestedRepeats),
     BodyValueReferencesProcessor(),
     MonomorphicUncurryingProcessor(),

@@ -3,14 +3,20 @@ package com.vanillasource.eliot.eliotc.core.processor
 import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.ast.fact.{
   ArgumentDefinition,
+  DataConstructor,
+  DataDefinition,
   Expression,
   FunctionDefinition,
+  Handles,
   ImplementationParameters,
   ImplementationRows,
+  LambdaParameterDefinition,
   NamedImplementation,
   Visibility
 }
+import com.vanillasource.eliot.eliotc.core.fact.RoleHint
 import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, Qualifier}
+import com.vanillasource.eliot.eliotc.source.content.Sourced
 
 /** Lowers a **named** `implement` (effects v6, `docs/effects.md` §9.3) into ordinary [[FunctionDefinition]]s, the way
   * [[com.vanillasource.eliot.eliotc.ast.fact.ImplementBlock]] lowers the anonymous form — with one addition.
@@ -49,6 +55,143 @@ import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, Qualifier}
   * A named implementation is always public: it exists to be named from elsewhere.
   */
 object NamedImplementationDesugarer {
+
+  /** The lowering on the new effect path (`docs/effects.md` D36 point 2): a named implementation is a **`data`** and an
+    * **ordinary instance** of its effect's ability, whose first pattern argument is that data type.
+    *
+    * {{{
+    * implement scripted(answer: String): Console { def printLine(line: String): Unit = … answer … }
+    *   ⟶ data scripted$Handle(scripted$answer: String)
+    *     implement Console[scripted$Handle] {
+    *        def printLine(self$handle: scripted$Handle, line: String): Unit = { val answer = scripted$answer(self$handle); … }
+    *     }
+    * }}}
+    *
+    * The data's value is the **handle** a `with` puts in scope, and its fields are the implementation's parameters, so a
+    * clause reads them off its own handle. Every implementation has a type of its own, so its instance is the only one
+    * at its pattern: the two-site search finds it in the data's module, and nothing overlaps it. The name marker and the
+    * `with` binder stay, unchanged, and so does its parameters declaration, so a `with` naming the implementation
+    * resolves and supplies its arguments as before; the `row` phase turns the
+    * binder's call into the handle in scope. So does the implementation's marker under its own name, with no clause
+    * beside it: it is what the resolver reaches the binder through.
+    */
+  def desugar(implementation: NamedImplementation, handles: Boolean): Seq[(FunctionDefinition, RoleHint)] =
+    if (!handles) desugar(implementation).map(_ -> RoleHint.NoHint)
+    else {
+      val abilityName = implementation.ability.value
+      val implName    = implementation.name.value
+      val anchor      = implementation.name
+      val generics    = implementation.genericParameters.map(_.copy(abilityConstraints = Seq.empty))
+      val handleType  = anchor.as(
+        Expression.FunctionApplication(
+          None,
+          anchor.as(Handles.dataType(implName)),
+          // Always bracketed: the name is lower-case, and only brackets put a lower-case name in the type namespace.
+          Some(generics.map(gp => gp.name.as(typeExpr(gp.name)))),
+          Seq.empty
+        )
+      )
+      val data        = DataDefinition(
+        anchor.as(Handles.dataType(implName)),
+        generics,
+        Some(
+          Seq(
+            DataConstructor(
+              anchor.as(Handles.dataType(implName)),
+              implementation.parameters.map(p => p.copy(name = p.name.map(Handles.field(implName, _))))
+            )
+          )
+        )
+      )
+      val pattern     = handleType +: implementation.pattern
+      val qualifier   = Qualifier.AbilityImplementation(abilityName, pattern.map(_.value.render).mkString(", "), None)
+      val methods     = implementation.functions.map { f =>
+        if (f.name.value.qualifier == Qualifier.Type)
+          f.copy(
+            name = f.name.map(n => QualifiedName(n.name, qualifier)),
+            genericParameters = implementation.genericParameters ++ f.genericParameters,
+            visibility = Visibility.Public
+          )
+        else
+          f.copy(
+            name = f.name.map(n => QualifiedName(n.name, qualifier)),
+            genericParameters = implementation.genericParameters ++ f.genericParameters,
+            args = ArgumentDefinition(anchor.as(Handles.self), handleType) +: f.args,
+            body = f.body.map(fieldsBound(implName, implementation.parameters, _)),
+            visibility = Visibility.Public
+          )
+      }
+      val instance    = FunctionDefinition(
+        implementation.ability.as(QualifiedName(abilityName, qualifier)),
+        implementation.genericParameters,
+        pattern.zipWithIndex.map { case (p, i) => ArgumentDefinition(anchor.as(s"arg$i"), p) },
+        Expression.trueReference(implementation.ability),
+        None
+      )
+      val named       = Qualifier.AbilityImplementation(
+        abilityName,
+        implementation.pattern.map(_.value.render).mkString(", "),
+        Some(implName)
+      )
+      val namedMarker = FunctionDefinition(
+        implementation.ability.as(QualifiedName(abilityName, named)),
+        implementation.genericParameters,
+        implementation.pattern.zipWithIndex.map { case (p, i) => ArgumentDefinition(anchor.as(s"arg$i"), p) },
+        Expression.trueReference(implementation.ability),
+        None
+      )
+      val nameMarker  = FunctionDefinition(
+        anchor.as(QualifiedName(implName, Qualifier.Implementation(implName))),
+        Seq.empty,
+        Seq.empty,
+        anchor.as(Expression.FunctionApplication(None, anchor.as("Type"), None, Seq.empty)),
+        None
+      )
+      DataDefinitionDesugarer.desugar(data) ++
+        (methods ++
+          ImplementationParameters.declaration(anchor, named, implementation.genericParameters, implementation.parameters, Seq.empty) :+
+          instance :+ namedMarker :+ nameMarker :+
+          ImplementationParameters.binder(anchor, named, implementation.genericParameters, implementation.parameters))
+          .map(_ -> RoleHint.NoHint)
+    }
+
+  /** A clause's body with each of the implementation's parameters bound to its field of the clause's own handle, so
+    * the body names them as it always did. Each binding line stands on the body's own line, so a block never joins it
+    * to the body as a continuation.
+    */
+  private def fieldsBound(
+      implName: String,
+      parameters: Seq[ArgumentDefinition],
+      body: Sourced[Expression]
+  ): Sourced[Expression] =
+    if (parameters.isEmpty) body
+    else
+      body.as(
+        Expression.BlockExpression(
+          parameters.map { p =>
+            Expression.BlockLine(
+              Some(LambdaParameterDefinition(p.name, Some(p.typeExpression))),
+              body.as(
+                Expression.FlatExpression(
+                  Seq(
+                    body.as(
+                      Expression.FunctionApplication(
+                        None,
+                        body.as(Handles.field(implName, p.name.value)),
+                        None,
+                        Seq(body.as(typeExpr(body.as(Handles.self))))
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          } :+ Expression.BlockLine(None, body)
+        )
+      )
+
+  private def typeExpr(name: Sourced[String]): Expression =
+    Expression.FunctionApplication(None, name, None, Seq.empty)
 
   def desugar(implementation: NamedImplementation): Seq[FunctionDefinition] = {
     val abilityName = implementation.ability.value

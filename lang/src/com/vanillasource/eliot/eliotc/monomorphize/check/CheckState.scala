@@ -69,6 +69,11 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
   *   The metavariable each **keyed** hole stands for — `Inferred[k]`, which the `row` phase writes at every place that
   *   must agree on one type the checker reads off the call (`docs/effects.md` §8 item 36): `pick`'s `A` in
   *   `pick(1) with mapping(x -> show(x))` and `mapping$with`'s `T`. The first occurrence of a key mints the meta.
+  * @param handleHoles
+  *   Every handle position the checker met, in the order it met them (`docs/effects.md` D36 point 4,
+  *   [[HandleHoleResolver]]).
+  * @param handleChoices
+  *   The handle each decided hole took, by hole id.
   */
 case class CheckState(
     gamma: Env,
@@ -79,7 +84,9 @@ case class CheckState(
     metaConstraints: Map[Int, Seq[CheckState.MetaConstraint]] = Map.empty,
     abilityArities: Map[ValueFQN, Int] = Map.empty,
     bindingForwards: Map[(ValueFQN, ValueFQN), Seq[(Int, Int)]] = Map.empty,
-    sharedHoles: Map[BigInt, VMeta] = Map.empty
+    sharedHoles: Map[BigInt, VMeta] = Map.empty,
+    handleHoles: Seq[HandleHoleResolver.Hole] = Seq.empty,
+    handleChoices: Map[Int, String] = Map.empty
 ) {
 
   /** Record a higher-kinded type-parameter instantiation meta with its expected kind, for post-drain verification. */

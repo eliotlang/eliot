@@ -34,12 +34,16 @@ object AbilityMembers {
     *   True for an `effect`: membership in the block says the member performs the effect, so the row is recorded on
     *   every member — the one place effect-ness is written down, and what the scope check and the write then read. An
     *   `ability`'s members declare nothing of the sort, which is what makes a constructor class expressible (§3.6).
+    * @param handles
+    *   The new effect path (`docs/effects.md` D36): an `effect` is an ability over a handle type, its binding binder
+    *   is that type, and every member takes the handle as its first value parameter ([[Handles.parameter]]).
     */
   def lower(
       name: Sourced[String],
       commonGenericParameters: Seq[GenericParameter],
       functions: Seq[FunctionDefinition],
-      performsItself: Boolean
+      performsItself: Boolean,
+      handles: Boolean = false
   ): Seq[FunctionDefinition] = {
     val qualifier     = Qualifier.Ability(name.value)
     val bindingBinder = GenericParameter(
@@ -58,12 +62,18 @@ object AbilityMembers {
         )
       else EffectRow.empty[UnresolvedAbilityConstraint[Sourced[Expression]]]
 
+    def handleOf(member: FunctionDefinition): Seq[ArgumentDefinition] =
+      if (handles && performsItself && member.name.value.qualifier != Qualifier.Type)
+        Seq(ArgumentDefinition(bindingBinder.name.map(Handles.parameter), bindingBinder.name.as(typeExpr(bindingBinder.name))))
+      else Seq.empty
+
     functions.map(f =>
       // `f.copy`, never a positional rebuild: every field this does not deliberately override — `doc`, `fixity`,
       // `precedence`, the refinement-channel companions — must forward untouched (the trap `ImplementBlock` records).
       f.copy(
         name = f.name.map(n => QualifiedName(n.name, qualifier)),
         genericParameters = abilityParams ++ f.genericParameters,
+        args = handleOf(f) ++ f.args,
         visibility = Visibility.Public,
         effectRow = ownRow(f)
       )

@@ -114,6 +114,8 @@ class TypeStackLoop(
       // Post-drain resolution + quoter assembly (shared with the signature twin): drain-and-resolve every metavariable,
       // abort on any unification error, then build the `PostDrainQuoter` over the drain-resolved impl bindings.
       quoter    <- drainAndBuildQuoter(resolvedValue, abilityRefs, returnMeta, monoEnv)
+      choices   <- inspect(_.handleChoices)
+      runtime   <- pure(runtime.map(_.map(HandleHoleResolver.fill(_, choices))))
       groundSig <- liftF(quoter.quoteSem(checkSig, resolvedValue.signature))
       // The compiler track reduces its body (`reduceSourced`); the runtime track keeps it structural (`quoteSourced`).
       // Narrow-representation reconciliation happens in the backend's `ExpressionCodeGenerator` off the refinement
@@ -423,7 +425,9 @@ class TypeStackLoop(
     } yield ()
 
   /** Saturation: drain the unifier — so the resolver sees every solution the previous round injected — then resolve
-    * abilities; loop while that progresses. Bounded: each ability resolves at most once, so progress is monotone.
+    * abilities and handle holes ([[HandleHoleResolver]]: the certain ones each round, one by agreement when nothing else
+    * progresses); loop while that progresses, and report the holes left open when it stops. Bounded: each ability and
+    * each hole resolves at most once, so progress is monotone.
     *
     * This used to interleave the A.8.7 **mode resolution** and, on a decided hoist, splice a body rewrite and restart
     * the whole mono. Since §1 rule 4 the row elaborator classifies every position from its declaration and writes both
@@ -433,9 +437,11 @@ class TypeStackLoop(
   private def resolveAbilitiesToFixedPoint(abilityRefs: Seq[AbilityRef]): CheckIO[Unit] = {
     def loop: CheckIO[Unit] =
       for {
-        _        <- modify(s => s.withUnifier(s.unifier.drain()))
-        progress <- checker.abilityResolver.resolveAbilities(abilityRefs)
-        _        <- if (progress) loop else pure(())
+        _         <- modify(s => s.withUnifier(s.unifier.drain()))
+        abilities <- checker.abilityResolver.resolveAbilities(abilityRefs)
+        holes     <- checker.handleHoles.resolveCertain
+        agreed    <- if (abilities || holes) pure(false) else checker.handleHoles.resolveByAgreement
+        _         <- if (abilities || holes || agreed) loop else checker.handleHoles.reportUndecided
       } yield ()
 
     loop

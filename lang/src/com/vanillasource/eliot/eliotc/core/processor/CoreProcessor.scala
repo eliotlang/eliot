@@ -20,7 +20,7 @@ import com.vanillasource.eliot.eliotc.processor.common.TransformationProcessor
   *   - Converts data definitions into constructor and accessor functions
   *   - Represents all types as levels in ExpressionStacks
   */
-class CoreProcessor
+class CoreProcessor(handles: Boolean = false)
     extends TransformationProcessor[SourceAST.Key, CoreAST.Key](key => SourceAST.Key(key.uri))
     with Logging {
 
@@ -50,11 +50,11 @@ class CoreProcessor
     // anonymous form lowers in `ImplementBlock` — except that the named form is parsed into a node of its own, so the
     // lowering runs here rather than in the parser. See NamedImplementationDesugarer.
     val desugaredNamedImplementations: Seq[(FunctionDefinition, RoleHint)] =
-      sourceAstData.namedImplementations.flatMap(NamedImplementationDesugarer.desugar).map(_ -> RoleHint.NoHint)
+      sourceAstData.namedImplementations.flatMap(NamedImplementationDesugarer.desugar(_, handles))
     // An `effect` declaration (effects v6 §9.3) lowers exactly as an `ability` block does — the difference is one
     // metadata flag, not a shape — except that it parses into a node of its own. See EffectDefinitionDesugarer.
     val desugaredEffects: Seq[(FunctionDefinition, RoleHint)] =
-      sourceAstData.effectDefinitions.flatMap(EffectDefinitionDesugarer.desugar).map(_ -> RoleHint.NoHint)
+      sourceAstData.effectDefinitions.flatMap(EffectDefinitionDesugarer.desugar(_, handles)).map(_ -> RoleHint.NoHint)
     val allFunctions  =
       sourceAstData.functionDefinitions.map(_ -> RoleHint.NoHint) ++
         desugaredFromData ++ desugaredMetaConstructors ++ desugaredMetaTransfers ++ desugaredWhereCompanions ++
@@ -64,7 +64,7 @@ class CoreProcessor
       // Effect-row sugar (`{E} A`) becomes one marked binding binder per entry before the function is converted, so
       // everything downstream sees ordinary generics (see EffectSugarDesugarer). Each definition splits at birth into
       // its `Runtime` twin and its `Signature` twin (see [[transformFunction]]).
-      allFunctions.flatMap { case (fd, hint) => transformFunction(EffectSugarDesugarer.desugar(fd), hint) }
+      allFunctions.flatMap { case (fd, hint) => transformFunction(EffectSugarDesugarer.desugar(fd, handles), hint) }
     )
 
     // Strict-positivity check (termination precondition #2): reject any `data` whose own type constructor appears in a

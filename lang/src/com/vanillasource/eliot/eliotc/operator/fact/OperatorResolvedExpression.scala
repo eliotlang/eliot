@@ -4,6 +4,7 @@ import cats.{Applicative, Monad}
 import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.matchdesugar.fact.MatchDesugaredExpression
 import com.vanillasource.eliot.eliotc.module.fact.{ValueFQN, WellKnownTypes}
+import com.vanillasource.eliot.eliotc.resolve.fact.AbilityFQN
 import com.vanillasource.eliot.eliotc.source.content.Sourced
 
 sealed trait OperatorResolvedExpression
@@ -37,6 +38,41 @@ object OperatorResolvedExpression {
       implementation: Sourced[ValueFQN]
   ) extends OperatorResolvedExpression
 
+  /** A **handle position** the `row` phase leaves for the checker to fill (`docs/effects.md` D36 point 4): the handle a
+    * call, an operation or a run of code is given for one `uses` entry. It names the entry it asks for and the handles
+    * in lexical scope that might answer it, nearest first and grouped by the binder that put them in scope; the checker
+    * takes the nearest one whose entry is definitionally equal after evaluation, and the node becomes a reference to
+    * that handle. Only the `row` phase writes one, and only on the new effect path.
+    *
+    * The entries are type expressions in the scope of the hole: the enclosing definition's binders, and keyed holes
+    * (`Inferred[k]`, [[WellKnownTypes.inferredTypeArgumentFQN]]) for what only a call's checking determines, so that
+    * `raise`'s `E` and the entry a block of `catch` is handed can stand for the same type.
+    */
+  case class HandleHole(
+      entry: HandleHole.Entry,
+      candidates: Seq[Seq[HandleHole.Candidate]]
+  ) extends OperatorResolvedExpression
+
+  object HandleHole {
+
+    /** An effect entry: the effect's ability and its type arguments, without the handle's type. */
+    case class Entry(ability: AbilityFQN, typeArgs: Seq[Sourced[OperatorResolvedExpression]]) {
+      def map(f: Sourced[OperatorResolvedExpression] => Sourced[OperatorResolvedExpression]): Entry =
+        copy(typeArgs = typeArgs.map(f))
+    }
+
+    /** A handle in scope — a parameter of that name — and the entry it answers. */
+    case class Candidate(name: Sourced[String], entry: Entry)
+
+    /** Every type expression a hole holds, its own entry's and its candidates'. */
+    def typeExpressions(hole: HandleHole): Seq[Sourced[OperatorResolvedExpression]] =
+      hole.entry.typeArgs ++ hole.candidates.flatten.flatMap(_.entry.typeArgs)
+
+    /** The hole with `f` applied to every type expression it holds. */
+    def mapTypes(hole: HandleHole)(f: Sourced[OperatorResolvedExpression] => Sourced[OperatorResolvedExpression]): HandleHole =
+      HandleHole(hole.entry.map(f), hole.candidates.map(_.map(c => c.copy(entry = c.entry.map(f)))))
+  }
+
   /** Replace every free occurrence of the parameter named `paramName` with `replacement`. Respects shadowing by
     * `FunctionLiteral` parameters of the same name.
     */
@@ -64,6 +100,8 @@ object OperatorResolvedExpression {
       FunctionLiteral(pn, newParamType, newBody)
     case WithBinding(subject, implementation)         =>
       WithBinding(subject.map(substitute(_, paramName, replacement)), implementation)
+    case hole: HandleHole                                    =>
+      HandleHole.mapTypes(hole)(_.map(substitute(_, paramName, replacement)))
     case _: IntegerLiteral | _: StringLiteral                =>
       expr
   }
@@ -82,6 +120,9 @@ object OperatorResolvedExpression {
       val inBody      = pn.value != varName && containsVar(body.value, varName)
       inParamType || inBody
     case WithBinding(subject, _)            => containsVar(subject.value, varName)
+    case hole: HandleHole                      =>
+      HandleHole.typeExpressions(hole).exists(t => containsVar(t.value, varName)) ||
+        hole.candidates.flatten.exists(_.name.value == varName)
     case _: IntegerLiteral | _: StringLiteral  => false
   }
 
@@ -110,6 +151,8 @@ object OperatorResolvedExpression {
         }
         withParam.flatMap(go(body.value, _))
       case WithBinding(subject, _)          => go(subject.value, s)
+      case hole: HandleHole                    =>
+        HandleHole.typeExpressions(hole).foldLeft(s.pure[F])((a, t) => a.flatMap(go(t.value, _)))
       case _: IntegerLiteral | _: StringLiteral | _: ParameterReference =>
         s.pure[F]
     }
@@ -129,7 +172,7 @@ object OperatorResolvedExpression {
         typeArgs.traverse(ta => f(ta.value).map(ta.as)).map(ValueReference(name, _))
       case WithBinding(subject, implementation)                  =>
         f(subject.value).map(sub => WithBinding(subject.as(sub), implementation))
-      case _: IntegerLiteral | _: StringLiteral | _: ParameterReference => expr.pure[F]
+      case _: HandleHole | _: IntegerLiteral | _: StringLiteral | _: ParameterReference => expr.pure[F]
     }
 
   /** True iff `expr` is a reference to the built-in `Function` type constructor (the arrow former). */
@@ -272,5 +315,11 @@ object OperatorResolvedExpression {
           (if (typeArgs.isEmpty) "" else typeArgs.map(ta => ta.value.render).mkString("[", ", ", "]"))
       case WithBinding(subject, implementation)                            =>
         s"${subject.value.render} with ${implementation.value.show}"
+      case HandleHole(entry, candidates)                                      =>
+        def shown(e: HandleHole.Entry) =
+          e.ability.abilityName + (if (e.typeArgs.isEmpty) "" else e.typeArgs.map(_.value.render).mkString("[", ", ", "]"))
+        s"?${shown(entry)}" + candidates
+          .map(_.map(c => s"${c.name.value}: ${shown(c.entry)}").mkString(", "))
+          .mkString("{", " | ", "}")
     }
 }

@@ -115,10 +115,15 @@ class AbilityResolver(
                             // evidence in scope (`docs/effects.md` D35): nothing in the key says which implementation
                             // answers it — the runtime track checks with effect bindings left out, and the compile
                             // track's are the caller's, while a block's are what the callee running it gives.
+                            //
+                            // On the new effect path (`docs/effects.md` D36) the first argument is the handle's type, not
+                            // a binding, and the operation is an ordinary ability method dispatched by it: the handle's
+                            // instance is the only one at its type.
                             liftF(AbilityKind.isEffect(AbilityFQN(abilityVfqn.value.moduleName, abilityName), platform))
                               .flatMap {
-                                case Some(true) => pure(false)
-                                case _          => resolveGround(abilityVfqn, abilityName, ground)
+                                case Some(true) if ImplementationBinding.split(ground)._2.isDefined => pure(false)
+                                case _                                                               =>
+                                  resolveGround(abilityVfqn, abilityName, ground)
                               }
                           case Left(_)                                                                         =>
                             pure(false)

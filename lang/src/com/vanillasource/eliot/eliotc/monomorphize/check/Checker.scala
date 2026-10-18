@@ -14,7 +14,7 @@ import com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedExpression.S
 import com.vanillasource.eliot.eliotc.processor.CompilerIO.*
 import com.vanillasource.eliot.eliotc.saturate.fact.SaturatedValue
 import com.vanillasource.eliot.eliotc.source.content.Sourced
-import com.vanillasource.eliot.eliotc.source.content.Sourced.compilerError
+import com.vanillasource.eliot.eliotc.source.content.Sourced.{compilerAbort, compilerError}
 
 /** Bidirectional type checker for the NbE pipeline. All state is threaded via the CheckIO state monad.
   *
@@ -64,6 +64,11 @@ class Checker(
     */
   private[check] val abilityResolver: AbilityResolver =
     new AbilityResolver(resolveAbility, bindingForwards, platform)
+
+  /** The hole rule (`docs/effects.md` D36 point 4): each handle position takes the nearest handle in scope whose entry
+    * answers it. Run from [[TypeStackLoop]]'s post-drain fixpoint beside ability resolution. See [[HandleHoleResolver]].
+    */
+  private[check] val handleHoles: HandleHoleResolver = new HandleHoleResolver
 
   /** Which binders of `method` take the call's binding when `member` dispatches to it, off the two declarations — both
     * referenced and resolved, so present. See [[DeclaredEntries.forwarded]].
@@ -388,7 +393,49 @@ class Checker(
 
     case OperatorResolvedExpression.FunctionLiteral(_, None, _) =>
       liftF(compilerError(tm.as("Cannot infer type of unannotated lambda.")) >> abort)
+
+    case hole: OperatorResolvedExpression.HandleHole =>
+      inferHandleHole(tm, hole)
   }
+
+  /** A handle position (`docs/effects.md` D36 point 4): its type is a fresh metavariable — whatever the position it
+    * stands in takes — and it is recorded with its entry and its candidates evaluated here, where the candidates are in
+    * scope, for the hole rule to fill after the drain ([[HandleHoleResolver]]). Until then it reads as a reference to a
+    * placeholder name, which [[HandleHoleResolver.fill]] replaces with the handle's.
+    */
+  private def inferHandleHole(
+      tm: Sourced[OperatorResolvedExpression],
+      hole: OperatorResolvedExpression.HandleHole
+  ): CheckIO[(SemExpression, SemValue)] =
+    for {
+      handleType <- freshMeta
+      asked      <- handleEntry(hole.entry)
+      candidates <- hole.candidates.traverse(_.traverse { candidate =>
+                      for {
+                        entry      <- handleEntry(candidate.entry)
+                        handleType <- inspect(_.gamma.lookupByName(candidate.name.value))
+                        result     <- handleType match {
+                                        case Some(tpe) => pure(HandleHoleResolver.Candidate(candidate.name, entry, tpe))
+                                        case None      =>
+                                          liftF(
+                                            compilerAbort[HandleHoleResolver.Candidate](
+                                              candidate.name.as(s"Internal: the handle '${candidate.name.value}' is not in scope.")
+                                            )
+                                          )
+                                      }
+                      } yield result
+                    })
+      id         <- inspect(_.handleHoles.size)
+      _          <- modify(s =>
+                      s.copy(handleHoles = s.handleHoles :+ HandleHoleResolver.Hole(id, tm, asked, candidates, handleType))
+                    )
+    } yield (
+      SemExpression(handleType, SemExpression.ParameterReference(tm.as(HandleHoleResolver.placeholder(id)))),
+      handleType
+    )
+
+  private def handleEntry(entry: OperatorResolvedExpression.HandleHole.Entry): CheckIO[HandleHoleResolver.Entry] =
+    entry.typeArgs.traverse(explicitTypeArgument).map(HandleHoleResolver.Entry(entry.ability, _))
 
   /** One written type argument: evaluated, except the `row` phase's hole ([[WellKnownTypes.inferredTypeArgumentFQN]]),
     * which is a fresh metavariable — solved from the call's arguments like a binder past the end of the list. A

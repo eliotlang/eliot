@@ -43,7 +43,7 @@ import scala.collection.mutable
   * design: a referenced name legitimately has none when its own definition aborted upstream, and a reference the write cannot read is simply left alone — the
   * fail-safe direction, since an unwritten binder is caught by the checker rather than silently defaulted.
   */
-class RowElaborationProcessor
+class RowElaborationProcessor(handles: Boolean = false)
     extends TransformationProcessor[RecursionCheckedValue.Key, RowElaboratedValue.Key](key =>
       RecursionCheckedValue.Key(key.vfqn, key.platform)
     ) {
@@ -55,7 +55,7 @@ class RowElaborationProcessor
     val value = checked.value
     for {
       universe <- universeFor(value, key.platform)
-      written   = BindingWriter.write(value, universe)
+      written   = BindingWriter.write(value, universe, handles)
       _        <- implementationKind(value, key.platform) >> report(written, value, key.platform)
     } yield RowElaboratedValue(written.value)
   }
@@ -82,7 +82,9 @@ class RowElaborationProcessor
       case ResolveQualifier.AbilityImplementation(ability, _, named) if value.vfqn.name.name == ability.abilityName =>
         AbilityKind.isEffect(ability, platform).flatMap { kind =>
           named match {
-            case None if kind.contains(true)        =>
+            // On the new effect path (`docs/effects.md` D36) a named implementation lowers to an anonymous instance keyed
+            // by its own handle type, which this would refuse; a user-written one still has to be refused there.
+            case None if kind.contains(true) && !handles =>
               refuse(
                 value,
                 platform,
@@ -227,7 +229,8 @@ class RowElaborationProcessor
       val missedClauses = mutable.Set.empty[ValueFQN]
       BindingWriter.write(
         value,
-        universe.copy(onMiss = fqn => { missed += fqn; () }, onMissClauses = fqn => { missedClauses += fqn; () })
+        universe.copy(onMiss = fqn => { missed += fqn; () }, onMissClauses = fqn => { missedClauses += fqn; () }),
+        handles
       )
       val fresh         = missed.toSet -- attempted
       val freshClauses  = missedClauses.toSet -- attemptedClauses

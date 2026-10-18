@@ -25,8 +25,12 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced.compilerAbort
   *
   * Each is mandatory rather than advisory: a machine-generated core that nothing re-checks is exactly the
   * silent-miscompile surface the fail-safe rule forbids.
+  *
+  * On the new effect path (`handles`, `docs/effects.md` D36) an environment is a handle, an ordinary value the checker
+  * already passed, so nothing is threaded here, and no row entry is supplied, so there is nothing for the first
+  * precondition to check.
   */
-class WovenValueProcessor()
+class WovenValueProcessor(handles: Boolean = false)
     extends TransformationProcessor[MonomorphicValue.Key, WovenValue.Key](key =>
       MonomorphicValue.Key(key.vfqn, key.typeArguments)
     ) {
@@ -40,7 +44,7 @@ class WovenValueProcessor()
       // the check, whose abort here blocks its `WovenValue` and so its codegen — a discharger never reaches bytecode
       // installing a frame the computation it discharges will not exit to. (Effects themselves are verified before
       // monomorphization, by the scope check the write performs; D7 retired this seam's post-mono shadow of it.)
-      _                  <- getFactOrAbort(SuppliedRowArguments.Key(mv.vfqn, mv.typeArguments))
+      _                  <- getFactOrAbort(SuppliedRowArguments.Key(mv.vfqn, mv.typeArguments)).unlessA(handles)
       // Meta-transfer accounting (R2) as the same kind of codegen precondition (docs/total-meta-transfers.md §P2): a
       // native leaf producing a meta-carrying type without stating what it does to the meta-information fails
       // accounting, whose abort here blocks its `WovenValue` and so its codegen. Without it such a leaf silently
@@ -49,7 +53,8 @@ class WovenValueProcessor()
       _                  <- getFactOrAbort(MetaTransferAccounting.Key(mv.vfqn, mv.typeArguments))
       // **Environment threading** (effects D20c option 5): each implementation's runtime environment — a frame, a
       // cell, an implementation's parameters — is passed here, after monomorphization, and never searched for.
-      threaded           <- EnvironmentThreading.thread(mv)
+      threaded           <-
+        if (handles) (mv.signature, mv.runtime).pure[CompilerIO] else EnvironmentThreading.thread(mv)
       (signature, body)   = threaded
       // The **woven re-check**: the body that leaves this seam is type-checked once more, on ground types, with no
       // metavariables and no unification — which is what checks the threading.
