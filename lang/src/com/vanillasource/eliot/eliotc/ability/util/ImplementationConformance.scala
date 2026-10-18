@@ -118,8 +118,8 @@ object ImplementationConformance {
         for {
           markerSignature <- markerSignature(clause.vfqn, ability.abilityName, platform)
           compatible      <- AbilityMatcher.signaturesCompatible(
-                               withoutHandles(member.signature),
-                               withoutHandles(withoutLeadingParameters(clause.signature, leadingParameters)),
+                               withoutHandles(member.signature, ability),
+                               withoutHandles(withoutLeadingParameters(clause.signature, leadingParameters), ability),
                                markerSignature
                              )
           _               <- compilerError(clause.name.as("Signature of implementation does not match the ability definition."))
@@ -128,27 +128,34 @@ object ImplementationConformance {
       }
   }
 
-  /** A signature without the handles it takes beyond its first parameter — on the new effect path (`docs/effects.md`
-    * D36) every parameter typed by a binding binder. The first is the member's own effect's handle, which a clause
-    * takes as its implementation's handle and which the pattern matches; the rest are the compiler's to arrange: a
-    * clause takes the handles its member declares, in the member's order, and what it captures is bound where it is
-    * installed. On the old path no parameter is typed by a binding binder, and nothing is dropped.
+  /** A signature without the handles of other effects it takes — on the new effect path (`docs/effects.md` D36) every
+    * parameter typed by a binding binder marked for an effect other than `ability`. An effect's own handle, which a
+    * clause takes as its implementation's handle and which the pattern matches, stays; the rest are the compiler's to
+    * arrange: a clause takes the handles its member declares, in the member's order, and what it captures is bound where
+    * it is installed, while what an ability's clause performs beyond its member is the `row` phase's to refuse, by name.
+    * On the old path no parameter is typed by a binding binder, and nothing is dropped.
     */
-  private def withoutHandles(signature: Sourced[OperatorResolvedExpression]): Sourced[OperatorResolvedExpression] = {
+  private def withoutHandles(signature: Sourced[OperatorResolvedExpression], ability: AbilityFQN)
+      : Sourced[OperatorResolvedExpression] = {
     val view    = SignatureView.of(signature)
-    val marked  = view.binders.filter(_.parameterType.exists(t => isMark(t.value))).map(_.name.value).toSet
+    val marked  = view.binders.filter(_.parameterType.exists(t => marksOther(t.value, ability))).map(_.name.value).toSet
     val handles = view.parameters.zipWithIndex.collect {
-      case (Sourced(_, _, OperatorResolvedExpression.ParameterReference(name)), index) if index > 0 && marked(name.value) =>
-        index
+      case (Sourced(_, _, OperatorResolvedExpression.ParameterReference(name)), index) if marked(name.value) => index
     }.toSet
     if (handles.isEmpty) signature
     else signature.as(view.copy(parameters = view.parameters.zipWithIndex.filterNot((_, i) => handles(i)).map(_._1)).toExpression)
   }
 
-  private def isMark(declared: OperatorResolvedExpression): Boolean =
-    OperatorResolvedExpression.spine(declared)._1 match {
-      case OperatorResolvedExpression.ValueReference(head, _) => head.value == WellKnownTypes.implementationTypeFQN
-      case _                                                  => false
+  /** Whether a binder's declared type is the binding mark `Implementation[X]` of an ability `X` other than `ability`. */
+  private def marksOther(declared: OperatorResolvedExpression, ability: AbilityFQN): Boolean =
+    OperatorResolvedExpression.spine(declared) match {
+      case (OperatorResolvedExpression.ValueReference(head, _), arguments) if head.value == WellKnownTypes.implementationTypeFQN =>
+        !arguments.headOption.exists(_.value match {
+          case OperatorResolvedExpression.ValueReference(marked, _) =>
+            marked.value.moduleName == ability.moduleName && marked.value.name.name == ability.abilityName
+          case _                                                    => false
+        })
+      case _                                                                                                                    => false
     }
 
   private def withoutLeadingParameters(

@@ -1,6 +1,7 @@
 package com.vanillasource.eliot.eliotc.ast.fact
 
 import cats.syntax.all.*
+import com.vanillasource.eliot.eliotc.module.fact.Qualifier
 import com.vanillasource.eliot.eliotc.source.content.Sourced
 
 /** The **clause row** of an `implement` block: what the implementation itself performs — effects v6,
@@ -85,6 +86,22 @@ object ImplementationRows {
           )
         case _                                             => definition.copy(carriedEffects = Set.empty)
       }
+
+  /** An anonymous `implement` block's definition as the new effect path (`docs/effects.md` D36) reads it: a clause with
+    * only the entries it wrote itself ([[own]]), and the marker with no row at all. A clause is an instance method
+    * shaped like its member, taking the handles its member declares, so nothing is bound where an ability's instance is
+    * found and its marker declares no binder for what its clauses perform.
+    */
+  def anonymousOnHandles(definition: FunctionDefinition): FunctionDefinition =
+    definition.name.value.qualifier match {
+      case Qualifier.AbilityImplementation(ability, _, None) if definition.name.value.name == ability =>
+        definition.typeDefinition.value match {
+          case Expression.EffectfulType(_, resultType) => definition.copy(typeDefinition = resultType)
+          case _                                       => definition
+        }
+      case Qualifier.AbilityImplementation(_, _, None)                                                => own(definition)
+      case _                                                                                          => definition
+    }
 
   def entriesOf(expr: Sourced[Expression]): Seq[UnresolvedAbilityConstraint[Sourced[Expression]]] =
     expr.value match {
