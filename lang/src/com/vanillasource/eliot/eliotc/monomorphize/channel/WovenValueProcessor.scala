@@ -10,9 +10,10 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced.compilerAbort
 /** The **`WovenValue` codegen seam** — the step between checking and code generation that everything downstream (`used`
   * / `uncurry` / the jvm backend) reads instead of [[MonomorphicValue]].
   *
-  * It rewrites nothing: an effect's environment is a handle, an ordinary value the checker already passed
-  * (`docs/effects.md` D36), and there is no carrier machinery to erase. What is left is the seam's other job, which is
-  * to be the place two **preconditions** are checked before any bytecode is emitted:
+  * It rewrites one thing, **handles** ([[HandleErasure]]): an effect's environment is a handle, an ordinary value the
+  * checker passed (`docs/effects.md` D36), and here a handle that holds nothing stops being passed at all, while one
+  * holding one field is passed as that field. It is also the place two **preconditions** are checked before any
+  * bytecode is emitted:
   *
   *   - **meta-transfer accounting** — a native leaf producing a meta-carrying type states what it does to it
   *     ([[MetaTransferAccountingProcessor]]);
@@ -37,11 +38,12 @@ class WovenValueProcessor
       // accounting, whose abort here blocks its `WovenValue` and so its codegen. Without it such a leaf silently
       // defaults its meta to ⊤, which is indistinguishable downstream from "nobody has computed this yet" — the
       // channel's one remaining source of untotality.
-      _ <- getFactOrAbort(MetaTransferAccounting.Key(mv.vfqn, mv.typeArguments))
+      _     <- getFactOrAbort(MetaTransferAccounting.Key(mv.vfqn, mv.typeArguments))
+      woven <- HandleErasure.erase(mv)
       // The **woven re-check**: the body that leaves this seam is type-checked once more, on ground types, with no
-      // metavariables and no unification.
-      _ <- assertWovenRechecks(mv, mv.signature, mv.runtime)
-    } yield WovenValue(mv.vfqn, mv.typeArguments, mv.name, mv.signature, mv.runtime)
+      // metavariables and no unification — after erasure, so a rewrite that disagreed with itself is caught here.
+      _     <- assertWovenRechecks(mv, woven.signature, woven.runtime)
+    } yield woven
   }
 
   /** Report every disagreement [[WovenRecheck]] found in the woven body as a compiler error at the offending node, and

@@ -552,7 +552,9 @@ open questions **D20a** naming a set of effects, **D20c** storing an open comput
 one entry each); Part III holds §12's **do-not-re-propose** list and §13, the citation map (D35's Part I is at
 `e03aa15c`; the record before the 2026-10-18 compaction at `14b61527`). **There is no carrier, no monad, no `Id`, no
 evidence, no specialisation pass and nothing to infer** — if you are reading code or a comment that mentions one, it is
-history. Still to come: **erasure** (D36 step 4) — handles are data until then, +22.3% jar over the examples.
+history. Handles are **erased** at the `WovenValue` seam (`monomorphize/channel/HandleErasure`, D36 step 4): a
+handle with no surviving field is no parameter, argument or class, one with one field is that field, one with more
+stays its `data` — the examples' jars are 5.2% under D35's.
 
 **The surface is one clause in two positions.** On a **definition**, `uses Console, Throw[E]` is what its caller
 hands it. On a **parameter**, a clause makes the argument **code** the caller wrote, which the callee may call or pass

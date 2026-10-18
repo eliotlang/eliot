@@ -15,9 +15,8 @@ import scala.annotation.tailrec
 
 /** Processor that uncurries monomorphic values to a specific arity.
   *
-  * Input: [[WovenValue]] (the post-monomorphization woven view — the effects-as-channel codegen source; off the flag it
-  * is the identity image of the `MonomorphicValue`, so this is unchanged) Output: UncurriedMonomorphicValue
-  * (multi-parameter form with specified arity)
+  * Input: [[WovenValue]] (the codegen seam's view of a `MonomorphicValue`, its handles erased) Output:
+  * UncurriedMonomorphicValue (multi-parameter form with specified arity)
   */
 class MonomorphicUncurryingProcessor
     extends TransformationProcessor[WovenValue.Key, UncurriedMonomorphicValue.Key](key =>

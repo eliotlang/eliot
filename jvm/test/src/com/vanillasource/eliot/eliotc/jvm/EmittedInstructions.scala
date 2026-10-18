@@ -36,6 +36,37 @@ trait EmittedInstructions { self: FullIntegrationTest =>
     classesOf(jarPath).flatMap(instructionsOf(_, Some(name)))
   }
 
+  /** The names of every class the compiled jar contains, as internal names (`eliot/effect/Console`). */
+  protected def classNames: IO[Seq[String]] = IO.blocking {
+    classesOf(jarPath).map(new ClassReader(_).getClassName)
+  }
+
+  /** The JVM descriptor of every method of the compiled jar named `name`, or mangled from it (`name$…`), leaving out
+    * the methods its lambdas lower to — what a definition's instances take and return.
+    */
+  protected def descriptorsOf(name: String): IO[Seq[String]] = IO.blocking {
+    classesOf(jarPath).flatMap { classBytes =>
+      val collected = Seq.newBuilder[String]
+      new ClassReader(classBytes).accept(
+        new ClassVisitor(Opcodes.ASM9) {
+          override def visitMethod(
+              access: Int,
+              methodName: String,
+              descriptor: String,
+              signature: String,
+              exceptions: Array[String]
+          ): MethodVisitor = {
+            if ((methodName == name || methodName.startsWith(name + "$")) && !methodName.contains("$lambda$"))
+              collected += descriptor
+            null
+          }
+        },
+        ClassReader.SKIP_CODE
+      )
+      collected.result()
+    }
+  }
+
   private def classesOf(jar: Path): Seq[Array[Byte]] =
     Using.resource(new JarFile(jar.toFile)) { jarFile =>
       jarFile

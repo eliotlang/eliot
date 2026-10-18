@@ -6,12 +6,12 @@ This is the effect system's single document. It has two subjects that must not b
   before monomorphization to an ability over a handle type, a `uses` entry to a handle parameter, a named
   implementation to a `data` and its instance, and the checker gives each use the nearest handle in lexical scope whose
   entry answers it. Part I describes it and is the authority for the tree.
-- **The plan** — what is left of D36 (§11): the deletions still in the tree (§8), a release, and **erasure** (step 4).
+- **The plan** — D36 (§11) is built, erasure included (step 4, 2026-10-18); what is left is a release.
 
 **Status (2026-10-18).** The tree: D20/D21's `uses` surface with D22–D29 and D36 built — every effect implementation
 named, `main` run with a generated `with` per entry, a clause listing effects only, abilities never bound with `with`,
-handles passed as values and chosen by the checker by type (§3.3), a block's handle types read off its callee. D35's
-evidence, specialisation pass and threading are deleted. Latest release `v0.16`, which predates D36.
+handles passed as values and chosen by the checker by type (§3.3), a block's handle types read off its callee, handles erased at the codegen seam (§3.4). D35's
+evidence, specialisation pass and threading are deleted. Latest release `v0.17` (D36 without erasure).
 
 An effect is an ability declared with the `effect` keyword. A definition's `uses` clause says what its caller hands
 it, as handles. Before monomorphization one syntax-directed walk does all the plumbing and checks by name; the checker
@@ -28,9 +28,9 @@ history; §13 says where.
 **Next, in order.**
 
 1. ~~**D36 step 2**~~ (§11): the new path beside the old, measured on the corpus — done 2026-10-18.
-2. **D36 step 3**: the switch and the first deletions are done, and Part I is rewritten (2026-10-18); what is left of
-   "It deletes" is §8's, and then a release.
-3. **D36 step 4**: erasure, measured against D35's jars.
+2. ~~**D36 step 3**~~: the switch, the deletions and Part I — done 2026-10-18, released as `v0.17`.
+3. ~~**D36 step 4**~~: erasure — done 2026-10-18 (§3.4): the examples' jars are 22.3% smaller than `v0.17`'s and 5.2%
+   smaller than D35's. Next is a release.
 
 The seven readings D36 needed were signed off by Robert on 2026-10-18 (§11, D36, "Signed off"). D20a, D20c and D3
 stay open; none blocks the steps above.
@@ -553,7 +553,7 @@ instance method, filled at each operation's call (`standardFileSystem.readFile`'
 own (`Capture$j`), filled at the `with` with the handle in scope there (`recordingConsole.printLine`'s
 `Writer[String]`). Which entries are which needs the member's declaration, in another file, so the desugar gives the
 handle a field for every entry any clause writes, records them on a `$captures` declaration, and the `row` phase
-decides (`row/Captures`); a field nothing captures holds `unit` until erasure. A method's own handle parameters are
+decides (`row/Captures`); a field nothing captures holds `unit`, which erasure drops (§3.4). A method's own handle parameters are
 nearer than the fields, so a misread entry is never chosen over the call's and shows as a capture no hole takes. A type
 parameter no field and no captured entry mentions is left out of the handle and is the pattern's alone, solved at each
 use, so one `with showing` serves `Source[Int]` and `Source[String]` (§8 item 30); one a field fixes is one per
@@ -767,10 +767,23 @@ that can run a control effect is never read raw — raw, an operation stays an u
 ignores its argument (`_ -> false`) would turn that into a plausible wrong value — and the refinement channel's
 reduction of a `^Meta`/`^Where` companion links every callee reduced at its own instantiation.
 
-**The cost, before erasure** (D36 point 11): handles are data, so over the 46 examples the jars are 22.3% larger than
-D35's (a `data` class per handle, its `PatternMatch` instance and accessors, and per `with` the lambda binding its
-handle); the smallest programs grow most. Erasure — a field-less handle is no parameter, argument, allocation or
-capture, and a single-field handle is passed as its field — is the plan's step 4.
+**Erasure** (D36 point 11, `monomorphize/channel/HandleErasure`, run at the `WovenValue` seam so every backend reads
+it): a handle costs only what it holds. A field survives unless its own type erases or it is a capture field nothing
+captured (which holds `unit`); a handle with **no** surviving field is no parameter, argument, allocation or capture,
+one with **one** is that field — `escaping(frame)`'s handle is the frame, `recordingConsole`'s the `Writer` cell it
+captured — and one with more stays its `data`. The decision is a function of the handle's ground type alone, so its
+construction, its field reads, a parameter of it and a call passing it all agree. A definition's leading handle
+parameters are dropped with the arguments a direct call passes them, both sides reading the callee's body for how many
+leading parameters it has; a function value keeps its shape, so a block taking an erased handle takes `unit`. A `with`
+is a `let`: one whose handle erases is its subject alone, and one whose handle became a variable is that variable
+substituted into its subject. Dropping is safe because a handle is second-class: an expression of a handle's type is a
+parameter, a construction or a field read, and anything else is refused there rather than dropped. The entry point is
+now the only zero-parameter `main` that gets the JVM `main(String[])` bridge — a user `main` is one too, once its
+handles are gone.
+
+Measured over the 46 examples (2026-10-18), with every program printing what it printed before: 845 914 ⤳ 657 477
+bytes (−22.3%), 1 494 ⤳ 1 184 classes, 24 049 ⤳ 18 870 instructions; every jar shrank, and the total is 5.2% under
+D35's 693 312 bytes. HelloWorld is 2 603 ⤳ 1 679 bytes: `main` takes nothing and calls `printLine`'s clause directly.
 
 ### 3.5 Discharge
 
@@ -828,8 +841,8 @@ A post-monomorphization verifier existed and was retired by measurement (D7, 202
 see propagation through a *declaring callee*, never a direct operation call — a strict subset of the scope check.
 **Do not reintroduce a post-mono effect verifier.**
 
-What sits at the `WovenValue` seam is not one: `WovenValueProcessor` checks meta-transfer accounting and re-checks the
-body on ground types before codegen, and rewrites nothing — a handle is an ordinary value the checker already passed.
+What sits at the `WovenValue` seam is not one: `WovenValueProcessor` checks meta-transfer accounting, erases handles
+(§3.4) and re-checks the erased body on ground types before codegen — a representation change, deciding nothing.
 The refinement channel walks a definition's leading handle parameters as the parameters they are, not as a lambda's,
 so an effectful body records its ranges as one taking nothing does; and a `where` companion is matched against the
 declared arguments, a callee's handles left out.
@@ -1015,9 +1028,7 @@ Each is stated, fail-safe, and either has a plan entry or is a deliberate trade.
    entry's arguments differently, or nothing solves them (§2.2), the call spells them. The rejection is loud and names
    the fix; the alternative — a choice by visiting order, or a default — would answer a use with a handle its author did
    not mean.
-8. **Handles are data until erasure.** Every handle is an object and every `with` allocates one, so a jar is 22.3%
-   larger than D35's over the examples (§3.4); D36 step 4 erases field-less handles and passes a single-field one as
-   its field. Behaviour is unaffected.
+8. *Closed 2026-10-18 by erasure (§3.4)*: handles were data, +22.3% jar over D35's.
 3. **An under-applied backend *intrinsic* has nowhere to link.** An intrinsic is emitted inline at each call
    site, so only a saturated call can be emitted at all; `digits.map(show)` for such a name is a hard error at
    the definition naming the fix (`digits.map(n -> show(n))`). This is a gap in the backend, not a rule of the
@@ -1175,7 +1186,7 @@ snippet using an effect needs the `Implementation` stub (`Inferred`, `Handed`), 
 Every decision is Robert's. This section holds the plan (D36), the open questions, and the record of everything
 decided before, one entry each. Conveniences deliberately left out are in §12.
 
-### D36 — effects are capability passing: an effect desugars to an ability over a handle (decided 2026-10-17, revised 2026-10-18, built 2026-10-18 but for erasure)
+### D36 — effects are capability passing: an effect desugars to an ability over a handle (decided 2026-10-17, revised 2026-10-18, built 2026-10-18)
 
 **The question** (Robert, 2026-10-17, rejecting the rules proposed for §8 item 60): how can the effect system be
 simple, run before monomorphization, and desugar into ordinary constructors and abilities? An effect should differ from
@@ -1528,7 +1539,10 @@ and uses in `row` (`BindingWriter`). What is new:
    and the `eliot-code` skill. §8 items 59–61 closed; 61 needed the `row` phase's anonymous-clause check to read the
    member's entries at the implementation's pattern (`HoleRuleIntegrationTest` pins 60, 61 and `raise(none)`). What
    is left of step 3 was §8 items 63–65 (closed the same day, above) and a release.
-4. **Erasure**, measured against today's jar.
+4. **Erasure**, measured against today's jar. **Done (2026-10-18)**, as §3.4 describes and measures:
+   `HandleErasure` at the `WovenValue` seam, a backend-independent rewrite, so no backend learns what a handle is.
+   Every example prints what it printed; the jars are 22.3% smaller than `v0.17`'s and 5.2% smaller than D35's.
+   `HandleErasureIntegrationTest` pins the three shapes (no field, one, two).
 
 ### Open questions
 

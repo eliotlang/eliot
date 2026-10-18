@@ -51,6 +51,9 @@ object Handles {
     */
   def capture(j: Int): String = s"Capture$$$j"
 
+  /** Whether `name` is a capture type parameter's ([[capture]]). */
+  def isCapture(name: String): Boolean = name.startsWith("Capture$")
+
   /** The field of the handle `data` holding the handle captured for the `j`-th entry its clauses write. */
   def captureField(implementation: String, j: Int): String = field(implementation, s"capture$$$j")
 

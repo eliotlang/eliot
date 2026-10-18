@@ -11,17 +11,13 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
 
 import scala.annotation.tailrec
 
-/** The effects-as-channel **woven** form of one monomorphic instance (docs/effects-as-channel.md §6) — the
-  * `Id`-normalized image of the value's [[com.vanillasource.eliot.eliotc.monomorphize.fact.MonomorphicValue]], produced
-  * post-monomorphization by [[WovenValueProcessor]] at the codegen seam.
+/** The **woven** form of one monomorphic instance — the image of its
+  * [[com.vanillasource.eliot.eliotc.monomorphize.fact.MonomorphicValue]] with its handles erased ([[HandleErasure]]),
+  * produced by [[WovenValueProcessor]] at the codegen seam.
   *
   * Mirrors [[com.vanillasource.eliot.eliotc.monomorphize.fact.MonomorphicValue]]'s consumable shape (name / signature /
   * runtime body) so codegen (`uncurry`, `used`, the jvm backend) reads it in place of `MonomorphicValue`, and is keyed
-  * identically. The checker leaves the body already monadic (binds/`pure` inserted by the uniform elaboration) and
-  * resolved; the woven stage erases the pervasive identity carrier `Id` (`runId`/`Id`/`Effect[Id]` methods rewritten
-  * away, `Id[X]` types collapsed to `X`) so pure code recovers its efficient shape and no effect machinery ships for
-  * it. A value that carries no `Id` (already-effectful or genuinely pure with none inserted) weaves to the identity
-  * image.
+  * identically. A value that takes, builds and reads no handle weaves to the identity image.
   *
   * @param vfqn
   *   The value this weave belongs to (the same instance identity as its `MonomorphicValue`).
@@ -30,8 +26,8 @@ import scala.annotation.tailrec
   * @param name
   *   The sourced name of the value (forwarded from `MonomorphicValue` for codegen).
   * @param signature
-  *   The woven signature — the carrier-wrapped payload (`IO[Unit]`) for an effectful value, else the payload with any
-  *   `Id` carrier erased.
+  *   The signature with its handles erased: a leading handle parameter that erases is gone, and a handle type is the
+  *   type it is represented by.
   * @param runtime
   *   The woven runtime body, or `None` for a body-less value.
   */
@@ -48,8 +44,8 @@ case class WovenValue(
     * [[MonomorphicExpression.FunctionLiteral]]s of the woven body, exactly as
     * [[com.vanillasource.eliot.eliotc.monomorphize.fact.MonomorphicValue.naturalArity]] computes it over the mono body.
     * The codegen driver (`used`, the jvm `ExpressionCodeGenerator`) reads this off the woven value it now consumes in
-    * place of the `MonomorphicValue`; the woven body reflects any `Id`-erasure the normalizer applied. `None` for a
-    * body-less value.
+    * place of the `MonomorphicValue`; it counts what is left after handle erasure, which is what a call passes. `None`
+    * for a body-less value.
     */
   def naturalArity: Option[Int] = runtime.map(body => WovenValue.countLeadingLambdas(body.value, 0))
 }

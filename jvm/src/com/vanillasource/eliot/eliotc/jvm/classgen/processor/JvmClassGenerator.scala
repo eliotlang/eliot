@@ -15,6 +15,7 @@ import com.vanillasource.eliot.eliotc.jvm.classgen.asm.CommonPatterns.{
 }
 import com.vanillasource.eliot.eliotc.jvm.classgen.asm.NativeType.{convertToNestedClassName, systemAnyValue, systemFunctionValue, systemUnitValue}
 import com.vanillasource.eliot.eliotc.jvm.classgen.fact.{ClassFile, GeneratedModule}
+import com.vanillasource.eliot.eliotc.jvm.jargen.SyntheticMainSourceProcessor
 import com.vanillasource.eliot.eliotc.jvm.classgen.processor.DataClassGenerator.isConstructor
 import com.vanillasource.eliot.eliotc.jvm.classgen.processor.ExpressionCodeGenerator.{createExpressionCodeAtBoundaryWidth, patternMatchSingletonName}
 import com.vanillasource.eliot.eliotc.jvm.classgen.processor.NativeImplementation.implementations
@@ -579,8 +580,11 @@ class JvmClassGenerator extends SingleKeyTypeProcessor[GeneratedModule.Key] with
            }
     } yield ()
 
+  /** Whether this is the synthesized entry point the jar's `Main-Class` bootstraps. Only that one: a user `main` that
+    * takes nothing — every `main` once its handles are erased — is an ordinary method the entry point calls.
+    */
   private def isMain(uncurriedValue: UncurriedMonomorphicValue): Boolean =
-    uncurriedValue.vfqn.name.name === "main" && uncurriedValue.parameters.isEmpty
+    uncurriedValue.vfqn === SyntheticMainSourceProcessor.syntheticMainVfqn && uncurriedValue.parameters.isEmpty
 
   private def generatePatternMatchSingleton(
       mainClassGenerator: ClassGenerator,
