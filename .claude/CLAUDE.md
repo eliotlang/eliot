@@ -248,58 +248,54 @@ subset of its data.
     lived there is gone too, because a type now prints as what the user wrote.)*
 11. **row** — the effect phase, right after the gate. `row/processor/RowElaborationProcessor` produces
     `RowElaboratedValue` before saturation, running `row/BindingWriter` over **both halves** of a definition (body *and*
-    signature — a guarded return holds references too). One walk, three jobs, **from declarations only**: answer each
-    binding binder at the indices the callee's declaration **marks** (`Impl: Implementation[Console]`) — the scope
-    check — and write it `Default`, since the implementation is the evidence's after monomorphization (D35), merged by
-    index with what the call determines for the rest; **thunk and apply** (an actual at a row-typed slot
-    is wrapped in a lambda, a reference to one of this definition's row-typed parameters is applied to `unit` — wrap and
-    apply are inverse, so a pass-through is an η-expansion); and erase the `with` nodes. The walk **is** the pre-mono
-    scope check: an effect with no covering declaration is the "performs but does not declare" error at that reference.
-    `row/RowChecker` is now just the demand-driven `Universe` the walk consults (its `onMiss`/`onMissClauses` are what
-    let a demand-driven consumer avoid guessing the consulted set). Nothing is exempt from the check: the synthesized
-    entry point is an ordinary definition binding `main`'s entries with `with` (`row/EntryPoint`). The same processor
-    refuses an anonymous `implement` of an effect, and a named one of an ability (D29), at its marker. See the *Effects Are a Channel* cornerstone.
-12. **ability** — checks and returns a type-specific ability implementation. An **effect**'s operation never comes
-    here: no checker dispatches one, on either track — the specialisation pass dispatches it from the evidence in scope
-    (phase 13, D35), straight to the named implementation, with no structural match, no `where` filter and no coherence
-    question, which is what lets a test's double freely overlap another. Only an **ability**'s `Default` reaches the
-    two-site search, whose candidates are the
+    signature — a guarded return holds references too). It does all of an effect's plumbing and decides nothing
+    (`docs/effects.md` §3.2): a **hole** (`HandleHole`) at every handle position — an operation's, a `uses` callee's, a
+    run's — carrying its entry and its lexical candidates nearest first; a `with` (the resolver's `$with` binder call)
+    turned into a `let` of the implementation's handle around its subject; an actual at a listing slot wrapped in a
+    lambda taking one handle per listed entry, a `uses *`-only one in a thunk; an implementation's clause shaped as its
+    member (`row/Captures`). It is the scope check's **by-name** half: an effect with no handle of it in scope is the
+    "performs but does not declare" error at that reference, and the second-class rule (rules 2–3) is checked here.
+    A `~` constraint's binder is written `Default` (the two-site search). `row/RowChecker` is the demand-driven
+    `Universe` the walk consults (`onMiss`/`onMissClauses`; a probe of a name only a bodying layer mints asks the
+    module's names first). The synthesized entry point is an ordinary definition binding `main`'s entries with `with`
+    (`row/EntryPoint`), which reports an unbodied standard implementation at `main`. The same processor refuses an
+    anonymous `implement` of an effect, and a named one of an ability (D29), at its marker. See the *Effects Are
+    Capability Passing* cornerstone.
+12. **ability** — checks and returns a type-specific ability implementation. An effect's operation is an ordinary
+    ability method over its handle's type, and a named implementation's instance is the only one at its handle's type,
+    so it is found by the same search with nothing to overlap. The two-site search's candidates are the
     **anonymous** implementations alone (`ModuleAbilities.anonymousImplementationMethodsOf` — a named one is reached
-    only by `with`, and reading the unfiltered list is how a colocated double silently answered an ordinary row), where
-    selection is structural (pattern match) and then filtered twice: by the candidate's `where` guard, and by
+    only through its handle, and reading the unfiltered list is how a colocated double silently answered an ordinary
+    row), where selection is structural (pattern match) and then filtered twice: by the candidate's `where` guard, and by
     **constraint-aware declination** — a candidate whose `~` constraints have no implementation at the matched bindings
     declines. Every step of the check is fail-safe *towards keeping*, so it can only remove a candidate that could not
     have worked. A constraint probe that leads back to a resolution already in progress is answered "satisfied" off
     `activeFactKeys`, never demanded.
 13. **monomorphize** — the NbE monomorphic type checker: evaluates data and value definitions into typed
     structures and checks all types at every instantiated usage, with the single evaluator. (It absorbed the
-    former standalone `eval` phase.) An effect is an ordinary nullary ability to the checker and a binding an ordinary
-    type argument, which the checker never decides (D35): the runtime track checks a value at its key with every effect
-    binding `Default` (`CheckedValue`, `specialise/EffectBindings`), and the **specialisation pass**
-    (`specialise/SpecialisationProcessor`, `EvidenceSpecialisation`) produces the `MonomorphicValue` everything
-    downstream reads, at the full key, writing each binding and dispatching each operation from the **evidence** in
-    scope and cloning per constant evidence; the compile track keeps the binding in its key, and the same pass runs in
-    its read-back (`CompilerMonomorphicTypeCheckProcessor`, `PostDrainQuoter.threaded`):
-    - **the checker holds no effect rule at all.** `EffectLifter` went with the carrier its one surviving arm needed.
-      What is next door and must **not** be deleted as effect machinery is `check/CarrierKindChecker`, and that is
-      measured, not assumed (`docs/effects.md` §12, "do not re-propose"): `verifyCarrierKinds` is the only thing
-      rejecting a `[F[_]]` binder instantiated at a fully-applied proper type, and with it off that program silently
-      compiles. It is a *kind* system living next door.
-    - **verification is not here either** — it is phase 11's scope check, pre-mono and complete before
-      monomorphization, and it is the *only* effect verifier: the post-mono re-derivation retired with D7 on the
-      measurement that it could only ever see a strict subset of the same thing. What is left at the codegen seam is
-      `channel/SuppliedRowArgumentsProcessor`, rejecting a supplied row entry whose argument nothing determines,
-      which was never that check's shadow. The checker holds no effect diagnostic.
+    former standalone `eval` phase.) It produces `MonomorphicValue` (and `CompilerMonomorphicValue` on the compile
+    track) directly; monomorphization clones by a handle's type in the key, so there is no specialisation pass:
+    - **the checker holds one effect rule, the hole** (`check/HandleHoleResolver`, `docs/effects.md` §3.3): each hole
+      takes the nearest candidate whose entry is definitionally equal after evaluation; none is an error naming what is
+      in scope, a tie at one distance is an error, a candidate with an unsolved meta answers only if every hole it
+      could answer agrees. Beside it, `check/HandedBinders` reads a block's handle types off its callee's
+      `MonomorphicValue.handed` (`readHanded`). An operation is then dispatched by `AbilityResolver` by its handle's
+      type like any ability method. What is next door and must **not** be deleted as effect machinery is
+      `check/CarrierKindChecker`, and that is measured, not assumed (`docs/effects.md` §12, "do not re-propose"):
+      `verifyCarrierKinds` is the only thing rejecting a `[F[_]]` binder instantiated at a fully-applied proper type,
+      and with it off that program silently compiles. It is a *kind* system living next door.
+    - **verification is the scope check, in two halves**: by name in phase 11, by entry in the hole rule — one
+      verifier (D7); a post-mono re-derivation retired on the measurement that it could only ever see a strict subset.
     - the **compile track** keeps its mid-spine default ladder and deferred slots *by design* (`Track.Compiler`,
       `Checker.resolveDeferredSlot`) — the sole live reader of the `Unifier`'s higher-kinded-meta record.
     - other non-equality collaborators, each hooked from `TypeStackLoop.runPostDrainResolution`:
       `check/CarrierKindChecker`, `check/GuardDischargeResolver` (W2b effectful-signature guard discharge —
       formerly `CalculatedReturnResolver`, whose calculated-return half was removed with the `auto`/implicit-generics
-      feature), `check/AbilityResolver`.
-    - riders on `MonomorphicValue`: `channel/RefinementChannelProcessor` (Int ranges),
-      `channel/SuppliedRowArgumentsProcessor` (a supplied row entry's arguments are determined) and
-      `channel/MetaTransferAccountingProcessor` (meta transfers: R2 a leaf must state, R3 nothing else may). The
-      last two are `WovenValue` codegen preconditions.
+      feature), `check/AbilityResolver`, `check/HandleHoleResolver`.
+    - riders on `MonomorphicValue`: `channel/RefinementChannelProcessor` (Int ranges; it walks a definition's leading
+      handle parameters as parameters, and a `where` companion leaves a callee's handles out) and
+      `channel/MetaTransferAccountingProcessor` (meta transfers: R2 a leaf must state, R3 nothing else may), the
+      latter a `WovenValue` codegen precondition.
 14. **used** — collects used value names starting from a `main`
 15. **uncurry** — uncurries calls for the backend
 
@@ -535,49 +531,27 @@ silent gap**: it is complete verification of the actual program, hard-erroring a
 Principle: *we prove a definition correct for every input it does take, not every input it could take — and reject
 any program in which some input it does take is wrong.*
 
-## Language Cornerstone: Effects Are a Channel (`uses` In, Evidence Passed)
+## Language Cornerstone: Effects Are Capability Passing (`uses` In, Handles Passed)
 
 The user writes **`uses` clauses** (`def greet(name: String) uses Console: Unit`); the compiler turns each entry into
-a **phantom generic binder**, and after monomorphization that binder holds **evidence** — the implementation's code
-and its environment, one value — installed by a `with`, received from the caller, or given to a block by the callee
-running it. Before monomorphization one syntax-directed walk, reading declarations only, proves that every use of an
-effect has something to answer it (the scope check); nothing decides which implementation that is until the evidence
-does. Clauses and implementations are two different things on purpose, and keeping them apart is what makes effects
-free of special cases. Authoritative design: `docs/effects.md` — Part I states the shipped
-design (§1 the user rules, §2 the surface, §3 the mechanism, §4 the scope check, §5 the standing rules, §6 testing,
-§7 the live limitations; §3.4 is evidence, the specialisation pass, the primitives and the environment threading);
-Part II is what is left (§8 where
-the tree diverges from Part I, §9 the binding binder marked by its declared type `Implementation[A]`, §10 the gate and
-method, §11 the decisions — **D36**, the plan, then the open questions (**D20a** naming a set of effects, **D20c**
-storing an open computation, **D3**) and every earlier decision one entry each); Part III holds §12's
-**do-not-re-propose** list and §13, which maps every citation of a condensed record to where it lives now (the full
-text before the 2026-10-18 compaction is `git show 14b61527:docs/effects.md`).
-**There is no carrier, no monad, no `Id`, and nothing to infer** — if you are reading code or a comment that mentions
-one, it is history.
-
-**D36** (decided 2026-10-17, **not built**; `docs/effects.md` §11) will replace D35's mechanism: an effect desugars
-before monomorphization to an **ability over a handle type**, a `uses` entry to a handle type parameter plus a handle
-value parameter, a named implementation to a `data` (its parameters as fields) and that ability's instance, `with` to
-a handle in scope for its subject, and `*` to closure capture. The one decision — which handle answers a use — is the
-checker's: **the nearest handle in lexical scope whose entry answers it after evaluation** (36 eliot-build
-declarations carry two or more `Throw` entries, so a choice by effect name alone cannot work). **Revised 2026-10-18**:
-the mechanism is **capability passing** — dependency injection checked statically and scoped lexically, with
-second-class handles (Effekt's *effects as capabilities* is the nearest prior art) — so reason about a design question
-in dependency terms, and keep *effect* for what the user is promised (purity is the absence of `uses`). A block's
-handle types are **what its callee's body hands it**, read at the callee's key — no slot names an implementation,
-because an implementation capturing a handle (`mockConsole uses State[Recording]`) has a generic type no signature can
-spell — and erasing field-less handles follows the switch rather than gating it. Until D36 is built, what follows
-describes the tree.
-
-**D35** (decided 2026-10-16, built 2026-10-17; it reverses D33, and D34 is withdrawn) is what this cornerstone
-describes: an implementation is **evidence passed after monomorphization**, and static code is a **specialisation
-pass** (`monomorphize/specialise/`) that clones by constant evidence — so a jar is what the binding in the key used to
-give, and correctness never depends on the pass. Runs of one parameter given different implementations get **a block
-each** (step 5a): the callee records its runs' distinct evidence as the slot's `variants`, takes one block parameter
-per variant right after the slot (`MonomorphicEffects.positions`, `variantName`), and the caller writes the block once
-per variant — in the `MonomorphicValue` itself, so the refinement channel walks every copy (shared positions that
-disagree are ⊤). A slot with one variant is unchanged, byte for byte. The compile track still refuses differing runs.
-A free-monad representation was evaluated and rejected (reasons in D35); D31 and D32 are withdrawn.
+a **handle**: a type parameter and a value parameter of that type, holding the implementation's environment, and an
+effect into an ability over its handle's type, so each operation is an ordinary ability method chosen by the
+handle's type. This is **capability passing** (D36, built 2026-10-18) — dependency injection checked statically and
+scoped lexically, with second-class handles (Effekt's *effects as capabilities* is the nearest prior art): reason about
+a design question in dependency terms, and keep *effect* for what the user is promised (purity is the absence of
+`uses`, totality the absence of `Inf`). Before monomorphization one syntax-directed walk does all the plumbing and
+decides nothing; **the one decision — which handle answers a use — is the checker's**: the nearest handle in lexical
+scope whose entry answers it after evaluation (36 eliot-build declarations carry two or more `Throw` entries, so a
+choice by effect name alone cannot work). Authoritative design: `docs/effects.md` — Part I states the shipped design
+(§1 the user rules, §2 the surface, §3 the mechanism — §3.1 the desugar, §3.2 the walk, §3.3 the hole rule and a
+block's handle types, §3.4 the primitives and frames —, §4 the scope check, §5 the standing rules, §6 testing, §7 the
+live limitations); Part II is what is left (§8 where the tree diverges from D36's deletion list, items 63–65; §9 the
+binding binder marked by its declared type `Implementation[A]`; §10 the gate and method; §11 the decisions — D36, the
+open questions **D20a** naming a set of effects, **D20c** storing an open computation, **D3**, and every earlier decision
+one entry each); Part III holds §12's **do-not-re-propose** list and §13, the citation map (D35's Part I is at
+`e03aa15c`; the record before the 2026-10-18 compaction at `14b61527`). **There is no carrier, no monad, no `Id`, no
+evidence, no specialisation pass and nothing to infer** — if you are reading code or a comment that mentions one, it is
+history. Still to come: **erasure** (D36 step 4) — handles are data until then, +22.3% jar over the examples.
 
 **The surface is one clause in two positions.** On a **definition**, `uses Console, Throw[E]` is what its caller
 hands it. On a **parameter**, a clause makes the argument **code** the caller wrote, which the callee may call or pass
@@ -626,106 +600,72 @@ signature, an example or a test conflicts with them, the rule wins and the artef
    declares in its own clause, passing it on; neither is "'body' may perform the effect 'X' here, which this definition
    neither handles nor declares". An effect the code uses through `*` unlisted is invisible to it — it can neither
    catch it nor declare it — what the definition's own `uses *` (D24) marks instead. **An effect has no default**
-   (D26): its implementation is always passed — installed by a `with`, given by the callee running the code, or
+   (D26): its handle is always passed — installed by a `with`, handed to a block by the callee running it, or
    received from the caller — and the entry point binds `main`'s entries with a `with` each.
 6. **A field holds a value.** A `data` field takes no clause and no row; store data describing the work and perform
    it where the effects are in scope.
 
-**Three other constructs.** An **`effect`** is an ability with no carrier binder; a member's clause lists what it
-performs *beyond* the effect it belongs to (`uses Console` on a member of `effect Console` is not written). An
-**anonymous `implement`** in one of the two sites is an **ability**'s *default* for its pattern, takes no parameters
-(a parameter list there is a parse error naming the named form), and of an **effect** is an error, since an effect has
-no default (D26); a **named `implement`** is an effect's only (of an ability it is an error, D29) and is never a default — it may live anywhere, is never searched, is not checked for overlap, closes over nothing, and its clauses
-may carry `uses`. It may take **parameters**, supplied by the `with` that binds it (`implement scripted(answer:
-String): Terminal`, `greet with scripted("Bob")`): the resolver lowers that `with` to a call of the implementation's
-body-less binder `scripted$with(args…, subject with scripted)` so the checker types the arguments, and
-`EnvironmentThreading` turns the call into the arguments bound around the subject, where they become the frame's own
-parts (`docs/effects.md` §3.1, §3.4). Every body `with` is lowered that way (D35 step 2), one with no arguments to a
-binder taking only its subject, so the threading sees each install site. A named implementation's **type parameters** are what its pattern takes at the
-entry it runs for (`NamedImplementationArguments`, the two-site search's match without the search), at dispatch and in
-the threading alike, so one `with showing` serves `Source[Int]` and `Source[String]`. **`with`** binds a name for every effect of its ability that **escapes its
-subject** (D23): infix, subject-first, loosest precedence, left-associative, as an expression in a body only — on a
-parameter or a field it is a parse error naming the `with` around the run (D35). A `with` nothing escapes to is an
-error; one around a run of a code parameter installs its implementation for what the slot lists, even an entry the
-definition declares, and the block its caller wrote is compiled against it: a block is given what its callee's runs
-find (`MonomorphicEffects.Slot.variants`, read off the callee's specialised body), so a run **passed** to another
-callee's slot runs on whatever that callee installs. `with` on a definition's own clause is rejected. **`with` is written almost nowhere**: a def declaring `uses Console` receives its binding from its
-caller up to `main`, and a `with` in production code is the same mistake as a hard-coded dependency.
+**Three other constructs.** An **`effect`** is an ability over a handle type: every operation takes the handle first,
+and a member's clause lists what it performs *beyond* the effect it belongs to (`uses Console` on a member of `effect
+Console` is not written). An **anonymous `implement`** in one of the two sites is an **ability**'s *default* for its
+pattern, takes no parameters (a parameter list there is a parse error naming the named form), and of an **effect** is an
+error, since an effect has no default (D26). A **named `implement`** is an effect's only (of an ability it is an error,
+D29): it lowers to a `data` — its handle, its parameters as fields — and that ability's instance at the handle's type,
+so it is unique and colocated by construction, may live anywhere and overlaps nothing. Only a layer that **bodies** it
+mints its handle (`implement standardConsole: Console` in the base only declares the name). A clause entry its member
+also declares, at the implementation's pattern, is the **call's** (a handle parameter of the instance method,
+`standardFileSystem.readFile`'s `Throw[IoError]`); any other is **captured** at the `with`, a field holding the handle in
+scope there (`recordingConsole.printLine`'s `Writer[String]`, `row/Captures`). Parameters are supplied by the `with`
+(`greet with scripted("Bob")`), which the resolver lowers to a call of the implementation's body-less binder
+`scripted$with(args…, subject with scripted)` so the arguments are typed as any call's; the `row` walk turns it into a
+`let` of the handle around the subject. A type parameter no field fixes is the pattern's alone, solved at each use, so
+one `with showing` serves `Source[Int]` and `Source[String]`. **`with`** puts its handle in scope for its subject (D23):
+infix, subject-first, loosest precedence, left-associative, as an expression in a body only — on a parameter or a field
+it is a parse error. A `with` no hole in its subject takes is an error; one around a run of a code parameter is handed to
+the block for what the slot lists. `with` on a definition's own clause is rejected. **`with` is written almost
+nowhere**: a def declaring `uses Console` receives its handle from its caller up to `main`, and a `with` in production
+code is the same mistake as a hard-coded dependency.
 
-**The desugar mints a binder; the walk checks every use; the evidence decides; nothing solves for one.**
-`core/…/EffectSugarDesugarer` turns each entry and each `~` constraint into one phantom binder of kind `Type` that
-occurs in **no parameter or return type**, and thunks a code parameter (`Unit => A`; a function-typed one keeps its
-arrow, the clause recorded in `EffectRow.callbackEffects` with its arity). `row/BindingWriter` answers each binder at
-every reference by the resolution order — (1) the nearest enclosing `with`; (2) this definition's own binder for it,
-a **received** binding filled by the caller; (3) for an actual at a code slot, the entries that slot **supplies**;
-(4) `Default` — the two-site search — for an **ability**, while for an **effect** an uncovered use is "This value
-performs the effect 'X' but does not declare it; add it to its `uses` clause" at that reference — and writes it
-`Default`: the order is the scope check, and the implementation is the evidence's after monomorphization. **Effect-ness is read from one place
-only**: the callee's declaration. Nothing keys on a name or a shape. A minted binder says it is a binding in its
-**declared type** — `Impl: Implementation[Console]`, the mark `row/BindingWriter` reads and erases at the end of that
-phase — so bindings need not sit in a prefix: `typeArgs` still applies positionally, and the write merges the marked
-indices with what the call determines for the rest.
+**The desugar plumbs; the walk checks by name; the checker chooses by type; nothing solves for a binding.**
+`core/…/EffectSugarDesugarer` turns each entry into a marked binder (`Impl: Implementation[Console]`, §9) plus a handle
+parameter after the handles the definition already takes, and each `~` constraint into a marked binder alone (an
+ability's, answered by the two-site search). A code parameter listing entries is a **block** taking one handle per
+listed entry, each of a **handed** binder's type (`Implementation::Handed`, after every other binder); one listing none
+is a thunk (`Unit => A`); a function-typed one keeps its arrow, its clause in `EffectRow.callbackEffects`.
+`row/BindingWriter` writes a **hole** at every handle position with its lexical candidates, nearest first, grouped by
+the binder that put them in scope (the definition's own handles, a block's, a `with`'s, what a block captured), and is
+the scope check's **by-name** half ("performs the effect 'X' but does not declare it", "declares … but does not perform
+it") and the second-class check. `check/HandleHoleResolver` fills each hole with the nearest candidate whose entry is
+**definitionally equal after evaluation**: none is *"No handle in scope here answers 'X'. In scope: …"*; two at one
+distance is an error whose fix is a distinct type, never a name (no `@Named`, no slot naming its implementation — D36
+decision 3); a candidate holding an unsolved meta answers only if every hole it could answer agrees, else *"Which handle
+answers 'X' depends on type arguments nothing here decides"*. **A block's handle types are what its callee's body hands
+it** (`check/HandedBinders`): solved by equality at the callee's runs, recorded on `MonomorphicValue.handed`, read by the
+caller at the callee's key — every run must hand the same (*"This run of the code is handed another implementation than
+another run of it"*), and the block is not in the callee's key. **Effect-ness is read from one place only**: the
+callee's declaration. Nothing keys on a name or a shape.
 
-**What that deletes, and what must not come back.** There is no carrier metavariable, no join solver, no lattice, no
-`Id`-headed judgment, no mode obligation, no post-drain mode resolver, and no elaborator whitelist to police.
-**Reintroducing inference of a binding** — a meta, a lattice, an ordering-sensitive slot decision, a row variable
-unified across arguments, or a **sum over a monomorphized sub-graph with transitive override**, which is dynamic
-scoping resolved at compile time — is the historical bug class in new vocabulary and is **prohibited**. A rule that
-inspects a *sibling argument's expression shape* is inference, not desugaring, and is prohibited. A decision that
-cannot be made from a declaration is a gap to close **in the declarations**.
+**What must not come back.** There is no carrier metavariable, no join solver, no lattice, no `Id`-headed judgment, no
+mode obligation, no evidence and no specialisation pass. **Reintroducing inference of a binding** — a meta of its own,
+a lattice, an ordering-sensitive slot decision, a row variable unified across arguments, or a **sum over a monomorphized
+sub-graph with transitive override**, which is dynamic scoping resolved at compile time — is the historical bug class in
+new vocabulary and is **prohibited**; the hole rule is lexical lookup by type and is not that (signed-off reading). A
+rule that inspects a *sibling argument's expression shape* is inference, not desugaring, and is prohibited. A decision
+that cannot be made from a declaration is the checker's, by type, or a gap to close **in the declarations**.
 
-**A slot's entries are *supplied*, and that is what makes a discharger** (§2.2). `body uses *, Abort: A` says "on my
-caller's bindings **extended by** `Abort`": an entry the definition's own clause already has, **spelled the same**, is *not* supplied
-and the walk continues outward (so `if`'s `value uses *, Abort: T` under its own `uses Abort` rides the caller's), and an
-entry it lacks is supplied by the slot. Entries compare as the declarations spell them, never at the arguments a call or an
-instantiation determines (D30): `Throw[E]` on a slot is supplied beside a declared `Throw[String]` even at `E := String`,
-and a reference whose entry the call does not spell (`raise`'s `E`, left to the checker) answers the nearest binding of
-its ability. A function-typed code parameter's clause is the callback's own scope (`onError uses *: E =>
-A`). A supplied entry's **type arguments** are written from the actual's declaration (`bad uses Throw[String]:
-String` against `Throw[E]` gives `E := String`); where no declaration answers, the call spells them
-(`runThrow[AssertionError, Unit](body)`) and an argument nothing determines is **rejected**, never defaulted — which
-is what stops a `catch` compiling against a frame it will not meet. Three shapes reach that rejection honestly: the
-actual is a **parameter reference**, the actual **raises nothing**, or the slot names the **same ability twice**.
+**A listed effect is handed, and that is what makes a discharger** (§2.2). `body uses *, Abort: A` says the callee
+hands the block an `Abort` handle at each run, from its own scope: its received one (it declares the effect and installs
+nothing nearer — `if`'s `value`, so an `abort` reaches `if`'s caller) or one it made (a `with` around the run, or passing
+the code on to a discharger — `else`, `catch`). "Ride" and "supply" are no longer concepts. A definition may discharge
+the **very effect it declares**, which is what lets `describedAs` rewrite its body's failure message. A function-typed
+code parameter's clause is the callback's own scope (`onError uses *: E => A`).
 
 **Discharge is a frame, not a layer.** A discharger installs the frame its effect's operations exit to or thread
 through, so the entry simply never joins the clause and there is nothing to spell as a negative effect. **Nesting
 order at the run site decides interaction** — `runStateToPair(s, runThrow(c))` versus `runThrow(runStateToPair(s,
 c))` is the difference between state surviving a `raise` and not — and there is no canonical form for the compiler
-to choose. A definition may discharge the **very effect it declares**, which is what lets `describedAs` rewrite its
-body's failure message: a block finds a listed entry's evidence — code and frame together — **where the callee runs
-it**, so a slot entry the definition also declares rides to the caller's evidence unless the definition installs a
-nearer one around the run, and a listed effect is always the callee's to catch if it chooses (D22). (D20c's
-"ride by code, give by frame" (b) is retired: code and frame are one value.)
-
-**An implementation is evidence: code plus an environment, passed and never searched for** (`docs/effects.md` §3.4;
-D35 over D20c option 5). Evidence comes into scope three ways, and a use takes the **nearest answering its entry**
-(`EffectDeclarations.answers`): **received** — a definition's binding binders, at its own type arguments; **given to a
-block by the callee running it** — at each run of a code parameter, what the callee has in scope there for the entries
-the slot lists, recorded as `MonomorphicEffects.Slot.variants` off the callee's **specialised body**, never its
-declaration, so a run passed to another callee's slot finds what that callee's runs give (how `catch` learns
-`runThrow`'s `escaping`); what the block uses through `*` unlisted it answers with the evidence where it was written,
-as a closure captures; and **installed by a `with`**, at the `$with` binder call the resolver leaves around its subject,
-closing over the evidence at the `with` for its clauses. The code half is written by the specialisation pass, which
-dispatches each operation to the clause of the implementation the evidence runs. The environment — an escape frame, a
-cell, a named implementation's own parameters (`implement[S] holding(cell: StateCell[S]): State[S]`, recorded on a
-body-less `$parameters` declaration, `ast/fact/ImplementationParameters`) — is threaded from the same evidence, at the
-`WovenValue` seam (`monomorphize/channel/EnvironmentThreading`), whose ground re-check checks the plumbing: each value
-mono records its entries at ground arguments (`MonomorphicEffects`); a definition receives one frame per entry as
-hidden parameters; a row-typed slot's thunk takes the frames its callee's runs give in place of `unit`; evidence is
-found **by entry at ground arguments**, and an operation's frame is the one the evidence its binding was written from
-holds — a disagreement is an internal error. The platform's control effects take a frame (`ThrowFrame`,
-`AbortFrame`, `StateCell`, `WriterCell`, `DepCell`) that their body-less primitives make and hand to the thunk they
-run, so a helper's own `catch` cannot intercept its caller's `raise`, and an undischarged control effect at `main` is
-a compile error (D19). The compile track threads its frames the same way, over its own intrinsics (§3.4). An
-implementation with parameters is always **named** (D25) — never a default, since nothing that inserts a default has
-arguments. An entry a named implementation's clause only repeats from its member (`standardFileSystem`'s `readFile` and its
-`Throw[IoError]`) is the **call's**: dispatch hands the clause the call's binding (`DeclaredEntries.forwarded`), so a
-`with` binding the implementation answers nothing for it (`BindingWriter.perCallBinders`). An **ability** has no
-named implementation and is never bound with `with` (D29): it is answered by the two-site search alone, a named
-`implement` of one is an error at its marker, and behaviour chosen per call is a value parameter. Every type parameter
-of an implementation is its pattern's (D29 reversed D27). A binding is mangled
-by the backend as its whole identity — ability, module-and-pattern hash, name — since by the ability's name alone two
-named implementations of one ability were one method and one body silently replaced the other.
+to choose. A frame is a **handle's field**: a helper's own `catch` cannot intercept its caller's `raise`, because the
+caller's block captured the caller's handle, and an undischarged control effect at `main` is a compile error (D19).
 
 **Three platform-private primitives, and nothing else.** A finishing clause is a non-local exit; a stateful
 implementation threads a value through calls that never mention it. Neither is expressible in a strict pure core, so
@@ -734,15 +674,17 @@ exited by identity; on the compile track an evaluator intrinsic of the same shap
 body, combine)` — a one-slot array local to the call, handed to `body`) and **loop** (`foreverInternal`). The control
 effects' single implementations are **named** and written over them (`escaping`, `aborting`, `holding`, `writing`,
 `providing`), and each platform discharger binds its own with an ordinary `with` over the frame its primitive made —
-`escapeInternal((frame: ThrowFrame[E]) -> obj with escaping(frame), …)` — so a primitive gives no effect (D25, D26). Every
-discharger over it (`catch`, `else`, `mocked`) passes its code on to that run, so the code runs on `escaping` and names
-nothing. A guarded signature's uncovered `raise`/`abort` runs on what `runThrow`'s/`runAbort`'s runs give
-(`WellKnownTypes.guardDischargers`, `Evidence.Discharged`). They are private
+`escapeInternal((frame: ThrowFrame[E]) -> obj with escaping(frame), …)` — so a primitive gives no effect (D25, D26).
+Every discharger over it (`catch`, `else`, `mocked`) passes its code on to that run and names nothing. A guarded
+signature's uncovered `raise` is read inside the compile track's `runThrow`, an uncovered `abort` as `… else raise(…)`
+inside it (`WellKnownTypes.guardDischargers`), so the guard read gets one verdict shape. The primitives are private
 because a public cell is Landin's knot (`termination/PurityGuardTest` exists to keep it out), so
 `runThrow`/`runAbort`/`runStateToPair`/`runWriterToPair`/`provide` are **body-less in the base and bodied per
 platform**, while `catch`/`else`/`runStateToValue`/`runStateToFinalState`/`runWriterToValue`/`runWriterToLog` are
-ordinary base bodies over those. Eliot has no layer-private visibility, so each jvm module needing a primitive
-declares its own copy, which also separates the frames for free.
+ordinary base bodies over those. Eliot has no layer-private visibility, so each jvm module needing a primitive declares
+its own copy, which also separates the frames for free. An implementation with parameters is always **named** (D25).
+An **ability** has no named implementation and is never bound with `with` (D29). A binding is mangled by the backend
+as its whole identity — ability, module-and-pattern hash, name.
 
 **Every effect is bound the same way; only what is bound differs** (D26). A control effect (`Throw`, `Abort`, `State`,
 `Writer`, `Dep`) has one named implementation per platform, bound by its discharger's `with`; `Inf` and the
@@ -750,34 +692,29 @@ interpretation effects (`Console`, `Log`, `FileSystem`, `Process`, `Environment`
 which the entry point binds and a test replaces. A description of what the platform ships, not a bit in the language.
 
 **Clauses are the user surface and the verifier's vocabulary — they never flow back into types.** `EffectRow` is
-declaration metadata (like `paramConstraints`), consumed by the desugar; verification is a separate **channel** with
-**one verifier**: the pre-mono **scope check**, which is the write's own walk, complete before monomorphization. It
-checks the other direction too: a declared entry no reference in the body is written from is "This value declares
-the effect 'X' but does not perform it" (§4) — running a code parameter consumes only the entries its slot rides,
-since the effects it uses through `*` were answered where it was written. *Forward what is declared, derive what is done* — a forwarded per-operation verdict would
-be a checker self-report and is rejected, as is any negative-effect surface. The post-mono second verifier was
-**retired by D7 (2026-09-10)** on the measurement that it saw a strict subset of the scope check. **Do not grow a
-second effect verifier.** What stays at the codegen seam is `monomorphize/channel/SuppliedRowArgumentsProcessor`, a
-`getFactOrAbort` precondition rejecting a supplied entry whose type argument nothing determines; it needs ground
-arguments, so it cannot move earlier, and it is not the retired check's shadow.
+declaration metadata (like `paramConstraints`) and a handle is an ordinary value parameter, so `unify` sees
+`Function[A, B]` on both sides of a code parameter and a value alike. There is **one verifier**, the scope check, in two
+halves: by name in the `row` walk, by entry in the hole rule; its other direction is "This value declares the effect
+'X' but does not perform it" — a handle parameter no hole takes. *Forward what is declared, derive what is done.* The
+post-mono second verifier was **retired by D7 (2026-09-10)**; **do not grow a second effect verifier.**
 
-**The checker holds no effect rule at all.** What lives next door and must **not** be deleted as effect machinery is
-`check/CarrierKindChecker`: `verifyCarrierKinds` is the only thing rejecting a `[F[_]]` binder instantiated at a
-fully-applied proper type, and with it off that program silently compiles. It is a *kind* system, measured, not
-assumed. Rendering has nothing to invert either — an effect is a nullary ability and an implementation is a name, so
-`GroundValueRenderer` prints what the user wrote.
+**The checker holds exactly one effect rule, the hole**, and the read of a block's handed types beside it; everything
+else an effect does there is an ordinary ability method on an ordinary type parameter. What lives next door and must
+**not** be deleted as effect machinery is `check/CarrierKindChecker`: `verifyCarrierKinds` is the only thing rejecting
+a `[F[_]]` binder instantiated at a fully-applied proper type, and with it off that program silently compiles. It is a
+*kind* system, measured, not assumed. Rendering has nothing to invert — `GroundValueRenderer` prints what the user
+wrote, and LSP hover leaves handles out (`TypeHintIndex`).
 
 **A named implementation is the testing injection point** (§6). Production code that declares `uses Console` names no
 implementation, so whoever runs it decides — the synthesized entry point in production, one `with` in a test. A
-double is **one declaration** in the test module: no type to hang on, no colocation, no coherence question, since a
-named implementation is never searched and may freely overlap another. **A double cannot cheat**, because a user
-module cannot declare a native and the platform's are private to its layer — an implementation reaches the world only
-through effects **its own clauses declare**, which are charged and bound at the binding site. **Interpretation is per
-effect, not per program**: `body with mockConsole with mockFileSystem` leaves everything else bound as its caller binds it.
-`eliot-test` is the worked framework: a suite declares only its return type — the row alias
-`type Test = {Writer[List[TestResult]]} Unit`, widened with a clause where its cases perform (`def testCases uses
-Console: Test`) — and an author's own discharge word lists the faked effects on its slot and binds the doubles with a
-`with` around its run of the code (eliot-test's `mocked`), so a faked case writes no fixture at all.
+double is **one declaration** in the test module: no type to hang on, no colocation, no coherence question. **A double
+cannot cheat**, because a user module cannot declare a native and the platform's are private to its layer — an
+implementation reaches the world only through effects **its own clauses declare**, which it captures at the binding
+site. **Interpretation is per effect, not per program**: `body with mockConsole with mockFileSystem` leaves everything
+else bound as its caller binds it. `eliot-test` is the worked framework: a suite declares only its return type — the
+row alias `type Test = {Writer[List[TestResult]]} Unit`, widened with a clause where its cases perform (`def testCases
+uses Console: Test`) — and an author's own discharge word lists the faked effects on its slot and binds the doubles with
+a `with` around its run of the code (eliot-test's `mocked`), so a faked case writes no fixture at all.
 
 **A set of effects has no name** beyond the row alias (§2.4, D20a open). What survives of v5's ability-requires-
 ability is the ordinary **superability closure** on a `~` constraint — `~ A` is closed under what `A` itself
@@ -801,14 +738,13 @@ the prelude can grow without breaking code), while explicit imports keep the str
 **What has no spelling, on purpose.** A stored effectful computation (a field holds a value; store data and interpret
 it — `docs/effects.md` §2.3, and D20c for one handled where it runs) and a native that keeps a callback (the
 platform's axiom). One gap is carried, fail-safe: a function-typed code parameter's own entries
-(`f uses *, E: A => B`) land on the codomain the callee never supplies, so code using `E` there is rejected.
+(`f uses *, E: A => B`) land on the codomain the callee never hands a handle for, so code using `E` there is rejected.
 
-**Cornerstone fidelity**: this is *more* types-are-values-faithful than the carrier was, not less — a phantom binder
-is an ordinary generic binder, the evidence's binding is an ordinary ground value in `typeArguments` once the pass
-writes it, specialisation clones along the ordinary monomorphization key, and effect flow is ordinary instantiation;
-the evidence exists only after the checker, so it never needs typing as a record of polymorphic operations. No side channel does type-like work behind
-the type system's back, and no kind or sort is added to the type language: `uses` is a clause on a declaration, never
-part of a type, so `unify` sees `Function[A, B]` on both sides.
+**Cornerstone fidelity**: this is *more* types-are-values-faithful than the carrier was, not less — a handle's type is
+an ordinary type parameter, a handle an ordinary value of an ordinary `data`, an operation an ordinary ability method,
+monomorphization clones along the ordinary key, and the hole rule compares by the one evaluator's definitional
+equality. No side channel does type-like work behind the type system's back, and no kind or sort is added to the type
+language: `uses` is a clause on a declaration, never part of a type.
 
 ## Language Cornerstone: Total by Default (No Recursion; `Inf` is the Opt-Out)
 

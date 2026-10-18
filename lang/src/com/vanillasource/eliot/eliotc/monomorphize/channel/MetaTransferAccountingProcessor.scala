@@ -24,7 +24,7 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced.compilerAbort
   *     same body test and the same companion lookup, so the two cannot drift into disagreeing about which values
   *     summarise and which are read.
   *
-  * A rider on [[MonomorphicValue]] (runtime track), on the [[SuppliedRowArgumentsProcessor]] template. The leaf test both
+  * A rider on [[MonomorphicValue]] (runtime track), on the [[RefinementChannelProcessor]] template. The leaf test both
   * rules split on is exactly the body test the fact already carries — `mv.runtime.isEmpty` (no Eliot body on this
   * track), read *after* the layer merge, so §8.2's cross-layer case (the brace in one layer, the body in another) is
   * the same check and needs no separate mechanism.

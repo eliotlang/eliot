@@ -30,13 +30,12 @@ import scala.util.control.ControlThrowable
   *
   * '''Escape: a frame is a value with identity.''' Each control effect's compile-track overlay module declares its own
   * private `escapeIntrinsic`/`exitIntrinsic` pair, as each jvm module declares its `escapeInternal`/`exitInternal`. The
-  * escape makes a **fresh frame** and hands it to the body it runs — a thunk the environment threading made take the
-  * frame (`monomorphize/channel/EnvironmentThreading`) — and `exitIntrinsic(frame, payload)` leaves through exactly
-  * that frame, by identity. Which frame an operation reaches is decided by what was passed to it along the declared
-  * chain, never by a search, so a helper's own `else` cannot catch the `abort` its caller wrote: the caller's block
-  * holds the caller's frame. An exit through a frame that is not installed — its escape has returned, or what was
-  * passed is not a frame at all, as in an evaluation nothing threaded — stays **stuck** on its own name, loud at
-  * read-back, never a nearest-frame guess.
+  * escape makes a **fresh frame** and hands it to the body it runs — which binds it in a handle with `with`
+  * (`docs/effects.md` §3.4) — and `exitIntrinsic(frame, payload)` leaves through exactly that frame, by identity. Which
+  * frame an operation reaches is decided by the handle passed to it, never by a search, so a helper's own `else`
+  * cannot catch the `abort` its caller wrote: the caller's block holds the caller's frame. An exit through a frame that
+  * is not installed — its escape has returned, or what was passed is not a frame at all, as in an evaluation no handle
+  * reached — stays **stuck** on its own name, loud at read-back, never a nearest-frame guess.
   *
   * '''Cell''' is still the earlier, type-keyed form: `withCell(S, s0, body)`, `read(S)` and `write(S, s)` reach the
   * nearest enclosing cell whose key is definitionally equal ([[ConcreteNormalForm]]). No compile-track effect is

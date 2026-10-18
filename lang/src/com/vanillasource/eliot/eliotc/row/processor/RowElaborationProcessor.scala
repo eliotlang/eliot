@@ -155,24 +155,68 @@ class RowElaborationProcessor
           // A clause the ability does not declare is the conformance check's "Method not defined in ability."
           case None         => ().pure[CompilerIO]
           case Some(member) =>
-            val declared = DeclaredEntries.ofMember(member)
-            performed.filterNot(declared.contains).headOption match {
-              case None              => ().pure[CompilerIO]
-              case Some((effect, _)) =>
-                val how =
-                  if (declared.exists(_._1 == effect)) s"at other arguments than the ability's '$clause' declares it"
-                  else s"which the ability's '$clause' does not declare"
-                refuse(
-                  value,
-                  platform,
-                  s"This implementation of '${ability.abilityName}' performs the effect '${effect.abilityName}' in " +
-                    s"'$clause', $how, so nothing could bind it: an ability's implementation is found by its type, " +
-                    "never bound with `with`.",
-                  s"Declare it on '$clause' in the ability, so that every call hands it over, or discharge it inside " +
-                    "the clause."
-                )
+            memberEntriesAtPattern(value, ability, member, platform).flatMap { declared =>
+              performed.filterNot(declared.contains).headOption match {
+                case None              => ().pure[CompilerIO]
+                case Some((effect, _)) =>
+                  val how =
+                    if (declared.exists(_._1 == effect)) s"at other arguments than the ability's '$clause' declares it"
+                    else s"which the ability's '$clause' does not declare"
+                  refuse(
+                    value,
+                    platform,
+                    s"This implementation of '${ability.abilityName}' performs the effect '${effect.abilityName}' in " +
+                      s"'$clause', $how, so nothing could bind it: an ability's implementation is found by its type, " +
+                      "never bound with `with`.",
+                    s"Declare it on '$clause' in the ability, so that every call hands it over, or discharge it inside " +
+                      "the clause."
+                  )
+              }
             }
         }
+    }
+
+  /** The entries the ability `member` declares beyond its own ability, at the pattern of the implementation `clause`
+    * belongs to: the member's ability-level binders past its binding binder are the ability's parameters, which the
+    * implementation's marker takes as its pattern — so `Writer[List[T]]` on `Logged[T]`'s member is `Writer[List[Box]]`
+    * for `implement Logged[Box]` (`docs/effects.md` §8 item 61). As spelled when the markers are not there to read.
+    */
+  private def memberEntriesAtPattern(
+      clause: OperatorResolvedValue,
+      ability: AbilityFQN,
+      member: OperatorResolvedValue,
+      platform: Platform
+  ): CompilerIO[Set[DeclaredEntries.Declared]] =
+    (
+      getFactIfProduced(
+        OperatorResolvedValue.Key(
+          ValueFQN(ability.moduleName, ModuleQualifiedName(ability.abilityName, Qualifier.Ability(ability.abilityName))),
+          platform
+        )
+      ),
+      getFactIfProduced(
+        OperatorResolvedValue.Key(
+          ValueFQN(clause.vfqn.moduleName, ModuleQualifiedName(ability.abilityName, clause.vfqn.name.qualifier)),
+          platform
+        )
+      )
+    ).mapN {
+      case (Some(abilityMarker), Some(instanceMarker)) =>
+        val arity        = OperatorResolvedExpression.SignatureView.of(abilityMarker.signature).binders.size
+        val parameters   = OperatorResolvedExpression.SignatureView.of(member.signature).binders.take(arity).drop(1)
+        val pattern      = OperatorResolvedExpression.SignatureView.of(instanceMarker.signature).parameters
+        val substitution = parameters.map(_.name.value).zip(pattern.map(_.value))
+        member.effectRow.returnEffects
+          .filterNot(_.abilityFQN == ability)
+          .map(entry =>
+            entry.abilityFQN -> entry.typeArgs.map(argument =>
+              substitution.foldLeft(argument) { case (acc, (name, value)) =>
+                OperatorResolvedExpression.substitute(acc, name, value)
+              }.render
+            )
+          )
+          .toSet
+      case _                                           => DeclaredEntries.ofMember(member)
     }
 
   private def refuse(value: OperatorResolvedValue, platform: Platform, message: String, help: String)

@@ -12,16 +12,16 @@ import com.vanillasource.eliot.eliotc.processor.{CompilerFact, CompilerFactKey}
   * meta-information states a `^Meta` transfer for it.
   *
   * A rider on [[com.vanillasource.eliot.eliotc.monomorphize.fact.MonomorphicValue]], built on the same template as
-  * [[SuppliedRowArgumentsProcessor]] / [[RefinementChannelProcessor]]. Producing the fact is contingent on the check
+  * [[RefinementChannelProcessor]]. Producing the fact is contingent on the check
   * passing: a leaf that originates a meta-carrying return but states no transfer is reported at the value and the fact
   * declines (aborts).
   *
-  * '''Armed''' (S5): [[WovenValueProcessor]] demands it beside the effect-accounting precondition, so a leaf that
+  * '''Armed''' (S5): [[WovenValueProcessor]] demands it as a codegen precondition, so a leaf that
   * states nothing blocks its own `WovenValue` and with it codegen. Arming waited until the meta-carrying stdlib leaves
   * stated their transfers (docs/total-meta-transfers.md §P2).
   *
   * The fact carries no payload beyond its identity — a pass/fail witness — but it is nonetheless **persisted**, like
-  * its [[SuppliedRowArguments]] peer and unlike [[com.vanillasource.eliot.eliotc.monomorphize.fact.NativeBinding]]:
+  * the refinement table and unlike [[com.vanillasource.eliot.eliotc.monomorphize.fact.NativeBinding]]:
   * only a fact that *cannot* be equality-stable may decline a codec (a binding holds a Scala lambda; this holds an FQN
   * and ground type arguments), and a build now materialises this one.
   *
