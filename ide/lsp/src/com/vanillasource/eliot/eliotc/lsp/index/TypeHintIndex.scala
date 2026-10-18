@@ -155,7 +155,7 @@ object TypeHintIndex {
       .unless(isHandle(node.value.expressionType) || appliesHandle(node.value.expression))(
         // A reference is hinted at its name: the call it heads may give its node the whole call's range.
         node.value.expression match {
-          case MonomorphicExpression.MonomorphicValueReference(name, _, _) =>
+          case MonomorphicExpression.MonomorphicValueReference(name, _) =>
             Hint(node.uri, name.range, withoutHandles(node.value.expressionType), intervals.get(name.range))
           case _                                                          =>
             Hint(node.uri, node.range, withoutHandles(node.value.expressionType), intervals.get(node.range))

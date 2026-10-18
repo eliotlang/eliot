@@ -63,21 +63,12 @@ class Checker(
     * [[AbilityResolver]].
     */
   private[check] val abilityResolver: AbilityResolver =
-    new AbilityResolver(resolveAbility, bindingForwards, platform)
+    new AbilityResolver(resolveAbility, platform)
 
   /** The hole rule (`docs/effects.md` D36 point 4): each handle position takes the nearest handle in scope whose entry
     * answers it. Run from [[TypeStackLoop]]'s post-drain fixpoint beside ability resolution. See [[HandleHoleResolver]].
     */
   private[check] val handleHoles: HandleHoleResolver = new HandleHoleResolver
-
-  /** Which binders of `method` take the call's binding when `member` dispatches to it, off the two declarations — both
-    * referenced and resolved, so present. See [[DeclaredEntries.forwarded]].
-    */
-  private def bindingForwards(member: ValueFQN, method: ValueFQN): CompilerIO[Seq[(Int, Int)]] =
-    for {
-      memberValue <- getFactOrAbort(OperatorResolvedValue.Key(member, platform))
-      clauseValue <- getFactOrAbort(OperatorResolvedValue.Key(method, platform))
-    } yield DeclaredEntries.forwarded(memberValue, clauseValue)
 
   /** Ensure a NativeBinding is in the cache, fetching it via CompilerIO if needed. */
   private def ensureBinding(vfqn: ValueFQN): CheckIO[Option[SemValue]] =

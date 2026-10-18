@@ -22,12 +22,10 @@ import com.vanillasource.eliot.eliotc.module.processor.{
 import com.vanillasource.eliot.eliotc.monomorphize.channel.{
   MetaTransferAccountingProcessor,
   RefinementChannelProcessor,
-  SuppliedRowArgumentsProcessor,
   WovenValueProcessor
 }
 import com.vanillasource.eliot.eliotc.namedvalues.processor.{NamedValuesIndexProcessor, NamedValuesRewriteProcessor}
 import com.vanillasource.eliot.eliotc.monomorphize.fact.ContributedBinding
-import com.vanillasource.eliot.eliotc.monomorphize.specialise.SpecialisationProcessor
 import com.vanillasource.eliot.eliotc.monomorphize.processor.{
   BindingMergerProcessor,
   BodyValueReferencesProcessor,
@@ -75,37 +73,30 @@ import com.vanillasource.eliot.eliotc.used.UsedNamesProcessor
   *     extra native processor onto this list passes that processor's label here so the [[BindingMergerProcessor]]
   *     consults it. The base labels ([[ContributedBinding.langNativeLabels]]) are always included — the contributors
   *     that own them are always in this list.
-  *   - `handles` — the **new effect path** being built beside the old one (`docs/effects.md` D36, order step 2): an
-  *     effect desugars to an ability over a handle type, a `uses` entry to a handle parameter, a named implementation to
-  *     a `data` and that ability's instance, and the checker fills each handle position with the nearest handle in
-  *     lexical scope whose entry answers it. Off unless the internal system property [[LangPlugin.handlesProperty]] is
-  *     set — never a CLI word, since the CLI is a compatibility promise — so `master` builds as before, and every
-  *     harness built on this list can be run on the new path by setting it.
   */
 object LangProcessors {
   def apply(
       systemModules: Seq[ModuleName] = ModuleName.defaultSystemModules,
       maxNestedRepeats: Int = UsedNamesProcessor.DefaultMaxNestedRepeats,
-      extraNativeBindingLabels: Seq[String] = Seq.empty,
-      handles: Boolean = true
+      extraNativeBindingLabels: Seq[String] = Seq.empty
   ): Seq[CompilerProcessor] = Seq(
     Tokenizer(),
     ASTParser(),
-    CoreProcessor(handles),
+    CoreProcessor(),
     ModuleNamesProcessor(),
     ModuleValueProcessor(systemModules),
     UnifiedModuleNamesProcessor(),
     UnifiedModuleValueProcessor(),
     ModuleConstructorsProcessor(),
     ModuleAbilitiesProcessor(),
-    ValueResolver(handles),
+    ValueResolver(),
     BlockDesugaringProcessor(),
     MatchDesugaringProcessor(),
     OperatorResolverProcessor(),
     NamedValuesIndexProcessor(),
     NamedValuesRewriteProcessor(),
     RecursionCheckProcessor(),
-    RowElaborationProcessor(handles),
+    RowElaborationProcessor(),
     SaturatedValueProcessor(),
     AbilityImplementationProcessor(),
     AbilityImplementationCheckProcessor(),
@@ -120,15 +111,13 @@ object LangProcessors {
       ContributedBinding.langNativeLabels ++ extraNativeBindingLabels,
       ContributedBinding.userLabels
     ),
-    MonomorphicTypeCheckProcessor(handles),
-    SpecialisationProcessor(handles),
-    CompilerMonomorphicTypeCheckProcessor(handles),
+    MonomorphicTypeCheckProcessor(),
+    CompilerMonomorphicTypeCheckProcessor(),
     RefinementChannelProcessor(),
-    SuppliedRowArgumentsProcessor(),
     // R2 meta-transfer accounting. Landed but not yet armed: nothing demands its fact in a normal build, so it is
     // dormant until wired as a `WovenValue` precondition (docs/total-meta-transfers.md §P2).
     MetaTransferAccountingProcessor(),
-    WovenValueProcessor(handles),
+    WovenValueProcessor(),
     UsedNamesProcessor(maxNestedRepeats),
     BodyValueReferencesProcessor(),
     MonomorphicUncurryingProcessor(),

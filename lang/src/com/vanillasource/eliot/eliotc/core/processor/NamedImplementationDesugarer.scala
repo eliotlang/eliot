@@ -58,7 +58,7 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
   */
 object NamedImplementationDesugarer {
 
-  /** The lowering on the new effect path (`docs/effects.md` D36 point 2): a named implementation is a **`data`** and an
+  /** A named implementation is a **`data`** and an
     * **ordinary instance** of its effect's ability, whose first pattern argument is that data type.
     *
     * {{{
@@ -77,137 +77,135 @@ object NamedImplementationDesugarer {
     * binder's call into the handle in scope. So does the implementation's marker under its own name, with no clause
     * beside it: it is what the resolver reaches the binder through.
     */
-  def desugar(implementation: NamedImplementation, handles: Boolean): Seq[(FunctionDefinition, RoleHint)] =
-    if (!handles) desugar(implementation).map(_ -> RoleHint.NoHint)
-    else {
-      val abilityName = implementation.ability.value
-      val implName    = implementation.name.value
-      val anchor      = implementation.name
-      val clauses     = implementation.functions.map(ImplementationRows.own)
-      // Every entry a clause writes may be captured where the implementation is bound (`docs/effects.md` D36 point 2):
-      // which ones are — those no member declares — is the `row` phase's to read, since the members are declared in
-      // another file. The handle has a field for each, of a type of its own, and a `with` fills the ones not captured
-      // with `unit`.
-      val written     = ImplementationRows.union(clauses.filter(_.name.value.qualifier != Qualifier.Type))
-      val captures    = written.indices.map(j =>
-        GenericParameter(anchor.as(Handles.capture(j)), anchor.as(typeExpr(anchor.as("Type"))), Seq.empty)
-      )
-      // The handle takes only the type parameters its value fixes: those its fields' types or its clauses' entries
-      // mention. Any other is the pattern's alone, so the instance's pattern leaves it free and each use solves it — one
-      // `with showing` serves `Source[Int]` and `Source[String]` (`docs/effects.md` §8 item 30).
-      val fixed       = implementation.genericParameters.filter(gp =>
-        implementation.parameters.exists(p => mentions(p.typeExpression, gp.name.value)) ||
-          written.exists(_.typeArgs.exists(mentions(_, gp.name.value)))
-      )
-      val generics    = fixed.map(_.copy(abilityConstraints = Seq.empty)) ++ captures
-      val handleType  = anchor.as(
-        Expression.FunctionApplication(
-          None,
-          anchor.as(Handles.dataType(implName)),
-          // Always bracketed: the name is lower-case, and only brackets put a lower-case name in the type namespace.
-          Some(generics.map(gp => gp.name.as(typeExpr(gp.name)))),
-          Seq.empty
-        )
-      )
-      val data        = DataDefinition(
+  def desugar(implementation: NamedImplementation): Seq[(FunctionDefinition, RoleHint)] = {
+    val abilityName = implementation.ability.value
+    val implName    = implementation.name.value
+    val anchor      = implementation.name
+    val clauses     = implementation.functions.map(ImplementationRows.own)
+    // Every entry a clause writes may be captured where the implementation is bound (`docs/effects.md` D36 point 2):
+    // which ones are — those no member declares — is the `row` phase's to read, since the members are declared in
+    // another file. The handle has a field for each, of a type of its own, and a `with` fills the ones not captured
+    // with `unit`.
+    val written     = ImplementationRows.union(clauses.filter(_.name.value.qualifier != Qualifier.Type))
+    val captures    = written.indices.map(j =>
+      GenericParameter(anchor.as(Handles.capture(j)), anchor.as(typeExpr(anchor.as("Type"))), Seq.empty)
+    )
+    // The handle takes only the type parameters its value fixes: those its fields' types or its clauses' entries
+    // mention. Any other is the pattern's alone, so the instance's pattern leaves it free and each use solves it — one
+    // `with showing` serves `Source[Int]` and `Source[String]` (`docs/effects.md` §8 item 30).
+    val fixed       = implementation.genericParameters.filter(gp =>
+      implementation.parameters.exists(p => mentions(p.typeExpression, gp.name.value)) ||
+        written.exists(_.typeArgs.exists(mentions(_, gp.name.value)))
+    )
+    val generics    = fixed.map(_.copy(abilityConstraints = Seq.empty)) ++ captures
+    val handleType  = anchor.as(
+      Expression.FunctionApplication(
+        None,
         anchor.as(Handles.dataType(implName)),
-        generics,
-        Some(
-          Seq(
-            DataConstructor(
-              anchor.as(Handles.dataType(implName)),
-              implementation.parameters.map(p => p.copy(name = p.name.map(Handles.field(implName, _)))) ++
-                captures.indices.map(j =>
-                  ArgumentDefinition(anchor.as(Handles.captureField(implName, j)), anchor.as(typeExpr(anchor.as(Handles.capture(j)))))
-                )
-            )
-          )
-        )
+        // Always bracketed: the name is lower-case, and only brackets put a lower-case name in the type namespace.
+        Some(generics.map(gp => gp.name.as(typeExpr(gp.name)))),
+        Seq.empty
       )
-      val pattern     = handleType +: implementation.pattern
-      val qualifier   = Qualifier.AbilityImplementation(abilityName, pattern.map(_.value.render).mkString(", "), None)
-      // A prefix of every clause's binders, ahead of those the clause's own row mints: dispatch hands a clause its
-      // instance's type arguments by position.
-      val instanceGenerics = (implementation.genericParameters ++ captures).map(_.copy(abilityLevel = true))
-      val methods     = clauses.map { f =>
-        if (f.name.value.qualifier == Qualifier.Type)
-          f.copy(
-            name = f.name.map(n => QualifiedName(n.name, qualifier)),
-            genericParameters = instanceGenerics ++ f.genericParameters,
-            visibility = Visibility.Public
-          )
-        else
-          f.copy(
-            name = f.name.map(n => QualifiedName(n.name, qualifier)),
-            genericParameters = instanceGenerics ++ f.genericParameters,
-            args = ArgumentDefinition(anchor.as(Handles.self), handleType) +: f.args,
-            body = f.body.map(fieldsBound(implName, implementation.parameters, _)),
-            visibility = Visibility.Public
-          )
-      }
-      val instance    = FunctionDefinition(
-        implementation.ability.as(QualifiedName(abilityName, qualifier)),
-        instanceGenerics,
-        pattern.zipWithIndex.map { case (p, i) => ArgumentDefinition(anchor.as(s"arg$i"), p) },
-        Expression.trueReference(implementation.ability),
-        None
-      )
-      val named       = Qualifier.AbilityImplementation(
-        abilityName,
-        implementation.pattern.map(_.value.render).mkString(", "),
-        Some(implName)
-      )
-      val namedMarker = FunctionDefinition(
-        implementation.ability.as(QualifiedName(abilityName, named)),
-        implementation.genericParameters,
-        implementation.pattern.zipWithIndex.map { case (p, i) => ArgumentDefinition(anchor.as(s"arg$i"), p) },
-        Expression.trueReference(implementation.ability),
-        None
-      )
-      val nameMarker  = FunctionDefinition(
-        anchor.as(QualifiedName(implName, Qualifier.Implementation(implName))),
-        Seq.empty,
-        Seq.empty,
-        anchor.as(Expression.FunctionApplication(None, anchor.as("Type"), None, Seq.empty)),
-        None
-      )
-      // Only a layer that bodies the implementation mints its handle: the `data` lowers to values with bodies of their
-      // own, which two layers could not both supply. The base's `implement standardConsole: Console`, and its
-      // `standardFileSystem` whose clauses carry no body, only declare the name a `with` resolves to.
-      val bodied      = implementation.functions.exists(f => f.name.value.qualifier != Qualifier.Type && f.body.isDefined)
-      val declaration =
-        (ImplementationParameters
-          .declaration(anchor, named, implementation.genericParameters, implementation.parameters, Seq.empty)
-          .toSeq :+ namedMarker :+ nameMarker :+
-          ImplementationParameters.binder(anchor, named, implementation.genericParameters, implementation.parameters))
-          .map(_ -> RoleHint.NoHint)
-      def recording(name: QualifiedName, genericParameters: Seq[GenericParameter], row: Seq[UnresolvedAbilityConstraint[Sourced[Expression]]]) =
-        FunctionDefinition(
-          anchor.as(name),
-          genericParameters,
-          Seq.empty,
-          ImplementationRows.rowed(row, anchor.as(Expression.FunctionApplication(None, anchor.as("Unit"), None, Seq.empty))),
-          None
-        )
-      val recorded    =
+    )
+    val data        = DataDefinition(
+      anchor.as(Handles.dataType(implName)),
+      generics,
+      Some(
         Seq(
-          recording(QualifiedName(Handles.captures, named), implementation.genericParameters, written),
-          recording(QualifiedName(Handles.captures, qualifier), instanceGenerics, written)
-        ) ++ clauses.filter(_.name.value.qualifier != Qualifier.Type).map(f =>
-          recording(
-            QualifiedName(Handles.clause(f.name.value.name), named),
-            implementation.genericParameters ++ f.genericParameters,
-            ImplementationRows.entriesOf(f.typeDefinition)
+          DataConstructor(
+            anchor.as(Handles.dataType(implName)),
+            implementation.parameters.map(p => p.copy(name = p.name.map(Handles.field(implName, _)))) ++
+              captures.indices.map(j =>
+                ArgumentDefinition(anchor.as(Handles.captureField(implName, j)), anchor.as(typeExpr(anchor.as(Handles.capture(j)))))
+              )
           )
         )
-      if (bodied)
-        DataDefinitionDesugarer.desugar(data) ++ (methods ++ recorded :+ instance).map(_ -> RoleHint.NoHint) ++ declaration
-      else declaration
+      )
+    )
+    val pattern     = handleType +: implementation.pattern
+    val qualifier   = Qualifier.AbilityImplementation(abilityName, pattern.map(_.value.render).mkString(", "), None)
+    // A prefix of every clause's binders, ahead of those the clause's own row mints: dispatch hands a clause its
+    // instance's type arguments by position.
+    val instanceGenerics = (implementation.genericParameters ++ captures).map(_.copy(abilityLevel = true))
+    val methods     = clauses.map { f =>
+      if (f.name.value.qualifier == Qualifier.Type)
+        f.copy(
+          name = f.name.map(n => QualifiedName(n.name, qualifier)),
+          genericParameters = instanceGenerics ++ f.genericParameters,
+          visibility = Visibility.Public
+        )
+      else
+        f.copy(
+          name = f.name.map(n => QualifiedName(n.name, qualifier)),
+          genericParameters = instanceGenerics ++ f.genericParameters,
+          args = ArgumentDefinition(anchor.as(Handles.self), handleType) +: f.args,
+          body = f.body.map(fieldsBound(implName, implementation.parameters, _)),
+          visibility = Visibility.Public
+        )
     }
+    val instance    = FunctionDefinition(
+      implementation.ability.as(QualifiedName(abilityName, qualifier)),
+      instanceGenerics,
+      pattern.zipWithIndex.map { case (p, i) => ArgumentDefinition(anchor.as(s"arg$i"), p) },
+      Expression.trueReference(implementation.ability),
+      None
+    )
+    val named       = Qualifier.AbilityImplementation(
+      abilityName,
+      implementation.pattern.map(_.value.render).mkString(", "),
+      Some(implName)
+    )
+    val namedMarker = FunctionDefinition(
+      implementation.ability.as(QualifiedName(abilityName, named)),
+      implementation.genericParameters,
+      implementation.pattern.zipWithIndex.map { case (p, i) => ArgumentDefinition(anchor.as(s"arg$i"), p) },
+      Expression.trueReference(implementation.ability),
+      None
+    )
+    val nameMarker  = FunctionDefinition(
+      anchor.as(QualifiedName(implName, Qualifier.Implementation(implName))),
+      Seq.empty,
+      Seq.empty,
+      anchor.as(Expression.FunctionApplication(None, anchor.as("Type"), None, Seq.empty)),
+      None
+    )
+    // Only a layer that bodies the implementation mints its handle: the `data` lowers to values with bodies of their
+    // own, which two layers could not both supply. The base's `implement standardConsole: Console`, and its
+    // `standardFileSystem` whose clauses carry no body, only declare the name a `with` resolves to.
+    val bodied      = implementation.functions.exists(f => f.name.value.qualifier != Qualifier.Type && f.body.isDefined)
+    val declaration =
+      (ImplementationParameters
+        .declaration(anchor, named, implementation.genericParameters, implementation.parameters, Seq.empty)
+        .toSeq :+ namedMarker :+ nameMarker :+
+        ImplementationParameters.binder(anchor, named, implementation.genericParameters, implementation.parameters))
+        .map(_ -> RoleHint.NoHint)
+    def recording(name: QualifiedName, genericParameters: Seq[GenericParameter], row: Seq[UnresolvedAbilityConstraint[Sourced[Expression]]]) =
+      FunctionDefinition(
+        anchor.as(name),
+        genericParameters,
+        Seq.empty,
+        ImplementationRows.rowed(row, anchor.as(Expression.FunctionApplication(None, anchor.as("Unit"), None, Seq.empty))),
+        None
+      )
+    val recorded    =
+      Seq(
+        recording(QualifiedName(Handles.captures, named), implementation.genericParameters, written),
+        recording(QualifiedName(Handles.captures, qualifier), instanceGenerics, written)
+      ) ++ clauses.filter(_.name.value.qualifier != Qualifier.Type).map(f =>
+        recording(
+          QualifiedName(Handles.clause(f.name.value.name), named),
+          implementation.genericParameters ++ f.genericParameters,
+          ImplementationRows.entriesOf(f.typeDefinition)
+        )
+      )
+    if (bodied)
+      DataDefinitionDesugarer.desugar(data) ++ (methods ++ recorded :+ instance).map(_ -> RoleHint.NoHint) ++ declaration
+    else declaration
+  }
 
   /** A named implementation's type parameters its pattern does not take (`docs/effects.md` D29), each as the error
-    * at the implementation's name: nothing where it runs determines one. On the new effect path the check is made here,
-    * at the declaration, since nothing demands the named marker's `row` phase, where the old path makes it.
+    * at the implementation's name: nothing where it runs determines one. The check is made here, at the declaration,
+    * since nothing demands the named marker's `row` phase.
     */
   def unpatterned(implementation: NamedImplementation): Seq[(Sourced[String], Seq[String])] =
     implementation.genericParameters
@@ -273,52 +271,4 @@ object NamedImplementationDesugarer {
 
   private def typeExpr(name: Sourced[String]): Expression =
     Expression.FunctionApplication(None, name, None, Seq.empty)
-
-  def desugar(implementation: NamedImplementation): Seq[FunctionDefinition] = {
-    val abilityName = implementation.ability.value
-    val implName    = implementation.name.value
-    // No `where` guard is parsed for a named implementation, so — unlike the anonymous form — the pattern key is the
-    // pattern alone. It is still the same canonical, position-independent string, so a named implementation split
-    // across layers merges exactly as an anonymous one does.
-    val patternKey  = implementation.pattern.map(_.value.render).mkString(", ")
-    val qualifier   = Qualifier.AbilityImplementation(abilityName, patternKey, Some(implName))
-    val anchor      = implementation.name
-
-    val clauseRow = ImplementationRows.union(implementation.functions)
-
-    // An associated type (`type Cases[R]`) carries no clause row and takes no parameters; a clause carries both.
-    val methods = implementation.functions.map(f =>
-      f.copy(
-        name = f.name.map(n => QualifiedName(n.name, qualifier)),
-        genericParameters = implementation.genericParameters ++ f.genericParameters,
-        args = (if (f.name.value.qualifier == Qualifier.Type) Seq.empty else implementation.parameters) ++ f.args,
-        visibility = Visibility.Public
-      )
-    )
-
-    val marker = FunctionDefinition(
-      implementation.ability.as(QualifiedName(abilityName, qualifier)),
-      implementation.genericParameters,
-      implementation.pattern.zipWithIndex.map { case (p, i) => ArgumentDefinition(anchor.as(s"arg$i"), p) },
-      // The clause row rides the guard slot, exactly as it does for the anonymous form: the row is erased from every
-      // type, so the unguarded `true` is untouched, and what the marker gains is the phantom-binder declaration
-      // `BindingWriter` reads back to write `recordingConsole[…]` at a `with` ([[ImplementationRows]]).
-      ImplementationRows.rowed(clauseRow, Expression.trueReference(implementation.ability)),
-      None
-    )
-
-    val nameMarker = FunctionDefinition(
-      anchor.as(QualifiedName(implName, Qualifier.Implementation(implName))),
-      Seq.empty,
-      Seq.empty,
-      anchor.as(Expression.FunctionApplication(None, anchor.as("Type"), None, Seq.empty)),
-      None
-    )
-
-    val declarations =
-      ImplementationParameters.declaration(anchor, qualifier, implementation.genericParameters, implementation.parameters, clauseRow).toSeq :+
-        ImplementationParameters.binder(anchor, qualifier, implementation.genericParameters, implementation.parameters)
-
-    (methods ++ declarations :+ marker) :+ nameMarker
-  }
 }

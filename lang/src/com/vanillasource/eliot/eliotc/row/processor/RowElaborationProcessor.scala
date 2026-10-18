@@ -44,7 +44,7 @@ import scala.collection.mutable
   * design: a referenced name legitimately has none when its own definition aborted upstream, and a reference the write cannot read is simply left alone — the
   * fail-safe direction, since an unwritten binder is caught by the checker rather than silently defaulted.
   */
-class RowElaborationProcessor(handles: Boolean = true)
+class RowElaborationProcessor
     extends TransformationProcessor[RecursionCheckedValue.Key, RowElaboratedValue.Key](key =>
       RecursionCheckedValue.Key(key.vfqn, key.platform)
     ) {
@@ -56,7 +56,7 @@ class RowElaborationProcessor(handles: Boolean = true)
     val value = checked.value
     for {
       universe <- universeFor(value, key.platform)
-      written   = BindingWriter.write(value, universe, handles)
+      written   = BindingWriter.write(value, universe)
       _        <- implementationKind(value, key.platform) >> report(written, value, key.platform)
     } yield RowElaboratedValue(written.value)
   }
@@ -83,9 +83,9 @@ class RowElaborationProcessor(handles: Boolean = true)
       case ResolveQualifier.AbilityImplementation(ability, _, named) if value.vfqn.name.name == ability.abilityName =>
         AbilityKind.isEffect(ability, platform).flatMap { kind =>
           named match {
-            // On the new effect path (`docs/effects.md` D36) a named implementation lowers to an anonymous instance keyed
-            // by its own handle type, which is not refused; one a user writes still is.
-            case None if kind.contains(true) && !(handles && isHandleInstance(value)) =>
+            // A named implementation lowers to an anonymous instance keyed by its own handle type (`docs/effects.md`
+            // D36), which is not refused; one a user writes still is.
+            case None if kind.contains(true) && !isHandleInstance(value) =>
               refuse(
                 value,
                 platform,
@@ -114,11 +114,11 @@ class RowElaborationProcessor(handles: Boolean = true)
             case None                               => ().pure[CompilerIO]
           }
         }
-      // On the new effect path a named implementation's clause lives in an anonymous instance keyed by its handle, and
+      // A named implementation's clause lives in an anonymous instance keyed by its handle, and
       // what it performs beyond its member is captured where it is bound ([[com.vanillasource.eliot.eliotc.row.Captures]]).
       // Its own declarations (`$captures`) are no clause and have no member.
       case ResolveQualifier.AbilityImplementation(_, _, None)
-          if handles && (isHandleClause(value) || Handles.isDeclaration(value.vfqn.name.name)) =>
+          if isHandleClause(value) || Handles.isDeclaration(value.vfqn.name.name) =>
         ().pure[CompilerIO]
       case ResolveQualifier.AbilityImplementation(ability, _, None)                                            =>
         anonymousClauseEntries(value, ability, platform)
@@ -250,8 +250,7 @@ class RowElaborationProcessor(handles: Boolean = true)
       val missedClauses = mutable.Set.empty[ValueFQN]
       BindingWriter.write(
         value,
-        universe.copy(onMiss = fqn => { missed += fqn; () }, onMissClauses = fqn => { missedClauses += fqn; () }),
-        handles
+        universe.copy(onMiss = fqn => { missed += fqn; () }, onMissClauses = fqn => { missedClauses += fqn; () })
       )
       val fresh         = missed.toSet -- attempted
       val freshClauses  = missedClauses.toSet -- attemptedClauses

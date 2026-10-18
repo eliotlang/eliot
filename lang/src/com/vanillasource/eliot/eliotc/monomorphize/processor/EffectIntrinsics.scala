@@ -204,17 +204,6 @@ object EffectIntrinsics {
       case _ => None
     }
 
-  /** Run `body` with `count` fresh frames installed and handed to it, as an escape runs its body: [[Right]] of what it
-    * answers, or [[Left]] of what an exit through one of them carried. The guarded-return read discharges a signature's
-    * own control effects with it (`docs/effects.md` §3.4), installing its frames around the read-back as well as the
-    * evaluation, since a signature's codomain is only evaluated when it is quoted.
-    */
-  def discharging(count: Int)(body: Seq[SemValue] => SemValue): Either[SemValue, SemValue] = {
-    val frames = Seq.fill(count)(frameIds.incrementAndGet())
-    try Right(escapes.withValue(frames.reverse.toList ++ escapes.value)(body(frames.map(frameValue))))
-    catch { case Exiting(exited, value) if frames.contains(exited) => Left(value) }
-  }
-
   // ----------------------------------------------------------------------------------------------------------------
   // cell
   // ----------------------------------------------------------------------------------------------------------------

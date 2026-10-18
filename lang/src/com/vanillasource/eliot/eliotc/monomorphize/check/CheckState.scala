@@ -55,11 +55,6 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
   *   ability rather than the method). Recorded by [[AbilityResolver]], which fetches it anyway to slice the impl query;
   *   read back by the post-drain quoter, which must slice a reference's type arguments the same way to rebuild the
   *   [[abilityResolutions]] key and has no `getFact` of its own.
-  * @param bindingForwards
-  *   (ability member, implementation method it dispatched to) → the clause binders that take the **call's** binding,
-  *   paired with the member binder it is read from ([[DeclaredEntries.forwarded]]). Recorded by [[AbilityResolver]]
-  *   with each resolution, read by the post-drain quoter, which rewrites each reference at its own type arguments: a
-  *   resolution is shared by every reference at the same ability-level arguments, a member's own bindings are not.
   * @param metaConstraints
   *   The ability constraints a callee reference declared on each of its freshly-peeled instantiation metas — keyed by
   *   the meta's raw id (docs/effects-as-channel.md §10 U4-f). Recorded at instantiation ([[recordMetaConstraints]],
@@ -88,7 +83,6 @@ case class CheckState(
     abilityResolutions: Map[CheckState.AbilityResolutionKey, (ValueFQN, Seq[GroundValue])],
     metaConstraints: Map[Int, Seq[CheckState.MetaConstraint]] = Map.empty,
     abilityArities: Map[ValueFQN, Int] = Map.empty,
-    bindingForwards: Map[(ValueFQN, ValueFQN), Seq[(Int, Int)]] = Map.empty,
     sharedHoles: Map[BigInt, VMeta] = Map.empty,
     handleHoles: Seq[HandleHoleResolver.Hole] = Seq.empty,
     handleChoices: Map[Int, String] = Map.empty,
@@ -145,12 +139,6 @@ case class CheckState(
       impl: (ValueFQN, Seq[GroundValue])
   ): CheckState =
     copy(abilityResolutions = abilityResolutions + (key -> impl))
-
-  /** Record which clause binders of `method` take the call's binding when `member` dispatches to it. See
-    * [[bindingForwards]].
-    */
-  def recordBindingForwards(member: ValueFQN, method: ValueFQN, forwards: Seq[(Int, Int)]): CheckState =
-    copy(bindingForwards = bindingForwards.updated((member, method), forwards))
 
   /** Record an ability's arity under one of its method FQNs. See [[abilityArities]]. */
   def recordAbilityArity(methodVfqn: ValueFQN, arity: Int): CheckState =

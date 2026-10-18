@@ -1620,6 +1620,26 @@ and uses in `row` (`BindingWriter`). What is new:
      out of what it shows.
 
    All 46 examples behave identically; the jars are as step 2b measured (+22.3% bytes before erasure).
+
+   **The deletions, first slice (2026-10-18).** Gone, with every jar byte-identical to the flip's: the switch
+   (`LangProcessors`' `handles` and every processor's parameter), the specialisation pass (`monomorphize/specialise/`,
+   `CheckedValue` — the checker now produces `MonomorphicValue` itself, carrying the handed types),
+   `channel/EnvironmentThreading`, `channel/EffectDeclarations`, `channel/SuppliedRowArgumentsProcessor`,
+   `MonomorphicEffects` (with `MonomorphicValueReference.dispatchedFrom`), the compile track's threaded reduction
+   (`PostDrainQuoter`'s `Threading`, `threaded`, `reduceThreaded`, `EffectIntrinsics.discharging`),
+   `DeclaredEntries.forwarded` and the binding forwards it fed, `NamedImplementationArguments`, the old named
+   implementation lowering, and `BindingWriter`'s A6 reading of a slot's arguments off the actual's declared row. Two
+   findings: a `where` companion over a callee taking handles must leave the handle arguments out of what it compares
+   (the refinement channel did so for D35's block copies, by position, and now does for handles); and the channel's
+   compile-time reduction of a companion links every callee reduced at its own instantiation from the start, which is
+   what the threading had been doing for it.
+
+   **Still in the tree, as the `row` phase's carriers** — each named in "It deletes" and each a cross-phase change of
+   its own: the `$with` and `$parameters` declarations (they carry a `with`'s arguments through resolution, operators
+   and match desugaring as an ordinary call's, and `walkHandleWith` turns the call into the handle), and the
+   `Implementation[A]` mark (§9), which is how the walk tells a binding binder from an ordinary one and how a handed
+   binder is recognised. `BindingWriter`'s by-name half of the scope check stays by design ("The scope check
+   splits"); its spelled-entry bookkeeping (D30's `Need`s and rides) still runs and is subsumed by the hole rule.
 4. **Erasure**, measured against today's jar.
 
 ### Open questions

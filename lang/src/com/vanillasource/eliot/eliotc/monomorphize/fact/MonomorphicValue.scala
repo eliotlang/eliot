@@ -23,13 +23,12 @@ import scala.annotation.tailrec
   *   The concrete ground type of this specialized instance
   * @param runtime
   *   The optional monomorphized runtime body
-  * @param effects
-  *   This specialisation's effect entries at their ground arguments, for the environment threading
+  * @param handed
+  *   The types of the handles this value's body hands the code of each of its code parameters, for its handed binders
+  *   its key leaves open (`docs/effects.md` D36 point 6) — what a caller reads them off.
   *
-  * The `ambientCarriers` field went with the carrier (effects v6, F6), and nothing replaced it: the implementations an
-  * instantiation received are its own phantom binders' arguments, already here in [[typeArguments]], and effects are
-  * verified before monomorphization by the scope check the write performs
-  * ([[com.vanillasource.eliot.eliotc.row.BindingWriter]]).
+  * The handles an instantiation received are ordinary type arguments, already here in [[typeArguments]], and the
+  * checker dispatched every effect operation by its handle's type, so nothing about effects is left to record.
   */
 case class MonomorphicValue(
     vfqn: ValueFQN,
@@ -37,7 +36,7 @@ case class MonomorphicValue(
     name: Sourced[QualifiedName],
     signature: GroundValue,
     runtime: Option[Sourced[MonomorphicExpression.Expression]],
-    effects: MonomorphicEffects = MonomorphicEffects.empty
+    handed: Seq[GroundValue] = Seq.empty
 ) extends CompilerFact {
   override def key(): CompilerFactKey[MonomorphicValue] =
     MonomorphicValue.Key(vfqn, typeArguments)

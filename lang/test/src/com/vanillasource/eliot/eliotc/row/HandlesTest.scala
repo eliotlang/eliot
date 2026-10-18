@@ -11,7 +11,7 @@ import com.vanillasource.eliot.eliotc.plugin.LangProcessors
   * effect is an ability over a handle type, a `uses` entry a handle parameter, a named implementation a `data` and its
   * instance, and the checker fills every handle position with the nearest handle in scope whose entry answers it.
   */
-class HandlesTest extends ProcessorTest(LangProcessors(handles = true)*) {
+class HandlesTest extends ProcessorTest(LangProcessors()*) {
 
   private val greeting =
     """effect Greeting { def say(line: String): Unit }
@@ -222,7 +222,7 @@ class HandlesTest extends ProcessorTest(LangProcessors(handles = true)*) {
 
   private def targetsIn(expression: MonomorphicExpression.Expression, to: String): Seq[Qualifier] =
     expression match {
-      case MonomorphicExpression.MonomorphicValueReference(name, _, _) if name.value.name.name == to => Seq(name.value.name.qualifier)
+      case MonomorphicExpression.MonomorphicValueReference(name, _) if name.value.name.name == to => Seq(name.value.name.qualifier)
       case MonomorphicExpression.FunctionApplication(target, argument)                             =>
         targetsIn(target.value.expression, to) ++ targetsIn(argument.value.expression, to)
       case MonomorphicExpression.FunctionLiteral(_, _, body)                                       => targetsIn(body.value.expression, to)
@@ -247,7 +247,7 @@ class HandlesTest extends ProcessorTest(LangProcessors(handles = true)*) {
 
   private def referencesIn(expression: MonomorphicExpression.Expression, to: String): Seq[Seq[GroundValue]] =
     expression match {
-      case MonomorphicExpression.MonomorphicValueReference(name, typeArguments, _) if name.value.name.name == to =>
+      case MonomorphicExpression.MonomorphicValueReference(name, typeArguments) if name.value.name.name == to =>
         Seq(typeArguments)
       case MonomorphicExpression.FunctionApplication(target, argument)                                         =>
         referencesIn(target.value.expression, to) ++ referencesIn(argument.value.expression, to)

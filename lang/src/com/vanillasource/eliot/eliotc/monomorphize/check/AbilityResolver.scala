@@ -32,15 +32,11 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced.{compilerAbort, com
   *
   * @param resolveAbility
   *   Resolve an ability at concrete type arguments to its impl — the checker's `resolveAbility`.
-  * @param bindingForwards
-  *   Which binders of an implementation method take the **call's** binding when a member dispatches to it
-  *   ([[DeclaredEntries.forwarded]]) — read off the two declarations, so the checker passes the fact read.
   * @param platform
   *   The track's platform, used to key the ability-marker signature fact.
   */
 class AbilityResolver(
     resolveAbility: (ValueFQN, Seq[GroundValue]) => CompilerIO[Option[(ValueFQN, Seq[GroundValue])]],
-    bindingForwards: (ValueFQN, ValueFQN) => CompilerIO[Seq[(Int, Int)]],
     platform: Platform
 ) {
   import AbilityResolver.AbilityRef
@@ -180,19 +176,12 @@ class AbilityResolver(
       case None       => reportFailedDemand(abilityVfqn, abilityName, patternArgs)
     }
 
-  /** Record a resolution, and which of the implementation method's binders take the call's binding instead of the
-    * implementation's ([[DeclaredEntries.forwarded]]): the entries the member declares are the call's to bind
-    * (`docs/effects.md` §3.4), whatever the implementation's clause, which restates them, was handed.
-    */
   private def record(
       member: ValueFQN,
       key: CheckState.AbilityResolutionKey,
       impl: (ValueFQN, Seq[GroundValue])
   ): CheckIO[Unit] =
-    for {
-      forwards <- liftF(bindingForwards(member, impl._1))
-      _        <- modify(_.recordAbilityResolution(key, impl).recordBindingForwards(member, impl._1, forwards))
-    } yield ()
+    modify(_.recordAbilityResolution(key, impl))
 
   /** A ground-argument demand did not resolve. The producer
     * ([[com.vanillasource.eliot.eliotc.ability.processor.AbilityImplementationProcessor]]) registers the failed

@@ -107,14 +107,6 @@ class EffectIntrinsicsTest extends AnyFlatSpec with Matchers {
     exit(kept, str("b")) shouldBe VStuckNative(exitFqn, spineOf(kept, str("b")))
   }
 
-  "discharging" should "answer Right of the body's result when nothing exits" in {
-    EffectIntrinsics.discharging(1)(_ => str("ok")) shouldBe Right(str("ok"))
-  }
-
-  it should "answer Left of the value exited through any of its frames" in {
-    EffectIntrinsics.discharging(2)(frames => exit(frames(1), str("x"))) shouldBe Left(str("x"))
-  }
-
   "withCell" should "pair the body's result with the initial content when nothing writes" in {
     withCell(intKey, int(0), str("r")) shouldBe pair(str("r"), int(0))
   }

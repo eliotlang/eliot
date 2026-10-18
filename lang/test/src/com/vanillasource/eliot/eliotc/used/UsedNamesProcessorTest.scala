@@ -4,26 +4,19 @@ import cats.effect.IO
 import com.vanillasource.eliot.eliotc.ProcessorTest
 import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, Qualifier}
 import com.vanillasource.eliot.eliotc.module.fact.{ModuleName, ValueFQN, WellKnownTypes}
-import com.vanillasource.eliot.eliotc.monomorphize.channel.{
-  MetaTransferAccountingProcessor,
-  SuppliedRowArgumentsProcessor,
-  WovenValueProcessor
-}
+import com.vanillasource.eliot.eliotc.monomorphize.channel.{MetaTransferAccountingProcessor, WovenValueProcessor}
 import com.vanillasource.eliot.eliotc.monomorphize.fact.{GroundValue, MonomorphicExpression, MonomorphicValue}
 import com.vanillasource.eliot.eliotc.processor.CompilerFact
 import com.vanillasource.eliot.eliotc.source.content.Sourced
 
-// `used` now demands the post-mono `WovenValue` (the effects-as-channel codegen source), so this manual-fact-injection
-// harness runs the `WovenValueProcessor` too: the injected `MonomorphicValue`s carry no `Id`, so weaving is the identity
-// image of each. `WovenValue` in turn demands both codegen preconditions — `SuppliedRowArguments` and, since S5
-// armed R2, `MetaTransferAccounting` (docs/total-meta-transfers.md §P2) — so both ride along. The injected bodies
-// contain no call supplying a row entry, so the first has nothing to reject; they have no `OperatorResolvedValue` to
-// read a declared return from, so the second passes with nothing to check.
+// `used` demands the post-mono `WovenValue` (the codegen source), so this manual-fact-injection harness runs the
+// `WovenValueProcessor` too, which is the identity image of each injected `MonomorphicValue`. `WovenValue` in turn
+// demands its codegen precondition `MetaTransferAccounting` (docs/total-meta-transfers.md §P2), which rides along: the
+// injected bodies have no `OperatorResolvedValue` to read a declared return from, so it passes with nothing to check.
 class UsedNamesProcessorTest
     extends ProcessorTest(
       UsedNamesProcessor(),
       WovenValueProcessor(),
-      SuppliedRowArgumentsProcessor(),
       MetaTransferAccountingProcessor()
     ) {
   private val intVfqn = ValueFQN(testModuleName, QualifiedName("Int", Qualifier.Default))

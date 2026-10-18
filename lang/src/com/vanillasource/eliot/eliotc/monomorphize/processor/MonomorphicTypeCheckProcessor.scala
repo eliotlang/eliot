@@ -5,7 +5,7 @@ import com.vanillasource.eliot.eliotc.ability.fact.AbilityImplementation
 import com.vanillasource.eliot.eliotc.module.fact.ValueFQN
 import com.vanillasource.eliot.eliotc.monomorphize.check.{MarkerGuardSignature, Track, TypeStackLoop}
 import com.vanillasource.eliot.eliotc.monomorphize.domain.SemValue
-import com.vanillasource.eliot.eliotc.monomorphize.fact.{CheckedValue, CompilerMonomorphicValue, GroundValue, NativeBinding}
+import com.vanillasource.eliot.eliotc.monomorphize.fact.{CompilerMonomorphicValue, GroundValue, MonomorphicValue, NativeBinding}
 import com.vanillasource.eliot.eliotc.platform.Platform
 import com.vanillasource.eliot.eliotc.processor.CompilerIO.*
 import com.vanillasource.eliot.eliotc.processor.common.TransformationProcessor
@@ -15,11 +15,11 @@ import com.vanillasource.eliot.eliotc.saturate.fact.SaturatedValue
   * work. Reads the [[SaturatedValue]] (the operator-resolved value with parameter-position bare omittable references
   * generalized into explicit generic binders), not the raw `OperatorResolvedValue`.
   *
-  * It checks a value at type arguments whose effect bindings are left out ([[CheckedValue]], `docs/effects.md` D35
-  * step 4); the specialisation pass puts them back.
+  * A handle's type is an ordinary type argument of the key, and every effect operation is an ability method the checker
+  * dispatches by it (`docs/effects.md` D36), so the checked value is the specialisation everything downstream reads.
   */
-class MonomorphicTypeCheckProcessor(handles: Boolean = true)
-    extends TransformationProcessor[SaturatedValue.Key, CheckedValue.Key](key => SaturatedValue.Key(key.vfqn)) {
+class MonomorphicTypeCheckProcessor
+    extends TransformationProcessor[SaturatedValue.Key, MonomorphicValue.Key](key => SaturatedValue.Key(key.vfqn)) {
 
   /** A callee's binding. A callee whose own definition was rejected has none, on either track, and is skipped: the
     * checker names it where it is referenced (*"Cannot use 'x' here: its own definition was rejected."*), while an
@@ -29,9 +29,9 @@ class MonomorphicTypeCheckProcessor(handles: Boolean = true)
     getFactIfProduced(NativeBinding.Key(vfqn, Platform.Runtime)).map(_.flatMap(_.semValue))
 
   override protected def generateFromKeyAndFact(
-      key: CheckedValue.Key,
+      key: MonomorphicValue.Key,
       saturatedValue: SaturatedValue
-  ): CompilerIO[CheckedValue] = {
+  ): CompilerIO[MonomorphicValue] = {
     // An ability-implementation marker is monomorphized only to discharge its `where` guard (ability-guards §2.3); its
     // pattern-argument types are not real value parameters, so they are stripped to leave binders + guard return.
     val value = MarkerGuardSignature.strippedForGuard(saturatedValue.value)
@@ -55,17 +55,15 @@ class MonomorphicTypeCheckProcessor(handles: Boolean = true)
                              reduceInstance = ReducedBindingClosure.reduceInstance(_, _),
                              injectedSignature = injectedSignature,
                              readHanded = Some((callee, arguments) =>
-                               getFactOrAbort(CheckedValue.Key(callee, arguments)).map(_.handed)
-                             ),
-                             handles = handles
+                               getFactOrAbort(MonomorphicValue.Key(callee, arguments)).map(_.handed)
+                             )
                            )
-    } yield CheckedValue(
+    } yield MonomorphicValue(
       key.vfqn,
       key.typeArguments,
       value.signature.as(key.vfqn.name),
       result.signature,
       result.body,
-      result.effects,
       result.handed
     )
   }

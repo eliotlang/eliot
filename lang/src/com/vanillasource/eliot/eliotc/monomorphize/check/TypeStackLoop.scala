@@ -47,10 +47,7 @@ class TypeStackLoop(
     // The new effect path (`docs/effects.md` D36 point 6): a callee's handed types at its other type arguments, read off
     // its checked value on this track ([[HandedBinders]]). `None` reads nothing, which only a value with no reference
     // to a callee with handed binders can afford.
-    readHanded: Option[(ValueFQN, Seq[GroundValue]) => CompilerIO[Seq[GroundValue]]] = None,
-    // The new effect path (`docs/effects.md` D36): no environment is threaded on either track, since a frame is a
-    // handle's field and a handle is passed as any value is.
-    handles: Boolean = true
+    readHanded: Option[(ValueFQN, Seq[GroundValue]) => CompilerIO[Seq[GroundValue]]] = None
 ) {
   import TypeStackLoop.AbilityRef
 
@@ -130,72 +127,12 @@ class TypeStackLoop(
       // The compiler track reduces its body (`reduceSourced`); the runtime track keeps it structural (`quoteSourced`).
       // Narrow-representation reconciliation happens in the backend's `ExpressionCodeGenerator` off the refinement
       // channel, so the body is read back directly.
-      // On the new effect path a handle is an ordinary parameter, so there are no entries to thread: every threading
-      // the compile track's reductions run is then a no-op.
-      effects   <- if (handles) pure(MonomorphicEffects.empty) else monomorphicEffects(resolvedValue, typeArguments, quoter, monoEnv)
-      threading  = PostDrainQuoter.Threading(
-                     resolvedValue.vfqn,
-                     typeArguments,
-                     resolvedValue.name.as(resolvedValue.vfqn.name),
-                     groundSig,
-                     effects,
-                     guarded = false
-                   )
-      monoBody  <- runtime.traverse(srcSem => liftF(track.readBackBody(quoter, srcSem, Option.unless(handles)(threading))))
+      monoBody  <- runtime.traverse(srcSem => liftF(track.readBackBody(quoter, srcSem)))
     } yield TypeStackLoop.Result(
       groundSig,
       monoBody.map(sourcedMono => sourcedMono.as(sourcedMono.value.expression)),
-      effects,
       handed
     )
-
-  /** This specialisation's effect entries at their ground arguments ([[MonomorphicEffects]]), for the environment
-    * threading at the `WovenValue` seam. An entry's arguments are type expressions over this definition's binders, so
-    * they are reduced here, by the one evaluator, under the binders' ground values (`monoEnv`).
-    *
-    * A **received** entry is read off the constraint the desugar puts on every binding binder — `Impl ~ Console[Impl]`
-    * for a row entry, `T ~ Ord[Impl, T]` for a `~` constraint — whose first argument names the binder and whose rest
-    * are the entry's arguments. A **slot**'s entries are the parameter row's own. An entry whose arguments do not reduce
-    * to ground (a partial-arity key's leftover binder) is left out, which can only leave a reference with no frame to
-    * find — reported where the threading needs one, never guessed.
-    */
-  private def monomorphicEffects(
-      resolvedValue: OperatorResolvedValue,
-      typeArguments: Seq[GroundValue],
-      quoter: PostDrainQuoter,
-      monoEnv: Env
-  ): CheckIO[MonomorphicEffects] = {
-    val binders = SignatureView.of(resolvedValue.signature).binders.map(_.name.value)
-    def ground(arguments: Seq[OperatorResolvedExpression]): CheckIO[Option[Seq[GroundValue]]] =
-      arguments.toList
-        .traverse(argument => checker.evalExpr(argument, Some(monoEnv)).map(quoter.quoteSemOption))
-        .map(_.sequence)
-    val received =
-      resolvedValue.paramConstraints.values.flatten.toSeq
-        .flatMap { constraint =>
-          constraint.typeArgs.headOption
-            .collect { case OperatorResolvedExpression.ParameterReference(name) => binders.indexOf(name.value) }
-            .filter(index => index >= 0 && index < typeArguments.size)
-            .map(_ -> constraint)
-        }
-        .sortBy(_._1)
-    for {
-      receivedEntries <- received.toList.traverse { case (index, constraint) =>
-                           ground(constraint.typeArgs.drop(1)).map(
-                             _.map(arguments =>
-                               MonomorphicEffects.Received(index, MonomorphicEffects.Entry(constraint.abilityFQN, arguments))
-                             )
-                           )
-                         }
-      slots           <- resolvedValue.effectRow.parameterEffects.toList.traverse { slot =>
-                           slot.effects.toList
-                             .traverse(entry =>
-                               ground(entry.typeArgs).map(_.map(MonomorphicEffects.Entry(entry.abilityFQN, _)))
-                             )
-                             .map(entries => MonomorphicEffects.Slot(slot.parameterIndex, entries.flatten))
-                         }
-    } yield MonomorphicEffects(receivedEntries.flatten, slots)
-  }
 
   /** The signature twin's monomorphization as an **ordinary body mono** (signature-unification §3.1): the signature's
     * binder-stripped arrow chain *is* the body. Kind-check each declared binder against `VType` and bind its ground
@@ -246,7 +183,7 @@ class TypeStackLoop(
                       case Some(ground) => liftF(ground.pure[CompilerIO])
                       case None         =>
                         liftF(
-                          quoter.reduceSignatureToGroundOption(checked, guardRead(resolvedValue, typeArguments))
+                          quoter.reduceSignatureToGroundOption(checked)
                         ).flatMap {
                           case Some(ground) => liftF(ground.pure[CompilerIO])
                           case None         => publishStuckGuardCarrier(view, checked, quoter, resolvedValue)
@@ -254,25 +191,6 @@ class TypeStackLoop(
                     }
     } yield TypeStackLoop.Result(groundSig, None)
   }
-
-  /** How the compile track threads a signature's read-back: the **guarded-return read** gives the signature's own
-    * control effects their frames (`docs/effects.md` §3.4), so a `raise("…")` it performs is read as the rejection
-    * `Left("…")`, carrying its author's message, and an `else` in it catches only the `abort` written inside it.
-    */
-  private def guardRead(
-      resolvedValue: OperatorResolvedValue,
-      typeArguments: Seq[GroundValue]
-  ): Option[PostDrainQuoter.Threading] =
-    Option.when(track.platform == Platform.Compiler && !handles)(
-      PostDrainQuoter.Threading(
-        resolvedValue.vfqn,
-        typeArguments,
-        resolvedValue.name.as(resolvedValue.vfqn.name),
-        GroundValue.Type,
-        MonomorphicEffects.empty,
-        guarded = true
-      )
-    )
 
   /** A guard whose verdict depends on a *leftover generic binder* (a [[GroundValue.Param]]) is stuck as a value — its
     * `fold`/`else` cannot reduce with the binder abstract, so neither the raw quote nor the escalation grounds it
@@ -406,13 +324,11 @@ class TypeStackLoop(
       state.unifier.metaStore,
       state.abilityResolutions,
       state.abilityArities,
-      state.bindingForwards,
       monoEnv,
       fqn =>
         implBindings.get(fqn).orElse(abilityMethodBindings.get(fqn)).orElse(state.bindingCache.getOrElse(fqn, None)),
       track.platform,
-      reduceInstance,
-      handles
+      reduceInstance
     )
 
   /** The post-check resolution sequence (D1) that settles every metavariable, in order:
@@ -596,7 +512,6 @@ object TypeStackLoop {
   case class Result(
       signature: GroundValue,
       body: Option[Sourced[MonomorphicExpression.Expression]],
-      effects: MonomorphicEffects = MonomorphicEffects.empty,
       handed: Seq[GroundValue] = Seq.empty
   )
 
@@ -611,8 +526,7 @@ object TypeStackLoop {
         none[SemValue].pure[CompilerIO],
       signatureOnly: Boolean = false,
       injectedSignature: Option[GroundValue] = None,
-      readHanded: Option[(ValueFQN, Seq[GroundValue]) => CompilerIO[Seq[GroundValue]]] = None,
-      handles: Boolean = true
+      readHanded: Option[(ValueFQN, Seq[GroundValue]) => CompilerIO[Seq[GroundValue]]] = None
   ): CompilerIO[Result] =
     new TypeStackLoop(
       fetchBinding,
@@ -621,8 +535,7 @@ object TypeStackLoop {
       reduceInstance,
       signatureOnly,
       injectedSignature,
-      readHanded,
-      handles
+      readHanded
     )
       .process(typeArguments, resolvedValue)
 

@@ -118,7 +118,7 @@ class MonomorphicUncurryingProcessor
         UncurriedMonomorphicExpression(expr.expressionType, UncurriedMonomorphicExpression.StringLiteral(value))
       case MonomorphicExpression.ParameterReference(paramName)                      =>
         UncurriedMonomorphicExpression(expr.expressionType, UncurriedMonomorphicExpression.ParameterReference(paramName))
-      case MonomorphicExpression.MonomorphicValueReference(vfqn, typeArgs, _)          =>
+      case MonomorphicExpression.MonomorphicValueReference(vfqn, typeArgs)          =>
         UncurriedMonomorphicExpression(
           expr.expressionType,
           UncurriedMonomorphicExpression.MonomorphicValueReference(vfqn, typeArgs)

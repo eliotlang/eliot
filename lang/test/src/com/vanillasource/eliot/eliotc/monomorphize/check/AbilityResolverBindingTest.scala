@@ -133,7 +133,7 @@ class AbilityResolverBindingTest extends AnyFlatSpec with Matchers {
       searched = searched :+ asked
       (Some(searchedImpl): Option[(ValueFQN, Seq[GroundValue])]).pure[CompilerIO]
     }
-    val resolver = new AbilityResolver(search, (_, _) => Seq.empty.pure[CompilerIO], Platform.Runtime)
+    val resolver = new AbilityResolver(search, Platform.Runtime)
     val pass     = resolver.resolveAbilities(Seq((raise, args.map(Evaluator.groundToSem))))
     pass.run(CheckState.initial).run(implementation).run(Chain.empty).value.unsafeRunSync().map {
       case (_, (state, _)) => (state.abilityResolutions, searched)

@@ -11,14 +11,11 @@ import com.vanillasource.eliot.eliotc.module.fact.{
   ValueFQN,
   WellKnownTypes
 }
-import com.vanillasource.eliot.eliotc.monomorphize.channel.EnvironmentThreading
-import com.vanillasource.eliot.eliotc.monomorphize.specialise.EvidenceSpecialisation
 import com.vanillasource.eliot.eliotc.monomorphize.domain.{Env, MetaStore, SemValue}
 import com.vanillasource.eliot.eliotc.monomorphize.eval.{Evaluator, Quoter, SemExpressionEvaluator}
 import com.vanillasource.eliot.eliotc.monomorphize.fact.{
   CompilerMonomorphicValue,
   GroundValue,
-  MonomorphicEffects,
   MonomorphicExpression
 }
 import com.vanillasource.eliot.eliotc.monomorphize.fact.GroundValue.Literal
@@ -64,17 +61,13 @@ class PostDrainQuoter(
     metaStore: MetaStore,
     abilityResolutions: Map[CheckState.AbilityResolutionKey, (ValueFQN, Seq[GroundValue])],
     abilityArities: Map[ValueFQN, Int],
-    bindingForwards: Map[(ValueFQN, ValueFQN), Seq[(Int, Int)]],
     monoEnv: Env,
     lookupTopDef: ValueFQN => Option[SemValue],
     platform: Platform,
     // Required (no default): defaulting it to a no-op fetch would be a silent-degradation trap — a construction site
     // that omitted it would get an escalation loop that can never escalate (terms that should reduce stay stuck), with
     // no compile error and nothing to grep for. The one production site (`TypeStackLoop`) always passes the real fetch.
-    reduceInstance: (ValueFQN, Seq[GroundValue]) => CompilerIO[Option[SemValue]],
-    // The new effect path (`docs/effects.md` D36): a dispatched clause also takes the call's method-level type
-    // arguments, its handles' types among them, after its instance's.
-    handles: Boolean = true
+    reduceInstance: (ValueFQN, Seq[GroundValue]) => CompilerIO[Option[SemValue]]
 ) {
 
   private val erasedParams: Set[String]            = monoEnv.names.toSet
@@ -124,21 +117,17 @@ class PostDrainQuoter(
     */
   def reduceSignatureToGround(
       expr: SemExpression,
-      at: Sourced[?],
-      threading: Option[PostDrainQuoter.Threading] = None
+      at: Sourced[?]
   ): CompilerIO[GroundValue] =
-    reduceWithEscalation(monoEnv, expr, EscalatingReducer.typeLevelStuck, threading)
+    reduceWithEscalation(monoEnv, expr, EscalatingReducer.typeLevelStuck)
       .flatMap(reduced => orAbort(quoteDeep(reduced), at))
 
   /** Non-aborting [[reduceSignatureToGround]]: the reduced ground signature, or [[None]] when it does not fully reduce
     * (a guard stuck on a leftover `GroundValue.Param`). The signature twin uses this so it can fall back to publishing
     * the guard's undischarged *carrier type* instead of aborting (signature-unification C2).
     */
-  def reduceSignatureToGroundOption(
-      expr: SemExpression,
-      threading: Option[PostDrainQuoter.Threading] = None
-  ): CompilerIO[Option[GroundValue]] =
-    reduceWithEscalation(monoEnv, expr, EscalatingReducer.typeLevelStuck, threading)
+  def reduceSignatureToGroundOption(expr: SemExpression): CompilerIO[Option[GroundValue]] =
+    reduceWithEscalation(monoEnv, expr, EscalatingReducer.typeLevelStuck)
       .map(reduced => quoteDeep(reduced).toOption)
 
   /** Quote a sourced [[SemExpression]] tree to a sourced [[MonomorphicExpression]] tree, applying the staging gate. */
@@ -161,11 +150,8 @@ class PostDrainQuoter(
     *     `foldEither`), whose parameters stay neutral — falls back to the ordinary structural quote, identical to the
     *     runtime track's read-back (with `resolveIfAbility` doing the ability→impl rewrite there).
     */
-  def reduceSourced(
-      expr: Sourced[SemExpression],
-      threading: Option[PostDrainQuoter.Threading] = None
-  ): CompilerIO[Sourced[MonomorphicExpression]] =
-    reduceWithEscalation(monoEnv, expr.value, EscalatingReducer.reducibleStuck, threading).flatMap { reduced =>
+  def reduceSourced(expr: Sourced[SemExpression]): CompilerIO[Sourced[MonomorphicExpression]] =
+    reduceWithEscalation(monoEnv, expr.value, EscalatingReducer.reducibleStuck).flatMap { reduced =>
       Quoter.quote(0, reduced, metaStore) match {
         case Left(_)       => quoteSourced(expr)
         case Right(ground) =>
@@ -216,21 +202,9 @@ class PostDrainQuoter(
   private def reduceWithEscalation(
       env: Env,
       expr: SemExpression,
-      stuck: (SemValue, MetaStore) => Boolean,
-      threading: Option[PostDrainQuoter.Threading]
-  ): CompilerIO[SemValue] = {
-    val resolved = resolveAbilityRefs(expr)
-    threading.traverse(threaded(expr, resolved, _)).map(_.flatten).flatMap {
-      case None                    => reduceUnthreaded(env, resolved, stuck)
-      case Some((body, guards)) => reduceThreaded(env, body, guards, stuck)
-    }
-  }
-
-  private def reduceUnthreaded(
-      env: Env,
-      resolved: SemExpression,
       stuck: (SemValue, MetaStore) => Boolean
   ): CompilerIO[SemValue] = {
+    val resolved = resolveAbilityRefs(expr)
     // Evaluate, then **renormalise** (re-firing a stuck native `add(2,1)` ⤳ `3`, descending under `VPi` binders) before
     // deciding the result is stuck — exactly what `quoteSem` does. Without this a native left stuck at evaluation time
     // (its arguments not yet concrete when the reference was inlined) would wrongly trigger escalation, monomorphizing
@@ -245,138 +219,6 @@ class PostDrainQuoter(
       )
     EscalatingReducer.escalatingLoop(metaStore, evalWith, escalationBindings(resolved, _), stuck)
   }
-
-  /** The reduction of an expression the compile track **threaded** (`docs/effects.md` §3.4): a control effect's frame
-    * is passed along the declared chain, so every callee it reaches must be threaded the same way. Each one is
-    * therefore linked **reduced at its own instantiation** from the start ([[reduceInstance]], which threads it)
-    * rather than escalated to on a stuck result: a raw binding is unthreaded, takes no frame, and would be applied to
-    * one. A callee
-    * referenced at two instantiations gets one binding per instantiation, under a name of its own ([[instanceNamed]]).
-    *
-    * A **guarded** expression takes the guarded-return read's frames as its leading parameters: they are installed
-    * around the evaluation *and* its read-back, since a signature's codomain is only evaluated when it is quoted, and
-    * an exit through one is the rejection `Left(payload)` — the author's `raise("…")` message.
-    */
-  private def reduceThreaded(
-      env: Env,
-      body: SemExpression,
-      guards: Int,
-      stuck: (SemValue, MetaStore) => Boolean
-  ): CompilerIO[SemValue] = {
-    val (named, instances) = instanceNamed(body)
-    def evaluate(lookup: ValueFQN => Option[SemValue]): SemValue =
-      Evaluator.renormalize(new SemExpressionEvaluator(lookup).eval(env, named), metaStore, lookupTopDef, deep = true)
-    def evalWith(bindings: Map[ValueFQN, SemValue]): SemValue = {
-      val lookup: ValueFQN => Option[SemValue] =
-        fqn =>
-          bindings
-            .get(fqn)
-            .orElse(instances.get(fqn).map { case (original, _) =>
-              lookupTopDef(original).getOrElse(SemValue.VTopDef(original, None, SemValue.Spine.SNil))
-            })
-            .orElse(lookupTopDef(fqn))
-      if (guards == 0) evaluate(lookup)
-      else
-        EffectIntrinsics.discharging(guards) { frames =>
-          val applied = Evaluator.renormalize(
-            frames.foldLeft(evaluate(lookup))(Evaluator.applyValue),
-            metaStore,
-            lookupTopDef,
-            deep = true
-          )
-          Quoter.quote(0, applied, metaStore).fold(_ => applied, Evaluator.groundToSem)
-        } match {
-          case Right(value)  => value
-          case Left(payload) => SemValue.VTopDef(WellKnownTypes.leftFQN, None, SemValue.Spine.SNil :+ payload)
-        }
-    }
-    for {
-      ancestors <- activeFactKeys
-      linked    <- instances.toList.foldLeftM(Map.empty[ValueFQN, SemValue]) { case (acc, (name, (original, args))) =>
-                     if (ancestors.contains(CompilerMonomorphicValue.Key(original, args))) acc.pure[CompilerIO]
-                     else
-                       reduceInstance(original, args)
-                         .map(_.fold(acc)(sem => acc + (name -> absorbTypeArgs(args.size, sem))))
-                   }
-      result <- EscalatingReducer.escalatingLoop(
-                  metaStore,
-                  extra => evalWith(linked ++ extra),
-                  _ => Map.empty[ValueFQN, SemValue].pure[CompilerIO],
-                  stuck
-                )
-    } yield result
-  }
-
-  /** Name every value reference with ground type arguments after its instantiation, so that one lookup keyed by name
-    * can serve a callee referenced at two instantiations. The map answers each new name with the reference it names.
-    */
-  private def instanceNamed(body: SemExpression): (SemExpression, Map[ValueFQN, (ValueFQN, Seq[GroundValue])]) = {
-    val instances = mutable.LinkedHashMap.empty[(ValueFQN, Seq[GroundValue]), ValueFQN]
-    def rename(se: SemExpression): SemExpression = se.expression match {
-      case SemExpression.ValueReference(vfqn, typeArgs)              =>
-        typeArgs.toList.traverse(a => Quoter.quote(0, a, metaStore)).toOption match {
-          case Some(args) =>
-            val name = instances.getOrElseUpdate(
-              (vfqn.value, args),
-              vfqn.value.copy(name = vfqn.value.name.copy(name = s"${vfqn.value.name.name}#${instances.size}"))
-            )
-            se.copy(expression = SemExpression.ValueReference(vfqn.as(name), typeArgs))
-          case None       => se
-        }
-      case SemExpression.FunctionApplication(target, argument)       =>
-        se.copy(expression = SemExpression.FunctionApplication(target.map(rename), argument.map(rename)))
-      case SemExpression.FunctionLiteral(paramName, paramType, inner) =>
-        se.copy(expression = SemExpression.FunctionLiteral(paramName, paramType, inner.map(rename)))
-      case _                                                         => se
-    }
-    val renamed = rename(body)
-    (renamed, instances.map { case (instance, name) => name -> instance }.toMap)
-  }
-
-  /** `expr` threaded, with the number of guard frames it takes, when it reaches a control effect's frame at all — a
-    * reference with an effect row, or a clause of an implementation with parameters. Everything else is reduced as it
-    * always was, which keeps pure compile-time code free of the threading's cost. [[None]] too when the expression
-    * does not read back structurally or cannot be threaded; the threading's errors are kept.
-    */
-  private def threaded(
-      expr: SemExpression,
-      resolved: SemExpression,
-      threading: PostDrainQuoter.Threading
-  ): CompilerIO[Option[(SemExpression, Int)]] =
-    reachesFrames(resolved).flatMap {
-      case false => None.pure[CompilerIO]
-      case true  =>
-        structuralForm(SemExpression(expr.expressionType, expr.expression), threading.name) match {
-          case None       => None.pure[CompilerIO]
-          case Some(form) =>
-            val unspecialised = EnvironmentThreading.Specialisation(
-              threading.vfqn,
-              threading.typeArguments,
-              threading.name,
-              threading.signature,
-              Some(form.map(_.expression)),
-              threading.effects
-            )
-            // Every effect operation is dispatched from the evidence in scope before the frames are threaded to it.
-            val threadedValue =
-              EvidenceSpecialisation.specialiseBody(platform, unspecialised, threading.guarded).flatMap { specialised =>
-                val value = unspecialised.copy(body = specialised.body, effects = specialised.effects)
-                if (threading.guarded) EnvironmentThreading.threadGuarded(value)
-                else
-                  EnvironmentThreading
-                    .threadCompiled(value)
-                    .map(EnvironmentThreading.Threaded(value.signature, _, Seq.empty))
-              }
-            recover(
-              threadedValue.map(result =>
-                result.body.map { body =>
-                  val sem = semanticForm(form.as(MonomorphicExpression(form.value.expressionType, body.value)))
-                  (sem.value, result.guards.size)
-                }
-              )
-            )(None)
-        }
-    }
 
   /** Whether evaluating the checked `expr` can run a control effect — reach an escape frame. An evaluation that does is
     * meaningful only threaded, with its references dispatched: read raw, an operation stays an undispatched call that
@@ -402,55 +244,6 @@ class PostDrainQuoter(
           }
         case _                                              => false.pure[CompilerIO]
       }
-    }
-
-  /** The checked expression read back as it stands, every type slot quoted and every drain-resolved ability reference
-    * rewritten to its implementation (with the entry it was dispatched from) — nothing evaluated, nothing materialised.
-    * [[None]] when a slot does not quote.
-    */
-  private def structuralForm(expr: SemExpression, at: Sourced[?]): Option[Sourced[MonomorphicExpression]] =
-    for {
-      tpe   <- quoteDeep(expr.expressionType).toOption
-      inner <- expr.expression match {
-                 case SemExpression.IntegerLiteral(v)                            =>
-                   Some(MonomorphicExpression.IntegerLiteral(v))
-                 case SemExpression.StringLiteral(v)                             =>
-                   Some(MonomorphicExpression.StringLiteral(v))
-                 case SemExpression.ParameterReference(name)                     =>
-                   Some(MonomorphicExpression.ParameterReference(name))
-                 case SemExpression.FunctionApplication(target, argument)        =>
-                   (structuralForm(target.value, target), structuralForm(argument.value, argument))
-                     .mapN(MonomorphicExpression.FunctionApplication(_, _))
-                 case SemExpression.FunctionLiteral(paramName, paramType, body) =>
-                   (quoteDeep(paramType).toOption, structuralForm(body.value, body))
-                     .mapN(MonomorphicExpression.FunctionLiteral(paramName, _, _))
-                 case SemExpression.ValueReference(vfqn, typeArgs)               =>
-                   typeArgs.toList
-                     .traverse(a => quoteDeep(a).toOption)
-                     .map(args => resolveIfAbility(vfqn, args, typeArgs))
-               }
-    } yield at.as(MonomorphicExpression(tpe, inner))
-
-  /** A read-back expression as the checker's output again, so the one evaluator runs it exactly as it runs a checked
-    * one: every ground slot in its evaluable form, every reference with its type arguments.
-    */
-  private def semanticForm(expr: Sourced[MonomorphicExpression]): Sourced[SemExpression] =
-    expr.map { node =>
-      SemExpression(
-        Evaluator.groundToSem(node.expressionType),
-        node.expression match {
-          case MonomorphicExpression.IntegerLiteral(v)                            => SemExpression.IntegerLiteral(v)
-          case MonomorphicExpression.StringLiteral(v)                             => SemExpression.StringLiteral(v)
-          case MonomorphicExpression.ParameterReference(name)                     =>
-            SemExpression.ParameterReference(name)
-          case MonomorphicExpression.FunctionApplication(target, argument)        =>
-            SemExpression.FunctionApplication(semanticForm(target), semanticForm(argument))
-          case MonomorphicExpression.FunctionLiteral(paramName, paramType, body) =>
-            SemExpression.FunctionLiteral(paramName, Evaluator.groundToSem(paramType), semanticForm(body))
-          case MonomorphicExpression.MonomorphicValueReference(vfqn, typeArgs, _) =>
-            SemExpression.ValueReference(vfqn, typeArgs.map(Evaluator.groundToSem))
-        }
-      )
     }
 
   /** The in-checker instantiation of [[EscalatingReducer.escalate]]'s escalation fetch: escalate each value reference
@@ -504,7 +297,7 @@ class PostDrainQuoter(
             se.expressionType,
             SemExpression.ValueReference(
               vfqn.as(implFqn),
-              forwarded(vfqn.value, implFqn, implTypeArgs.map(Evaluator.groundToSem), typeArgs)
+              forwarded(vfqn.value, implTypeArgs.map(Evaluator.groundToSem), typeArgs)
             )
           )
         case None                          => se
@@ -791,29 +584,12 @@ class PostDrainQuoter(
         val abilityArgs = abilityArgsOf(vfqn.value, semTypeArgs)
         lookupResolution(vfqn, abilityArgs) match {
           case Some((implFqn, implTypeArgs)) =>
-            MonomorphicExpression.MonomorphicValueReference(
-              vfqn.as(implFqn),
-              forwarded(vfqn.value, implFqn, implTypeArgs, typeArgs),
-              dispatchOf(AbilityFQN(vfqn.value.moduleName, abilityName), abilityArgs)
-            )
+            MonomorphicExpression.MonomorphicValueReference(vfqn.as(implFqn), forwarded(vfqn.value, implTypeArgs, typeArgs))
           case None                          =>
             MonomorphicExpression.MonomorphicValueReference(vfqn, typeArgs)
         }
       case _                                  =>
         MonomorphicExpression.MonomorphicValueReference(vfqn, typeArgs)
-    }
-
-  /** The entry and binding a dispatched reference came from: its ability-level arguments are the binding and then the
-    * ability's own parameters ([[ImplementationBinding]]), which are the entry's arguments.
-    */
-  private def dispatchOf(
-      ability: AbilityFQN,
-      abilityArgs: Option[Seq[GroundValue]]
-  ): Option[MonomorphicEffects.Dispatch] =
-    abilityArgs.flatMap {
-      case binding +: arguments if ImplementationBinding.fromGround(binding).isDefined =>
-        Some(MonomorphicEffects.Dispatch(MonomorphicEffects.Entry(ability, arguments), binding))
-      case _                                                                          => None
     }
 
   /** The ability-level type arguments of a method reference, derived **exactly** as `AbilityResolver.tryResolveOne`
@@ -830,39 +606,16 @@ class PostDrainQuoter(
       .traverse(a => Quoter.quote(0, a, metaStore))
       .toOption
 
-  /** The implementation method's type arguments with the **call's** bindings at the clause binders that take them
-    * ([[CheckState.bindingForwards]]): `describe(t: T) uses Console` under `with recordingConsole` runs the
-    * implementation's `printLine` on `recordingConsole`, not on what the implementation was resolved with.
+  /** The implementation method's type arguments: its instance's, then the call's method-level ones. A clause's binders
+    * follow its member's after its instance's (`docs/effects.md` D36, `row/Captures`), so the call's method-level
+    * arguments, its handles' types among them, are simply appended.
     */
-  private def forwarded[A](member: ValueFQN, method: ValueFQN, implArguments: Seq[A], callArguments: Seq[A]): Seq[A] =
-    // On the new effect path (`docs/effects.md` D36) a clause's binders follow its member's after its instance's
-    // (`row/Captures`), so the call's method-level arguments, its handles' types among them, are simply appended.
-    if (handles) implArguments ++ callArguments.drop(abilityArities.getOrElse(member, callArguments.size))
-    else
-      bindingForwards.getOrElse((member, method), Seq.empty).foldLeft(implArguments) {
-        case (acc, (clauseIndex, memberIndex)) =>
-          callArguments.lift(memberIndex).filter(_ => acc.isDefinedAt(clauseIndex)).fold(acc)(acc.updated(clauseIndex, _))
-      }
+  private def forwarded[A](member: ValueFQN, implArguments: Seq[A], callArguments: Seq[A]): Seq[A] =
+    implArguments ++ callArguments.drop(abilityArities.getOrElse(member, callArguments.size))
 
   private def lookupResolution(
       vfqn: Sourced[ValueFQN],
       abilityArgs: Option[Seq[GroundValue]]
   ): Option[(ValueFQN, Seq[GroundValue])] =
     CheckState.lookupAbilityResolution(abilityResolutions, vfqn, abilityArgs)
-}
-
-object PostDrainQuoter {
-
-  /** What the compile track threads one of its reductions with (`docs/effects.md` §3.4): the value being read back, as
-    * the environment threading reads a specialisation — its name and type arguments, its ground signature and its
-    * effect entries — and whether it is a **signature**, whose own control effects the guarded-return read gives.
-    */
-  case class Threading(
-      vfqn: ValueFQN,
-      typeArguments: Seq[GroundValue],
-      name: Sourced[QualifiedName],
-      signature: GroundValue,
-      effects: MonomorphicEffects,
-      guarded: Boolean
-  )
 }

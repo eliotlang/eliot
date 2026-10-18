@@ -36,8 +36,7 @@ sealed trait Track {
   /** Read a checked body back into a [[MonomorphicExpression]] tree: reduced (compiler) or structural (runtime). */
   def readBackBody(
       quoter: PostDrainQuoter,
-      srcSem: Sourced[SemExpression],
-      threading: Option[PostDrainQuoter.Threading]
+      srcSem: Sourced[SemExpression]
   ): CompilerIO[Sourced[MonomorphicExpression]]
 
 }
@@ -56,8 +55,7 @@ object Track {
 
     override def readBackBody(
         quoter: PostDrainQuoter,
-        srcSem: Sourced[SemExpression],
-        threading: Option[PostDrainQuoter.Threading]
+        srcSem: Sourced[SemExpression]
     ): CompilerIO[Sourced[MonomorphicExpression]] = quoter.quoteSourced(srcSem)
   }
 
@@ -65,10 +63,7 @@ object Track {
     * signature is published undischarged (this track is the guard's producer), each drain-resolved ability impl's body
     * is made reachable to the read-back evaluator, and the body is reduced to a normal form.
     *
-    * The `{Throw[E]}` ⤳ `Either[E]` **carrier pinning** that used to sit here went with the carrier (effects v6, F3).
-    * It keyed on a `Throw[E, F]` constraint's carrier position, which no longer exists, and its inline-guard fallback
-    * pinned *every* still-open higher-kinded meta to `Either[String]` — under v6 that would capture an ordinary
-    * constructor-class binder. The compile track's control effects run on frames now, exactly as the runtime's do.
+    * The compile track's control effects run on frames, exactly as the runtime's do: a frame is a handle's field.
     */
   case object Compiler extends Track {
     override val platform: Platform = Platform.Compiler
@@ -86,15 +81,11 @@ object Track {
                     .map(_.flatten.toMap)
       } yield result
 
-    /** Reduce the body, threaded as the value's specialisation: a control effect it runs gets its frame along the
-      * declared chain (`docs/effects.md` §3.4). On the new effect path there is nothing to thread (`None`): a frame is
-      * a handle's field, passed as any value is.
-      */
+    /** Reduce the body. A control effect's frame is a handle's field, passed as any value is (`docs/effects.md` D36). */
     override def readBackBody(
         quoter: PostDrainQuoter,
-        srcSem: Sourced[SemExpression],
-        threading: Option[PostDrainQuoter.Threading]
-    ): CompilerIO[Sourced[MonomorphicExpression]] = quoter.reduceSourced(srcSem, threading)
+        srcSem: Sourced[SemExpression]
+    ): CompilerIO[Sourced[MonomorphicExpression]] = quoter.reduceSourced(srcSem)
 
   }
 }

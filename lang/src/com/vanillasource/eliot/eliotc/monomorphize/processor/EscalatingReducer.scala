@@ -36,12 +36,10 @@ object EscalatingReducer {
     * only monomorphized callees.
     *
     *   1. fetch `CompilerMonomorphicValue(vfqn, typeArguments)`'s reduced body;
-    *   1. seed the bindings with the one-hop raw closure ([[ReducedBindingClosure.collectBindings]], `deep = false`) —
-    *      the cheap common case (a transfer bottoming at natives) pays nothing new;
-    *   1. evaluate the reduced body, apply `argMetas`, and `renormalize` (re-fires natives; empty metastore);
-    *   1. if the result quotes, done; if it is *reducibly* stuck, escalate — re-link each of the body's value
-    *      references **reduced at its own ground type arguments** and re-evaluate; loop until it quotes or no new
-    *      binding is available.
+    *   1. link each of its value references **reduced at its own ground type arguments**
+    *      ([[ReducedBindingClosure.collectBindings]], `deep = true`): linked raw, one hop at a time, a `where` over
+    *      `rangeWithin[0, 255](range(x))` does not evaluate (`WhereOnDefIntegrationTest`);
+    *   1. evaluate the reduced body, apply `argMetas`, and `renormalize` (re-fires natives; empty metastore), and quote.
     *
     * [[None]] when the value produced no `CompilerMonomorphicValue`, has no reduced body, or the final result does not
     * reduce to a quotable ground form.
@@ -52,32 +50,24 @@ object EscalatingReducer {
       argMetas: Seq[SemValue]
   ): CompilerIO[Option[GroundValue]] =
     getFactIfProduced(CompilerMonomorphicValue.Key(vfqn, typeArguments)).flatMap {
-      case Some(cmv @ CompilerMonomorphicValue(_, _, _, _, Some(_), _, _)) =>
-        // Threaded, a body passes frames to its callees, which must then be threaded too: link each one reduced at its
-        // instantiation from the start, as `PostDrainQuoter.reduceThreaded` does, rather than the raw one-hop binding
-        // that takes no frame — so there is nothing left to escalate to.
-        ReducedBindingClosure.threaded(cmv).flatMap(_.flatTraverse { reduced =>
-          val deep = !cmv.reduced.contains(reduced)
-          ReducedBindingClosure.collectBindings(reduced.value, vfqn, Platform.Compiler, deep).flatMap { linked =>
-            def evalWith(extra: Map[ValueFQN, SemValue]): SemValue = {
-              val lookup  = linked.lookup(extra)
-              val body    =
-                new MonomorphicEvaluator(lookup).eval(Env.empty, MonomorphicExpression(GroundValue.Type, linked.body))
-              val applied = argMetas.foldLeft(body)(Evaluator.applyValue)
-              Evaluator.renormalize(applied, MetaStore.empty, lookup, deep = true)
-            }
-
-            val candidates = ReducedBindingClosure.valueReferences(reduced.value).toSeq.filterNot(_._1 == vfqn)
-            escalatingLoop(
-              MetaStore.empty,
-              evalWith,
-              already =>
-                if (deep) Map.empty[ValueFQN, SemValue].pure[CompilerIO]
-                else escalate(candidates, already, ReducedBindingClosure.reduceInstance(_, _), (_, sem) => sem),
-              channelStuck
-            ).map(result => Quoter.quote(0, result, MetaStore.empty).toOption.filterNot(isAbstractAbilityStructure))
+      case Some(CompilerMonomorphicValue(_, _, _, _, Some(reduced), _)) =>
+        // Every callee is linked reduced at its own instantiation from the start, so there is nothing left to
+        // escalate to.
+        ReducedBindingClosure.collectBindings(reduced.value, vfqn, Platform.Compiler, deep = true).flatMap { linked =>
+          def evalWith(extra: Map[ValueFQN, SemValue]): SemValue = {
+            val lookup  = linked.lookup(extra)
+            val body    =
+              new MonomorphicEvaluator(lookup).eval(Env.empty, MonomorphicExpression(GroundValue.Type, linked.body))
+            val applied = argMetas.foldLeft(body)(Evaluator.applyValue)
+            Evaluator.renormalize(applied, MetaStore.empty, lookup, deep = true)
           }
-        })
+          escalatingLoop(
+            MetaStore.empty,
+            evalWith,
+            _ => Map.empty[ValueFQN, SemValue].pure[CompilerIO],
+            channelStuck
+          ).map(result => Quoter.quote(0, result, MetaStore.empty).toOption.filterNot(isAbstractAbilityStructure))
+        }
       case _                                                         => none[GroundValue].pure[CompilerIO]
     }
 

@@ -2,103 +2,69 @@ package com.vanillasource.eliot.eliotc.core.processor
 
 import cats.effect.IO
 import com.vanillasource.eliot.eliotc.ProcessorTest
-import com.vanillasource.eliot.eliotc.ast.fact.{AST, SourceAST, Visibility}
+import com.vanillasource.eliot.eliotc.ast.fact.{AST, FunctionDefinition, SourceAST, Visibility}
 import com.vanillasource.eliot.eliotc.ast.processor.ASTParser
 import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, Qualifier}
 import com.vanillasource.eliot.eliotc.source.content.Sourced
 import com.vanillasource.eliot.eliotc.token.Tokenizer
 
-/** The lowering of a **named** `implement` (effects v6, `docs/effects.md` §9.4 step 1). Landed dark: `with` and the
-  * named form are still rejected at core, so nothing in the tree reaches this yet and the lowering is pinned here.
+/** The lowering of a **named** `implement` (`docs/effects.md` D36 point 2): a `data` whose value is the handle a `with`
+  * puts in scope, an ordinary instance of the effect's ability at that data type, and the declarations a `with` naming
+  * the implementation resolves through.
   */
 class NamedImplementationDesugarerTest extends ProcessorTest(new Tokenizer(), new ASTParser()) {
-  private val console = Qualifier.AbilityImplementation("Console", "", Some("recordingConsole"))
+  private val instance = Qualifier.AbilityImplementation("Console", "RecordingConsole$Handle[]", None)
+  private val named    = Qualifier.AbilityImplementation("Console", "", Some("recordingConsole"))
 
-  "a named implementation" should "put every clause in its own implementation namespace" in {
+  "a bodied named implementation" should "mint its handle data type and constructor" in {
+    desugar("implement recordingConsole: Console {\n  def readLine: X = None\n}")
+      .asserting(_ should contain.allOf(("RecordingConsole$Handle", Qualifier.Type), ("RecordingConsole$Handle", Qualifier.Default)))
+  }
+
+  it should "put every clause in the instance at its handle type" in {
     desugar("implement recordingConsole: Console {\n  def printLine(s: String): Unit = u\n  def readLine: X = None\n}")
-      .asserting(_.filter(_._2 == console).map(_._1) shouldBe Seq("printLine", "readLine", "$with", "Console"))
+      .asserting(_.filter(_._2 == instance).map(_._1) shouldBe Seq("printLine", "readLine", "$captures", "Console"))
   }
 
-  it should "mint the implementation's marker beside the clauses" in {
-    desugar("implement recordingConsole: Console {\n  def readLine: X = None\n}")
-      .asserting(_ should contain(("Console", console)))
-  }
-
-  it should "mint the name marker that `with` looks up" in {
-    desugar("implement recordingConsole: Console {\n  def readLine: X = None\n}")
-      .asserting(_ should contain(("recordingConsole", Qualifier.Implementation("recordingConsole"))))
-  }
-
-  it should "key the implementation on its pattern as well as its name" in {
-    desugar("implement stringThrow: Throw[String] {\n  def raise[A](err: String): A = a\n}")
-      .asserting(_ should contain(("Throw", Qualifier.AbilityImplementation("Throw", "String", Some("stringThrow")))))
+  it should "give every clause its own handle as its first parameter" in {
+    definitions("implement recordingConsole: Console {\n  def printLine(s: String): Unit = u\n}")
+      .asserting(clause(_, "printLine").args.map(_.name.value) shouldBe Seq("self$handle", "s"))
   }
 
   it should "make every clause public" in {
     definitions("implement recordingConsole: Console {\n  private def readLine: X = None\n}")
-      .asserting(_.map(_.visibility).distinct shouldBe Seq(Visibility.Public))
+      .asserting(clause(_, "readLine").visibility shouldBe Visibility.Public)
   }
 
-  it should "prepend the implementation's own generic parameters to every clause" in {
-    definitions("implement[E] loggingThrow: Throw[E] {\n  def raise[A](err: E): A = a\n}")
-      .asserting(_.head.genericParameters.map(_.name.value) shouldBe Seq("E", "A"))
+  it should "keep the marker, the name marker and the binder a `with` resolves through" in {
+    desugar("implement recordingConsole: Console {\n  def readLine: X = None\n}")
+      .asserting(
+        _ should contain.allOf(("Console", named), ("recordingConsole", Qualifier.Implementation("recordingConsole")), ("$with", named))
+      )
   }
 
-  it should "give the marker one argument per pattern element" in {
-    definitions("implement stringThrow: Throw[String] {\n  def raise[A](err: String): A = a\n}")
-      .asserting(_.find(_.name.value.name == "Throw").get.args.map(_.typeExpression.value.render) shouldBe Seq("String"))
+  "a body-less named implementation" should "declare only what a `with` resolves through, minting no handle" in {
+    desugar("implement standardConsole: Console {\n  def readLine: X\n}")
+      .asserting(_.map(_._1).filter(_.contains("Handle")) shouldBe empty)
   }
 
-  it should "leave the marker unguarded" in {
-    definitions("implement recordingConsole: Console {\n  def readLine: X = None\n}")
-      .asserting(_.find(_.name.value.name == "Console").get.typeDefinition.value.render shouldBe "eliot.lang.Bool::true")
-  }
-
-  it should "give the marker the clause row so `with` can write what the implementation performs" in {
-    definitions("implement recordingConsole: Console {\n  def printLine(s: String) uses Writer[String]: Unit = t\n}")
-      .asserting(_.find(_.name.value.name == "Console").get.typeDefinition.value.render shouldBe "{Writer[String]} eliot.lang.Bool::true")
-  }
-
-  it should "give every clause the union of the clauses' rows, so all of them declare one prefix" in {
-    definitions("implement recordingConsole: Console {\n  def printLine(s: String) uses Writer[String]: Unit = t\n  def readLine: X = None\n}")
-      .asserting(_.filter(_.body.isDefined).map(_.typeDefinition.value.render) shouldBe Seq("{Writer[String]} Unit", "{Writer[String]} X"))
-  }
-
-  it should "leave an associated type out of the clause row" in {
-    definitions("implement recordingConsole: Console {\n  def printLine(s: String) uses Writer[String]: Unit = t\n  type Buffer = X\n}")
-      .asserting(_.find(_.name.value.name == "Buffer").get.typeDefinition.value.render shouldBe "Type")
-  }
-
-  "a named implementation with parameters" should "give each clause the parameters ahead of its own" in {
-    definitions("implement scripted(answer: String): Terminal {\n  def write(line: String): Unit = u\n  def read: String = answer\n}")
-      .asserting(_.filter(_.body.isDefined).map(f => (f.name.value.name, f.args.map(_.name.value))) shouldBe
-        Seq(("write", Seq("answer", "line")), ("read", Seq("answer"))))
-  }
-
-  it should "declare its parameters, and the binder a `with` supplying them is lowered to" in {
+  "a named implementation with parameters" should "hold each in a field of its handle" in {
     definitions("implement scripted(answer: String): Terminal {\n  def read: String = answer\n}")
-      .asserting(_.filter(f => f.name.value.name.startsWith("$")).map(f =>
-        (f.name.value.name, f.genericParameters.map(_.name.value), f.args.map(_.name.value), f.typeDefinition.value.render)
-      ) shouldBe Seq(
-        ("$parameters", Seq.empty, Seq("answer"), "Unit"),
-        ("$with", Seq("Subject$"), Seq("answer", "subject$"), "Subject$")
-      ))
+      .asserting(_.map(_.name.value.name) should contain("scripted$answer"))
   }
 
-  it should "not give an associated type the parameters" in {
-    definitions("implement scripted(answer: String): Terminal {\n  def read: String = answer\n  type Buffer = X\n}")
-      .asserting(_.find(_.name.value.name == "Buffer").get.args shouldBe empty)
+  "a named implementation's type parameter no parameter fixes" should "be left out of its handle" in {
+    definitions("implement[T] showing: Source[T] {\n  def describe(t: T): String = s\n}")
+      .asserting(
+        _.find(fd => fd.name.value == QualifiedName("Showing$Handle", Qualifier.Type)).get.genericParameters shouldBe empty
+      )
   }
 
-  "a named implementation without parameters" should "declare no parameters, and a binder taking only its subject" in {
-    definitions("implement[T] showing: Source[T] {\n  def read: T = t\n}")
-      .asserting(_.filter(f => f.name.value.name.startsWith("$")).map(f =>
-        (f.name.value.name, f.genericParameters.map(_.name.value), f.args.map(_.name.value))
-      ) shouldBe Seq(("$with", Seq("Subject$"), Seq("subject$"))))
-  }
+  private def clause(definitions: Seq[FunctionDefinition], name: String): FunctionDefinition =
+    definitions.find(fd => fd.name.value.name == name && fd.body.isDefined).get
 
-  private def definitions(source: String) =
-    ast(source).map(_.namedImplementations.flatMap(NamedImplementationDesugarer.desugar))
+  private def definitions(source: String): IO[Seq[FunctionDefinition]] =
+    ast(source).map(_.namedImplementations.flatMap(NamedImplementationDesugarer.desugar).map(_._1))
 
   private def desugar(source: String): IO[Seq[(String, Qualifier)]] =
     definitions(source).map(_.map(fd => (fd.name.value.name, fd.name.value.qualifier)))

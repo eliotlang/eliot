@@ -15,7 +15,6 @@ import com.vanillasource.eliot.eliotc.module.fact.*
 import com.vanillasource.eliot.eliotc.monomorphize.channel.{
   MetaTransferAccounting,
   RefinementTable,
-  SuppliedRowArguments,
   WovenValue
 }
 import com.vanillasource.eliot.eliotc.monomorphize.fact.*
@@ -75,7 +74,6 @@ object LangProgressDescriber extends ProgressDescriber {
       case BodyValueReferences.Key(vfqn, _)                => checking(vfqn.moduleName)
       case ContributedBinding.Key(vfqn, _)                 => checking(vfqn.moduleName)
       case NativeBinding.Key(vfqn, _)                      => checking(vfqn.moduleName)
-      case CheckedValue.Key(vfqn, _)                       => checking(vfqn.moduleName)
       case MonomorphicValue.Key(vfqn, _)                   => checking(vfqn.moduleName)
       case CompilerMonomorphicValue.Key(vfqn, _)           => checking(vfqn.moduleName)
       case AbilityImplementation.Key(ability, _, _)        => checking(ability.moduleName)
@@ -83,7 +81,6 @@ object LangProgressDescriber extends ProgressDescriber {
       case NamedImplementationCheck.Key(marker, _)         => checking(marker.moduleName)
       case ModuleAbilityOverlapCheck.Key(moduleName, _, _) => checking(moduleName)
       case RefinementTable.Key(vfqn, _)                    => checking(vfqn.moduleName)
-      case SuppliedRowArguments.Key(vfqn, _)               => checking(vfqn.moduleName)
       case MetaTransferAccounting.Key(vfqn, _)             => checking(vfqn.moduleName)
       case WovenValue.Key(vfqn, _)                         => checking(vfqn.moduleName)
       case UsedNames.Key(root)                             => lowering(root.moduleName)

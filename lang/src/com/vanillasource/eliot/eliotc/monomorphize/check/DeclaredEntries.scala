@@ -49,14 +49,4 @@ object DeclaredEntries {
     */
   def environment(clauses: Seq[(OperatorResolvedValue, OperatorResolvedValue)]): Set[Declared] =
     clauses.flatMap((clause, member) => of(clause).values.toSet -- ofMember(member)).toSet
-
-  /** Where a dispatched clause takes the **call's** binding: each of the clause's own entries that the ability member it
-    * implements declares too, as `(clause binder index, member binder index)`. Such an entry is per call — the caller
-    * hands the member its binding (`docs/effects.md` §3.4) — so the implementation's own value for that binder, which is
-    * `Default` for an anonymous one, is not the one to run on.
-    */
-  def forwarded(member: OperatorResolvedValue, clause: OperatorResolvedValue): Seq[(Int, Int)] = {
-    val byEntry = of(member).map(_.swap)
-    of(clause).toSeq.flatMap { case (clauseIndex, entry) => byEntry.get(entry).map(clauseIndex -> _) }.sortBy(_._1)
-  }
 }

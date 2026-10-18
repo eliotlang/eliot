@@ -42,7 +42,7 @@ import com.vanillasource.eliot.eliotc.resolve.processor.ValueResolverScope.*
 import com.vanillasource.eliot.eliotc.source.content.Sourced
 import com.vanillasource.eliot.eliotc.source.content.Sourced.compilerAbort
 
-class ValueResolver(handles: Boolean = true)
+class ValueResolver
     extends TransformationProcessor[UnifiedModuleValue.Key, ResolvedValue.Key](key =>
       UnifiedModuleValue.Key(key.vfqn, key.platform)
     )
@@ -92,10 +92,10 @@ class ValueResolver(handles: Boolean = true)
                              )
       _                   <- reportNamedRowMisuses(resolvedSignature, resolvedRuntime, namedValue)
       received             = receiveBindings(resolvedSignature, resolvedConstraints, resolvedEffectRow, namedRow)
-      // On the new effect path (`docs/effects.md` D36 point 3) each received entry is a handle parameter too, after the
-      // handles the definition already takes and before its own parameters.
+      // Each received entry is a handle parameter too (`docs/effects.md` D36 point 3), after the handles the
+      // definition already takes and before its own parameters.
       handled              =
-        if (handles && namedRow.nonEmpty)
+        if (namedRow.nonEmpty)
           withHandleParameters(
             received.signature,
             resolvedRuntime,

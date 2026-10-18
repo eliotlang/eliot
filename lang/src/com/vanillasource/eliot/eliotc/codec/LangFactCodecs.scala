@@ -49,16 +49,6 @@ object LangFactCodecs {
       : FactCodec[com.vanillasource.eliot.eliotc.resolve.processor.ValueResolverScope] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_resolve_fact_AbilityFQN
       : FactCodec[com.vanillasource.eliot.eliotc.resolve.fact.AbilityFQN] = FactCodec.derived
-  given codec_com_vanillasource_eliot_eliotc_monomorphize_fact_MonomorphicEffects_Entry
-      : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.fact.MonomorphicEffects.Entry] = FactCodec.derived
-  given codec_com_vanillasource_eliot_eliotc_monomorphize_fact_MonomorphicEffects_Received
-      : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.fact.MonomorphicEffects.Received] = FactCodec.derived
-  given codec_com_vanillasource_eliot_eliotc_monomorphize_fact_MonomorphicEffects_Slot
-      : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.fact.MonomorphicEffects.Slot] = FactCodec.derived
-  given codec_com_vanillasource_eliot_eliotc_monomorphize_fact_MonomorphicEffects_Dispatch
-      : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.fact.MonomorphicEffects.Dispatch] = FactCodec.derived
-  given codec_com_vanillasource_eliot_eliotc_monomorphize_fact_MonomorphicEffects
-      : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.fact.MonomorphicEffects] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_resolve_fact_Expression
       : FactCodec[com.vanillasource.eliot.eliotc.resolve.fact.Expression] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_resolve_fact_Expression_FunctionApplication
@@ -409,10 +399,6 @@ object LangFactCodecs {
       : FactCodec[com.vanillasource.eliot.eliotc.namedvalues.fact.NamedValuesRewrittenValue] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_namedvalues_fact_NamedValuesRewrittenValue_Key
       : FactCodec[com.vanillasource.eliot.eliotc.namedvalues.fact.NamedValuesRewrittenValue.Key] = FactCodec.derived
-  given codec_com_vanillasource_eliot_eliotc_monomorphize_channel_SuppliedRowArguments
-      : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.channel.SuppliedRowArguments] = FactCodec.derived
-  given codec_com_vanillasource_eliot_eliotc_monomorphize_channel_SuppliedRowArguments_Key
-      : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.channel.SuppliedRowArguments.Key] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_monomorphize_channel_MetaTransferAccounting
       : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.channel.MetaTransferAccounting] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_monomorphize_channel_MetaTransferAccounting_Key
@@ -463,10 +449,6 @@ object LangFactCodecs {
   given codec_com_vanillasource_eliot_eliotc_monomorphize_fact_MonomorphicExpression_MonomorphicValueReference
       : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.fact.MonomorphicExpression.MonomorphicValueReference] =
     FactCodec.derived
-  given codec_com_vanillasource_eliot_eliotc_monomorphize_fact_CheckedValue
-      : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.fact.CheckedValue] = FactCodec.derived
-  given codec_com_vanillasource_eliot_eliotc_monomorphize_fact_CheckedValue_Key
-      : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.fact.CheckedValue.Key] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_monomorphize_fact_MonomorphicValue
       : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.fact.MonomorphicValue] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_monomorphize_fact_MonomorphicValue_Key
@@ -516,8 +498,6 @@ object LangFactCodecs {
     codec_com_vanillasource_eliot_eliotc_module_fact_UnifiedModuleNames
   val unifiedModuleValueCodec: FactCodec[com.vanillasource.eliot.eliotc.module.fact.UnifiedModuleValue]                =
     codec_com_vanillasource_eliot_eliotc_module_fact_UnifiedModuleValue
-  val suppliedRowArgumentsCodec: FactCodec[com.vanillasource.eliot.eliotc.monomorphize.channel.SuppliedRowArguments]   =
-    codec_com_vanillasource_eliot_eliotc_monomorphize_channel_SuppliedRowArguments
   val metaTransferAccountingCodec
       : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.channel.MetaTransferAccounting] =
     codec_com_vanillasource_eliot_eliotc_monomorphize_channel_MetaTransferAccounting
@@ -530,8 +510,6 @@ object LangFactCodecs {
   val compilerMonomorphicValueCodec
       : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.fact.CompilerMonomorphicValue] =
     codec_com_vanillasource_eliot_eliotc_monomorphize_fact_CompilerMonomorphicValue
-  val checkedValueCodec: FactCodec[com.vanillasource.eliot.eliotc.monomorphize.fact.CheckedValue]                      =
-    codec_com_vanillasource_eliot_eliotc_monomorphize_fact_CheckedValue
   val monomorphicValueCodec: FactCodec[com.vanillasource.eliot.eliotc.monomorphize.fact.MonomorphicValue]              =
     codec_com_vanillasource_eliot_eliotc_monomorphize_fact_MonomorphicValue
   val namedValuesIndexCodec: FactCodec[com.vanillasource.eliot.eliotc.namedvalues.fact.NamedValuesIndex]               =
@@ -605,13 +583,11 @@ object LangFactCodecs {
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_row_fact_RowElaboratedValue_Key),
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_namedvalues_fact_NamedValuesIndex_Key),
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_namedvalues_fact_NamedValuesRewrittenValue_Key),
-    FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_monomorphize_channel_SuppliedRowArguments_Key),
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_monomorphize_channel_MetaTransferAccounting_Key),
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_monomorphize_channel_RefinementTable_Key),
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_monomorphize_channel_WovenValue_Key),
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_monomorphize_fact_BodyValueReferences_Key),
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_monomorphize_fact_CompilerMonomorphicValue_Key),
-    FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_monomorphize_fact_CheckedValue_Key),
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_monomorphize_fact_MonomorphicValue_Key)
   )
 }

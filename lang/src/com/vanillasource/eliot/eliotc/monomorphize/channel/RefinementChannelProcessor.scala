@@ -6,7 +6,7 @@ import com.vanillasource.eliot.eliotc.core.processor.{MetaTransferDesugarer, Met
 import com.vanillasource.eliot.eliotc.feedback.Logging
 import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, UnifiedModuleNames, ValueFQN}
 import com.vanillasource.eliot.eliotc.monomorphize.eval.Evaluator
-import com.vanillasource.eliot.eliotc.monomorphize.fact.{GroundValue, MonomorphicEffects, MonomorphicExpression, MonomorphicValue}
+import com.vanillasource.eliot.eliotc.monomorphize.fact.{GroundValue, MonomorphicExpression, MonomorphicValue}
 import com.vanillasource.eliot.eliotc.monomorphize.fact.GroundValue.Literal
 import com.vanillasource.eliot.eliotc.monomorphize.processor.EscalatingReducer
 import com.vanillasource.eliot.eliotc.platform.Platform
@@ -137,7 +137,7 @@ class RefinementChannelProcessor
       case _: MonomorphicExpression.FunctionApplication =>
         val (head, args) = MetaInterpreter.flatten(node)
         head.value.expression match {
-          case MonomorphicExpression.MonomorphicValueReference(vfqn, typeArgs, _) =>
+          case MonomorphicExpression.MonomorphicValueReference(vfqn, typeArgs) =>
             // An ordinary call (or constructor). Descend into the arguments (so a literal/arithmetic argument narrows,
             // and a `where` precondition is demanded over their ranges, bounds-as-refinements §4.3). The call's own
             // result is whatever the callee's meta is — **stated** by a leaf (`Numeric[Int]::add`'s transfer, `fold`'s
@@ -179,7 +179,7 @@ class RefinementChannelProcessor
         // effects during the walk remain.
         walkFlow(body).as(Flow(None, recordAt(node, None)))
 
-      case MonomorphicExpression.MonomorphicValueReference(vfqn, typeArgs, _) =>
+      case MonomorphicExpression.MonomorphicValueReference(vfqn, typeArgs) =>
         // A **bare** reference to a def — *not* the head of a full application (that path is the `FunctionApplication`
         // arm's `checkWhere`). If the def carries a `where` precondition, passing it as a value silently bypasses that
         // precondition: its eventual call rides a function value whose head the channel never sees as a
@@ -233,12 +233,14 @@ class RefinementChannelProcessor
       case true  =>
         getFactIfProduced(MonomorphicValue.Key(callee, calleeTypeArgs)).flatMap {
           case Some(mv) =>
-            // The companion takes the declared parameters: a further variant's block (`docs/effects.md` D35 step 5a)
-            // is not one of them.
-            val copies   = MonomorphicEffects.copyPositions(mv.effects.slots)
-            val declared = argMetas.zipWithIndex.collect { case (meta, index) if !copies.contains(index) => meta }
-            val applied  = appliedArgs - copies.count(_ < appliedArgs)
-            mv.naturalArity.map(_ - copies.size) match {
+            // The companion takes the declared parameters: a handle the callee takes (`docs/effects.md` D36) is not
+            // one of them.
+            val handles  = mv.signature.extractParamAndReturnTypes._1.zipWithIndex.collect {
+              case (parameter, index) if isHandle(parameter) => index
+            }.toSet
+            val declared = argMetas.zipWithIndex.collect { case (meta, index) if !handles.contains(index) => meta }
+            val applied  = appliedArgs - handles.count(_ < appliedArgs)
+            mv.naturalArity.map(_ - handles.size) match {
               case Some(arity) if arity > 0 && applied >= arity =>
                 demandPrecondition(callNode, callee, declared.take(arity))
               case Some(arity) if arity > 0                         =>

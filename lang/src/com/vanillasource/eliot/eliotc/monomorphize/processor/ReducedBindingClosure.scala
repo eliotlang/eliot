@@ -2,7 +2,6 @@ package com.vanillasource.eliot.eliotc.monomorphize.processor
 
 import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.module.fact.ValueFQN
-import com.vanillasource.eliot.eliotc.monomorphize.channel.EnvironmentThreading
 import com.vanillasource.eliot.eliotc.monomorphize.domain.*
 import com.vanillasource.eliot.eliotc.monomorphize.domain.SemValue.*
 import com.vanillasource.eliot.eliotc.monomorphize.eval.MonomorphicEvaluator
@@ -45,9 +44,7 @@ object ReducedBindingClosure {
     * (`guardOr`, `else`) keeps its impl-dispatch dependencies structural (they close over its runtime value
     * parameters), and applying it to concrete arguments must reach those dependencies already reduced (an
     * `AbortCarrier` impl over the base `Either` resolving through every layer) rather than a still-abstract raw
-    * binding. It is driven by [[EscalatingReducer.escalatingLoop]]'s laziness (a *stuck* term escalates) and by a
-    * threaded body ([[EscalatingReducer.reduceApplied]], `PostDrainQuoter.reduceThreaded`), whose callees must all be
-    * threaded, so each is linked reduced from the start. Always the compiler track: a compile-time reduction never
+    * binding. It is driven by [[EscalatingReducer.escalatingLoop]]'s laziness (a *stuck* term escalates). Always the compiler track: a compile-time reduction never
     * reaches a runtime target.
     */
   def reduceInstance(
@@ -56,18 +53,9 @@ object ReducedBindingClosure {
   ): CompilerIO[Option[SemValue]] =
     getFactIfProduced(CompilerMonomorphicValue.Key(vfqn, typeArguments)).flatMap {
       case Some(cmv) =>
-        threaded(cmv).flatMap(_.traverse(r => buildBinding(vfqn, r.value, Platform.Compiler, deep = true)))
+        cmv.reduced.traverse(r => buildBinding(vfqn, r.value, Platform.Compiler, deep = true))
       case None      => None.pure[CompilerIO]
     }
-
-  /** A compile-track specialisation's reduced body, **threaded** (`docs/effects.md` §3.4): every binding a reduction
-    * links is threaded, so a control effect's frame reaches its operation along the declared chain, exactly as on the
-    * runtime track. A specialisation receiving and supplying nothing comes back as it was. Where the threading fails,
-    * its errors are kept and the unthreaded body is linked — which takes no frame, so a control effect run through it
-    * stays stuck rather than reaching another frame.
-    */
-  def threaded(cmv: CompilerMonomorphicValue): CompilerIO[Option[Sourced[MonomorphicExpression.Expression]]] =
-    recover(EnvironmentThreading.threadCompiled(EnvironmentThreading.Specialisation.of(cmv)))(cmv.reduced)
 
   /** Build the NbE binding for `vfqn` from its reduced compile-time body, resolving each dependency's binding in the
     * given `platform` pool. The dependencies are resolved once here; the resulting `VTopDef` thunk is self-contained,
@@ -180,12 +168,12 @@ object ReducedBindingClosure {
       valueReferences(expr).toSeq.groupBy(_._1).collect { case (fqn, instances) if instances.size > 1 => fqn }.toSet
     val names     = mutable.LinkedHashMap.empty[(ValueFQN, Seq[GroundValue]), ValueFQN]
     def rename(expr: MonomorphicExpression.Expression): MonomorphicExpression.Expression = expr match {
-      case MonomorphicExpression.MonomorphicValueReference(vfqn, typeArgs, from) if ambiguous.contains(vfqn.value) =>
+      case MonomorphicExpression.MonomorphicValueReference(vfqn, typeArgs) if ambiguous.contains(vfqn.value) =>
         val name = names.getOrElseUpdate(
           (vfqn.value, typeArgs),
           vfqn.value.copy(name = vfqn.value.name.copy(name = s"${vfqn.value.name.name}#${names.size}"))
         )
-        MonomorphicExpression.MonomorphicValueReference(vfqn.as(name), typeArgs, from)
+        MonomorphicExpression.MonomorphicValueReference(vfqn.as(name), typeArgs)
       case MonomorphicExpression.FunctionApplication(target, argument)                                             =>
         MonomorphicExpression.FunctionApplication(renamed(target), renamed(argument))
       case MonomorphicExpression.FunctionLiteral(paramName, paramType, body)                                     =>
@@ -200,7 +188,7 @@ object ReducedBindingClosure {
   private[processor] def valueReferences(
       expr: MonomorphicExpression.Expression
   ): Set[(ValueFQN, Seq[GroundValue])] = expr match {
-    case MonomorphicExpression.MonomorphicValueReference(vfqn, typeArgs, _) => Set((vfqn.value, typeArgs))
+    case MonomorphicExpression.MonomorphicValueReference(vfqn, typeArgs) => Set((vfqn.value, typeArgs))
     case MonomorphicExpression.FunctionApplication(target, argument)     =>
       valueReferences(target.value.expression) ++ valueReferences(argument.value.expression)
     case MonomorphicExpression.FunctionLiteral(_, _, body)               => valueReferences(body.value.expression)

@@ -60,14 +60,12 @@ object EffectSugarDesugarer {
   /** The binder name minted for a row entry or a `~` constraint. Nothing reads it: it is written positionally. */
   private val binderPrefix = "Impl"
 
-  /** Rewrite one function definition — see the object comment.
-    *
-    * @param handles
-    *   The new effect path (`docs/effects.md` D36): each row entry's binder is also the type of a **handle parameter**
-    *   the definition takes ([[Handles.parameter]]), after the handles it already takes (an effect member's own) and
-    *   before its own parameters, so a call hands it the handle its caller has in scope for the entry.
+  /** Rewrite one function definition — see the object comment. Each row entry's binder is also the type of a **handle
+    * parameter** the definition takes ([[Handles.parameter]], `docs/effects.md` D36), after the handles it already takes
+    * (an effect member's own) and before its own parameters, so a call hands it the handle its caller has in scope for
+    * the entry.
     */
-  def desugar(function: FunctionDefinition, handles: Boolean = true): FunctionDefinition =
+  def desugar(function: FunctionDefinition): FunctionDefinition =
     if (signatureAndBodyRows(function).isEmpty && unprocessedConstraints(function).isEmpty) function
     else {
       val anchor                       = function.name
@@ -110,11 +108,11 @@ object EffectSugarDesugarer {
       }
       val (before, after)              = adapted.splitAt(mintAt(function))
       val declared                     = declaredEffectRow(function)
-      // On the new effect path a code parameter listing entries takes one handle per entry, each of a type the callee's
-      // body hands it: a *handed* binder, appended after every other binder so a key without them is a prefix.
+      // A code parameter listing entries takes one handle per entry, each of a type the callee's body hands it: a
+      // *handed* binder, appended after every other binder so a key without them is a prefix.
       val (handed, ownArgs)            = function.args.foldLeft((Seq.empty[GenericParameter], Seq.empty[ArgumentDefinition])) {
         case ((minted, done), arg) =>
-          handedEntries(function, arg, handles) match {
+          handedEntries(function, arg) match {
             case Seq()   => (minted, done :+ arg.copy(typeExpression = parameterType(function)(arg.typeExpression)))
             case entries =>
               val binders = entries.map(entry =>
@@ -125,15 +123,12 @@ object EffectSugarDesugarer {
       }
       val (heldHandles, userArgs)      = ownArgs.span(arg => Handles.isParameter(arg.name.value))
       val rowHandles                   =
-        if (handles) rowBinders.map(binder => ArgumentDefinition(binder.name.map(Handles.parameter), binder.name.as(typeExpr(binder.name))))
-        else Seq.empty
+        rowBinders.map(binder => ArgumentDefinition(binder.name.map(Handles.parameter), binder.name.as(typeExpr(binder.name))))
 
       function.copy(
-        // On the new effect path a `~` constraint's binder comes before the row's: an implementation's clause then
-        // starts with exactly its instance's binders, which dispatch hands it by position, row or no row.
-        genericParameters =
-          if (handles) before ++ constraintBinders ++ rowBinders ++ after ++ handed
-          else before ++ rowBinders ++ constraintBinders ++ after ++ handed,
+        // A `~` constraint's binder comes before the row's: an implementation's clause then starts with exactly its
+        // instance's binders, which dispatch hands it by position, row or no row.
+        genericParameters = before ++ constraintBinders ++ rowBinders ++ after ++ handed,
         args = heldHandles ++ rowHandles ++ userArgs,
         typeDefinition = bare(function.typeDefinition),
         body = function.body.map(bare),
@@ -143,20 +138,19 @@ object EffectSugarDesugarer {
       )
     }
 
-  /** The binder name minted for a code parameter's handle on the new effect path. */
+  /** The binder name minted for a code parameter's handle. */
   private val handedPrefix = "Handed"
 
-  /** The entries a parameter's own clause lists, when on the new effect path it takes a handle for each: a top-level
-    * row with entries, on an ordinary definition (a meta companion's parameters are payloads, never code).
+  /** The entries a parameter's own clause lists, a handle for each: a top-level row with entries, on an ordinary
+    * definition (a meta companion's parameters are payloads, never code).
     */
   private def handedEntries(
       function: FunctionDefinition,
-      arg: ArgumentDefinition,
-      handles: Boolean
+      arg: ArgumentDefinition
   ): Seq[UnresolvedAbilityConstraint[Sourced[Expression]]] =
-    if (!handles || isMetaCompanion(function)) Seq.empty else topLevelRowEntries(arg.typeExpression)
+    if (isMetaCompanion(function)) Seq.empty else topLevelRowEntries(arg.typeExpression)
 
-  /** A code parameter's type on the new effect path: one handle per entry, then its result — `body uses *, Throw[E]: A`
+  /** A code parameter's type: one handle per entry, then its result — `body uses *, Throw[E]: A`
     * is `Handed => A`.
     */
   private def handedType(binders: Seq[GenericParameter], expr: Sourced[Expression]): Sourced[Expression] =
