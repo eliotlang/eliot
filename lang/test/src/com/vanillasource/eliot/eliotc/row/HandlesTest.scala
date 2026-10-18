@@ -49,6 +49,33 @@ class HandlesTest extends ProcessorTest(LangProcessors(handles = true)*) {
         toTestErrors(errors)
       }
 
+  private val capturing =
+    """effect Out { def put(s: String): Unit }
+      |effect Note { def note(s: String): Unit }
+      |implement recording: Out { def put(s: String) uses Note: Unit = note(s) }
+      |implement noting: Note { def note(s: String): Unit = sink(s) }
+      |def sink(s: String): Unit
+      |def greet uses Out: Unit = put("x")
+      |""".stripMargin
+
+  "a capture" should "be filled with the handle in scope at the `with`" in {
+    references(capturing + "def test: Unit = (greet with recording) with noting\n", "test", "greet")
+      .asserting(_ shouldBe Seq(Seq(GroundValue.Structure(
+        ValueFQN(testModuleName, QualifiedName("Recording$Handle", Qualifier.Type)),
+        Seq(GroundValue.Structure(ValueFQN(testModuleName, QualifiedName("Noting$Handle", Qualifier.Type)), Seq.empty, GroundValue.Type)),
+        GroundValue.Type
+      ))))
+  }
+
+  it should "dispatch what the clause performs on the captured handle" in {
+    targets(
+      capturing + "def test: Unit = (greet with recording) with noting\n",
+      QualifiedName("put", Qualifier.AbilityImplementation("Out", "Recording$Handle[Capture$0]", None)),
+      "note",
+      Seq(GroundValue.Structure(ValueFQN(testModuleName, QualifiedName("Noting$Handle", Qualifier.Type)), Seq.empty, GroundValue.Type))
+    ).asserting(_ shouldBe Seq(Qualifier.AbilityImplementation("Note", "Noting$Handle[]", None)))
+  }
+
   private val failing =
     """effect Fail[E] { def fail[A](e: E): A }
       |implement[E] failing(code: E): Fail[E] { def fail[A](e: E): A = stop(code) }
@@ -169,17 +196,29 @@ class HandlesTest extends ProcessorTest(LangProcessors(handles = true)*) {
   /** The qualifier of every reference to a value named `to` in `in`'s body at `typeArguments`. */
   private def targets(
       source: String,
-      in: String,
+      in: String | QualifiedName,
       to: String,
       typeArguments: Seq[GroundValue] = Seq.empty
-  ): IO[Seq[Qualifier]] =
-    runGenerator(source, WovenValue.Key(ValueFQN(testModuleName, default(in)), typeArguments), systemImports)
-      .map((_, facts) =>
+  ): IO[Seq[Qualifier]] = {
+    val name = in match {
+      case n: QualifiedName => n
+      case n: String        => default(n)
+    }
+    runGenerator(source, WovenValue.Key(ValueFQN(testModuleName, name), typeArguments), systemImports)
+      .map { (errors, facts) =>
+        if (sys.env.contains("HANDLES_DEBUG")) errors.foreach(e => println(s"${e.message} ${e.description.mkString(" | ")} @ ${e.sourceRange}"))
+        if (sys.env.contains("HANDLES_DEBUG")) facts.values.foreach {
+          case r: com.vanillasource.eliot.eliotc.row.fact.RowElaboratedValue if r.value.vfqn.moduleName == testModuleName =>
+            println(s"ROW ${r.value.vfqn.name}: ${com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedExpression.render(r.value.signature.value)} = ${r.value.runtime.map(b => com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedExpression.render(b.value))}")
+          case w: WovenValue if w.vfqn.moduleName == testModuleName => println(s"WOVEN ${w.vfqn.name} ${w.typeArguments} ${w.runtime}")
+          case _ => ()
+        }
         facts.values
-          .collect { case woven: WovenValue if woven.vfqn.name.name == in => woven.runtime.toSeq.flatMap(b => targetsIn(b.value, to)) }
+          .collect { case woven: WovenValue if woven.vfqn.name == name => woven.runtime.toSeq.flatMap(b => targetsIn(b.value, to)) }
           .flatten
           .toSeq
-      )
+      }
+  }
 
   private def targetsIn(expression: MonomorphicExpression.Expression, to: String): Seq[Qualifier] =
     expression match {

@@ -29,6 +29,12 @@ object Handles {
     */
   def dataType(implementation: String): String = s"${implementation.capitalize}$$Handle"
 
+  /** The named implementation whose handle `data` type is `dataType` ([[dataType]]'s inverse). */
+  def implementationOf(dataType: String): String = {
+    val capitalised = dataType.stripSuffix("$Handle")
+    capitalised.take(1).toLowerCase + capitalised.drop(1)
+  }
+
   /** The field of the handle `data` holding the implementation's parameter `parameter`, which is also its accessor's
     * name: the implementation's name keeps it apart from another implementation's field in the same module.
     */
@@ -36,6 +42,27 @@ object Handles {
 
   /** The name an implementation's clause gives its own handle, its first parameter. */
   val self: String = "self$handle"
+
+  /** The type parameter of an implementation's handle `data` for the `j`-th entry its clauses write — the type of the
+    * handle a `with` may capture for it (`docs/effects.md` D36 point 2).
+    */
+  def capture(j: Int): String = s"Capture$$$j"
+
+  /** The field of the handle `data` holding the handle captured for the `j`-th entry its clauses write. */
+  def captureField(implementation: String, j: Int): String = field(implementation, s"capture$$$j")
+
+  /** The body-less declaration, in an implementation's namespaces, whose row is the entries its clauses write, in the
+    * order of the handle `data`'s capture fields.
+    */
+  val captures: String = "$captures"
+
+  /** The body-less declaration, in a named implementation's namespace, whose row is the entries its clause `clause`
+    * writes: what a `with` reads to tell which entries the implementation captures.
+    */
+  def clause(clause: String): String = s"$$clause$$$clause"
+
+  /** Whether `name` is one of an implementation's own declarations rather than a clause. */
+  def isDeclaration(name: String): Boolean = name == captures || name.startsWith("$clause$")
 
   /** The name of the handle the `n`-th `with` of a definition binds. */
   def binding(n: Long): String = s"$$with$n"

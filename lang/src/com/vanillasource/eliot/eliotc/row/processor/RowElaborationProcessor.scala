@@ -10,6 +10,7 @@ import com.vanillasource.eliot.eliotc.module.fact.{
   QualifiedName as ModuleQualifiedName
 }
 import com.vanillasource.eliot.eliotc.ability.util.AbilityKind
+import com.vanillasource.eliot.eliotc.ast.fact.Handles
 import com.vanillasource.eliot.eliotc.monomorphize.check.DeclaredEntries
 import com.vanillasource.eliot.eliotc.operator.fact.{OperatorResolvedExpression, OperatorResolvedValue}
 import com.vanillasource.eliot.eliotc.platform.Platform
@@ -113,11 +114,18 @@ class RowElaborationProcessor(handles: Boolean = false)
             case None                               => ().pure[CompilerIO]
           }
         }
+      // On the new effect path a named implementation's clause lives in an anonymous instance keyed by its handle, and
+      // what it performs beyond its member is captured where it is bound ([[com.vanillasource.eliot.eliotc.row.Captures]]).
+      case ResolveQualifier.AbilityImplementation(_, _, None) if handles && isHandleClause(value)               =>
+        ().pure[CompilerIO]
       case ResolveQualifier.AbilityImplementation(ability, _, None)                                            =>
         anonymousClauseEntries(value, ability, platform)
       case _                                                                                                    =>
         ().pure[CompilerIO]
     }
+
+  private def isHandleClause(value: OperatorResolvedValue): Boolean =
+    value.runtime.exists(body => RowChecker.peelBinders(body.value)._1.headOption.contains(Handles.self))
 
   private def anonymousClauseEntries(value: OperatorResolvedValue, ability: AbilityFQN, platform: Platform)
       : CompilerIO[Unit] =

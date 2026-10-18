@@ -4,6 +4,8 @@ import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.ast.fact.{
   ArgumentDefinition,
   DataConstructor,
+  GenericParameter,
+  UnresolvedAbilityConstraint,
   DataDefinition,
   Expression,
   FunctionDefinition,
@@ -81,7 +83,16 @@ object NamedImplementationDesugarer {
       val abilityName = implementation.ability.value
       val implName    = implementation.name.value
       val anchor      = implementation.name
-      val generics    = implementation.genericParameters.map(_.copy(abilityConstraints = Seq.empty))
+      val clauses     = implementation.functions.map(ImplementationRows.own)
+      // Every entry a clause writes may be captured where the implementation is bound (`docs/effects.md` D36 point 2):
+      // which ones are — those no member declares — is the `row` phase's to read, since the members are declared in
+      // another file. The handle has a field for each, of a type of its own, and a `with` fills the ones not captured
+      // with `unit`.
+      val written     = ImplementationRows.union(clauses.filter(_.name.value.qualifier != Qualifier.Type))
+      val captures    = written.indices.map(j =>
+        GenericParameter(anchor.as(Handles.capture(j)), anchor.as(typeExpr(anchor.as("Type"))), Seq.empty)
+      )
+      val generics    = implementation.genericParameters.map(_.copy(abilityConstraints = Seq.empty)) ++ captures
       val handleType  = anchor.as(
         Expression.FunctionApplication(
           None,
@@ -98,24 +109,30 @@ object NamedImplementationDesugarer {
           Seq(
             DataConstructor(
               anchor.as(Handles.dataType(implName)),
-              implementation.parameters.map(p => p.copy(name = p.name.map(Handles.field(implName, _))))
+              implementation.parameters.map(p => p.copy(name = p.name.map(Handles.field(implName, _)))) ++
+                captures.indices.map(j =>
+                  ArgumentDefinition(anchor.as(Handles.captureField(implName, j)), anchor.as(typeExpr(anchor.as(Handles.capture(j)))))
+                )
             )
           )
         )
       )
       val pattern     = handleType +: implementation.pattern
       val qualifier   = Qualifier.AbilityImplementation(abilityName, pattern.map(_.value.render).mkString(", "), None)
-      val methods     = implementation.functions.map(ImplementationRows.own).map { f =>
+      // A prefix of every clause's binders, ahead of those the clause's own row mints: dispatch hands a clause its
+      // instance's type arguments by position.
+      val instanceGenerics = (implementation.genericParameters ++ captures).map(_.copy(abilityLevel = true))
+      val methods     = clauses.map { f =>
         if (f.name.value.qualifier == Qualifier.Type)
           f.copy(
             name = f.name.map(n => QualifiedName(n.name, qualifier)),
-            genericParameters = implementation.genericParameters ++ f.genericParameters,
+            genericParameters = instanceGenerics ++ f.genericParameters,
             visibility = Visibility.Public
           )
         else
           f.copy(
             name = f.name.map(n => QualifiedName(n.name, qualifier)),
-            genericParameters = implementation.genericParameters ++ f.genericParameters,
+            genericParameters = instanceGenerics ++ f.genericParameters,
             args = ArgumentDefinition(anchor.as(Handles.self), handleType) +: f.args,
             body = f.body.map(fieldsBound(implName, implementation.parameters, _)),
             visibility = Visibility.Public
@@ -123,7 +140,7 @@ object NamedImplementationDesugarer {
       }
       val instance    = FunctionDefinition(
         implementation.ability.as(QualifiedName(abilityName, qualifier)),
-        implementation.genericParameters,
+        instanceGenerics,
         pattern.zipWithIndex.map { case (p, i) => ArgumentDefinition(anchor.as(s"arg$i"), p) },
         Expression.trueReference(implementation.ability),
         None
@@ -157,7 +174,27 @@ object NamedImplementationDesugarer {
           .toSeq :+ namedMarker :+ nameMarker :+
           ImplementationParameters.binder(anchor, named, implementation.genericParameters, implementation.parameters))
           .map(_ -> RoleHint.NoHint)
-      if (bodied) DataDefinitionDesugarer.desugar(data) ++ (methods :+ instance).map(_ -> RoleHint.NoHint) ++ declaration
+      def recording(name: QualifiedName, genericParameters: Seq[GenericParameter], row: Seq[UnresolvedAbilityConstraint[Sourced[Expression]]]) =
+        FunctionDefinition(
+          anchor.as(name),
+          genericParameters,
+          Seq.empty,
+          ImplementationRows.rowed(row, anchor.as(Expression.FunctionApplication(None, anchor.as("Unit"), None, Seq.empty))),
+          None
+        )
+      val recorded    =
+        Seq(
+          recording(QualifiedName(Handles.captures, named), implementation.genericParameters, written),
+          recording(QualifiedName(Handles.captures, qualifier), instanceGenerics, written)
+        ) ++ clauses.filter(_.name.value.qualifier != Qualifier.Type).map(f =>
+          recording(
+            QualifiedName(Handles.clause(f.name.value.name), named),
+            implementation.genericParameters ++ f.genericParameters,
+            ImplementationRows.entriesOf(f.typeDefinition)
+          )
+        )
+      if (bodied)
+        DataDefinitionDesugarer.desugar(data) ++ (methods ++ recorded :+ instance).map(_ -> RoleHint.NoHint) ++ declaration
       else declaration
     }
 

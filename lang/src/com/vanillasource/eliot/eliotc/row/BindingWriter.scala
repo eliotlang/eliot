@@ -224,7 +224,10 @@ object BindingWriter {
     * is the error, which is the whole of the scope check — the synthesized entry point included, which binds every
     * effect of `main`'s clause with `with` ([[EntryPoint]]).
     */
-  def write(orv: OperatorResolvedValue, universe: RowChecker.Universe, handles: Boolean = false): Written = {
+  def write(original: OperatorResolvedValue, universe: RowChecker.Universe, handles: Boolean = false): Written = {
+    // On the new effect path an implementation's clause is shaped as its member is, and what it captures is bound from
+    // its handle ([[Captures.clause]]); every other value is written as it is.
+    val orv        = Option.when(handles)(Captures.clause(original, universe)).flatten.getOrElse(original)
     val writer     = new Writer(universe, handles)
     val received   = receivedBindings(orv, handles)
     val scope      = Scope(
@@ -355,7 +358,7 @@ object BindingWriter {
     * binding binders for an **effect** (`docs/effects.md` D36 point 3), as the binder's index and ability. A definition
     * on the old effect path takes none.
     */
-  private def handleParameters(orv: OperatorResolvedValue): Seq[(Int, AbilityFQN)] = {
+  private[row] def handleParameters(orv: OperatorResolvedValue): Seq[(Int, AbilityFQN)] = {
     val view    = SignatureView.of(orv.signature)
     val effects = orv.effectRow.returnEffects.map(_.abilityFQN).toSet
     val marks   = phantoms(orv).toMap
@@ -555,7 +558,7 @@ object BindingWriter {
     * ability is the `k`-th entry of the declared row naming it, since the desugar mints them in the order written. An
     * ability whose marks and entries do not pair one to one — a `~` constraint's binder has no entry — pairs none.
     */
-  private def entryArguments(orv: OperatorResolvedValue): Map[Int, Seq[OperatorResolvedExpression]] =
+  private[row] def entryArguments(orv: OperatorResolvedValue): Map[Int, Seq[OperatorResolvedExpression]] =
     phantoms(orv)
       .groupBy(_._2)
       .toSeq
@@ -920,6 +923,22 @@ object BindingWriter {
             // The data takes the implementation's own type parameters, never the binding a `~` constraint on one mints.
             val own     = unmarkedBinders(marker)
             val keys    = own.map(_ -> keyedHole(implementation)).toMap
+            // The handle's capture fields (`docs/effects.md` D36 point 2): a captured entry takes the handle in scope
+            // here, outside the binding, and any other `unit`.
+            val fields  = Captures.captured(marker, universe).getOrElse(Seq.empty)
+            val held    = fields.map { case ((fieldAbility, arguments), isCaptured) =>
+              val key = keyedHole(implementation)
+              val arg =
+                if (isCaptured)
+                  handleHole(
+                    implementation,
+                    fieldAbility,
+                    arguments.map(argument => implementation.as(substituted(argument, keys))),
+                    scope
+                  )
+                else unitValue(implementation)
+              (key, arg)
+            }
             val entry   = HandleHole.Entry(
               ability,
               view.parameters.map(pattern =>
@@ -939,10 +958,10 @@ object BindingWriter {
                       QualifiedName(Handles.dataType(implementationName(implementation.value)), Qualifier.Default)
                     )
                   ),
-                  own.map(name => implementation.as(keys(name)))
+                  own.map(name => implementation.as(keys(name))) ++ held.map((key, _) => implementation.as(key))
                 )
               ),
-              supplied.map(walk(_, scope))
+              supplied.map(walk(_, scope)) ++ held.map(_._2)
             )
             val let     = FunctionApplication(implementation.as(FunctionLiteral(name, None, bound)), implementation.as(handle))
             expr.as(applyChain(implementation.as(let), rest.tail.map(walk(_, scope))))
@@ -1374,7 +1393,7 @@ object BindingWriter {
         scope: Scope
     ): Sourced[OperatorResolvedExpression] = {
       val offered = candidates(ability, scope)
-      offered.flatten.foreach((binding, _) => use(binding, None))
+      offered.flatten.foreach((binding, _) => consume(binding, None))
       at.as(HandleHole(HandleHole.Entry(ability, arguments), offered.map(_.map(_._2))))
     }
 

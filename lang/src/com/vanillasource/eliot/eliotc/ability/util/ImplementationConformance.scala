@@ -1,7 +1,8 @@
 package com.vanillasource.eliot.eliotc.ability.util
 
 import cats.syntax.all.*
-import com.vanillasource.eliot.eliotc.module.fact.{ModuleAbilities, QualifiedName, ValueFQN}
+import com.vanillasource.eliot.eliotc.ast.fact.Handles
+import com.vanillasource.eliot.eliotc.module.fact.{ModuleAbilities, QualifiedName, ValueFQN, WellKnownTypes}
 import com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedExpression.SignatureView
 import com.vanillasource.eliot.eliotc.operator.fact.{OperatorResolvedExpression, OperatorResolvedValue}
 import com.vanillasource.eliot.eliotc.platform.Platform
@@ -56,10 +57,13 @@ object ImplementationConformance {
       platform: Platform,
       complete: Boolean = true,
       leadingParameters: Int = 0
-  ): CompilerIO[Unit] =
-    checkCompleteness(ability, members, implementation).whenA(complete) >>
-      checkNoExtras(members, implementation) >>
-      checkSignatures(ability, members, implementation, platform, leadingParameters)
+  ): CompilerIO[Unit] = {
+    // An implementation's own declarations on the new effect path (`docs/effects.md` D36) are not clauses.
+    val clauses = implementation.filterNot(m => Handles.isDeclaration(m.vfqn.name.name))
+    checkCompleteness(ability, members, clauses).whenA(complete) >>
+      checkNoExtras(members, clauses) >>
+      checkSignatures(ability, members, clauses, platform, leadingParameters)
+  }
 
   /** A missing method is reported at the implementation's **marker** — the synthetic method named after the ability,
     * positioned at the `implement` head — so the error points at the block that is incomplete. `implementation` arrives
@@ -114,8 +118,8 @@ object ImplementationConformance {
         for {
           markerSignature <- markerSignature(clause.vfqn, ability.abilityName, platform)
           compatible      <- AbilityMatcher.signaturesCompatible(
-                               member.signature,
-                               withoutLeadingParameters(clause.signature, leadingParameters),
+                               withoutHandles(member.signature),
+                               withoutHandles(withoutLeadingParameters(clause.signature, leadingParameters)),
                                markerSignature
                              )
           _               <- compilerError(clause.name.as("Signature of implementation does not match the ability definition."))
@@ -123,6 +127,29 @@ object ImplementationConformance {
         } yield ()
       }
   }
+
+  /** A signature without the handles it takes beyond its first parameter — on the new effect path (`docs/effects.md`
+    * D36) every parameter typed by a binding binder. The first is the member's own effect's handle, which a clause
+    * takes as its implementation's handle and which the pattern matches; the rest are the compiler's to arrange: a
+    * clause takes the handles its member declares, in the member's order, and what it captures is bound where it is
+    * installed. On the old path no parameter is typed by a binding binder, and nothing is dropped.
+    */
+  private def withoutHandles(signature: Sourced[OperatorResolvedExpression]): Sourced[OperatorResolvedExpression] = {
+    val view    = SignatureView.of(signature)
+    val marked  = view.binders.filter(_.parameterType.exists(t => isMark(t.value))).map(_.name.value).toSet
+    val handles = view.parameters.zipWithIndex.collect {
+      case (Sourced(_, _, OperatorResolvedExpression.ParameterReference(name)), index) if index > 0 && marked(name.value) =>
+        index
+    }.toSet
+    if (handles.isEmpty) signature
+    else signature.as(view.copy(parameters = view.parameters.zipWithIndex.filterNot((_, i) => handles(i)).map(_._1)).toExpression)
+  }
+
+  private def isMark(declared: OperatorResolvedExpression): Boolean =
+    OperatorResolvedExpression.spine(declared)._1 match {
+      case OperatorResolvedExpression.ValueReference(head, _) => head.value == WellKnownTypes.implementationTypeFQN
+      case _                                                  => false
+    }
 
   private def withoutLeadingParameters(
       signature: Sourced[OperatorResolvedExpression],

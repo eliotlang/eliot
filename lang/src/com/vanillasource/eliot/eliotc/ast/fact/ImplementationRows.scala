@@ -86,7 +86,7 @@ object ImplementationRows {
         case _                                             => definition.copy(carriedEffects = Set.empty)
       }
 
-  private def entriesOf(expr: Sourced[Expression]): Seq[UnresolvedAbilityConstraint[Sourced[Expression]]] =
+  def entriesOf(expr: Sourced[Expression]): Seq[UnresolvedAbilityConstraint[Sourced[Expression]]] =
     expr.value match {
       case Expression.EffectfulType(effects, _) => effects
       case _                                    => Seq.empty
