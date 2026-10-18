@@ -45,6 +45,12 @@ import cats.syntax.all.*
   *   with no argument, while `def printLine(line: String) uses Console: Unit` needs one: a reference given fewer is
   *   unapplied, and is code rather than a value (`docs/effects.md` §1 rule 2). The signature's arrow chain cannot
   *   tell the two apart once the row is desugared away.
+  * @param handles
+  *   The definition's **handles** (`docs/effects.md` D36 point 3), in parameter order: each the binder typing a handle
+  *   — the handle's type — and the entry of [[returnEffects]] it stands for, by index. Written where a handle is minted
+  *   (an effect member's own, [[AbilityMembers]]; a `uses` entry's, the effect desugar; a row alias's, the resolver),
+  *   and the one place a phase reads which binders are handle types: `def greet(name: String) uses Console: Unit`
+  *   is `greet[Impl ~ Console[Impl]](Impl$handle: Impl, name: String)` with the handle `Impl` for entry 0.
   * @tparam C
   *   The phase's ability-constraint representation: [[UnresolvedAbilityConstraint]] over the ast's and then the core's
   *   expression type, and from resolution onwards
@@ -54,7 +60,8 @@ case class EffectRow[C](
     returnEffects: Seq[C] = Seq.empty[C],
     parameterEffects: Seq[EffectRow.ParameterEffects[C]] = Seq.empty[EffectRow.ParameterEffects[C]],
     callbackEffects: Seq[EffectRow.CallbackEffects[C]] = Seq.empty[EffectRow.CallbackEffects[C]],
-    returnArity: Int = 0
+    returnArity: Int = 0,
+    handles: Seq[EffectRow.Handle] = Seq.empty
 ) {
 
   /** Convert every entry with a pure function, preserving positions — the pure fact-chain hops (ast→core,
@@ -65,7 +72,8 @@ case class EffectRow[C](
       returnEffects.map(f),
       parameterEffects.map(_.map(f)),
       callbackEffects.map(_.map(f)),
-      returnArity
+      returnArity,
+      handles
     )
 
   /** Convert every entry with an effectful function, preserving positions — the resolving fact-chain hops
@@ -76,7 +84,7 @@ case class EffectRow[C](
       returnEffects.traverse(f),
       parameterEffects.traverse(_.traverse(f)),
       callbackEffects.traverse(_.traverse(f))
-    ).mapN(EffectRow(_, _, _, returnArity))
+    ).mapN(EffectRow(_, _, _, returnArity, handles))
 }
 
 object EffectRow {
@@ -107,6 +115,11 @@ object EffectRow {
     def traverse[F[_]: Applicative, D](f: C => F[D]): F[CallbackEffects[D]] =
       effects.traverse(f).map(CallbackEffects(parameterIndex, arity, _, closed))
   }
+
+  /** One handle of a definition: the binder that is its type, and the index of the [[EffectRow.returnEffects]] entry it
+    * stands for.
+    */
+  case class Handle(binder: String, entry: Int)
 
   def empty[C]: EffectRow[C] = EffectRow(Seq.empty, Seq.empty)
 }

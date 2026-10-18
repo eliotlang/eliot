@@ -33,10 +33,8 @@ import org.scalatest.matchers.should.Matchers
 
 import java.net.URI
 
-/** The read-the-argument arm of [[AbilityResolver]] (effects v6, `docs/effects.md` §9.4 step 4 / §10.1 step 6),
-  * tested by **injection**: the references are built by hand with their ability-level arguments beginning with a
-  * binding, and the two-site search is a stub that records what it was asked. Only an ability reaches the arm — an
-  * effect's operation is the specialisation pass's (D35) — so its binding is `Default`, and a named one is refused.
+/** The search arm of [[AbilityResolver]], tested by **injection**: the reference is built by hand with its
+  * ability-level arguments, and the two-site search is a stub that records what it was asked.
   *
   * No ability marker is registered, so the arity read falls back to "slice nothing" and a reference's whole argument
   * list is its ability-level slice, and the ability is not known to be an effect.
@@ -59,55 +57,22 @@ class AbilityResolverBindingTest extends AnyFlatSpec with Matchers {
       GroundValue.Type
     )
 
-  private val namedQualifier = Qualifier.AbilityImplementation("Throw", "E", Some("loggingThrow"))
-  private val implMarker     = ValueFQN(testModule, QualifiedName("Throw", namedQualifier))
-  private val implBinding    = GroundValue.Structure(implMarker, Seq(string), GroundValue.Type)
-
-  /** `E: Type -> E -> Bool`, unguarded: the marker of an implementation whose pattern is its type parameter. */
-  private val implMarkerValue = OperatorResolvedValue(
-    implMarker,
-    at(
-      ResolvedQualifiedName(
-        "Throw",
-        ResolvedQualifier.AbilityImplementation(AbilityFQN(throwModule, "Throw"), "E", Some("loggingThrow"))
-      )
-    ),
-    None,
-    at(
-      OperatorResolvedExpression.FunctionLiteral(
-        at("E"),
-        Some(at(OperatorResolvedExpression.ValueReference(at(WellKnownTypes.typeFQN)))),
-        at(
-          OperatorResolvedExpression.arrow(
-            at(OperatorResolvedExpression.ParameterReference(at("E"))),
-            at(OperatorResolvedExpression.ValueReference(at(WellKnownTypes.boolTrueFQN)))
-          )
-        )
-      )
-    )
-  )
-
   private val searchedImpl: (ValueFQN, Seq[GroundValue]) =
     (ValueFQN(throwModule, QualifiedName("raise", Qualifier.AbilityImplementation("Throw", "E", None))), Seq(string))
 
-  /** The ability's module, declaring no member to read, so whether it is an effect is unknown and a `Default` binding
-    * goes to the search ([[com.vanillasource.eliot.eliotc.ability.util.AbilityKind]]).
+  /** The ability's module, declaring no member to read, so whether it is an effect is unknown and the reference goes to
+    * the search ([[com.vanillasource.eliot.eliotc.ability.util.AbilityKind]]).
     */
   private val abilities = ModuleAbilities(throwModule, Seq.empty, Seq.empty)
 
-  /** A [[CompilationProcess]] holding the named implementation's marker, its module's `clauses`
-    * and the ability's module: every other read answers "not produced".
-    */
-  private class Implementation(clauses: Seq[String]) extends CompilationProcess {
-    private val names =
-      UnifiedModuleNames(testModule, clauses.map(QualifiedName(_, namedQualifier) -> Visibility.Public).toMap, true)
-
+  /** A [[CompilationProcess]] holding the ability's module: every other read answers "not produced". */
+  private class Implementation extends CompilationProcess {
     override def getFact[V <: CompilerFact, K <: CompilerFactKey[V]](
         key: K,
         ancestors: List[CompilerFactKey[?]]
     ): IO[Option[V]] =
       IO.pure(
-        Seq(implMarkerValue, names, abilities)
+        Seq(abilities)
           .find(_.key() == key)
           .map(_.asInstanceOf[V])
       )
@@ -121,7 +86,7 @@ class AbilityResolverBindingTest extends AnyFlatSpec with Matchers {
   private type Resolutions = Map[CheckState.AbilityResolutionKey, (ValueFQN, Seq[GroundValue])]
 
   private def resolve(args: Seq[GroundValue]): (Resolutions, Seq[Seq[GroundValue]]) =
-    run(args, Implementation(Seq("raise"))).fold(errors => fail(s"computation aborted: $errors"), identity)
+    run(args, Implementation()).fold(errors => fail(s"computation aborted: $errors"), identity)
 
   private def run(
       args: Seq[GroundValue],
@@ -139,21 +104,7 @@ class AbilityResolverBindingTest extends AnyFlatSpec with Matchers {
     }
   }
 
-  "a reference bound to a named implementation" should "be refused, since an ability has none (D29)" in {
-    run(Seq(implBinding, string), Implementation(Seq("raise"))).left.map(_.toList.map(_.message)) shouldBe
-      Left(List("Internal: the ability 'Throw' is bound to a named implementation."))
-  }
-
-  "a reference bound to Default" should "search at the pattern arguments, with the binding stripped" in {
-    resolve(Seq(ImplementationBinding.defaultGround, string))._2 shouldBe Seq(Seq(string))
-  }
-
-  it should "record the search's answer under the full arguments, binding included" in {
-    resolve(Seq(ImplementationBinding.defaultGround, string))._1 shouldBe
-      Map((raise, Seq(ImplementationBinding.defaultGround, string)) -> searchedImpl)
-  }
-
-  "a reference with no binding" should "search at all of its ability-level arguments, as today" in {
+  "a reference" should "search at all of its ability-level arguments" in {
     resolve(Seq(string))._2 shouldBe Seq(Seq(string))
   }
 

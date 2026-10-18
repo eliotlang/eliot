@@ -177,8 +177,8 @@ class RowElaborationProcessor
     }
 
   /** The entries the ability `member` declares beyond its own ability, at the pattern of the implementation `clause`
-    * belongs to: the member's ability-level binders past its binding binder are the ability's parameters, which the
-    * implementation's marker takes as its pattern — so `Writer[List[T]]` on `Logged[T]`'s member is `Writer[List[Box]]`
+    * belongs to: the member's ability-level binders are the ability's parameters, which the implementation's marker
+    * takes as its pattern — so `Writer[List[T]]` on `Logged[T]`'s member is `Writer[List[Box]]`
     * for `implement Logged[Box]` (`docs/effects.md` §8 item 61). As spelled when the markers are not there to read.
     */
   private def memberEntriesAtPattern(
@@ -203,7 +203,7 @@ class RowElaborationProcessor
     ).mapN {
       case (Some(abilityMarker), Some(instanceMarker)) =>
         val arity        = OperatorResolvedExpression.SignatureView.of(abilityMarker.signature).binders.size
-        val parameters   = OperatorResolvedExpression.SignatureView.of(member.signature).binders.take(arity).drop(1)
+        val parameters   = OperatorResolvedExpression.SignatureView.of(member.signature).binders.take(arity)
         val pattern      = OperatorResolvedExpression.SignatureView.of(instanceMarker.signature).parameters
         val substitution = parameters.map(_.name.value).zip(pattern.map(_.value))
         member.effectRow.returnEffects

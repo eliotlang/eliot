@@ -48,34 +48,15 @@ object CommonPatterns {
     * `def pick[C: Bool]` at `false` and at `true` are two bodies of one descriptor, and with the constant dropped both
     * were `pick$Any`, so one silently replaced the other. A string is prefixed with its length, so that a `$` inside it
     * cannot forge the separator between two arguments (`String$3$a$b` is one argument, never two).
-    *
-    * An **implementation binding** (`docs/effects.md` §3.1) is headed by its implementation's marker, whose local name is
-    * the ability's own, so it is mangled as its whole identity: the ability, a stable hash of its module and pattern,
-    * and its name. `sorted` at `with reversed` and at `with natural`, two named implementations of `Compare[Int]`, are
-    * two bodies of one descriptor, and spelled by the local name alone both were `sorted$Compare$Int`, so one silently
-    * replaced the other; the module is in the hash because two modules may each name a double `recording`.
     */
   private def mangleTypeArgument(v: GroundValue): String =
     v match {
-      case GroundValue.Structure(name, args, _) if implementationBinding(name.name.qualifier).isDefined =>
-        (implementationBinding(name.name.qualifier).get(name) +: args.map(mangleTypeArgument)).mkString("$")
       case GroundValue.Structure(_, args, _)     =>
         (valueType(v).name.name +: args.map(mangleTypeArgument)).mkString("$")
       case GroundValue.Direct(literal, litType) =>
         mangleTypeArgument(litType) + "$" + mangleLiteral(literal)
       case _                                     =>
         valueType(v).name.name
-    }
-
-  /** How an implementation binding headed by a marker of this qualifier is spelled, if it is one. */
-  private def implementationBinding(qualifier: Qualifier): Option[ValueFQN => String] =
-    qualifier match {
-      case Qualifier.AbilityImplementation(abilityName, pattern, implementationName) =>
-        Some(marker =>
-          abilityName + "$impl$" + stableHash(marker.moduleName.show + "/" + pattern) +
-            implementationName.fold("")("$" + _)
-        )
-      case _                                                                         => None
     }
 
   /** A JVM-identifier-safe stand-in for a string that is not one, such as an implementation's pattern (`List[T]`): the

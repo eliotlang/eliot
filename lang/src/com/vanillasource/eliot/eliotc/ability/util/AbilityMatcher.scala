@@ -1,7 +1,6 @@
 package com.vanillasource.eliot.eliotc.ability.util
 
 import cats.syntax.all.*
-import com.vanillasource.eliot.eliotc.ast.fact.Handles
 import com.vanillasource.eliot.eliotc.module.fact.{Qualifier, ValueFQN, WellKnownTypes}
 import com.vanillasource.eliot.eliotc.monomorphize.domain.*
 import com.vanillasource.eliot.eliotc.monomorphize.domain.SemValue.*
@@ -100,13 +99,6 @@ object AbilityMatcher {
     * ability-level params get bound to the pattern args, and any remaining method-level params stay as free metas that
     * unify with the impl side's method-level metas by position. The impl method body is then unified against the
     * (substituted) abstract method body.
-    *
-    * **The binding binder is dropped first.** Effects v6 mints, ahead of an ability's own parameters, a binder for the
-    * implementation itself ([[com.vanillasource.eliot.eliotc.ast.fact.AbilityMembers]]) — but an `implement` marker
-    * still takes one argument per *pattern* element and no binding, so the two lists are off by one. Zipping them as
-    * they come pairs the binding with the first pattern argument and every real parameter with the wrong one, which
-    * made this check both miss a genuine mismatch (`implement Show[Int] { def show(x: Bool): Bool }` passed) and invent
-    * one (`Convert[Int, String]` was rejected against its own ability).
     */
   def signaturesCompatible(
       abstractMethodSig: Sourced[OperatorResolvedExpression],
@@ -120,22 +112,12 @@ object AbilityMatcher {
       marker                         = peelPattern(s2, implMarkerSig)
     } yield attemptSigCompat(
       marker.setup,
-      if (marker.args.headOption.exists(isHandleType(_, marker.setup.metaStore))) absParams else absParams.drop(1),
+      absParams,
       marker.args,
       absBody,
       implBody,
       abstractMethodSig
     )
-
-  /** Whether a pattern argument is a named implementation's handle type — the instance a named implementation lowers to
-    * on the new effect path (`docs/effects.md` D36 point 2), whose first pattern argument answers the effect's member's
-    * first binder, its handle type, rather than following a binding binder the marker does not take.
-    */
-  private def isHandleType(argument: SemValue, metaStore: MetaStore): Boolean =
-    Evaluator.force(argument, metaStore) match {
-      case VTopDef(fqn, _, _, _) => Handles.isDataType(fqn.name.name)
-      case _                     => false
-    }
 
   // ---- Phase 1: classify every transitively-referenced ORE value ----
 

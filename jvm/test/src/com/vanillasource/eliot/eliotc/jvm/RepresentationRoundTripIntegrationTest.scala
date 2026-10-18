@@ -38,9 +38,9 @@ class RepresentationRoundTripIntegrationTest extends FullIntegrationTest with Em
       _ shouldBe Seq(
         "INVOKESTATIC Test.count",
         "INVOKESTATIC Test.count",
-        "INVOKESTATIC eliot/lang/Numeric._plus_$Default$Int",
+        "INVOKESTATIC eliot/lang/Numeric._plus_$Int",
         "INVOKESTATIC Test.count",
-        "INVOKESTATIC eliot/lang/Numeric._plus_$Default$Int"
+        "INVOKESTATIC eliot/lang/Numeric._plus_$Int"
       )
     )
   }

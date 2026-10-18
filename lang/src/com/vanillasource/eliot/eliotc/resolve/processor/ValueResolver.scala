@@ -19,7 +19,6 @@ import com.vanillasource.eliot.eliotc.core.fact.{
 import com.vanillasource.eliot.eliotc.module.fact.WellKnownTypes.{
   abilityCombinatorFQN,
   functionDataTypeFQN,
-  implementationTypeFQN,
   typeFQN,
   patternMatchAbilityName,
   typeMatchAbilityName
@@ -98,7 +97,7 @@ class ValueResolver
           withHandleParameters(
             received.signature,
             resolvedRuntime,
-            resolvedEffectRow.returnEffects.size,
+            resolvedEffectRow.handles.size,
             resolvedBinderNames(received.signature.value).takeRight(namedRow.size)
           )
         else (received.signature, resolvedRuntime)
@@ -319,15 +318,13 @@ class ValueResolver
     case _                              => Seq.empty
   }
 
-  /** Mint one **binding binder** per received entry, exactly as a written-out return row mints one at `core`
-    * ([[com.vanillasource.eliot.eliotc.core.processor.EffectSugarDesugarer]]): a binder carrying the mark
-    * `Implementation[Console]` as its declared type, the entry's own constraint with that binder as its first type
-    * argument, and the entry recorded in the declared row.
+  /** Mint one **handle binder** per received entry, exactly as a written-out return row mints one at `core`
+    * ([[com.vanillasource.eliot.eliotc.core.processor.EffectSugarDesugarer]]): a binder of kind `Type`, the entry's own
+    * constraint with that binder as its first type argument, the entry recorded in the declared row, and the binder
+    * recorded as the entry's handle ([[EffectRow.handles]]).
     *
     * The binders are appended to the signature's binder run rather than prefixed, because an **ability member's**
-    * ability-level binders must keep their positions — the ability's own binding stays the first ability-level type
-    * argument. Nothing requires a binding to be a prefix: the write merges the marked indices with what the call
-    * determines for the rest.
+    * ability-level binders must keep their positions.
     */
   private def receiveBindings(
       signature: Sourced[Expression],
@@ -346,7 +343,12 @@ class ValueResolver
         paramConstraints ++ binders.map { case (name, entry) =>
           name -> Seq(entry.copy(typeArgs = Expression.ParameterReference(signature.as(name)) +: entry.typeArgs))
         },
-        effectRow.copy(returnEffects = effectRow.returnEffects ++ entries)
+        effectRow.copy(
+          returnEffects = effectRow.returnEffects ++ entries,
+          handles = effectRow.handles ++ binders.zipWithIndex.map { case ((name, _), k) =>
+            EffectRow.Handle(name, effectRow.returnEffects.size + k)
+          }
+        )
       )
     }
 
@@ -423,19 +425,9 @@ class ValueResolver
       Expression.FunctionLiteral(name, Some(parameterType), body.map(appendBinders(_, binders)))
     case _                                                           =>
       binders.foldRight(expr) { case ((name, entry), body) =>
-        Expression.FunctionLiteral(name, Some(name.as(implementationMark(name, entry.abilityFQN))), name.as(body))
+        Expression.FunctionLiteral(name, Some(name.as(Expression.ValueReference(name.as(typeFQN)))), name.as(body))
       }
   }
-
-  /** A binding binder's **mark**: `Implementation[Console]`, the one place the fact "this binder is a binding" is
-    * written down, read (and erased) by [[com.vanillasource.eliot.eliotc.row.BindingWriter]]. Its argument is the
-    * ability's own marker value, which is what that reader matches on.
-    */
-  private def implementationMark(at: Sourced[?], abilityFQN: AbilityFQN): Expression =
-    Expression.FunctionApplication(
-      at.as(Expression.ValueReference(at.as(implementationTypeFQN))),
-      at.as(Expression.ValueReference(at.as(markerOf(abilityFQN))))
-    )
 
   private def convertQualifiedName(
       name: Sourced[CoreQualifiedName]
@@ -460,38 +452,6 @@ class ValueResolver
       // no resolution: the marker *is* what a `with` looks up, so it carries its own name and nothing else.
       case CoreQualifier.Implementation(n)                     => (Qualifier.Implementation(n): Qualifier).pure[ScopedIO]
     }
-
-  /** The argument of a binding binder's **mark** (`Impl: Implementation[Console]`,
-    * [[com.vanillasource.eliot.eliotc.ast.fact.GenericParameter.implementationMark]]) — `Some` exactly when this
-    * application is a mark, and then the ability's own marker value.
-    *
-    * The mark names an **ability**, and an ability resolves by [[resolveAbilityName]] and by nothing else (§2.5): it
-    * is not in the type namespace, so the ordinary value path would find it only through the ability fallback, would
-    * miss the fixed-FQN ones entirely, and would report a mistyped effect as "Name not defined." rather than "Ability
-    * not found.". Recognised by the well-known FQN of its head, exactly as `&` is recognised.
-    */
-  private def markedAbility(
-      resolvedTarget: Expression,
-      argument: Sourced[CoreExpression]
-  ): Option[ScopedIO[Sourced[Expression]]] = (resolvedTarget, argument.value) match {
-    case (Expression.ValueReference(head, _), NamedValueReference(name, None, Seq()))
-        if head.value === implementationTypeFQN =>
-      Some(
-        resolveAbilityName(name.map(_.name)).map(ability =>
-          argument.as(
-            Expression.ValueReference(
-              argument.as(
-                ValueFQN(
-                  ability.moduleName,
-                  CoreQualifiedName(ability.abilityName, CoreQualifier.Ability(ability.abilityName))
-                )
-              )
-            )
-          )
-        )
-      )
-    case _                                      => None
-  }
 
   private def resolveAbilityName(name: Sourced[String]): ScopedIO[AbilityFQN] =
     getAbility(name.value).flatMap {
@@ -783,9 +743,7 @@ class ValueResolver
       case FunctionApplication(target, arg)                          =>
         for {
           resolvedTarget <- resolveExpression(target.value, runtime).map(target.as)
-          resolvedArg    <- markedAbility(resolvedTarget.value, arg).getOrElse(
-                              resolveExpression(arg.value, runtime).map(arg.as)
-                            )
+          resolvedArg    <- resolveExpression(arg.value, runtime).map(arg.as)
         } yield Expression.FunctionApplication(resolvedTarget, resolvedArg)
       case FunctionLiteral(paramName, paramType, body)               =>
         for {

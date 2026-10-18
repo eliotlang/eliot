@@ -9,24 +9,16 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
   * performs beyond the ability it belongs to — for `effect` and `ability` alike"); they differ in exactly one thing,
   * `performsItself`, and that difference is metadata, not shape.
   *
-  * Effects v6 adds one binder. The block mints, **ahead of** its own generic parameters, a **binding binder** of kind
-  * `Type`: the implementation slot, and the *first ability-level type argument* of every member reference, which is the
-  * contract [[com.vanillasource.eliot.eliotc.monomorphize.check.ImplementationBinding]] reads back and
-  * [[com.vanillasource.eliot.eliotc.monomorphize.check.AbilityResolver]] slices off. So `effect Console` declares
-  * `Console[Impl]` and `effect Throw[E]` declares `Throw[Impl, E]`.
+  * An `effect` is an ability over a **handle type** (`docs/effects.md` D36 point 1): the block mints, **ahead of** its
+  * own generic parameters, one ordinary binder of kind `Type` — the handle's type — and every member takes the handle
+  * as its first value parameter ([[Handles.parameter]]). So `effect Console` declares `Console[Impl]` and `effect
+  * Throw[E]` declares `Throw[Impl, E]`, and an operation is dispatched by its handle's type like any ability method. An
+  * `ability` mints nothing: `ability Show[T]` declares `Show[T]`.
   *
-  * It goes first because a type-argument list applies positionally: an ordinary ability call (`show(x)`, `a ++ b`,
-  * `sort(xs)`) has its pattern arguments *inferred*, and no declaration determines them, so a binding behind them
-  * could not be written unless the call spelled those arguments itself. First, the write is one element long and
-  * everything after it is inferred exactly as before. See `ImplementationBinding` for why this reverses §10.1 step 6.
-  *
-  * The binder is declared with the [[GenericParameter.implementationMark]], which is what the `row` phase reads to
-  * know it is a binding at all. It is also flagged [[GenericParameter.abilityLevel]], as are the block's own
-  * parameters, so [[com.vanillasource.eliot.eliotc.core.processor.EffectSugarDesugarer]] knows to mint a member's
-  * *own* binding binders after it rather than in front of the ability's.
-  *
-  * The implementation side is unchanged: an `implement` marker still takes one argument per *pattern* element and no
-  * binding, which is exactly what the two-site search matches against once the binding is sliced off.
+  * Every ability-level binder is flagged [[GenericParameter.abilityLevel]], so
+  * [[com.vanillasource.eliot.eliotc.core.processor.EffectSugarDesugarer]] knows to mint a member's *own* binders after
+  * the run rather than in front of it: the run is the member reference's ability-level prefix, which
+  * [[com.vanillasource.eliot.eliotc.monomorphize.check.AbilityResolver]] slices off.
   */
 object AbilityMembers {
 
@@ -34,8 +26,8 @@ object AbilityMembers {
     *   True for an `effect`: membership in the block says the member performs the effect, so the row is recorded on
     *   every member — the one place effect-ness is written down, and what the scope check and the write then read. An
     *   `ability`'s members declare nothing of the sort, which is what makes a constructor class expressible (§3.6).
-    *   An `effect` is an ability over a handle type (`docs/effects.md` D36): its binding binder is that type, and every
-    *   member takes the handle as its first value parameter ([[Handles.parameter]]).
+    *   An `effect` is an ability over a handle type (`docs/effects.md` D36): it mints that type as its first binder,
+    *   and every member takes the handle as its first value parameter ([[Handles.parameter]]).
     */
   def lower(
       name: Sourced[String],
@@ -44,26 +36,32 @@ object AbilityMembers {
       performsItself: Boolean
   ): Seq[FunctionDefinition] = {
     val qualifier     = Qualifier.Ability(name.value)
-    val bindingBinder = GenericParameter(
-      name.as(freshName("Impl", commonGenericParameters.map(_.name.value).toSet)),
-      GenericParameter.implementationMark(name, name),
-      Seq.empty,
-      abilityLevel = true
+    val handleBinder  = Option.when(performsItself)(
+      GenericParameter(
+        name.as(freshName("Impl", commonGenericParameters.map(_.name.value).toSet)),
+        name.as(typeExpr(name.as("Type"))),
+        Seq.empty
+      )
     )
-    val abilityParams = (bindingBinder +: commonGenericParameters).map(_.copy(abilityLevel = true))
+    val abilityParams = (handleBinder.toSeq ++ commonGenericParameters).map(_.copy(abilityLevel = true))
     def ownRow(member: FunctionDefinition) =
       if (performsItself)
         EffectRow(
           returnEffects =
             Seq(UnresolvedAbilityConstraint(name, commonGenericParameters.map(gp => gp.name.as(typeExpr(gp.name))))),
-          returnArity = member.args.size
+          returnArity = member.args.size,
+          handles = handleBinder
+            .filter(_ => member.name.value.qualifier != Qualifier.Type)
+            .map(binder => EffectRow.Handle(binder.name.value, 0))
+            .toSeq
         )
       else EffectRow.empty[UnresolvedAbilityConstraint[Sourced[Expression]]]
 
     def handleOf(member: FunctionDefinition): Seq[ArgumentDefinition] =
-      if (performsItself && member.name.value.qualifier != Qualifier.Type)
-        Seq(ArgumentDefinition(bindingBinder.name.map(Handles.parameter), bindingBinder.name.as(typeExpr(bindingBinder.name))))
-      else Seq.empty
+      handleBinder
+        .filter(_ => member.name.value.qualifier != Qualifier.Type)
+        .map(binder => ArgumentDefinition(binder.name.map(Handles.parameter), binder.name.as(typeExpr(binder.name))))
+        .toSeq
 
     functions.map(f =>
       // `f.copy`, never a positional rebuild: every field this does not deliberately override — `doc`, `fixity`,
@@ -85,7 +83,7 @@ object AbilityMembers {
         abilityParams.zipWithIndex.map { case (gp, i) =>
           ArgumentDefinition(name.as(s"arg$i"), gp.name.as(typeExpr(gp.name)))
         },
-        abilityParams.head.name.as(typeExpr(abilityParams.head.name)),
+        abilityParams.headOption.fold(name.as(typeExpr(name.as("Type"))))(gp => gp.name.as(typeExpr(gp.name))),
         None
       )
   }

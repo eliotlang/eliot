@@ -20,7 +20,7 @@ decides which handle answers each use, on the compile track as on the runtime on
 
 **How to read it.** Part I is the design as built: where code, a stdlib signature, an example or a test disagrees with
 it, the disagreement is a defect in the artefact or an entry in §8, never silently tolerated. Part II is what is left:
-the divergences (§8), the binder mark (§9), the method every change is run under (§10) and the decisions (§11 — the
+the divergences (§8), which binders are handles (§9), the method every change is run under (§10) and the decisions (§11 — the
 plan, the open questions and the closed record). Part III holds what is **closed and must not be re-proposed** (§12)
 and how to read a citation (§13). A decision changes Part I when it is *built*. Everything superseded lives in git
 history; §13 says where.
@@ -444,8 +444,8 @@ def announce(name: String) uses Log: Talking[Unit] = …
 The alias is an **ordinary type alias** and a use of it an **ordinary application**: `Talking` lowers to
 `type Talking[A] = A` — a row is declaration metadata and never a type (§3.3) — and `Talking[Unit]` stays in the
 signature for the evaluator to reduce. What crosses the use site is the row's **entries**, with the use's arguments
-substituted into them and nothing else: the definition naming the alias mints one marked binding binder per entry and
-records them in its declared row, exactly as if they had been written in its clause.
+substituted into them and nothing else: the definition naming the alias mints one handle per entry and records them in
+its declared row, exactly as if they had been written in its clause.
 
 **The alias is an ordinary name, and that is the whole of how a use finds it.** The alias *declares* its row on its
 own declaration — `core/…/EffectSugarDesugarer` records it and mints nothing, since an alias names a row rather than
@@ -562,13 +562,14 @@ handle. Only a layer that **bodies** the implementation mints its handle `data` 
 keeps its marker and its name marker (`QualifiedName(name, Qualifier.Implementation(name))`, what `with name` looks
 up).
 
-**A `uses` entry is a handle parameter** (`core/…/EffectSugarDesugarer`): one marked binder and one value parameter
-per entry, after the handles the definition already takes (an effect member's own) and before its own parameters. A
-`~` constraint mints a marked binder too, with no handle: it is an ability's, answered by the two-site search.
+**A `uses` entry is a handle parameter** (`core/…/EffectSugarDesugarer`): one binder of kind `Type` — the handle's
+type — and one value parameter per entry, after the handles the definition already takes (an effect member's own) and
+before its own parameters. A `~` constraint mints nothing: it is an ability's, answered by the two-site search, and an
+ability declares only its own parameters.
 
 ```
 def greet(name: String) uses Console: Unit   ⟶  def greet[Impl ~ Console[Impl]](Impl$handle: Impl, name: String): Unit
-def sort[T ~ Ord[T]](xs: List[T])            ⟶  def sort[Impl, T ~ Ord[Impl, T]](xs: List[T])
+def sort[T ~ Ord[T]](xs: List[T])            ⟶  def sort[T ~ Ord[T]](xs: List[T])      -- unchanged
 computation uses *, Throw[E]: A              ⟶  computation: Handed => A        -- one handed binder per listed entry
 action uses *: A => Unit                     ⟶  action: A => Unit               -- EffectRow.callbackEffects, arity 1
 body uses *: A                               ⟶  body: Unit => A                 -- a thunk: it lists nothing
@@ -579,10 +580,9 @@ a **handed** binder (`Implementation::Handed`), placed after every other binder 
 A row alias (§2.4) adds nothing of its own: `resolve/…/ValueResolver` hands a definition naming one as its return type
 the alias's entries, as handle parameters exactly as a clause's.
 
-**Every minted binder says so in its declared type** — `Impl: Implementation[Console]`
-(`GenericParameter.implementationMark`, §9). The mark is how the `row` phase tells a binding binder from an ordinary
-one and which ability it binds; the walk erases it at the end of that phase, so the checker is handed ordinary
-binders of kind `Type`. A clause entry, a handle and its binder are declaration metadata and a value parameter: no row
+**Every handle is recorded in its declaration** — `EffectRow.handles`, each the binder that is a handle's type and the
+`returnEffects` entry it stands for (§9). The record is how the `row` phase tells a handle binder from an ordinary one
+and which effect it is a handle of; the binder itself is an ordinary binder of kind `Type`. A clause entry, a handle and its binder are declaration metadata and a value parameter: no row
 ever flows into a type, so `unify` sees `Function[A, B]` on both sides of a code parameter and a value alike.
 
 **A `with` carries its arguments.** `greet with scripted("Bob")` reaches the `row` phase as one node,
@@ -639,7 +639,8 @@ use into plumbing and checks what can be checked by name. Nothing it writes deci
 
 **Effect-ness is read from one place only**: the callee's declaration. An ability in `effectRow.returnEffects` is an
 effect at this reference — for an `effect`'s member what membership recorded, for an ordinary definition what its
-`uses` clause says. A `~` constraint's ability is in no row, so the walk writes it `Default`, the two-site search.
+`uses` clause says. A `~` constraint's ability is in no row and has no handle: the walk writes nothing for it, and the
+two-site search answers it.
 Nothing keys on a name or a shape.
 
 Two mechanical invariants of the pass, both of which cost real bugs to learn:
@@ -862,7 +863,7 @@ both:
   `callbacks`, function-typed), and whether the region is a **value** or a **closed** argument.
 - **a reference** to a callee taking handles has one hole per handle. By name: an **effect** with no handle of it in
   scope at all is *"This value performs the effect 'X' but does not declare it; add it to its `uses` clause"*, at the
-  reference; an **ability** (`~`) is `Default`, the two-site search. By entry: the nearest handle whose entry answers,
+  reference; an **ability** (`~`) is the two-site search's, at the reference's own type arguments. By entry: the nearest handle whose entry answers,
   or the hole rule's errors (§3.3).
 - **entering an argument** at slot *i*: a slot whose clause lists entries is a block whose handles are the nearest
   group; a closed clause cuts off everything from around it. A lambda at a parameter with no clause — or in any other
@@ -924,7 +925,7 @@ These bind every future change to the effect system.
    forced", "narrowed to ~nothing", "a small local concession", "keeps the shipped idiom", "it usually
    holds". A conflict is a decision for Robert, not a judgement call in flight.
 3. **There is nothing to infer.** A use of an effect is answered by the nearest handle in lexical scope whose entry
-   answers it — a `with`'s, a block's, the enclosing definition's — and an ability's by `Default`: never by a
+   answers it — a `with`'s, a block's, the enclosing definition's — and an ability's by the two-site search: never by a
    metavariable of its own, a join, a lattice, an ordering-sensitive slot decision, a row variable unified across
    arguments, or a sum over a monomorphized sub-graph. Carrier inference was the historical bug class (carrier theft,
    premature commitment); binding inference would be the same bug in the new vocabulary, and **dynamic scoping
@@ -1038,11 +1039,7 @@ Each is stated, fail-safe, and either has a plan entry or is a deliberate trade.
 
 Each item is a defect to close or a decision to make, never a doc fix. Numbers are kept so citations resolve.
 
-**Open.** D36's "It deletes" list, not yet done, each a cross-phase change of its own and none a defect:
-
-| # | what is left | why it is still there |
-| --- | --- | --- |
-| 64 | the `Implementation[A]` mark (§9) | how the walk tells a binding binder from an ordinary one, and how a handed binder is recognised |
+**Open.** None: D36's "It deletes" list is done (items 63–65, closed below).
 
 **Cleanup** (found by the same review; not defects). Most of it is in code D36 deletes and goes with it; the rest is to
 do with the next change that touches the file:
@@ -1057,16 +1054,14 @@ do with the next change that touches the file:
   .mergeEffectRows`.
 - *Text that names deleted code or says the opposite of the code:* §3.8 and `CLAUDE.md` on the compile track's
   "deferred slots" (deleted in 4bb25c00; `Unifier.scala:48` links it); base `.els` docs (`File.els:123`,
-  `Process.els:127` on `with standardFileSystem`; `lang/Implementation.els:4-7, 32` on `Default`; `Throw.els`,
+  `Process.els:127` on `with standardFileSystem`; `Throw.els`,
   `Abort.els`, `State.els` saying there is "nothing to bind with `with`"; `compiler/Cell.els:6, 8`); Scaladoc in
   `RowElaboratedValue`, `RowElaborationProcessor`, `EffectIntrinsics`,
   `SuppliedRowArgumentsProcessor`, `NamedImplementationArguments`, `AbilityMatcher.patternParameters`, `LspPlugin`,
   `WellKnownTypes`; carrier-era and brace-row examples in `EffectRow`, `NamedImplementation`, `ImplementBlock`,
   `WithBinding`, `BindingWriter`, `ValueResolver`, `CoreExpressionConverter`, `AbilityImplementation(Processor)`,
   `AbilityResolver`, `TypeStackLoop`, `ReducedBindingClosure`, `PostDrainQuoter`, `ArgumentDefinition` and three tests;
-  `Default` described as every binder's search in `WellKnownTypes`, `ImplementationBinding`, `EffectSugarDesugarer`,
-  `RowElaborationProcessor`; `CLAUDE.md`'s `people.sorted[Person]`, its `type Default` testing note (abilities only
-  since D26), `Expression.typeParser` (is `typeRunParser`), `AbilityConstraint.combinedBy` (is on the ast's
+  `CLAUDE.md`'s `people.sorted[Person]`, `Expression.typeParser` (is `typeRunParser`), `AbilityConstraint.combinedBy` (is on the ast's
   `UnresolvedAbilityConstraint`) and its inexpressible `~ Web` example. Line-level references are in the review record,
   `git show 14b61527:docs/effects.md` §8.
 
@@ -1125,25 +1120,31 @@ do with the next change that touches the file:
 | 61 | an anonymous implementation's clause could not repeat a member's entry at the pattern's type | 2026-10-18: the member's entry is read at the implementation's pattern (`RowElaborationProcessor.memberEntriesAtPattern`); an entry spelled through an alias is still refused, loudly |
 | 62 | runs of one code parameter given different implementations refused | 2026-10-17, D35 step 5a; refused again by D36 point 6 |
 | 63 | a `with`'s arguments rode the call of a `$with` binder declaration through every phase (`ast/fact/ImplementationParameters`), and the `$parameters` declaration told how many it takes | 2026-10-18: the `with` node carries them (`WithBinding.arguments`); the count is read off the handle constructor. `NamedImplementationCheckProcessor`, which read `$parameters` and was demanded by nothing since the flip, went with them; every jar byte-identical |
+| 64 | the `Implementation[A]` mark said which binders bind, for effects, `~` constraints and every ability's binding slot | 2026-10-18: handles recorded in the declaration (`EffectRow.handles`, §9); the ability binding slot, `Default`, `ImplementationBinding` and the `~` constraint's binder deleted. Every example behaves identically; mangled names lose `$Default` (19 jars, −0.2% bytes) |
 | 65 | `BindingWriter`'s D30 bookkeeping (spelled entries, `Need`s, rides, the threading's `with` arms) ran beside the holes | 2026-10-18: deleted, every example jar byte-identical and the suites unchanged; a run's listed effect is checked by name (`checkGiven`), its entry by the hole. Measured first: the `$with` lowering in a signature, an effect binder no handle takes and the keyed holes of an unhandled callee never fired over the suites; a closed callback's ride produced no accepted program (its callee is "declares … but does not perform it") |
 
-## 9. The binding binder's mark (built 2026-09-11/12; D36 deletes it, §8 item 64)
+## 9. Which binders are handles (the record; built 2026-10-18, replacing the binder mark)
 
-A binder the desugar mints — for a clause entry, a `~` constraint, or an ability block's binding slot — is declared
-with the type `Implementation[A]`, `A` the ability it binds, and every phase that needs to know which binders are
-bindings reads that and nothing else (§3.1). It replaced four encodings of one fact. The corrections the build
-measured, each a natural reading that is wrong — **do not re-propose the originals**:
+A definition records its **handles** in its declaration — `EffectRow.handles`, each the binder that is a handle's type
+and the index of the `returnEffects` entry it stands for — written where a handle is minted: an effect member's own
+(`ast/fact/AbilityMembers`), a `uses` entry's (`core/…/EffectSugarDesugarer`), a row alias's
+(`resolve/…/ValueResolver`). Every phase that asks which binders are handle types reads that and nothing else
+(`BindingWriter.phantoms`, `ImplementationConformance`); the binder itself is an ordinary binder of kind `Type`.
 
-- The mark rides the existing `parameterType` slot (`type Implementation[A] = Type`, minted module-qualified), not a
-  flag on `FunctionLiteral` and not a typed marker the checker verifies.
-- It does not reduce away for the checker (an ability's marker has kind `Type -> Type` or above), so it is **erased at
-  the end of `row`** (`BindingWriter.Writer.unmarked`); after `row`, an effect's binder is the type of a handle
-  parameter, and nothing past the checker asks which binders bind.
-- Its argument resolves **as an ability** (`ValueResolver.markedAbility`), so every pool declaring a row, a constraint
-  or an ability needs `eliot.lang.Implementation`, test stubs included (`ProcessorTest.implementationStubContent`).
-- An undetermined binder before a binding is the **call**'s diagnostic, and in a body it is the checker's hole
-  (`Implementation::Inferred`, §8 item 15).
-- A row alias mints no binders of its own; it *declares* its row, and is an ordinary name resolved at `resolve`.
+From 2026-09-11 to 2026-10-18 the fact was a **mark** on the binder's declared type, `Impl: Implementation[Console]`,
+minted also for a `~` constraint and for every ability block's **binding slot**, whose value at a reference was the
+`Default` sentinel ("search at the ground arguments"). Under D36 an ability's slot only ever held `Default` and an
+effect's is its handle type, so the slot went with the mark (§8 item 64): an ability declares only its own parameters, a
+`~` constraint mints nothing, and an ability reference's ability-level arguments are its pattern. **Do not re-propose:**
+
+- reading handle-ness off a signature's **shape** — a binder typing a leading parameter, a binder that is a
+  constraint's first argument, a name prefix, a count: the mark replaced four such encodings, and the record replaces
+  the mark;
+- a **binding slot on an ability**, or a sentinel standing for "use the search": an ability is answered by the
+  two-site search and by nothing else (D29);
+- an undetermined binder before a handle binder is the **call**'s diagnostic, and in a body it is the checker's hole
+  (`Implementation::Inferred`, §8 item 15);
+- a row alias mints no binders of its own; it *declares* its row, and is an ordinary name resolved at `resolve`.
 
 ## 10. How a change is run
 
@@ -1166,16 +1167,15 @@ run once said "43 failures, delete nothing" where per-part runs said 1 and 36. A
 mill prefixes forwarded lines with a worker id; a sample key carries the range end and the spine head; delete the
 cache before every run.
 
-**Two traps in the test harness.** A `ProcessorTest` needs an `Implementation` stub declaring `type Default` and the
-`Implementation[A]` alias, or a snippet calling an ability method loses its monomorphization **silently**. A test stub
-that diverges from the real declaration fails silently too.
+**A trap in the test harness.** A test stub that diverges from the real declaration fails silently. A `ProcessorTest`
+snippet using an effect needs the `Implementation` stub (`Inferred`, `Handed`), which `ProcessorTest`'s prelude carries.
 
 ## 11. Decisions
 
 Every decision is Robert's. This section holds the plan (D36), the open questions, and the record of everything
 decided before, one entry each. Conveniences deliberately left out are in §12.
 
-### D36 — effects are capability passing: an effect desugars to an ability over a handle (decided 2026-10-17, revised 2026-10-18, built 2026-10-18 but for §8 items 63–65 and erasure)
+### D36 — effects are capability passing: an effect desugars to an ability over a handle (decided 2026-10-17, revised 2026-10-18, built 2026-10-18 but for erasure)
 
 **The question** (Robert, 2026-10-17, rejecting the rules proposed for §8 item 60): how can the effect system be
 simple, run before monomorphization, and desugar into ordinary constructors and abilities? An effect should differ from
@@ -1512,18 +1512,22 @@ and uses in `row` (`BindingWriter`). What is new:
    **Still in the tree, as the `row` phase's carriers** — each named in "It deletes" and each a cross-phase change of
    its own: the `$with` and `$parameters` declarations (they carry a `with`'s arguments through resolution, operators
    and match desugaring as an ordinary call's, and `walkHandleWith` turns the call into the handle), and the
-   `Implementation[A]` mark (§9), which is how the walk tells a binding binder from an ordinary one and how a handed
-   binder is recognised. `BindingWriter`'s by-name half of the scope check stays by design ("The scope check
+   `Implementation[A]` mark (§9), which is how the walk tells a binding binder from an ordinary one. `BindingWriter`'s by-name half of the scope check stays by design ("The scope check
    splits"); its spelled-entry bookkeeping (D30's `Need`s and rides) still runs and is subsumed by the hole rule.
    These are §8 items 63–65. **Item 65 closed (2026-10-18)**: the bookkeeping is deleted, every jar byte-identical.
    **Item 63 closed (2026-10-18)**: the `with` node carries its arguments from `core` to the `row` phase; the `$with`
    binder, the `$parameters` declaration and the named-implementation conformance check that read it (demanded by
    nothing since the flip) are deleted, every jar byte-identical.
+   **Item 64 closed (2026-10-18)**: the mark is gone, and with it the ability binding slot and `Default`; handles are
+   recorded in the declaration (§9). Every example behaves identically; 19 jars differ by their mangled names (an
+   ability-constrained method was `f$Default$Int`, now `f$Int`), −0.2% bytes, instruction counts unchanged. A handed
+   binder keeps its own mark, `Implementation::Handed`, which is also the opaque type a body-less callee's block is
+   typed at (§3.3). What is left of step 3 is a release.
 
    **Part I rewritten (2026-10-18)** to the tree, with §12's restated entries, `CLAUDE.md`'s cornerstone and phases,
    and the `eliot-code` skill. §8 items 59–61 closed; 61 needed the `row` phase's anonymous-clause check to read the
    member's entries at the implementation's pattern (`HoleRuleIntegrationTest` pins 60, 61 and `raise(none)`). What
-   is left of step 3 is §8 items 63–65 and a release.
+   is left of step 3 was §8 items 63–65 (closed the same day, above) and a release.
 4. **Erasure**, measured against today's jar.
 
 ### Open questions

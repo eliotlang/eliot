@@ -38,26 +38,20 @@ monomorphize/
 │   ├── GuardChannel.scala      (the Left/Right guard read-back protocol shared with the ability processor)
 │   ├── CarrierKindChecker.scala (D8 HKT kind seeding + verification; records every HKT instantiation meta's kind.
 │   │                            NOT effect machinery — a kind system, and soundness: measured, do not delete)
-│   ├── ImplementationBinding.scala (reads a reference's written implementation argument back off its type args)
-│   ├── AbilityResolver.scala   (ability-ref collection + resolve-abilities saturation pass; a written
-│   │                            implementation is used directly, only `Default` reaches the two-site search)
+│   ├── AbilityResolver.scala   (ability-ref collection + resolve-abilities saturation pass: the two-site search
+│   │                            at the ground ability-level arguments; an effect's begin with its handle's type)
+│   ├── HandleHoleResolver.scala (the one effect rule: each hole takes the nearest handle whose entry answers)
+│   ├── HandedBinders.scala     (a block's handle types, read off its callee's `MonomorphicValue.handed`)
 │   └── Track.scala             (Runtime/Compiler strategy: platform + 4 per-track hooks, no platform match in the core)
 ├── channel/
-│   ├── EnvironmentThreading.scala (passes each implementation's environment — a frame, a cell, its parameters —
-│   │                            along the declared chain, read through a track: the runtime track at the WovenValue
-│   │                            seam, the compile track wherever it evaluates something that can reach a frame
-│   │                            (reduced instances, a body's read-back, the channel, a signature's guarded read))
 │   ├── RefinementChannelProcessor.scala (post-pass flow analysis over MonomorphicValue: ^Meta transfers/merges,
 │   │                                     ^Where precondition demands)
 │   ├── RefinementTable.scala   (per-node meta values keyed by source position; read by reconcile/backend/LSP)
-│   ├── SuppliedRowArgumentsProcessor.scala (a codegen precondition: every supplied row entry at every call knows
-│   │                            what it supplies. NOT an effect verifier — the post-mono one retired with D7,
-│   │                            measured a strict subset of the pre-mono scope check's coverage)
-│   ├── SuppliedRowArguments.scala (its fact: a pass/fail witness per (vfqn, typeArgs))
+│   ├── MetaTransferAccountingProcessor.scala (R2/R3: a native leaf states its transfer, a bodied value may not)
 │   ├── WovenRecheck.scala      (the re-check at the seam)
 │   ├── WovenValue.scala        (the fact codegen consumes)
-│   └── WovenValueProcessor.scala (the seam; demands SuppliedRowArguments and MetaTransferAccounting, so an
-│                                undetermined supplied argument or an unstated leaf transfer blocks codegen)
+│   └── WovenValueProcessor.scala (the seam; demands MetaTransferAccounting, so an unstated leaf transfer blocks
+│                                codegen)
 ├── unify/
 │   ├── Unifier.scala           (pattern unification; pure definitional equality; higherKindedMetas map; flushPostponed)
 │   ├── UnifyResult.scala       (Unified / Contradiction)
@@ -108,13 +102,12 @@ and its sibling tests under `lang/test/src/com/vanillasource/eliot/eliotc/monomo
 `monomorphize` is the sole monomorphic type-checker package. There is **one** evaluator traversal (`NbeEvaluator`)
 and **one** semantic domain (`SemValue`) shared by types and values — never a second, weaker compile-time interpreter.
 
-**Effects are *not* in this package.** The upstream `row/` phase writes each reference's **implementation** as an
-ordinary leading type argument (`docs/effects.md` §3.1), so the checker receives fully explicit code in which an
-effect is a nullary ability and a binding is a type argument like any other — there is no carrier, no monad, and
-**no effect rule in the checker at all**, and since D7 not even a post-mono effect verifier. What is left here is
-one codegen precondition that is *not* one — `channel/SuppliedRowArgumentsProcessor`, a supplied row entry's
-arguments must be determined — and `AbilityResolver` reading the written argument back. **Adding an effect decision — a
-bind, a `pure`, a lift, a carrier — back into the checker is a reversal of this design**; see the anti-patterns.
+**Effects are almost not in this package.** The upstream `row/` phase does all the plumbing (`docs/effects.md` §3.2):
+a handle is an ordinary value parameter of an ordinary type parameter, and an operation an ordinary ability method
+dispatched by its handle's type. The checker holds exactly **one** effect rule, the hole (`check/HandleHoleResolver`),
+and the read of a block's handle types beside it (`check/HandedBinders`); there is no carrier, no monad, and since D7
+no post-mono effect verifier. **Adding another effect decision — a bind, a `pure`, a lift, a carrier, inference of a
+binding — to the checker is a reversal of this design**; see the anti-patterns.
 
 ## How NbE works
 
@@ -410,28 +403,22 @@ walked (so nested `where` demands fire) but never record. Consumers: the reconci
 the JVM backend decodes machine widths from it, the LSP hover shows value ranges. Refinements flow strictly
 **downstream** of type formation — they never feed back into the checker or unifier.
 
-### The effect channel (`channel/`) — the other post-pass
+### Effects in the checker — the hole, and nothing else
 
-Authoritative design: `docs/effects.md` (§1 the user rules, §3 the mechanism, §3.3 the one verifier). Same template as the refinement channel: a
-rider on `MonomorphicValue`, strictly downstream of typing.
+Authoritative design: `docs/effects.md` (§3 the mechanism, §3.3 the hole rule, §4 the scope check). Effects are
+capability passing: before monomorphization the `row` phase (`row/BindingWriter`) turns every use into plumbing — a
+`HandleHole` at every handle position, a `with` into a `let` of its handle, a code parameter's actual into a block — and
+decides nothing.
 
-- **The implementation is written, not inferred.** `row/BindingWriter` writes each phantom binder's implementation
-  at every reference, so the checker never solves for one: an effect is a nullary ability and a binding is an
-  ordinary ground type argument. Only the **compile track** still infers anything effect-shaped — an inline guard's
-  carrier, pinned to `Either[E]` post hoc.
-- **The checker holds no effect rule at all.** `EffectLifter` went with the carrier its pure-wrap arm needed, and the
-  resolution ladder is now instantiate → unify → mismatch.
-- **Verification is *not* post-mono** — it is the pre-mono **scope check**, the write's own walk, reporting at the
-  reference. A post-mono verifier lived here until D7 retired it (2026-09-10) on the measurement that its derivation
-  saw only propagation through a *declaring callee*, never a direct operation call, whose row `AbilityResolver` has
-  by then rewritten away: a strict subset with no case of its own. Do not grow it back. What stays at the seam is
-  `SuppliedRowArgumentsProcessor` — a supplied row entry whose argument nothing determines is rejected before
-  codegen, and that one genuinely needs ground arguments.
-- **There is nothing to invert when printing.** The carrier inverter went with the carrier; `fact/GroundValueRenderer`
-  and `unify/SemValuePrinter` print a type as the user wrote it. What follows was the rule while an inverter existed,
-  kept because it is the durable half: recognizing something **by name is sanctioned for rendering only** —
-  the checker miscompiles. Do not add a second inverter, and do not reach for `Show[GroundValue]` (the terse debug
-  instance that drops type arguments) in a message a user reads.
+- **The checker holds exactly one effect rule, the hole** (`check/HandleHoleResolver`): each hole takes the nearest
+  candidate whose entry is definitionally equal after evaluation. Beside it, `check/HandedBinders` reads a block's
+  handle types off its callee. An operation is an ordinary ability method dispatched by its handle's type
+  (`AbilityResolver`); an ability (`~`) is the two-site search at the reference's own type arguments — there is no
+  binding slot and no `Default`.
+- **Verification is the scope check, in two halves**: by name in the `row` walk, by entry in the hole rule. A post-mono
+  verifier was retired by D7 (2026-09-10); do not grow one back.
+- **There is nothing to invert when printing.** `fact/GroundValueRenderer` prints what the user wrote, and LSP hover
+  leaves handles out (`TypeHintIndex`).
 
 ### PostDrainQuoter — the sole SemValue→GroundValue transition
 
@@ -619,10 +606,8 @@ Tests live under `lang/test/src/com/vanillasource/eliot/eliotc/monomorphize/`:
   `unify/MetaApplicationUnifyTest.scala`, `unify/PostponedFlushTest.scala`, `unify/HigherKindedMetaTest.scala` — pure
   unifier unit tests (construct `SemValue`s directly; `AnyFlatSpec`).
 
-The write side lives with its own phase, not here: the effect suites under `jvm/test/.../` (`EffectCorpus`,
-`EffectShapeCompileTest`, `CarrierSlotCompileTest`, `CatchShapeMatrixTest`, `SuppliedRowArgumentsWiringTest`,
-`StoredComputationIntegrationTest`) compile and run real programs, since the write's output is only meaningful
-end-to-end.
+The write side lives with its own phase, not here: the effect suites under `jvm/test/.../` compile and run real
+programs, since the write's output is only meaningful end-to-end.
 
 Most processor tests run the whole pipeline via `ProcessorTest(LangProcessors()*)` and construct source text inline.
 Follow the project testing conventions: single-line asserts, assert the `Seq` itself, prefer `.asserting(_ ...)`.

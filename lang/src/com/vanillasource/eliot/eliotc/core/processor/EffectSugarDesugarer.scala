@@ -14,50 +14,33 @@ import com.vanillasource.eliot.eliotc.ast.fact.Expression.*
 import com.vanillasource.eliot.eliotc.module.fact.{Qualifier, WellKnownTypes}
 import com.vanillasource.eliot.eliotc.source.content.Sourced
 
-/** Desugars an effect row, `{ E1, E2, … } A` ([[Expression.EffectfulType]]) — effects v6, `docs/effects.md` §9.4
-  * step 2. The user writes it as a `uses` clause, which the parser writes onto this node (D21), and as the body of a
-  * row alias; no other spelling parses.
+/** Desugars an effect row, `{ E1, E2, … } A` ([[Expression.EffectfulType]]) — `docs/effects.md` §3.1. The user writes
+  * it as a `uses` clause, which the parser writes onto this node (D21), and as the body of a row alias; no other
+  * spelling parses.
   *
-  * There is no carrier. A row entry and a `~` ability constraint each become **one phantom generic binder**: a binder
-  * of kind `Type` that occurs in the generic list and in no parameter or return type, so rows still never flow into
-  * types (§3.3). Its *value*, written at every reference by the `row` phase (§9.4 step 3), is an implementation —
-  * either one a `with` names, or the `Default` sentinel asking for the two-site search.
+  * A row is declaration metadata and never a type (§3.6), so every rewrite here lowers it to plain parameters:
   *
-  * Three rewrites, and nothing else:
+  *   - **a return-row entry is a handle.** `def greet(name: String) uses Console: Unit` becomes `def greet[Impl ~
+  *     Console[Impl]](Impl$handle: Impl, name: String): Unit` (D36 point 3): one binder of kind `Type` — the handle's
+  *     type — carrying the entry as its constraint, and one value parameter of that type ([[Handles.parameter]]), after
+  *     the handles the definition already takes (an effect member's own) and before its own parameters. The `k`-th
+  *     handle parameter stands for the `k`-th entry of the declared row ([[EffectRow.returnEffects]]).
+  *   - **a code parameter listing entries is a block.** `body uses *, Throw[E]: A` becomes `body: Handed => A`, one
+  *     **handed** binder per entry ([[WellKnownTypes.handedTypeFQN]]), appended after every other binder: its type is
+  *     what the callee's body hands the code (point 6).
+  *   - **a code parameter listing nothing thunks.** `body uses *: A` becomes `body: Unit => A`. A row in an arrow
+  *     codomain (`onError uses *: E => A`) is the callback's own row and lowers to the bare payload, as a return row
+  *     does. A `data` field takes no row at all — it holds a value.
   *
-  *   - **the return row vanishes.** `def greeting(name: String): {Console} Unit` becomes `def greeting[Impl](name:
-  *     String): Unit`, with `Impl` carrying the constraint `Console[Impl]` — exactly the shape the carrier binder had,
-  *     at kind `Type` instead of `Type -> Type`.
-  *   - **a `~` constraint grows a binder.** `def sort[T ~ Ord[T]](xs: List[T])` becomes `def sort[Impl, T ~ Ord[Impl,
-  *     T]](xs: List[T])`. The constraint stays on the binder it was written on — that is what
-  *     `resolveParamConstraints` and the superability closure read — and only gains the binding as its **first** type
-  *     argument, which is where the ability's marker declares it
-  *     ([[com.vanillasource.eliot.eliotc.ast.fact.AbilityMembers]]) and where
-  *     [[com.vanillasource.eliot.eliotc.monomorphize.check.ImplementationBinding]] reads it back. Constraint and
-  *     marker must agree on the position: a reference's ability-level arguments are matched against the marker's
-  *     parameters, so appending here while the marker prepends made every dispatch query the wrong shape.
-  *   - **a top-level row in a parameter thunks.** `computation: {Throw[E]} A` becomes `computation: Unit => A`: a slot
-  *     that must not run its argument says so by being a function, since there is no carrier left to hold an unrun
-  *     computation. Only a *top-level* row thunks; a row in an arrow codomain (`onError: E => {} A`) is the callback's
-  *     own row and lowers to the bare payload, exactly as a return row does. A `data` field takes no row at all — it
-  *     holds a value, and its parser admits neither a `uses` clause nor a row.
+  * A `~` constraint is an ability's and is left as it is written: it mints nothing, and the two-site search answers it.
+  * A member's own binders are placed past the whole ability-level run ([[mintAt]]), so the run stays exactly the
+  * ability's ([[com.vanillasource.eliot.eliotc.ast.fact.AbilityMembers]]).
   *
-  * **Every minted binder carries the mark** as its declared type — `Impl: Implementation[Console]`,
-  * [[com.vanillasource.eliot.eliotc.ast.fact.GenericParameter.implementationMark]] — which is the one place the fact
-  * "this binder is a binding" is written down, and what [[com.vanillasource.eliot.eliotc.row.BindingWriter]] reads.
-  * Minted binders are still *placed* together, but nothing requires them to be a prefix any more: the write merges
-  * them by index.
-  * [[mintAt]] places a member's own binders past the whole ability-level run, because the *ability's* binding must
-  * stay the first of the ability-level type arguments ([[com.vanillasource.eliot.eliotc.ast.fact.AbilityMembers]]).
-  *
-  * **Idempotent**, because [[CoreProcessor]] applies it uniformly to every definition including the ability members
-  * [[com.vanillasource.eliot.eliotc.ast.fact.AbilityMembers]] has already lowered: a definition with no remaining rows
-  * and no unprocessed constraint is returned unchanged, and a constraint is "processed" once its first type argument
-  * refers to one of this definition's **marked** binders — a shape only this desugar writes.
+  * A definition with no row is returned unchanged.
   */
 object EffectSugarDesugarer {
 
-  /** The binder name minted for a row entry or a `~` constraint. Nothing reads it: it is written positionally. */
+  /** The binder name minted for a row entry. Nothing reads it: it is written positionally. */
   private val binderPrefix = "Impl"
 
   /** Rewrite one function definition — see the object comment. Each row entry's binder is also the type of a **handle
@@ -66,7 +49,7 @@ object EffectSugarDesugarer {
     * the entry.
     */
   def desugar(function: FunctionDefinition): FunctionDefinition =
-    if (signatureAndBodyRows(function).isEmpty && unprocessedConstraints(function).isEmpty) function
+    if (signatureAndBodyRows(function).isEmpty) function
     else {
       val anchor                       = function.name
       val names                        = NameSource(function.genericParameters.map(_.name.value).toSet)
@@ -75,37 +58,17 @@ object EffectSugarDesugarer {
       // An `implement` clause's entry it only carries for a sibling gets its binder and no constraint
       // ([[FunctionDefinition.carriedEffects]]).
       val rowBinders                   = returnRowEntries(function).map { entry =>
-        val binder = anchor.as(names.fresh(binderPrefix))
+        // Sourced at the entry, so a diagnostic about the handle points at what the user wrote.
+        val binder = entry.abilityName.as(names.fresh(binderPrefix))
         GenericParameter(
           binder,
-          GenericParameter.implementationMark(anchor, entry.abilityName),
+          anchor.as(typeExpr(anchor.as("Type"))),
           if (function.carriedEffects.contains(UnresolvedAbilityConstraint.key(entry))) Seq.empty
           else Seq(UnresolvedAbilityConstraint(entry.abilityName, binder.as(typeExpr(binder)) +: entry.typeArgs.map(bare)))
         )
       }
-      // One unconstrained binder per `~` constraint, appended to that constraint in place. The constraint keeps the
-      // binder it was written on as its subject, so nothing about constraint scoping changes.
-      val (constraintBinders, adapted) = function.genericParameters.foldLeft(
-        (Seq.empty[GenericParameter], Seq.empty[GenericParameter])
-      ) { case ((minted, done), gp) =>
-        val (gpMinted, constraints) = gp.abilityConstraints.foldLeft(
-          (Seq.empty[GenericParameter], Seq.empty[UnresolvedAbilityConstraint[Sourced[Expression]]])
-        ) { case ((mintedHere, kept), constraint) =>
-          if (isProcessed(constraint, function)) (mintedHere, kept :+ constraint)
-          else {
-            val binder = anchor.as(names.fresh(binderPrefix))
-            (
-              mintedHere :+ GenericParameter(
-                binder,
-                GenericParameter.implementationMark(anchor, constraint.abilityName),
-                Seq.empty
-              ),
-              kept :+ constraint.copy(typeArgs = binder.as(typeExpr(binder)) +: constraint.typeArgs.map(bare))
-            )
-          }
-        }
-        (minted ++ gpMinted, done :+ gp.copy(typeRestriction = bare(gp.typeRestriction), abilityConstraints = constraints))
-      }
+      val adapted                      =
+        function.genericParameters.map(gp => gp.copy(typeRestriction = bare(gp.typeRestriction)))
       val (before, after)              = adapted.splitAt(mintAt(function))
       val declared                     = declaredEffectRow(function)
       // A code parameter listing entries takes one handle per entry, each of a type the callee's body hands it: a
@@ -126,15 +89,19 @@ object EffectSugarDesugarer {
         rowBinders.map(binder => ArgumentDefinition(binder.name.map(Handles.parameter), binder.name.as(typeExpr(binder.name))))
 
       function.copy(
-        // A `~` constraint's binder comes before the row's: an implementation's clause then starts with exactly its
-        // instance's binders, which dispatch hands it by position, row or no row.
-        genericParameters = before ++ constraintBinders ++ rowBinders ++ after ++ handed,
+        genericParameters = before ++ rowBinders ++ after ++ handed,
         args = heldHandles ++ rowHandles ++ userArgs,
         typeDefinition = bare(function.typeDefinition),
         body = function.body.map(bare),
         // An ability member arrives with the row its membership implies already recorded
         // ([[com.vanillasource.eliot.eliotc.ast.fact.AbilityMembers]]); its own row is added to that, never over it.
-        effectRow = declared.copy(returnEffects = function.effectRow.returnEffects ++ declared.returnEffects)
+        // Each row binder is the handle for its entry, which follows the membership's in the combined row.
+        effectRow = declared.copy(
+          returnEffects = function.effectRow.returnEffects ++ declared.returnEffects,
+          handles = function.effectRow.handles ++ rowBinders.zipWithIndex.map((binder, k) =>
+            EffectRow.Handle(binder.name.value, function.effectRow.returnEffects.size + k)
+          )
+        )
       )
     }
 
@@ -182,31 +149,11 @@ object EffectSugarDesugarer {
 
   /** Where the minted binders go in the generic list: `0` for an ordinary definition, and for an **ability member**
     * past the whole run of [[GenericParameter.abilityLevel]] binders
-    * [[com.vanillasource.eliot.eliotc.ast.fact.AbilityMembers]] contributes — so a member's own binding binders never
-    * land inside the ability-level prefix, whose first argument must stay the ability's own binding.
+    * [[com.vanillasource.eliot.eliotc.ast.fact.AbilityMembers]] contributes — so a member's own binders never land
+    * inside the ability-level prefix, which must stay exactly the ability's.
     */
   private def mintAt(function: FunctionDefinition): Int =
     function.genericParameters.lastIndexWhere(_.abilityLevel) + 1
-
-  /** The constraints of this definition that have not yet had a binder minted for them. */
-  private def unprocessedConstraints(
-      function: FunctionDefinition
-  ): Seq[UnresolvedAbilityConstraint[Sourced[Expression]]] =
-    function.genericParameters.flatMap(_.abilityConstraints).filterNot(isProcessed(_, function))
-
-  /** Whether a constraint already carries its phantom binder: its **first** type argument is a bare reference to one of
-    * this definition's binders that carries the **implementation mark**
-    * ([[com.vanillasource.eliot.eliotc.ast.fact.GenericParameter.isBinding]]), which is the one shape [[desugar]]
-    * writes and no source can.
-    */
-  private def isProcessed(
-      constraint: UnresolvedAbilityConstraint[Sourced[Expression]],
-      function: FunctionDefinition
-  ): Boolean = constraint.typeArgs.headOption.exists(_.value match {
-    case FunctionApplication(None, name, None, Seq()) =>
-      function.genericParameters.exists(gp => gp.name.value === name.value && GenericParameter.isBinding(gp))
-    case _                                            => false
-  })
 
   /** Every effect row anywhere in a definition's signature or body — what decides whether it carries the sugar. */
   private def signatureAndBodyRows(function: FunctionDefinition): Seq[Sourced[EffectfulType]] = {

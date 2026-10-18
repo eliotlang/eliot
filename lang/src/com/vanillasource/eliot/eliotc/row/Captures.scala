@@ -216,18 +216,9 @@ object Captures {
       view.binders.take(instanceArity) ++ mirrored ++ rest.map(view.binders) ++
         view.binders.indices.filter(handed).map(view.binders) ++
         capturedHandles.map((position, _) => view.binders(binderAt(position)))
-    // A binder marked for an effect stands for the entry of the same rank among that effect's entries
-    // (`BindingWriter.entryArguments`), so the row follows the binders' new order.
-    val entryOf         = BindingWriter.phantoms(orv).groupBy(_._2).toSeq.flatMap { (ability, binders) =>
-      val written = orv.effectRow.returnEffects.filter(_.abilityFQN == ability)
-      if (written.size != binders.size) Seq.empty else binders.map(_._1).zip(written)
-    }.toMap
-    val reordered       = newBinders.flatMap(binder => entryOf.get(binderIndex.getOrElse(binder.name.value, -1)))
-    val newRow          = reordered ++ orv.effectRow.returnEffects.filterNot(entry => reordered.exists(_ eq entry))
     orv.copy(
       signature = orv.signature.as(view.copy(binders = newBinders, parameters = newParameters).toExpression),
-      runtime = Some(body.as(newBody)),
-      effectRow = orv.effectRow.copy(returnEffects = newRow)
+      runtime = Some(body.as(newBody))
     )
   }
 

@@ -22,9 +22,8 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
   *
   * The **marker** carries the union on its guard slot. A row is erased from every type by that same desugar, so the
   * guard reaches [[com.vanillasource.eliot.eliotc.ability.processor.AbilityImplementationProcessor]] untouched; what
-  * the marker gains is the declaration the binder is read back from — by the write
-  * ([[com.vanillasource.eliot.eliotc.row.BindingWriter]]) for a `with`, and by the anonymous form's pattern match,
-  * which fills a binder no pattern argument solves with `Default`.
+  * the marker gains is the declaration the binder is read back from by the write
+  * ([[com.vanillasource.eliot.eliotc.row.BindingWriter]]) for a `with`.
   *
   * **Associated types are excluded.** A `type` inside an `implement` block is a type occupying a pattern slot, not a
   * clause: giving it a row would mint binders on it and change its arity at every use.

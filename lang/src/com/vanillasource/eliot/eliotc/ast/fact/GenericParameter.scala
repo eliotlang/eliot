@@ -7,25 +7,17 @@ import com.vanillasource.eliot.eliotc.ast.fact.ASTComponent.component
 import com.vanillasource.eliot.eliotc.ast.fact.Primitives.*
 import com.vanillasource.eliot.eliotc.ast.parser.Parser
 import com.vanillasource.eliot.eliotc.ast.parser.Parser.{acceptIf, acceptIfAll, anyTimes, optional, or}
-import com.vanillasource.eliot.eliotc.module.fact.WellKnownTypes
 import com.vanillasource.eliot.eliotc.source.content.Sourced
 import com.vanillasource.eliot.eliotc.token.Token
 
 /** A generic-parameter binder, e.g. `MIN: BigInteger` in `type Int[MIN: BigInteger, MAX: BigInteger]`.
   *
-  * A binder the compiler mints for a binding says so in its **declared type** and nowhere else — see
-  * [[GenericParameter.implementationMark]] and [[GenericParameter.isBinding]]. There was a second, redundant record
-  * of the same fact (an `inferable` flag, collapsed to a count every later fact forwarded unread); it is gone
-  * (`docs/effects.md` §9.3 step 4).
-  *
   * @param abilityLevel
-  *   True for every binder an `ability` or `effect` block contributes to each of its members ([[AbilityMembers]]): the
-  *   implementation binding slot it mints, and its own generic parameters. The run of them is the member reference's
-  *   **ability-level prefix**, which
-  *   [[com.vanillasource.eliot.eliotc.monomorphize.check.AbilityResolver]] slices off and
-  *   [[com.vanillasource.eliot.eliotc.monomorphize.check.ImplementationBinding]] reads the binding from. Marking the
-  *   whole run is what tells the desugar where a member's *own* minted binders go — after it, so the prefix stays
-  *   exactly the ability's.
+  *   True for every binder an `ability` or `effect` block contributes to each of its members ([[AbilityMembers]]): an
+  *   effect's handle type and the block's own generic parameters. The run of them is the member reference's
+  *   **ability-level prefix**, which [[com.vanillasource.eliot.eliotc.monomorphize.check.AbilityResolver]] slices off.
+  *   Marking the whole run is what tells the desugar where a member's *own* minted binders go — after it, so the prefix
+  *   stays exactly the ability's.
   */
 case class GenericParameter(
     name: Sourced[String],
@@ -35,44 +27,6 @@ case class GenericParameter(
 )
 
 object GenericParameter {
-
-  /** The **mark** every minted binding binder carries as its declared type — `Impl: Implementation[Console]`
-    * (`docs/effects.md` §9.2).
-    *
-    * It is the one place the fact "this binder is a binding" is written down, and it names the ability the binding is
-    * for; [[com.vanillasource.eliot.eliotc.row.BindingWriter]] reads it instead of re-deriving a binder's role from
-    * the shape of a signature. Minted in two places, for the same three kinds of binding: an effect-row entry and a
-    * `~` constraint ([[com.vanillasource.eliot.eliotc.core.processor.EffectSugarDesugarer]]), and an `ability` block's
-    * implementation slot ([[AbilityMembers]]).
-    *
-    * The head is module-qualified because the mark is compiler-written and must not depend on the file's imports; the
-    * ability is named bare, exactly as the constraint beside it names it, so it resolves in the scope that constraint
-    * resolves in. [[WellKnownTypes.implementationTypeFQN]] is an alias for `Type`, so a marked binder is an ordinary
-    * binder of kind `Type` to everything that does not look for the mark.
-    */
-  def implementationMark(anchor: Sourced[?], abilityName: Sourced[String]): Sourced[Expression] =
-    anchor.as(
-      Expression.FunctionApplication(
-        Some(anchor.as(WellKnownTypes.implementationTypeFQN.moduleName.show)),
-        anchor.as(WellKnownTypes.implementationTypeFQN.name.name),
-        Some(Seq(abilityName.as(Expression.FunctionApplication(None, abilityName, None, Seq.empty)))),
-        Seq.empty
-      )
-    )
-
-  /** Whether this binder is one the compiler minted for a **binding** — i.e. whether it carries the
-    * [[implementationMark]] as its declared type.
-    *
-    * It is the desugar's idempotence test ("is this constraint's first type argument a binder I already minted?"), and
-    * it is the same question [[com.vanillasource.eliot.eliotc.row.BindingWriter]] asks of the operator-resolved
-    * signature — one fact, read from the one place it is written down.
-    */
-  def isBinding(parameter: GenericParameter): Boolean = parameter.typeRestriction.value match {
-    case Expression.FunctionApplication(Some(moduleName), name, Some(Seq(_)), Seq()) =>
-      moduleName.value === WellKnownTypes.implementationTypeFQN.moduleName.show &&
-        name.value === WellKnownTypes.implementationTypeFQN.name.name
-    case _                                                                           => false
-  }
 
   val signatureEquality: Eq[GenericParameter] = (x: GenericParameter, y: GenericParameter) =>
     x.name.value === y.name.value && x.typeRestriction.value.render === y.typeRestriction.value.render

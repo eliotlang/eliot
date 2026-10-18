@@ -255,7 +255,7 @@ subset of its data.
     lambda taking one handle per listed entry, a `uses *`-only one in a thunk; an implementation's clause shaped as its
     member (`row/Captures`). It is the scope check's **by-name** half: an effect with no handle of it in scope is the
     "performs but does not declare" error at that reference, and the second-class rule (rules 2–3) is checked here.
-    A `~` constraint's binder is written `Default` (the two-site search). `row/RowChecker` is the demand-driven
+    A `~` constraint mints nothing and is the two-site search's. `row/RowChecker` is the demand-driven
     `Universe` the walk consults (`onMiss`/`onMissClauses`; a probe of a name only a bodying layer mints asks the
     module's names first). The synthesized entry point is an ordinary definition binding `main`'s entries with `with`
     (`row/EntryPoint`), which reports an unbodied standard implementation at `main`. The same processor refuses an
@@ -314,9 +314,9 @@ provide user-facing messages and debug logging.
   phases; carrying the full pipeline is free, and a new phase is then wired in exactly one place. Only true leaf
   tests (tokenizer/AST/core, or manual fact injection) list processors explicitly. The jvm backend test reuses the
   same list and appends its own: `LangProcessors(…) :+ JvmClassGenerator()`.
-- A `ProcessorTest` whose snippet calls an **ability or effect method** needs an `Implementation` stub declaring
-  `type Default` in its system modules, or the value silently loses its monomorphization **with no error at all**:
-  the write puts `Default` at the reference as an ordinary type argument, and saturation demands the value it names.
+- A `ProcessorTest` whose snippet uses an **effect** needs the `Implementation` stub (`type Inferred`, `type Handed =
+  Type`) in its system modules — the `row` phase writes both names, module-qualified. `ProcessorTest`'s prelude
+  carries it; a hand-built pool must too.
 
 ## Language Cornerstone: Types Are Values (λ\*)
 
@@ -545,8 +545,9 @@ scope whose entry answers it after evaluation (36 eliot-build declarations carry
 choice by effect name alone cannot work). Authoritative design: `docs/effects.md` — Part I states the shipped design
 (§1 the user rules, §2 the surface, §3 the mechanism — §3.1 the desugar, §3.2 the walk, §3.3 the hole rule and a
 block's handle types, §3.4 the primitives and frames —, §4 the scope check, §5 the standing rules, §6 testing, §7 the
-live limitations); Part II is what is left (§8 where the tree diverges from D36's deletion list, items 63–65; §9 the
-binding binder marked by its declared type `Implementation[A]`; §10 the gate and method; §11 the decisions — D36, the
+live limitations); Part II is what is left (§8 where the tree diverges, empty since items 63–65 closed; §9 which
+binders are handles — the declaration's `EffectRow.handles` record, which replaced the `Implementation[A]` mark and the
+ability binding slot; §10 the gate and method; §11 the decisions — D36, the
 open questions **D20a** naming a set of effects, **D20c** storing an open computation, **D3**, and every earlier decision
 one entry each); Part III holds §12's **do-not-re-propose** list and §13, the citation map (D35's Part I is at
 `e03aa15c`; the record before the 2026-10-18 compaction at `14b61527`). **There is no carrier, no monad, no `Id`, no
@@ -627,9 +628,9 @@ nowhere**: a def declaring `uses Console` receives its handle from its caller up
 code is the same mistake as a hard-coded dependency.
 
 **The desugar plumbs; the walk checks by name; the checker chooses by type; nothing solves for a binding.**
-`core/…/EffectSugarDesugarer` turns each entry into a marked binder (`Impl: Implementation[Console]`, §9) plus a handle
-parameter after the handles the definition already takes, and each `~` constraint into a marked binder alone (an
-ability's, answered by the two-site search). A code parameter listing entries is a **block** taking one handle per
+`core/…/EffectSugarDesugarer` turns each entry into a binder of kind `Type` — the handle's type, recorded as the entry's
+handle in `EffectRow.handles` (§9) — plus a handle parameter after the handles the definition already takes; a `~`
+constraint mints nothing (an ability's, answered by the two-site search; an ability has no binding slot). A code parameter listing entries is a **block** taking one handle per
 listed entry, each of a **handed** binder's type (`Implementation::Handed`, after every other binder); one listing none
 is a thunk (`Unit => A`); a function-typed one keeps its arrow, its clause in `EffectRow.callbackEffects`.
 `row/BindingWriter` writes a **hole** at every handle position with its lexical candidates, nearest first, grouped by

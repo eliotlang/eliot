@@ -322,6 +322,8 @@ object LangFactCodecs {
       : FactCodec[com.vanillasource.eliot.eliotc.ast.fact.DataConstructor] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_ast_fact_DataDefinition
       : FactCodec[com.vanillasource.eliot.eliotc.ast.fact.DataDefinition] = FactCodec.derived
+  given codec_com_vanillasource_eliot_eliotc_ast_fact_EffectRow_Handle
+      : FactCodec[com.vanillasource.eliot.eliotc.ast.fact.EffectRow.Handle] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_ast_fact_EffectRow[C: FactCodec]
       : FactCodec[com.vanillasource.eliot.eliotc.ast.fact.EffectRow[C]] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_ast_fact_UnresolvedAbilityConstraint[E: FactCodec]

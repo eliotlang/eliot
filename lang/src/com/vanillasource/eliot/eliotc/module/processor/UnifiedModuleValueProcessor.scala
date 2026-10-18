@@ -86,6 +86,7 @@ class UnifiedModuleValueProcessor extends SingleFactProcessor[UnifiedModuleValue
     chosen.namedValue.effectRow.copy(
       returnEffects = ownRow.map(_.returnEffects).getOrElse(Seq.empty),
       returnArity = ownRow.fold(chosen.namedValue.effectRow.returnArity)(_.returnArity),
+      handles = ownRow.fold(chosen.namedValue.effectRow.handles)(_.handles),
       parameterEffects = rows.map(_.parameterEffects).find(_.nonEmpty).getOrElse(Seq.empty),
       callbackEffects = rows.map(_.callbackEffects).find(_.nonEmpty).getOrElse(Seq.empty)
     )

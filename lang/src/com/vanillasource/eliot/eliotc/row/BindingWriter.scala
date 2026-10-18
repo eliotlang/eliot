@@ -34,8 +34,8 @@ import scala.collection.mutable
   * **Effect-ness is read from one place only**: the callee's declared row. An ability appearing in
   * `effectRow.returnEffects` is an effect at this reference — which for an `effect`'s member is what membership
   * recorded ([[com.vanillasource.eliot.eliotc.ast.fact.AbilityMembers]]) and for an ordinary definition is what its
-  * `uses` clause says. A `~` constraint's ability is in no row, so it is written `Default`. Nothing keys on a name or a
-  * shape.
+  * `uses` clause says. A `~` constraint's ability is in no row and has no handle: it is the two-site search's, and the
+  * walk writes nothing for it. Nothing keys on a name or a shape.
   *
   * **Code and values** (`docs/effects.md` §1 rules 2 and 3). A parameter with a clause — a top-level one (`body uses *:
   * A`) or one on its codomain (`action uses *: A => Unit`) — is **code**: the caller's text, run by the callee. Every
@@ -219,7 +219,7 @@ object BindingWriter {
     val effects = orv.effectRow.returnEffects.map(_.abilityFQN).toSet
     phantoms(orv)
       .filter { case (index, ability) => effects.contains(ability) && !consumed.contains(index) }
-      .map { case (index, ability) => ability -> markPosition(binders(index).parameterType, orv) }
+      .map { case (index, ability) => ability -> markPosition(binders(index)) }
       .filter { case (_, entry) => wrote(orv, entry) }
       .map { case (ability, entry) =>
         Violation(
@@ -229,12 +229,8 @@ object BindingWriter {
       }
   }
 
-  /** Where a binding binder's row entry was written: the desugar sources the mark's ability argument at the entry. */
-  private def markPosition(
-      mark: Option[Sourced[OperatorResolvedExpression]],
-      orv: OperatorResolvedValue
-  ): Sourced[?] =
-    mark.flatMap(declared => spine(declared.value)._2.headOption).getOrElse(orv.signature)
+  /** Where a handle binder's row entry was written: the desugar sources the binder's name at the entry. */
+  private def markPosition(binder: SignatureView.Binder): Sourced[?] = binder.name
 
   /** Whether this value's own declaration wrote the row entry at `entry`. Always, except for an `implement` clause,
     * whose row is its block's union ([[com.vanillasource.eliot.eliotc.ast.fact.ImplementationRows]]): there an entry
@@ -283,7 +279,7 @@ object BindingWriter {
           .flatten
           .map(arguments =>
             HandleHole.Candidate(
-              markPosition(binders(index).parameterType, orv).as(Handles.parameter(binders(index).name.value)),
+              markPosition(binders(index)).as(Handles.parameter(binders(index).name.value)),
               HandleHole.Entry(ability, arguments.map(binders(index).name.as(_)))
             )
           ),
@@ -389,75 +385,40 @@ object BindingWriter {
     */
   def unpatternedParameters(implementation: OperatorResolvedValue): Seq[String] = {
     val pattern = SignatureView.of(implementation.signature).parameters.map(_.value)
-    unmarkedBinders(implementation).filterNot(name => pattern.exists(OperatorResolvedExpression.containsVar(_, name)))
+    nonHandleBinders(implementation).filterNot(name => pattern.exists(OperatorResolvedExpression.containsVar(_, name)))
   }
 
-  /** The names of `orv`'s binders its declaration does not mark as bindings, in order. */
-  private def unmarkedBinders(orv: OperatorResolvedValue): Seq[String] = {
+  /** The names of `orv`'s binders that are not handle types, in order. */
+  private def nonHandleBinders(orv: OperatorResolvedValue): Seq[String] = {
     val marked = phantoms(orv).map(_._1).toSet
     SignatureView.of(orv.signature).binders.zipWithIndex.collect {
       case (parameter, index) if !marked.contains(index) => parameter.name.value
     }
   }
 
-  /** A definition's **binding binders**, as `(index, ability)` pairs in index order — read off the **marks** its own
-    * declaration carries, and off nothing else.
+  /** A definition's **handle binders**, as `(index, ability)` pairs — read off the handles its declaration records
+    * ([[com.vanillasource.eliot.eliotc.ast.fact.EffectRow.handles]]), and off nothing else: each the binder typing a
+    * handle, with the ability of the entry it stands for. Nothing is re-derived from the shape of a signature.
     *
-    * A binder the desugar mints for a row entry, for a `~` constraint or for an `ability` block's implementation slot
-    * is declared `Impl: Implementation[Console]`
-    * ([[com.vanillasource.eliot.eliotc.ast.fact.GenericParameter.implementationMark]]), and that mark both says "this
-    * binder is a binding" and names the ability it binds. Nothing is re-derived here: there is no non-occurrence test,
-    * no constraint whose first type argument gives the ability away, and no special case for an ability member's own
-    * slot — that slot carries the mark like every other binding (`docs/effects.md` §9.3 step 3).
-    *
-    * The marked indices are **not** required to be a prefix. A member of a *parameterised* ability declaring effects of
-    * its own (`ability Show[T] { def show(t: T): {Log} String }`) has its bindings at indices 0 and 2 with the
-    * ability's `T` between them; [[Writer.writeBindings]] merges them with what the call determines for that `T`.
-    *
-    * The only definition of where a binding sits. Besides the write, the evidence after monomorphization reads it
-    * (`docs/effects.md` D35), to build the binding an installed implementation stands for.
+    * The indices are **not** required to be a prefix. A member of a *parameterised* ability declaring effects of its own
+    * (`ability Show[T] { def show(t: T) uses Log: String }`) has its handle binder at index 1, after the ability's `T`;
+    * [[Writer.writeBindings]] merges it with what the call determines for that `T`.
     */
   def phantoms(orv: OperatorResolvedValue): Seq[(Int, AbilityFQN)] =
-    SignatureView.of(orv.signature).binders.zipWithIndex.flatMap { case (binder, index) =>
-      binder.parameterType.flatMap(declared => markedAbility(declared.value)).map(index -> _)
-    }
+    recordedHandles(orv).map((index, entry) => index -> entry.abilityFQN)
 
-  /** The row entry each of a definition's binding binders stands for, by binder index: the `k`-th binder marked for an
-    * ability is the `k`-th entry of the declared row naming it, since the desugar mints them in the order written. An
-    * ability whose marks and entries do not pair one to one — a `~` constraint's binder has no entry — pairs none.
-    */
+  /** The row entry each of a definition's handle binders stands for, by binder index. */
   private[row] def entryArguments(orv: OperatorResolvedValue): Map[Int, Seq[OperatorResolvedExpression]] =
-    phantoms(orv)
-      .groupBy(_._2)
-      .toSeq
-      .flatMap { case (ability, marks) =>
-        val entries = orv.effectRow.returnEffects.filter(_.abilityFQN == ability)
-        if (entries.size =!= marks.size) Seq.empty
-        else marks.map(_._1).zip(entries.map(_.typeArgs))
-      }
-      .toMap
+    recordedHandles(orv).map((index, entry) => index -> entry.typeArgs).toMap
 
-  /** The ability a binder's declared type **marks** it as binding, if it is marked at all — the head of the declared
-    * type is [[WellKnownTypes.implementationTypeFQN]] and its single argument names an ability
-    * ([[com.vanillasource.eliot.eliotc.ast.fact.GenericParameter.implementationMark]]).
-    *
-    * The mark is read off the *operator-resolved* signature, where the alias is still unexpanded: the evaluator
-    * reduces `Implementation[A]` to `Type` at monomorphization, so this is the last phase that can see it — and the
-    * phase that erases it ([[Writer.unmarked]]).
-    */
-  private def markedAbility(declaredType: OperatorResolvedExpression): Option[AbilityFQN] =
-    spine(declaredType) match {
-      case (ValueReference(head, _), Seq(argument)) if head.value === WellKnownTypes.implementationTypeFQN =>
-        argument.value match {
-          case ValueReference(ability, _) =>
-            ability.value.name.qualifier match {
-              case Qualifier.Ability(name) => Some(AbilityFQN(ability.value.moduleName, name))
-              case _                       => None
-            }
-          case _                          => None
-        }
-      case _                                                                                              => None
-    }
+  private def recordedHandles(orv: OperatorResolvedValue): Seq[(Int, AbilityConstraint[OperatorResolvedExpression])] = {
+    val binders = SignatureView.of(orv.signature).binders.map(_.name.value)
+    orv.effectRow.handles.flatMap(handle =>
+      Some(binders.indexOf(handle.binder))
+        .filter(_ >= 0)
+        .flatMap(index => orv.effectRow.returnEffects.lift(handle.entry).map(index -> _))
+    )
+  }
 
   /** The ability an implementation marker implements, read off its **resolved qualifier** — never off its name. */
   private def abilityOf(marker: ValueFQN, universe: RowChecker.Universe): Option[AbilityFQN] =
@@ -494,22 +455,9 @@ object BindingWriter {
     ): Sourced[OperatorResolvedExpression] =
       expr.value match {
         case FunctionLiteral(paramName, paramType, body) if remaining > 0 =>
-          expr.as(FunctionLiteral(paramName, paramType.map(unmarked), walkDefinition(body, scope, remaining - 1)))
+          expr.as(FunctionLiteral(paramName, paramType, walkDefinition(body, scope, remaining - 1)))
         case _                                                           => walk(expr, scope)
       }
-
-    /** Erase a binding binder's **mark**: `Impl: Implementation[Console]` becomes the ordinary `Impl: Type` it is
-      * definitionally equal to (`docs/effects.md` §9.2).
-      *
-      * The mark is written by the desugar and read here ([[phantoms]]), and nothing downstream of this phase has a
-      * question it answers, so it is dropped along with the `with` nodes rather than carried into the checker. That is
-      * what keeps the promise that a marked binder is an ordinary binder of kind `Type`: the checker is handed the
-      * same signature it was handed before the mark existed, and is never asked what kind an ability standing in a
-      * type argument has — it has one per ability arity, and the mark takes them all.
-      */
-    private def unmarked(paramType: Sourced[OperatorResolvedExpression]): Sourced[OperatorResolvedExpression] =
-      if (markedAbility(paramType.value).isDefined) paramType.as(ValueReference(paramType.as(WellKnownTypes.typeFQN)))
-      else paramType
 
     /** @param applied
       *   How many arguments the position `expr` stands in applies it to, beyond those written in it: the arity of the
@@ -603,7 +551,7 @@ object BindingWriter {
             case Some(constructor) =>
               val view    = SignatureView.of(marker.signature)
               // The data takes the implementation's own type parameters, never the binding a `~` constraint on one mints.
-              val own     = unmarkedBinders(marker)
+              val own     = nonHandleBinders(marker)
               // The handle's capture fields (`docs/effects.md` D36 point 2): a captured entry takes the handle in scope
               // here, outside the binding, and any other `unit`.
               val fields  = Captures.captured(marker, universe).getOrElse(Seq.empty)
@@ -891,10 +839,9 @@ object BindingWriter {
       orv.effectRow.parameterEffects.find(_.parameterIndex === index).map(_.effects)
 
     /** Write the callee's type arguments this call determines, **merged by index**: a binder the callee's declaration
-      * marks as a **binding** of an effect is a handle's type, written as a keyed hole the checker solves from the hole
-      * at the handle's position; one of an ability (a `~` constraint) is written `Default`, the two-site search; every
-      * other binder takes, in order, what the caller spelled. Each binding is still looked up ([[bindingFor]]), because
-      * that lookup is the by-name scope check.
+      * records as a **handle**'s type is written as a keyed hole the checker solves from the hole at the handle's
+      * position; every other binder takes, in order, what the caller spelled. Each handle's effect is still looked up
+      * ([[bindingFor]]), because that lookup is the by-name scope check.
       *
       * Type-argument application is positional, so what is written is the run from index 0 that every slot below it
       * fills. In a body a gap before a binding is written as the checker's hole ([[mergeTypeArguments]]), so every
@@ -934,8 +881,7 @@ object BindingWriter {
             reachTo,
             (index, ability) => {
               bindingFor(ability, effects.contains(ability), reference, scope)
-              if (handled.exists(_._1 == index)) reference.as(keyedHole(reference))
-              else reference.as(defaultBinding(reference))
+              reference.as(keyedHole(reference))
             }
           )
           marks.toSeq.filter(_._1 >= reach).sortBy(_._1).foreach { case (_, ability) =>
@@ -1030,8 +976,8 @@ object BindingWriter {
       )
     }
 
-    /** Merge the bindings with what the call determines, slot by slot: index `i` is `binding(ability)` where the
-      * declaration marks it, and the next undetermined value otherwise.
+    /** Merge the handle types with what the call determines, slot by slot: index `i` is `binding(ability)` where the
+      * declaration records a handle binder, and the next undetermined value otherwise.
       *
       * Where nothing determines a binder that stands **before** a binding, `hole` fills it — the checker's "infer this
       * one" ([[WellKnownTypes.inferredTypeArgumentFQN]]) — so the binding behind it is still written: `greetAs` of
@@ -1091,9 +1037,8 @@ object BindingWriter {
         )
       )
 
-    /** Answer one binder at a reference — the by-name half of the scope check. An **ability** is the two-site search's
-      * and needs nothing in scope; an **effect** with no handle of it in scope is the "performs but does not declare"
-      * error, at this reference, except in a signature, whose control effects the guarded-return read discharges. A
+    /** Answer one handle at a reference — the by-name half of the scope check. An **effect** with no handle of it in
+      * scope is the "performs but does not declare" error, at this reference, except in a signature, whose control effects the guarded-return read discharges. A
       * reference consumes every received handle of its effect: telling them apart is the hole's, by entry.
       */
     private def bindingFor(ability: AbilityFQN, isEffect: Boolean, at: Sourced[?], scope: Scope): Unit =
@@ -1195,10 +1140,6 @@ object BindingWriter {
           throw IllegalStateException(s"An application head is not a value reference: ${other.render}")
       }
   }
-
-  /** The `Default` sentinel: "search at the ground arguments", today's two-site resolution. */
-  private def defaultBinding(at: Sourced[?]): OperatorResolvedExpression =
-    ValueReference(at.as(WellKnownTypes.defaultImplementationFQN))
 
   private def unitValue(at: Sourced[?]): Sourced[OperatorResolvedExpression] =
     at.as(ValueReference(at.as(WellKnownTypes.unitValueFQN)))

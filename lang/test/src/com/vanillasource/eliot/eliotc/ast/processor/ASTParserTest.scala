@@ -334,11 +334,9 @@ class ASTParserTest extends ProcessorTest(new Tokenizer(), new ASTParser()) {
     )
   }
 
-  // Three and two, not two and one: an ability's members and its marker all carry the **implementation binding** as
-  // their leading generic parameter (effects v6, `docs/effects.md` §9.4) — the ability's own parameters follow it.
-  it should "prepend the binding and the ability generic parameters to function generic parameters" in {
+  it should "prepend the ability generic parameters to function generic parameters" in {
     runEngineForFunctionGenericCounts("ability Functor[A] { def map[B]: A }").asserting(
-      _ shouldBe Seq(("map", 3), ("Functor", 2))
+      _ shouldBe Seq(("map", 2), ("Functor", 1))
     )
   }
 
@@ -366,9 +364,9 @@ class ASTParserTest extends ProcessorTest(new Tokenizer(), new ASTParser()) {
     )
   }
 
-  it should "prepend the binding and the ability generic parameters to type declaration generic parameters" in {
+  it should "prepend the ability generic parameters to type declaration generic parameters" in {
     runEngineForFunctionGenericCounts("ability Container[A] { type Element }").asserting(
-      _ shouldBe Seq(("Element", 2), ("Container", 2))
+      _ shouldBe Seq(("Element", 1), ("Container", 1))
     )
   }
 

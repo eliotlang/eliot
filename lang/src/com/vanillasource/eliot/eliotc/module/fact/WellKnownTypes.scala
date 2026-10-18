@@ -36,23 +36,11 @@ object WellKnownTypes {
   val anyFQN: ValueFQN =
     ValueFQN(ModuleName(defaultSystemPackage, "Any"), QualifiedName("Any", Qualifier.Default))
 
-  /** The **`Default`** implementation marker of effects v6 (`docs/effects.md` §9.4 step 3): the value a phantom row or
-    * constraint binder carries when no `with` names an implementation — "search at the ground arguments", today's
-    * two-site resolution. It is the compiler's own sentinel, like [[anyFQN]]: not declared in any layer, never named by
-    * a user, and never a runtime value (a phantom binder occurs in no type and is erased). It occupies a
-    * type-argument position, hence the type-constructor qualifier; as a ground value it is the nullary
-    * `Structure(defaultImplementationFQN, Nil, Type)`, which
-    * [[com.vanillasource.eliot.eliotc.monomorphize.check.ImplementationBinding]] reads back. The other value such a
-    * binder can carry is an implementation, headed by a [[Qualifier.AbilityImplementation]] name.
-    */
-  val defaultImplementationFQN: ValueFQN =
-    ValueFQN(ModuleName(defaultSystemPackage, "Implementation"), QualifiedName("Default", Qualifier.Type))
-
   /** The **hole** in a written type-argument list: "the checker infers this one" — `type Inferred` in
-    * `eliot.lang.Implementation`, beside [[defaultImplementationFQN]] (`docs/effects.md` §3.1).
+    * `eliot.lang.Implementation` (`docs/effects.md` §3.1).
     *
-    * A type-argument list applies positionally, so the `row` phase cannot write a binding that stands behind a binder
-    * only the checker determines — a member of `ability Greeter[A]` declaring `uses Console` has `[Impl, A, Impl0]`, and
+    * A type-argument list applies positionally, so the `row` phase cannot write a handle's type that stands behind a
+    * binder only the checker determines — a member of `ability Greeter[A]` declaring `uses Console` has `[A, Impl]`, and
     * `A` is read off the argument. [[com.vanillasource.eliot.eliotc.row.BindingWriter]] writes this at such a binder,
     * in a body only, and the checker's `inferValueReference` replaces it with a fresh metavariable — what it already
     * does for every binder past the end of the list. Applied to an integer literal, `Inferred[k]`, it is a **keyed**
@@ -60,22 +48,6 @@ object WellKnownTypes {
     */
   val inferredTypeArgumentFQN: ValueFQN =
     ValueFQN(ModuleName(defaultSystemPackage, "Implementation"), QualifiedName("Inferred", Qualifier.Type))
-
-  /** The **mark** a binding binder carries as its declared type — `type Implementation[A] = Type` in
-    * `eliot.lang.Implementation`, beside [[defaultImplementationFQN]] (`docs/effects.md` §9.2).
-    *
-    * A binder the desugar mints for a row entry, a `~` constraint or an `ability` block's implementation slot is
-    * declared `Impl: Implementation[Console]`, and that declaration is the *only* place the fact "this binder is a
-    * binding" is written down: [[com.vanillasource.eliot.eliotc.row.BindingWriter]] reads the marks off the
-    * operator-resolved signature, where an alias is not yet expanded, and the ability off the mark's argument.
-    * Recognised by this FQN exactly as [[abilityCombinatorFQN]] is, and reduced to `Type` by definitional equality, so
-    * the checker makes no decision on it.
-    */
-  val implementationTypeFQN: ValueFQN =
-    ValueFQN(
-      ModuleName(defaultSystemPackage, "Implementation"),
-      QualifiedName("Implementation", Qualifier.Type)
-    )
 
   /** The **mark** a *handed* binder carries as its declared type — `type Handed = Type` in `eliot.lang.Implementation`,
     * on the new effect path (`docs/effects.md` D36 point 6).

@@ -160,7 +160,7 @@ class AbilityImplementationProcessor extends SingleKeyTypeProcessor[AbilityImple
                               case None    => decline
                               case Some(m) =>
                                 constraintsSatisfied(marker, m, platform).ifM(
-                                  dischargeGuard(vfqn, markerVfqn, markerSig, withPhantomDefaults(marker, m)),
+                                  dischargeGuard(vfqn, markerVfqn, markerSig, m),
                                   decline
                                 )
                             }
@@ -205,31 +205,6 @@ class AbilityImplementationProcessor extends SingleKeyTypeProcessor[AbilityImple
         .forallM { case (binderName, constraint) => constraintSatisfied(binderName, constraint, bindings, platform) }
     }
 
-  /** Fill each of a matched candidate's **phantom binders** with the `Default` sentinel (effects v6, §9.4).
-    *
-    * A derived instance (`implement[A ~ Display[A]] Display[Box[A]]`) carries a binding binder of its own, and the
-    * pattern match cannot recover it: it occurs in no pattern argument, so there is nothing to trace it from and the
-    * lossy fallback leaves junk. What it *means* is "search at these arguments" — the impl's own constraint is
-    * discharged where the impl is instantiated — which is exactly `Default`. Without this the recorded resolution
-    * carries a junk first argument and the nested dispatch fails as "no implementation found", naming the ability the
-    * user did write.
-    */
-  private def withPhantomDefaults(marker: OperatorResolvedValue, matched: AbilityMatcher.Match): AbilityMatcher.Match = {
-    val view        = OperatorResolvedExpression.SignatureView.of(marker.signature)
-    val patternRefs = AbilityMatcher.patternParameters(marker.signature)
-    val filled      = view.binders.map(_.name.value).zip(matched.groundArgs).map { case (binder, ground) =>
-      if (patternRefs.contains(binder)) ground else defaultBindingGround
-    }
-    matched.copy(groundArgs = filled)
-  }
-
-  /** The `Default` sentinel as a ground value — the same shape
-    * [[com.vanillasource.eliot.eliotc.monomorphize.check.ImplementationBinding.defaultGround]] reads back, built here
-    * because that reader lives downstream of this phase.
-    */
-  private val defaultBindingGround: GroundValue =
-    GroundValue.Structure(WellKnownTypes.defaultImplementationFQN, Seq.empty, GroundValue.Type)
-
   /** One `~` constraint of a matched candidate: ground its ability arguments at the match's bindings, then ask whether
     * that ability is implemented there. Undecidable at any step ⤳ `true` (see [[constraintsSatisfied]]).
     */
@@ -250,13 +225,8 @@ class AbilityImplementationProcessor extends SingleKeyTypeProcessor[AbilityImple
     } yield result
 
   /** The constraint's **pattern** arguments as ground values — what the two-site search is asked at — or [[None]] when
-    * they cannot be determined exactly.
-    *
-    * Effects v6 gives every `~` constraint a leading **binding** argument (`A ~ Display[A]` is `Display[Impl, A]`,
-    * `docs/effects.md` §9.4), which is the implementation to use rather than part of the pattern to search by. It is a
-    * phantom binder, so it has no ground value at all — grounding it would produce junk and decline every derived
-    * instance. Dropping it leaves exactly the ability's pattern parameters, one fewer than its declared arity; any
-    * other count is a shape this cannot read, and declines to judge.
+    * they cannot be determined exactly: one per ability parameter, and any other count is a shape this cannot read, and
+    * declines to judge.
     */
   private def constraintArguments(
       binderName: String,
@@ -266,8 +236,8 @@ class AbilityImplementationProcessor extends SingleKeyTypeProcessor[AbilityImple
   ): Option[Seq[GroundValue]] =
     for {
       abilityArity <- arity
-      declared     <- constraint.typeArgs.drop(1).toList.traverse(groundArgument(_, bindings))
-      full         <- Option.when(declared.size + 1 == abilityArity)(declared)
+      declared     <- constraint.typeArgs.toList.traverse(groundArgument(_, bindings))
+      full         <- Option.when(declared.size == abilityArity)(declared)
     } yield full
 
   /** Ground one constraint type-argument expression at the match's bindings: a reference to a bound type parameter is

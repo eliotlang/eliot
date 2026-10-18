@@ -2,7 +2,7 @@ package com.vanillasource.eliot.eliotc.ability.util
 
 import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.ast.fact.Handles
-import com.vanillasource.eliot.eliotc.module.fact.{ModuleAbilities, QualifiedName, ValueFQN, WellKnownTypes}
+import com.vanillasource.eliot.eliotc.module.fact.{ModuleAbilities, QualifiedName, ValueFQN}
 import com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedExpression.SignatureView
 import com.vanillasource.eliot.eliotc.operator.fact.{OperatorResolvedExpression, OperatorResolvedValue}
 import com.vanillasource.eliot.eliotc.platform.Platform
@@ -25,13 +25,22 @@ object ImplementationConformance {
       vfqn: ValueFQN,
       name: Sourced[com.vanillasource.eliot.eliotc.resolve.fact.QualifiedName],
       signature: Sourced[OperatorResolvedExpression],
-      hasRuntime: Boolean
+      hasRuntime: Boolean,
+      handles: Map[String, AbilityFQN] = Map.empty
   )
 
   def method(vfqn: ValueFQN, platform: Platform): CompilerIO[Method] =
     getFactOrAbort(OperatorResolvedValue.Key(vfqn, platform)).map(resolved =>
-      Method(vfqn, resolved.name, resolved.signature, resolved.runtime.isDefined)
+      Method(vfqn, resolved.name, resolved.signature, resolved.runtime.isDefined, handlesOf(resolved))
     )
+
+  /** The binders typing `resolved`'s handles, with the effect each is a handle of
+    * ([[com.vanillasource.eliot.eliotc.ast.fact.EffectRow.handles]]).
+    */
+  private def handlesOf(resolved: OperatorResolvedValue): Map[String, AbilityFQN] =
+    resolved.effectRow.handles
+      .flatMap(handle => resolved.effectRow.returnEffects.lift(handle.entry).map(handle.binder -> _.abilityFQN))
+      .toMap
 
   /** The members `ability` declares, its marker included. */
   def abilityMethods(ability: AbilityFQN, platform: Platform): CompilerIO[Seq[Method]] =
@@ -105,8 +114,8 @@ object ImplementationConformance {
         for {
           markerSignature <- markerSignature(clause.vfqn, ability.abilityName, platform)
           compatible      <- AbilityMatcher.signaturesCompatible(
-                               withoutHandles(member.signature, ability),
-                               withoutHandles(clause.signature, ability),
+                               withoutHandles(member, ability),
+                               withoutHandles(clause, ability),
                                markerSignature
                              )
           _               <- compilerError(clause.name.as("Signature of implementation does not match the ability definition."))
@@ -115,35 +124,24 @@ object ImplementationConformance {
       }
   }
 
-  /** A signature without the handles of other effects it takes — on the new effect path (`docs/effects.md` D36) every
-    * parameter typed by a binding binder marked for an effect other than `ability`. An effect's own handle, which a
-    * clause takes as its implementation's handle and which the pattern matches, stays; the rest are the compiler's to
-    * arrange: a clause takes the handles its member declares, in the member's order, and what it captures is bound where
-    * it is installed, while what an ability's clause performs beyond its member is the `row` phase's to refuse, by name.
-    * On the old path no parameter is typed by a binding binder, and nothing is dropped.
+  /** A method's signature without the handles of other effects it takes (`docs/effects.md` D36): every parameter
+    * typed by a handle binder of an effect other than `ability`. An effect's own handle, which a clause takes as its
+    * implementation's handle and which the pattern matches, stays; the rest are the compiler's to arrange: a clause takes
+    * the handles its member declares, in the member's order, and what it captures is bound where it is installed, while
+    * what an ability's clause performs beyond its member is the `row` phase's to refuse, by name.
     */
-  private def withoutHandles(signature: Sourced[OperatorResolvedExpression], ability: AbilityFQN)
-      : Sourced[OperatorResolvedExpression] = {
-    val view    = SignatureView.of(signature)
-    val marked  = view.binders.filter(_.parameterType.exists(t => marksOther(t.value, ability))).map(_.name.value).toSet
+  private def withoutHandles(method: Method, ability: AbilityFQN): Sourced[OperatorResolvedExpression] = {
+    val view    = SignatureView.of(method.signature)
+    val others  = method.handles.collect { case (binder, effect) if effect != ability => binder }.toSet
     val handles = view.parameters.zipWithIndex.collect {
-      case (Sourced(_, _, OperatorResolvedExpression.ParameterReference(name)), index) if marked(name.value) => index
+      case (Sourced(_, _, OperatorResolvedExpression.ParameterReference(name)), index) if others(name.value) => index
     }.toSet
-    if (handles.isEmpty) signature
-    else signature.as(view.copy(parameters = view.parameters.zipWithIndex.filterNot((_, i) => handles(i)).map(_._1)).toExpression)
+    if (handles.isEmpty) method.signature
+    else
+      method.signature.as(
+        view.copy(parameters = view.parameters.zipWithIndex.filterNot((_, i) => handles(i)).map(_._1)).toExpression
+      )
   }
-
-  /** Whether a binder's declared type is the binding mark `Implementation[X]` of an ability `X` other than `ability`. */
-  private def marksOther(declared: OperatorResolvedExpression, ability: AbilityFQN): Boolean =
-    OperatorResolvedExpression.spine(declared) match {
-      case (OperatorResolvedExpression.ValueReference(head, _), arguments) if head.value == WellKnownTypes.implementationTypeFQN =>
-        !arguments.headOption.exists(_.value match {
-          case OperatorResolvedExpression.ValueReference(marked, _) =>
-            marked.value.moduleName == ability.moduleName && marked.value.name.name == ability.abilityName
-          case _                                                    => false
-        })
-      case _                                                                                                                    => false
-    }
 
   /** The signature of the marker of the implementation `clause` belongs to. */
   def markerSignature(

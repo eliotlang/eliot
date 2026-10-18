@@ -61,9 +61,8 @@ abstract class ProcessorTest(val processors: CompilerProcessor*) extends AsyncFl
     // The ability-constraint combinator `&` is an ordinary prelude declaration the resolver looks up by name
     // (`docs/effects-syntax-userspace.md` §4 stage 1), so every snippet writing `A ~ X & Y` needs it in scope.
     SystemImport("Ability", "infix left type &[A, B]"),
-    // The `Default` binding sentinel. Effects v6 writes it as an ordinary type argument at every reference whose
-    // implementation nothing names, and saturation then demands the value it names — so a snippet calling *any*
-    // ability method needs this module present, exactly as the real `stdlib/eliot/src/eliot/lang/Implementation.els` is.
+    // The compiler's hole and handed mark, which the `row` phase writes into a snippet using an effect, exactly as the
+    // real `stdlib/eliot/src/eliot/lang/Implementation.els` is there for every program.
     SystemImport("Implementation", ProcessorTest.implementationStubContent),
     SystemImport("Bool", ProcessorTest.boolImportContent),
     SystemImport("Numeric", ProcessorTest.numericStubContent),
@@ -192,15 +191,12 @@ object ProcessorTest {
   /** Declarations for the built-in opaque `Bool` type and its compile-time predicates, mirroring
     * `lang/eliot/src/eliot/lang/Bool.els`. The reductions are supplied by `SystemNativesProcessor`.
     */
-  /** `eliot.lang.Implementation`, which every snippet declaring an effect row, a `~` constraint or an `ability` block
-    * needs — the compiler writes both of its names into such a declaration, module-qualified, so neither depends on
-    * the snippet's imports. `Default` is the sentinel a reference carries when no `with` names an implementation (and
-    * saturation then demands the value it names); `Implementation[A]` is the **mark** a binding binder carries as its
-    * declared type (`docs/effects.md` §9.2). A pool without this module fails with "Qualified named value not
-    * available." at the declaration, so it is part of every stub prelude, exactly as the real
-    * `stdlib/eliot/src/eliot/lang/Implementation.els` is part of every layer.
+  /** `eliot.lang.Implementation`, which every snippet using an effect needs — the compiler writes its names into such a
+    * snippet, module-qualified, so neither depends on the snippet's imports: `Inferred`, the checker's hole in a written
+    * type-argument list, and `Handed`, the mark on a code parameter's handle binder. It is part of every stub prelude,
+    * exactly as the real `stdlib/eliot/src/eliot/lang/Implementation.els` is part of every layer.
     */
-  val implementationStubContent: String = "type Default\ntype Inferred\ntype Implementation[A] = Type\ntype Handed = Type"
+  val implementationStubContent: String = "type Inferred\ntype Handed = Type"
 
   val boolImportContent: String =
     "type Bool\ndef true: Bool\ndef false: Bool\ninfix def &&(a: Bool, b: Bool): Bool"

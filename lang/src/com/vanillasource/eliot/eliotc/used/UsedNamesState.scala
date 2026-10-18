@@ -77,9 +77,7 @@ object UsedNamesState {
     * cap the recorded direct-call arities. Recorded per `vfqn` (the granularity of the usage statistics), taking the
     * **maximum** across walked instances; a body-less value contributes nothing (no cap).
     *
-    * Instances of one value may differ in natural arity: a specialisation whose binding carries an environment takes
-    * that frame as a leading parameter (`shout` on `recordingConsole` is `(frame, s)`, on `Default` just `(s)`,
-    * `docs/effects.md` §3.4). The minimum would cap the wider one below the arity its call sites use, so the backend
+    * Instances of one value may differ in natural arity. The minimum would cap the wider one below the arity its call sites use, so the backend
     * caps each instance at its own natural arity where it emits it, and this cap only removes what no instance absorbs.
     */
   def recordNaturalArity(vfqn: ValueFQN, naturalArity: Option[Int]): UsedNamesIO[Unit] =

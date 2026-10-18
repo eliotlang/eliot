@@ -114,10 +114,7 @@ class MonomorphicTypeCheckProcessorTest
         |  def show(x: BigInteger): BigInteger = x
         |}
         |def f[A ~ Show](x: A): A = show(x)""".stripMargin
-    // `f`'s `~ Show` constraint mints a phantom binder ahead of `A` (effects v6 §9.4), so the mono key is
-    // `[<implementation>, A]` — here the `Default` sentinel, meaning "search at the ground arguments", which is what
-    // the write puts at a reference no `with` names.
-    runEngineForMonomorphicValue(source, "f", Seq(defaultBinding, intType))
+    runEngineForMonomorphicValue(source, "f", Seq(intType))
       .asserting { result =>
         unwrapFunctionLiterals(normalizedBody(result)) match {
           case MonomorphicExpression.FunctionApplication(target, _) =>
@@ -171,10 +168,6 @@ class MonomorphicTypeCheckProcessorTest
 
   private val intType: GroundValue =
     GroundValue.Structure(WellKnownTypes.bigIntFQN, Seq.empty, GroundValue.Type)
-
-  /** The `Default` implementation sentinel, as a mono-key argument. */
-  private val defaultBinding: GroundValue =
-    GroundValue.Structure(WellKnownTypes.defaultImplementationFQN, Seq.empty, GroundValue.Type)
 
   private val stringType: GroundValue =
     GroundValue.Structure(WellKnownTypes.stringFQN, Seq.empty, GroundValue.Type)

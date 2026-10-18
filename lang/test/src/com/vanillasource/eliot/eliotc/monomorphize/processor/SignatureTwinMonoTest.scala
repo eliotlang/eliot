@@ -3,7 +3,6 @@ package com.vanillasource.eliot.eliotc.monomorphize.processor
 import cats.effect.IO
 import com.vanillasource.eliot.eliotc.ProcessorTest
 import com.vanillasource.eliot.eliotc.module.fact.{ModuleName, QualifiedName, Qualifier, ValueFQN}
-import com.vanillasource.eliot.eliotc.monomorphize.check.ImplementationBinding
 import com.vanillasource.eliot.eliotc.monomorphize.fact.{CompilerMonomorphicValue, GroundValue}
 import com.vanillasource.eliot.eliotc.platform.Platform
 import com.vanillasource.eliot.eliotc.plugin.LangProcessors
@@ -108,10 +107,8 @@ class SignatureTwinMonoTest extends ProcessorTest(LangProcessors(systemModules =
       .asserting { case (rt, sig, errs) => (rt.isDefined, sig, errs) shouldBe (true, rt, Seq.empty) }
   }
 
-  // Two arguments, because a `~` constraint mints a phantom binder for the implementation ahead of the constrained
-  // one (effects v6, `docs/effects.md` §9.4): the key is `[<binding>, E]`, and `Default` is what the write puts there.
   it should "match the runtime twin's for an ability-constrained value (`eqParam[E ~ Eq]` at `E = Type`)" in {
-    bothSignatures(fqn("eqParam"), Seq(ImplementationBinding.defaultGround, GroundValue.Type))
+    bothSignatures(fqn("eqParam"), Seq(GroundValue.Type))
       .asserting { case (rt, sig, errs) => (rt.isDefined, sig, errs) shouldBe (true, rt, Seq.empty) }
   }
 

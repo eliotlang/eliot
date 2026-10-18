@@ -627,19 +627,14 @@ class CoreProcessorTest extends ProcessorTest(Tokenizer(), ASTParser(), CoreProc
     }
   }
 
-  // Effects v6 (`docs/effects.md` §9): a row entry and a `~` constraint each become **one phantom generic binder**,
-  // declared `Implementation[A]` — the **mark** that says it is a binding and names the ability it binds (§9.2) — and
-  // occurring in no type, so rows still never flow into types. The binder's value, written later by the `row` phase,
-  // is an implementation. Three rewrites and nothing else: the return row vanishes onto a binder, a `~` constraint
-  // gains that binder as its **first** type argument, and a top-level row in a parameter or a `data` field thunks to
-  // `Unit => A`.
-  // `docs/effects.md` D36: the row's binder is the handle's type, taken by a handle parameter ahead of the others, and
-  // the rowed parameter is a block taking the handle its slot lists, of the type the callee's body hands it (`Handed`).
-  "effect-row sugar" should "mint one marked binder for the row, take its handle, and hand a rowed parameter one" in {
+  // `docs/effects.md` D36: a row entry's binder is the handle's type, an ordinary binder of kind `Type` taken by a handle
+  // parameter ahead of the others, and recorded as the entry's handle; the rowed parameter is a block taking the handle
+  // its slot lists, of the type the callee's body hands it (`Handed`). A row never flows into a type.
+  "effect-row sugar" should "mint one binder for the row, take its handle, and hand a rowed parameter one" in {
     namedValue("def f(x uses *, Suspend: String) uses *, Suspend: Unit").asserting { nv =>
       nv.signature.value.structure shouldBe Lambda(
         "Impl",
-        App(QualRef("Implementation", "eliot.lang.Implementation"), Ref("Suspend", T)),
+        Ref("Type", T),
         Lambda(
           "Handed",
           QualRef("Handed", "eliot.lang.Implementation"),
@@ -655,9 +650,9 @@ class CoreProcessorTest extends ProcessorTest(Tokenizer(), ASTParser(), CoreProc
     }
   }
 
-  it should "record the binder as a binding in its declared type, and the handed binder as unmarked" in {
+  it should "record the binder as the entry's handle, and the handed binder as none" in {
     namedValue("def f(x uses *, Suspend: String) uses *, Suspend: Unit")
-      .asserting(binderMarks(_) shouldBe Seq("Impl" -> Some("Suspend"), "Handed" -> None))
+      .asserting(handleRecords(_) shouldBe Seq("Impl" -> "Suspend"))
   }
 
   it should "constrain the binder by the row's ability, applied to itself" in {
@@ -689,24 +684,22 @@ class CoreProcessorTest extends ProcessorTest(Tokenizer(), ASTParser(), CoreProc
     }
   }
 
-  // A `~` constraint keeps the binder it was written on as its subject — that is what constraint scoping and the
-  // superability closure read — and only gains the binding ahead of it.
-  "a `~` constraint" should "keep its subject binder and gain the binding as its first argument" in {
+  // A `~` constraint is an ability's, answered by the two-site search: it is left as written and mints nothing.
+  "a `~` constraint" should "keep its subject binder and its arguments as written" in {
     namedValue("def f[T ~ Show[T]](x: T): String").asserting { nv =>
-      constraintShapes(nv) shouldBe Map("T" -> Seq(("Show", Seq(Ref("Impl", T), Ref("T", T)))))
+      constraintShapes(nv) shouldBe Map("T" -> Seq(("Show", Seq(Ref("T", T)))))
     }
   }
 
-  it should "mint an unconstrained binder for it, marked for the constraint's ability" in {
-    namedValue("def f[T ~ Show[T]](x: T): String")
-      .asserting(binderMarks(_) shouldBe Seq("Impl" -> Some("Show"), "T" -> None))
+  it should "mint no binder for it" in {
+    namedValue("def f[T ~ Show[T]](x: T): String").asserting(binderNames(_) shouldBe Seq("T"))
   }
 
   // The **empty row** `{}` names no ability, so it mints nothing. What it still says is "a value or a computation":
   // a top-level parameter row thunks whether or not it has entries.
   "the empty effect row" should "mint no binder and add no constraint" in {
     namedValue("def f[A](x uses *: A) uses *: A").asserting { nv =>
-      (binderMarks(nv), constraintShapes(nv)) shouldBe (Seq("A" -> None), Map.empty)
+      (binderNames(nv), constraintShapes(nv)) shouldBe (Seq("A"), Map.empty)
     }
   }
 
@@ -843,18 +836,17 @@ class CoreProcessorTest extends ProcessorTest(Tokenizer(), ASTParser(), CoreProc
     * binder. The mark (`Impl: Implementation[Suspend]`) is the one record that a binder is a **binding**, so this is
     * how a test asks which binders the desugar minted.
     */
-  private def binderMarks(nv: NamedValue): Seq[(String, Option[String])] = {
-    def peel(structure: ExprStructure): Seq[(String, Option[String])] = structure match {
-      case Lambda(name, paramType, body) =>
-        val marked = paramType match {
-          case App(QualRef("Implementation", "eliot.lang.Implementation"), Ref(ability, _, _)) => Some(ability)
-          case _                                                                              => None
-        }
-        (name -> marked) +: peel(body)
-      case _                             => Seq.empty
+  private def binderNames(nv: NamedValue): Seq[String] = {
+    def peel(structure: ExprStructure): Seq[String] = structure match {
+      case Lambda(name, _, body) => name +: peel(body)
+      case _                     => Seq.empty
     }
     peel(nv.signature.value.structure)
   }
+
+  /** Each handle the declaration records, as its binder and the ability of the entry it stands for. */
+  private def handleRecords(nv: NamedValue): Seq[(String, String)] =
+    nv.effectRow.handles.map(handle => handle.binder -> nv.effectRow.returnEffects(handle.entry).abilityName.value)
 
   private def constraintShapes(nv: NamedValue): Map[String, Seq[(String, Seq[ExprStructure])]] =
     nv.paramConstraints.view

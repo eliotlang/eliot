@@ -131,15 +131,11 @@ class RowAliasesTest extends ProcessorTest(LangProcessors()*) {
   private def rowLowering(source: String, imports: Seq[SystemImport] = systemImports): IO[(Seq[String], Seq[String])] =
     resolvedValue(source, imports).map(value => (bindings(value), declaredRow(value)))
 
-  /** The abilities this definition's binding binders mark — the binders whose declared type is the implementation
-    * mark `Implementation[Console]`.
+  /** The abilities this definition's handles are of, as its declaration records them
+    * ([[com.vanillasource.eliot.eliotc.ast.fact.EffectRow.handles]]).
     */
   private def bindings(value: ResolvedValue): Seq[String] =
-    binderTypes(value.signature.value).collect {
-      case FunctionApplication(Sourced(_, _, ValueReference(marker, _)), Sourced(_, _, ValueReference(ability, _)))
-          if marker.value.name.name === "Implementation" =>
-        ability.value.name.name
-    }
+    value.effectRow.handles.map(handle => value.effectRow.returnEffects(handle.entry).abilityFQN.abilityName)
 
   /** The definition's declared return row, each entry as `Ability` or `Ability[args]`. */
   private def declaredRow(value: ResolvedValue): Seq[String] =
@@ -181,11 +177,6 @@ class RowAliasesTest extends ProcessorTest(LangProcessors()*) {
 
   private def errorsResolving(source: String, value: ValueFQN): IO[Seq[TestError]] =
     runGenerator(source, ResolvedValue.Key(value), systemImports).map(result => toTestErrors(result._1))
-
-  private def binderTypes(expr: Expression): Seq[Expression] = expr match {
-    case FunctionLiteral(_, parameterType, body) => parameterType.map(_.value).toSeq ++ binderTypes(body.value)
-    case _                                       => Seq.empty
-  }
 
   private def simplified(rendered: String): String =
     rendered.replaceAll("\\^Type", "").replaceAll("[A-Za-z0-9_.]*::", "")

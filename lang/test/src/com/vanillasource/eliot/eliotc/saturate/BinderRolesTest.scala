@@ -58,14 +58,11 @@ class BinderRolesTest extends ProcessorTest(LangProcessors()*) {
       .asserting { case (errors, _) => errors.map(_.message) should contain("Value 'gen' is defined recursively.") }
   }
 
-  // Two binders, because a `~` constraint mints a phantom binder for the implementation it dispatches to (effects v6,
-  // `docs/effects.md` §9.4). Both specialize: the implementation is part of the mono key exactly as the dispatched
-  // type is, which is what makes specialisation per implementation fall out rather than be added.
   "a dispatched (ability-constrained) binder (S6 describe)" should "be disposed specialize, not collapsed" in {
     dispositionOf(
       "ability Render[A] { def render(x: A): String }\ndef describe[A ~ Render](x: A): String = render(x)",
       "describe"
-    ).asserting(_ shouldBe (Seq.empty, Seq(("Impl", Disposition.Specialize), ("A", Disposition.Specialize))))
+    ).asserting(_ shouldBe (Seq.empty, Seq(("A", Disposition.Specialize))))
   }
 
   "an obvious phantom binder used in no position" should "be disposed collapse-erase" in {

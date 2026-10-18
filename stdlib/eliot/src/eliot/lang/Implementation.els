@@ -1,39 +1,15 @@
 /**
- * The compiler's marker for "no implementation was named here".
- *
- * Effects v6 gives every `uses` entry and every `~` constraint a compile-time parameter — a *binding* — whose
- * value is the implementation the calls under it run on (`docs/effects.md` §9.4). Where a `with` names one, that
- * name is the value. Where nothing does, the compiler writes `Default`, which means "find the implementation the
- * ordinary way": the unique `implement` block in the ability's module or in the type's.
- *
- * It is not a value and cannot be constructed. It exists as a declaration only because a binding is an ordinary
- * type argument, and a type argument has to name something.
- */
-type Default
-
-/**
  * The compiler's hole in a type-argument list: "infer this one".
  *
- * A call's type arguments are written by position, and the compiler writes every binding it passes. Where a binding
- * stands behind a type parameter only the type checker can read off the call's arguments — `greetAs(Bob(…))` for a
- * member of `ability Greeter[A]` that `uses Console` — the compiler writes `Inferred` at that parameter, and the
- * checker infers it exactly as it infers a type parameter left off the end of the list. Written with a number,
- * `Inferred[1]`, it is one shared hole: every place the compiler writes the same number stands for the same type, which
- * is how a `with`'s arguments are typed by an entry only the checker reads off the call. Only the compiler writes it.
+ * A call's type arguments are written by position, and the compiler writes the type of every handle it passes
+ * (`docs/effects.md` §3.2). Where a handle's type stands behind a type parameter only the type checker can read off
+ * the call's arguments — `greetAs(Bob(…))` for a member of `ability Greeter[A]` that `uses Console` — the compiler
+ * writes `Inferred` at that parameter, and the checker infers it exactly as it infers a type parameter left off the end
+ * of the list. Written with a number, `Inferred[1]`, it is one shared hole: every place the compiler writes the same
+ * number stands for the same type, which is how a `with`'s arguments are typed by an entry only the checker reads off
+ * the call. Only the compiler writes it.
  */
 type Inferred
-
-/**
- * The **mark** on a binding binder: a binder the compiler mints for a `uses` entry, a `~` constraint or an
- * `ability` block's implementation slot is declared `Impl: Implementation[A]`, `A` being the ability it binds
- * (`docs/effects.md` §9).
- *
- * It is an alias for `Type` — a binding *is* an ordinary type argument, carrying an implementation name or
- * [[Default]] — so definitional equality reduces it away and no type decision is made on it. Only the compiler
- * writes it: it exists so that "which of these binders are bindings?" is read off one declaration instead of being
- * re-derived from the shape of a signature.
- */
-type Implementation[A] = Type
 
 /**
  * The **mark** on a binder the compiler mints for a code parameter's handle: the type of a handle the callee's body

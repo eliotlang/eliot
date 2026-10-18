@@ -77,10 +77,9 @@ class AbilityResolver(
     *     pending for the next iteration. (A fallback that took them from the enclosing definition's first constraint of
     *     the same local ability name was never reached by the tests, the examples or the dependents, and was wrong for
     *     two entries of one ability; it was deleted, `docs/effects.md` §8 item 54.)
-    *   - An **effect**'s operation is left alone: the specialisation pass dispatches it from the evidence in scope
-    *     (`docs/effects.md` D35). An **ability**'s ground arguments begin with its binding, always `Default`
-    *     ([[ImplementationBinding]]), and the rest go to the two-site search; the resolution is keyed under the full
-    *     sliced arguments, so the post-drain quoter re-derives the same slice.
+    *   - The ground ability-level arguments go to the two-site search — an **effect**'s begin with its handle's type,
+    *     whose instance is the only one there (`docs/effects.md` D36) — and the resolution is keyed under them, so the
+    *     post-drain quoter re-derives the same slice.
     *   - `resolveAbility` returning `None` at *ground* arguments is a failed **demand**: the [[AbilityImplementation]]
     *     fact's non-resolved outcome is read back and reported here, at this reference — the demand site — and the
     *     check aborts (see [[reportFailedDemand]]). Only an *absent* fact (the resolution aborted on an upstream error,
@@ -107,17 +106,10 @@ class AbilityResolver(
                           case Right(groundArgs) if state.abilityResolutions.contains((abilityVfqn, groundArgs)) =>
                             pure(false)
                           case Right(ground)                                                                   =>
-                            // An effect's operation is left to the specialisation pass, which dispatches it on the
-                            // evidence in scope (`docs/effects.md` D35): nothing in the key says which implementation
-                            // answers it — the runtime track checks with effect bindings left out, and the compile
-                            // track's are the caller's, while a block's are what the callee running it gives.
-                            //
-                            // On the new effect path (`docs/effects.md` D36) the first argument is the handle's type, not
-                            // a binding, and the operation is an ordinary ability method dispatched by it: the handle's
-                            // instance is the only one at its type.
+                            // An effect's operation is an ordinary ability method dispatched by its first argument,
+                            // the handle's type (`docs/effects.md` D36): the handle's instance is the only one there.
                             liftF(AbilityKind.isEffect(AbilityFQN(abilityVfqn.value.moduleName, abilityName), platform))
                               .flatMap {
-                                case Some(true) if ImplementationBinding.split(ground)._2.isDefined => pure(false)
                                 // A block a body-less callee runs is handed the opaque mark: nothing answers it.
                                 case Some(true) if ground.headOption.exists(isHandedMark)          =>
                                   liftF(
@@ -130,7 +122,7 @@ class AbilityResolver(
                                     ) >> abort[Boolean]
                                   )
                                 case _                                                               =>
-                                  resolveGround(abilityVfqn, abilityName, ground)
+                                  searchAndRecord(abilityVfqn, abilityName, (abilityVfqn, ground), ground)
                               }
                           case Left(_)                                                                         =>
                             pure(false)
@@ -145,25 +137,8 @@ class AbilityResolver(
     case _                                     => false
   }
 
-  /** Resolve a reference at its ground ability-level arguments, recorded under them. Only an **ability** reaches here,
-    * and its binding is always `Default`: an ability has no named implementation and is never bound with `with`
-    * (`docs/effects.md` D29), so it is answered by the two-site search alone. An effect's operation is the
-    * specialisation pass's to dispatch (D35).
-    */
-  private def resolveGround(
-      abilityVfqn: Sourced[ValueFQN],
-      abilityName: String,
-      groundArgs: Seq[GroundValue]
-  ): CheckIO[Boolean] =
-    ImplementationBinding.split(groundArgs) match {
-      case (_, Some(_: ImplementationBinding.Implementation)) =>
-        liftF(compilerAbort(abilityVfqn.as(s"Internal: the ability '$abilityName' is bound to a named implementation.")))
-      case (patternArgs, _)                                   =>
-        searchAndRecord(abilityVfqn, abilityName, (abilityVfqn, groundArgs), patternArgs)
-    }
-
   /** The two-site search: resolve the ability at its ground pattern arguments and record the impl under `key`, or
-    * report the failed demand. What every reference gets today, and what a `Default` binding asks for.
+    * report the failed demand.
     */
   private def searchAndRecord(
       abilityVfqn: Sourced[ValueFQN],
