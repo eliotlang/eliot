@@ -96,8 +96,9 @@ lives now.
 22. **D36** (decided 2026-10-17, §11): an effect desugars to an ability over a handle, and a use takes the nearest
    handle in lexical scope whose entry answers it, decided by the checker. Its order is in its record, starting with a
    hand-desugared spike (done 2026-10-17). Revised 2026-10-18: the callee's body types its blocks (no slot names an
-   implementation, so no spelling is left to settle), and erasure follows the switch; next is its step 2, the desugar
-   and the checker's two pieces measured on the corpus. Six readings it needs (D30, three §12 entries, §3.8, D35's
+   implementation, so no spelling is left to settle), no new syntax and no qualifier, and erasure follows the switch.
+   Assessed implementable now; next is its step 2a, the hole rule and the block-type read tested on hand-written
+   holes, then 2b, the desugar behind an internal switch. Six readings it needs (D30, three §12 entries, §3.8, D35's
    `$with` lowering) await Robert's sign-off. Built, it closes §8 items 59, 60 and 61.
 
 D20a, D20c and D3 stay open until decided; none blocks the steps above.
@@ -2370,12 +2371,63 @@ riskiest, and a handle type that stays unreduced until post-drain.
 the callee's runs, with no join, deciding no binding (which handle answers a use is point 4's, by entry). And it
 drops one: D30's ride versus supply, which is no longer a comparison of any kind.
 
+**Implementable now** (assessed against the tree, 2026-10-18). No open decision blocks the start: the agreement
+rule's details are settled by the measurement of step 2b, and the implementation-clause split and the platform-less
+reading above are recorded readings. What the tree already has:
+
+- **Dispatch that waits for a type.** An ability reference whose arguments are unsolved stays pending through the
+  post-drain fixpoint (`TypeStackLoop.resolveAbilitiesToFixedPoint`: drain, `AbilityResolver.resolveAbilities`, repeat
+  while it progresses), so an operation on a block's handle waits until that handle's type is read, with no new
+  machinery.
+- **A block with an unknown handle type.** An unannotated lambda checked against a `VPi` takes its domain as the
+  parameter's type, unsolved or not (`Checker.check`).
+- **Holes as metavariables.** The `row` phase already writes keyed holes (`Inferred[k]`) that the checker turns into
+  one shared metavariable per key (`Checker.explicitTypeArgument`, `CheckState.sharedHoles`).
+- **The phase split.** Declarations are rewritten in `core` (`EffectSugarDesugarer`), uses in `row`
+  (`BindingWriter`) — where the two halves of the desugar go.
+- **The handles' own forms**, from the step-1 spike: handle `data`, its instances, two `Throw` handles in one
+  definition, a block taking a handle, handle code on the compile track.
+
+What is new:
+
+1. **The declaration desugar, in `core`**: an effect to an ability over `H`; a named implementation to a `data` and its
+   instance, its captured entries as fields, generic over their handle types, with the instance constrained on them
+   (`implement[S ~ State[Recording]] Console[MockConsole[S]]` — a constrained instance over a captured handle is the
+   one handle form the spike did not compile); a `uses` entry to a type parameter and a handle parameter.
+2. **The use desugar, in `row`**, replacing `BindingWriter`'s resolution order and write and keeping its by-name scope
+   check, rules 2 and 3 and the thunk-and-apply: a hole at every handle position carrying its lexical candidates
+   nearest first, grouped by binder, each with its entry; a `with` to a bound handle; a run handing its block one
+   handle per listed entry; `EntryPoint` constructing the `standard…` handles.
+3. **The hole rule**, a pass in the same post-drain fixpoint beside ability resolution. A candidate is tried by
+   unifying entries and discarding the state when it fails — the check state is an immutable state monad, so a trial
+   costs nothing. Point 4's agreement rule is decided over all the holes a candidate with an unsolved argument could
+   answer, never hole by hole, so no result depends on visiting order.
+4. **A block's handle types read off its callee** — **the one piece with no precedent**. In the callee's own check
+   the slot's handle type is a metavariable its runs solve, quoted into its `MonomorphicValue`; in the caller it is a
+   metavariable left until the callee's type arguments are ground, then read from the callee's checked value at that
+   key, in the same fixpoint. Two frictions: the **signature twin** (`flippedCalleeSignature` reads a callee's ground
+   signature from a mono that checks no body, so it cannot solve the slot's type, and the in-place evaluation must
+   leave it a metavariable rather than quote it), and **`defaultUnsolvedMetas`**, which solves every metavariable left
+   over to `Type`: a handle type must be excluded from that — the dispatch would still fail loudly, but on a wrong
+   message — and an unsolved one is the "declares but does not perform" error on the slot.
+5. **Guarded signatures and the compile track**, which the spike did not reach: a guarded return's uncovered
+   `raise`/`abort` run as if wrapped in its discharger (`GuardDischargeResolver`, `TypeStackLoop.guardRead`), and the
+   compile track's frames over `EffectIntrinsics`. The most likely place for a surprise.
+6. **The deletions and what follows them**: the list under *It deletes* — several thousand lines (`EnvironmentThreading`
+   about 800, `EvidenceSpecialisation` about 650, most of `BindingWriter`'s 1,500, parts of `PostDrainQuoter`) — the 68
+   test files in `lang` that exercise effects, Part I, and eliot-test, eliot-build and the examples.
+
 **Order** (replacing steps 2–5; the gate as point 2 says):
 
-2. **The desugar and the checker's two pieces**, measured on the corpus before anything switches: every hole
-   resolves, the agreement rule accepts every unspelled discharger, every block's handle types are read.
-3. **The switch and the deletions together**: D35's machinery goes (the list under *It deletes*), Part I is rewritten
-   in capability terms, §12's restated entries and the cornerstone in `CLAUDE.md`; then a release.
+2. **The new path beside the old**, behind an internal switch (a system property, not a CLI word — the CLI is a
+   compatibility promise), so `master` stays green throughout:
+   - **2a, the checker first**: items 3 and 4, tested as `ProcessorTest`s on the step-1 spike's program with its
+     explicit handle arguments replaced by holes — the two unknowns measured before any desugar exists;
+   - **2b, the desugar**: items 1 and 2, then item 5, measured on the corpus under the switch: every hole resolves, the
+     agreement rule accepts every unspelled discharger, every block's handle types are read, and eliot-test,
+     eliot-build and the examples behave as today, every jar difference explained.
+3. **The switch and the deletions together**: the default flips, the switch and D35's machinery go (item 6), Part I is
+   rewritten in capability terms, §12's restated entries and the cornerstone in `CLAUDE.md`; then a release.
 4. **Erasure**, measured against today's jar.
 
 **Awaiting sign-off:** the four choices made in the code while building option 5 (§3.4, "Decided in the code"). A
