@@ -89,6 +89,8 @@ class CoreProcessor(handles: Boolean = false)
       .map(effect => effect.name.as(s"The effect '${effect.name.value}' declares no operation, so nothing could perform it."))
     (positivityErrors ++ visibilityErrors ++ signatureErrors ++ emptyEffects)
       .traverse_(message => Sourced.compilerError(message)) >>
+      (if (handles) sourceAstData.namedImplementations.flatMap(NamedImplementationDesugarer.unpatterned) else Seq.empty)
+        .traverse_((message, help) => Sourced.compilerError(message, help)) >>
       debug[CompilerIO](
         s"Core functions in ${key.uri}: ${coreAstData.namedValues.map(_.render).mkString(", ")}"
       ) >>

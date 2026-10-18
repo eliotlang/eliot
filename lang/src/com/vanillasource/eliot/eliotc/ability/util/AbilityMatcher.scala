@@ -1,6 +1,7 @@
 package com.vanillasource.eliot.eliotc.ability.util
 
 import cats.syntax.all.*
+import com.vanillasource.eliot.eliotc.ast.fact.Handles
 import com.vanillasource.eliot.eliotc.module.fact.{Qualifier, ValueFQN, WellKnownTypes}
 import com.vanillasource.eliot.eliotc.monomorphize.domain.*
 import com.vanillasource.eliot.eliotc.monomorphize.domain.SemValue.*
@@ -117,7 +118,24 @@ object AbilityMatcher {
       (s1, absParams, absBody)       = peelToBody(setup, abstractMethodSig)
       (s2, _, implBody)              = peelToBody(s1, implMethodSig)
       marker                         = peelPattern(s2, implMarkerSig)
-    } yield attemptSigCompat(marker.setup, absParams.drop(1), marker.args, absBody, implBody, abstractMethodSig)
+    } yield attemptSigCompat(
+      marker.setup,
+      if (marker.args.headOption.exists(isHandleType(_, marker.setup.metaStore))) absParams else absParams.drop(1),
+      marker.args,
+      absBody,
+      implBody,
+      abstractMethodSig
+    )
+
+  /** Whether a pattern argument is a named implementation's handle type — the instance a named implementation lowers to
+    * on the new effect path (`docs/effects.md` D36 point 2), whose first pattern argument answers the effect's member's
+    * first binder, its handle type, rather than following a binding binder the marker does not take.
+    */
+  private def isHandleType(argument: SemValue, metaStore: MetaStore): Boolean =
+    Evaluator.force(argument, metaStore) match {
+      case VTopDef(fqn, _, _, _) => Handles.isDataType(fqn.name.name)
+      case _                     => false
+    }
 
   // ---- Phase 1: classify every transitively-referenced ORE value ----
 

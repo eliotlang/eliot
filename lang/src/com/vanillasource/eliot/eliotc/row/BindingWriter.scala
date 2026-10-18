@@ -115,7 +115,8 @@ object BindingWriter {
       clauses: Seq[Binding.Clause] = Seq.empty,
       serial: Long = Binding.nextSerial(),
       handle: Option[HandleHole.Candidate] = None,
-      group: Option[Long] = None
+      group: Option[Long] = None,
+      perUse: Set[BigInt] = Set.empty
   ) {
 
     /** Which bindings are equally near: those put in scope by one binder — a definition's own handles, one block's
@@ -962,10 +963,20 @@ object BindingWriter {
             val view    = SignatureView.of(marker.signature)
             // The data takes the implementation's own type parameters, never the binding a `~` constraint on one mints.
             val own     = unmarkedBinders(marker)
-            val keys    = own.map(_ -> keyedHole(implementation)).toMap
             // The handle's capture fields (`docs/effects.md` D36 point 2): a captured entry takes the handle in scope
             // here, outside the binding, and any other `unit`.
             val fields  = Captures.captured(marker, universe).getOrElse(Seq.empty)
+            // A type parameter the handle's value fixes — one its parameters' types or its clauses' entries mention — is
+            // one keyed hole, written at the data's constructor and in the entry alike. Any other is the pattern's
+            // alone: the handle's type does not take it, so its key is fresh at each hole the handle is offered to,
+            // which solves it from what it asks (`docs/effects.md` §8 item 30, as the core desugar's handle `data`
+            // reads it).
+            val types   = universe.lookup(callee.value).toSeq.flatMap(orv => SignatureView.of(orv.signature).parameters.dropRight(1))
+            val fixed   = own.filter(name =>
+              types.exists(t => containsVar(t.value, name)) || fields.exists(_._1._2.exists(containsVar(_, name)))
+            )
+            val keys    = own.map(_ -> keyedHole(implementation)).toMap
+            val perUse  = own.filterNot(fixed.contains).flatMap(name => holeKey(keys(name))).toSet
             val held    = fields.map { case ((fieldAbility, arguments), isCaptured) =>
               val key = keyedHole(implementation)
               val arg =
@@ -986,7 +997,7 @@ object BindingWriter {
               )
             )
             val name    = implementation.as(Handles.binding(nextWith()))
-            val binding = Binding(ability, byWith = true, handle = Some(HandleHole.Candidate(name, entry)))
+            val binding = Binding(ability, byWith = true, handle = Some(HandleHole.Candidate(name, entry)), perUse = perUse)
             val bound   = walk(subject, scope.shadow(name.value).bind(binding), applied + rest.size - 1)
             if (!used.contains(binding.serial)) violations += unusedWith(subject, implementation, ability, scope)
             val handle  = applyChain(
@@ -998,7 +1009,7 @@ object BindingWriter {
                       QualifiedName(Handles.dataType(implementationName(implementation.value)), Qualifier.Default)
                     )
                   ),
-                  own.map(name => implementation.as(keys(name))) ++ held.map((key, _) => implementation.as(key))
+                  fixed.map(name => implementation.as(keys(name))) ++ held.map((key, _) => implementation.as(key))
                 )
               ),
               supplied.map(walk(_, scope)) ++ held.map(_._2)
@@ -1450,7 +1461,7 @@ object BindingWriter {
     private def candidates(ability: AbilityFQN, scope: Scope): Seq[Seq[(Binding, HandleHole.Candidate)]] =
       scope.bindings
         .filter(binding => binding.ability == ability && !binding.beyondValue)
-        .flatMap(binding => binding.handle.map(handle => (binding.distance, (binding, handle))))
+        .flatMap(binding => binding.handle.map(handle => (binding.distance, (binding, rekeyed(handle, binding.perUse)))))
         .foldLeft(Seq.empty[(Long, Seq[(Binding, HandleHole.Candidate)])]) {
           case (groups :+ ((distance, group)), (next, candidate)) if distance == next =>
             groups :+ (distance -> (group :+ candidate))
@@ -1511,6 +1522,31 @@ object BindingWriter {
     }
 
     private var holeKeys: Long = 0
+
+    /** The key of a keyed hole ([[keyedHole]]). */
+    private def holeKey(expression: OperatorResolvedExpression): Option[BigInt] =
+      expression match {
+        case ValueReference(name, Seq(Sourced(_, _, IntegerLiteral(key)))) if name.value == WellKnownTypes.inferredTypeArgumentFQN =>
+          Some(key.value)
+        case _                                                                                                                  => None
+      }
+
+    /** A candidate with each keyed hole of `keys` in its entry replaced by a fresh one, the same for every occurrence:
+      * a `with`'s type parameter its handle's type does not take is solved at each hole on its own.
+      */
+    private def rekeyed(candidate: HandleHole.Candidate, keys: Set[BigInt]): HandleHole.Candidate =
+      if (keys.isEmpty) candidate
+      else {
+        val fresh = keys.map(key => key -> keyedHole(candidate.name)).toMap
+        def go(expression: OperatorResolvedExpression): OperatorResolvedExpression =
+          holeKey(expression).flatMap(fresh.get).getOrElse(expression match {
+            case FunctionApplication(target, argument) => FunctionApplication(target.map(go), argument.map(go))
+            case ValueReference(name, typeArgs)         => ValueReference(name, typeArgs.map(_.map(go)))
+            case FunctionLiteral(name, tpe, body)       => FunctionLiteral(name, tpe.map(_.map(go)), body.map(go))
+            case other                                  => other
+          })
+        candidate.copy(entry = candidate.entry.map(_.map(go)))
+      }
 
     private def keyedHole(at: Sourced[?]): OperatorResolvedExpression = {
       holeKeys += 1

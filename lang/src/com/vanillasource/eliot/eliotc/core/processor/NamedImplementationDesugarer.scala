@@ -92,7 +92,14 @@ object NamedImplementationDesugarer {
       val captures    = written.indices.map(j =>
         GenericParameter(anchor.as(Handles.capture(j)), anchor.as(typeExpr(anchor.as("Type"))), Seq.empty)
       )
-      val generics    = implementation.genericParameters.map(_.copy(abilityConstraints = Seq.empty)) ++ captures
+      // The handle takes only the type parameters its value fixes: those its fields' types or its clauses' entries
+      // mention. Any other is the pattern's alone, so the instance's pattern leaves it free and each use solves it — one
+      // `with showing` serves `Source[Int]` and `Source[String]` (`docs/effects.md` §8 item 30).
+      val fixed       = implementation.genericParameters.filter(gp =>
+        implementation.parameters.exists(p => mentions(p.typeExpression, gp.name.value)) ||
+          written.exists(_.typeArgs.exists(mentions(_, gp.name.value)))
+      )
+      val generics    = fixed.map(_.copy(abilityConstraints = Seq.empty)) ++ captures
       val handleType  = anchor.as(
         Expression.FunctionApplication(
           None,
@@ -198,6 +205,20 @@ object NamedImplementationDesugarer {
       else declaration
     }
 
+  /** A named implementation's type parameters its pattern does not take (`docs/effects.md` D29), each as the error
+    * at the implementation's name: nothing where it runs determines one. On the new effect path the check is made here,
+    * at the declaration, since nothing demands the named marker's `row` phase, where the old path makes it.
+    */
+  def unpatterned(implementation: NamedImplementation): Seq[(Sourced[String], Seq[String])] =
+    implementation.genericParameters
+      .filterNot(gp => implementation.pattern.exists(mentions(_, gp.name.value)))
+      .map { gp =>
+        implementation.name.as(
+          s"The type parameter '${gp.name.value}' of the implementation '${implementation.name.value}' is not taken by " +
+            "its pattern, so nothing where it runs determines it."
+        ) -> Seq(s"Use '${gp.name.value}' in the implemented '${implementation.ability.value}[…]', or remove it.")
+      }
+
   /** A clause's body with each of the implementation's parameters bound to its field of the clause's own handle, so
     * the body names them as it always did. Each binding line stands on the body's own line, so a block never joins it
     * to the body as a continuation.
@@ -232,6 +253,23 @@ object NamedImplementationDesugarer {
           } :+ Expression.BlockLine(None, body)
         )
       )
+
+  /** Whether a type expression mentions the type parameter `name`. A shape a type does not take answers `true`, which
+    * keeps the parameter on the handle: one handle then fixes it, which is never wrong, only less general.
+    */
+  private def mentions(expression: Sourced[Expression], name: String): Boolean =
+    expression.value match {
+      case Expression.FunctionApplication(module, function, generics, arguments) =>
+        (module.isEmpty && function.value == name) ||
+        generics.exists(_.exists(mentions(_, name))) || arguments.exists(mentions(_, name))
+      case Expression.FlatExpression(parts)                                      => parts.exists(mentions(_, name))
+      case Expression.FunctionLiteral(parameters, body)                          =>
+        parameters.exists(_.typeExpression.exists(mentions(_, name))) || mentions(body, name)
+      case Expression.EffectfulType(effects, result)                             =>
+        effects.exists(_.typeArgs.exists(mentions(_, name))) || mentions(result, name)
+      case Expression.IntegerLiteral(_) | Expression.StringLiteral(_)            => false
+      case _                                                                     => true
+    }
 
   private def typeExpr(name: Sourced[String]): Expression =
     Expression.FunctionApplication(None, name, None, Seq.empty)

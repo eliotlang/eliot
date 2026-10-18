@@ -57,11 +57,13 @@ class HandleHoleResolver {
       answering = holes.map(hole => hole -> nearest(state.unifier, hole).getOrElse(Seq.empty))
       agreeing  = answering.iterator.collect { case (hole, Seq((candidate, _))) => (hole, candidate) }.flatMap {
                     case (hole, candidate) =>
-                      val sharing = answering.collect {
-                        case (other, answers) if answers.exists(_._1.name == candidate.name) => other
+                      // Each hole holds its own copy of a candidate: a `with`'s type parameter its handle's type does
+                      // not take is keyed apart at every hole, so each copy is asked at its own hole.
+                      val sharing = answering.flatMap { (other, answers) =>
+                        answers.collectFirst { case (offered, _) if offered.name == candidate.name => other -> offered }
                       }
                       sharing
-                        .foldLeft(Option(state.unifier))((acc, other) => acc.flatMap(answer(_, other, candidate)))
+                        .foldLeft(Option(state.unifier)) { case (acc, (other, offered)) => acc.flatMap(answer(_, other, offered)) }
                         .flatMap(_ => answer(state.unifier, hole, candidate))
                         .map(after => (hole, candidate, after))
                   }
