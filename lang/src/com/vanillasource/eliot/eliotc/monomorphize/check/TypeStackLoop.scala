@@ -441,7 +441,8 @@ class TypeStackLoop(
         abilities <- checker.abilityResolver.resolveAbilities(abilityRefs)
         holes     <- checker.handleHoles.resolveCertain
         agreed    <- if (abilities || holes) pure(false) else checker.handleHoles.resolveByAgreement
-        _         <- if (abilities || holes || agreed) loop else checker.handleHoles.reportUndecided
+        _         <- if (abilities || holes || agreed) loop
+                     else checker.handleHoles.reportUndecided >> checker.handleHoles.reportUntaken
       } yield ()
 
     loop

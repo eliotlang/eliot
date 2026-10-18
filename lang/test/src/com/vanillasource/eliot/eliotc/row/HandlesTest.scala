@@ -37,12 +37,75 @@ class HandlesTest extends ProcessorTest(LangProcessors(handles = true)*) {
   private def handleType(implementation: String): GroundValue =
     GroundValue.Structure(ValueFQN(testModuleName, QualifiedName(s"${implementation.capitalize}$$Handle", Qualifier.Type)), Seq.empty, GroundValue.Type)
 
-  private def woven(source: String, name: String = "test"): IO[Seq[TestError]] =
-    runGenerator(source, WovenValue.Key(ValueFQN(testModuleName, default(name)), Seq.empty), systemImports)
+  private def woven(source: String, name: String = "test", typeArguments: Seq[GroundValue] = Seq.empty): IO[Seq[TestError]] =
+    runGenerator(source, WovenValue.Key(ValueFQN(testModuleName, default(name)), typeArguments), systemImports)
       .map { (errors, _) =>
         if (sys.env.contains("HANDLES_DEBUG")) errors.foreach(e => println(s"${e.message} ${e.description.mkString(" | ")} @ ${e.sourceRange}"))
         toTestErrors(errors)
       }
+
+  private val failing =
+    """effect Fail[E] { def fail[A](e: E): A }
+      |implement[E] failing(code: E): Fail[E] { def fail[A](e: E): A = stop(code) }
+      |def stop[A, E](e: E): A
+      |data Num
+      |def one: Num
+      |""".stripMargin
+
+  "a handle position" should "take the handle whose entry its type arguments answer" in {
+    references(
+      failing + """def failNumber uses Fail[String], Fail[Num]: String = fail(one)
+                  |def test: String = failNumber with failing(one) with failing("a")
+                  |""".stripMargin,
+      "test",
+      "failNumber"
+    ).asserting(_ shouldBe Seq(Seq(failingType(stringType), failingType(numType))))
+  }
+
+  it should "be refused when no handle in scope answers it" in {
+    woven(
+      failing + "def failNumber uses Fail[String]: String = fail(one)\n",
+      "failNumber",
+      Seq(failingType(stringType))
+    ).asserting(_ shouldBe Seq("No handle in scope here answers 'Fail[Num]'." at "fail(one)"))
+  }
+
+  it should "be refused when two equally near handles answer it" in {
+    woven(
+      failing + "def twice[E](e: E) uses Fail[E], Fail[String]: String = fail(e)\n",
+      "twice",
+      Seq(failingType(stringType), failingType(stringType), stringType)
+    ).asserting(_ shouldBe Seq("Two equally near handles answer 'Fail[String]': 'Fail[String]', 'Fail[String]'." at "fail(e)"))
+  }
+
+  it should "refuse a `with` whose handle no hole takes" in {
+    woven(
+      failing + """def failString uses Fail[String]: String = fail("x")
+                  |def test: String = failString with failing(one) with failing("a")
+                  |""".stripMargin
+    ).asserting(_ shouldBe Seq("This `with` binds nothing: no use of 'Fail[Num]' in its subject takes it." at "failing"))
+  }
+
+  it should "refuse a received handle no hole takes" in {
+    woven(
+      failing + "def failString uses Fail[String], Fail[Num]: String = fail(\"x\")\n",
+      "failString",
+      Seq(failingType(stringType), failingType(numType))
+    ).asserting(_ shouldBe Seq("This value declares the effect 'Fail[Num]' but does not perform it." at "Fail"))
+  }
+
+  private def failingType(argument: GroundValue): GroundValue =
+    GroundValue.Structure(
+      ValueFQN(testModuleName, QualifiedName("Failing$Handle", Qualifier.Type)),
+      Seq(argument),
+      GroundValue.Type
+    )
+
+  private val stringType: GroundValue =
+    GroundValue.Structure(ValueFQN(ModuleName(ModuleName.defaultSystemPackage, "String"), QualifiedName("String", Qualifier.Type)), Seq.empty, GroundValue.Type)
+
+  private val numType: GroundValue =
+    GroundValue.Structure(ValueFQN(testModuleName, QualifiedName("Num", Qualifier.Type)), Seq.empty, GroundValue.Type)
 
   /** The qualifier of every reference to a value named `to` in `in`'s body at `typeArguments`. */
   private def targets(

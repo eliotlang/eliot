@@ -36,4 +36,10 @@ object Handles {
 
   /** The name an implementation's clause gives its own handle, its first parameter. */
   val self: String = "self$handle"
+
+  /** The name of the handle the `n`-th `with` of a definition binds. */
+  def binding(n: Long): String = s"$$with$n"
+
+  /** Whether `name` is the handle a `with` binds ([[binding]]). */
+  def isBinding(name: String): Boolean = name.startsWith("$with")
 }

@@ -334,7 +334,7 @@ object BindingWriter {
           .flatten
           .map(arguments =>
             HandleHole.Candidate(
-              binders(index).name.map(Handles.parameter),
+              markPosition(binders(index).parameterType, orv).as(Handles.parameter(binders(index).name.value)),
               HandleHole.Entry(ability, arguments.map(binders(index).name.as(_)))
             )
           ),
@@ -903,7 +903,7 @@ object BindingWriter {
                 pattern.as(keys.foldLeft(pattern.value) { case (acc, (name, key)) => substitute(acc, name, key) })
               )
             )
-            val name    = implementation.as(s"$$with${nextWith()}")
+            val name    = implementation.as(Handles.binding(nextWith()))
             val binding = Binding(ability, byWith = true, handle = Some(HandleHole.Candidate(name, entry)))
             val bound   = walk(subject, scope.shadow(name.value).bind(binding), applied + rest.size - 1)
             if (!used.contains(binding.serial)) violations += unusedWith(subject, implementation, ability, scope)
@@ -1298,7 +1298,11 @@ object BindingWriter {
                   reference.as(writtenBy.foldLeft(argument) { case (acc, (name, value)) => substitute(acc, name, value) })
                 )
             )
-            reference.as(HandleHole(asked, candidates(ability, scope)))
+            val offered = candidates(ability, scope)
+            // Which of them answers is the checker's: here each may, so a `with` is "used" if any hole could take it
+            // (`docs/effects.md` D23 by name; the checker holds the exact rule).
+            offered.flatten.foreach((binding, _) => use(binding, None))
+            reference.as(HandleHole(asked, offered.map(_.map(_._2))))
           }
           (if (written.isEmpty) reference else reference.as(ValueReference(nameOf(reference), written)), holes)
       }
@@ -1307,11 +1311,11 @@ object BindingWriter {
       * in scope. A handle beyond a value is left out: a value may use no effect bound outside it, which the scope
       * check reports by name ([[bindingFor]]).
       */
-    private def candidates(ability: AbilityFQN, scope: Scope): Seq[Seq[HandleHole.Candidate]] =
+    private def candidates(ability: AbilityFQN, scope: Scope): Seq[Seq[(Binding, HandleHole.Candidate)]] =
       scope.bindings
         .filter(binding => binding.ability == ability && !binding.beyondValue)
-        .flatMap(binding => binding.handle.map(binding.distance -> _))
-        .foldLeft(Seq.empty[(Long, Seq[HandleHole.Candidate])]) {
+        .flatMap(binding => binding.handle.map(handle => (binding.distance, (binding, handle))))
+        .foldLeft(Seq.empty[(Long, Seq[(Binding, HandleHole.Candidate)])]) {
           case (groups :+ ((distance, group)), (next, candidate)) if distance == next =>
             groups :+ (distance -> (group :+ candidate))
           case (groups, (next, candidate))                                             =>

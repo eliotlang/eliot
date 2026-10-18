@@ -1,6 +1,7 @@
 package com.vanillasource.eliot.eliotc.monomorphize.check
 
 import cats.syntax.all.*
+import com.vanillasource.eliot.eliotc.ast.fact.Handles
 import com.vanillasource.eliot.eliotc.monomorphize.check.CheckIO.*
 import com.vanillasource.eliot.eliotc.monomorphize.domain.SemValue
 import com.vanillasource.eliot.eliotc.monomorphize.unify.{SemValuePrinter, Unifier, UnifyResult}
@@ -84,6 +85,34 @@ class HandleHoleResolver {
           } >>
             liftF(abort[Unit])
         }
+    }
+
+  /** Report every handle a definition is **given** — one it receives, or one a `with` in it binds — that some hole could
+    * see and none took: the exact, by-entry half of "declares but does not perform" and of a `with` that binds nothing
+    * (`docs/effects.md` D23), whose by-name half the `row` phase checks. A handle a block is handed is not held to it: a
+    * block need not use what its callee hands it.
+    */
+  def reportUntaken: CheckIO[Unit] =
+    get.flatMap { state =>
+      val taken    = state.handleChoices.values.toSet
+      val untaken  = state.handleHoles
+        .flatMap(_.candidates.flatten)
+        .distinctBy(_.name.value)
+        .filter(candidate => !taken.contains(candidate.name.value))
+      def shown(entry: Entry): String =
+        entry.ability.abilityName +
+          (if (entry.args.isEmpty) ""
+           else entry.args.map(SemValuePrinter.show(_, state.unifier.metaStore)).mkString("[", ", ", "]"))
+      val messages = untaken.collect {
+        case candidate if Handles.isBinding(candidate.name.value)   =>
+          candidate.name.as(s"This `with` binds nothing: no use of '${shown(candidate.entry)}' in its subject takes it.") ->
+            Seq("Remove it, or move it to where the effect is performed.")
+        case candidate if Handles.isParameter(candidate.name.value) =>
+          candidate.name.as(s"This value declares the effect '${shown(candidate.entry)}' but does not perform it.") ->
+            Seq(s"Remove '${shown(candidate.entry)}' from its `uses` clause.")
+      }
+      messages.toList.traverse_((message, help) => liftF(compilerError(message, help))) >>
+        (if (messages.nonEmpty) liftF(abort[Unit]) else pure(()))
     }
 
   private def diagnose(unifier: Unifier, hole: Hole): (String, Seq[String]) = {
