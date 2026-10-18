@@ -1044,7 +1044,6 @@ Each item is a defect to close or a decision to make, never a doc fix. Numbers a
 | --- | --- | --- |
 | 63 | the `$with` and `$parameters` declarations (`ast/fact/ImplementationParameters`) | they carry a `with`'s arguments through resolution, operators and match desugaring as an ordinary call's; the `row` walk turns the call into the handle (§3.1). Reading 6 removes them, which needs a `with` node carrying its arguments through every phase |
 | 64 | the `Implementation[A]` mark (§9) | how the walk tells a binding binder from an ordinary one, and how a handed binder is recognised |
-| 65 | `BindingWriter`'s D30 bookkeeping: spelled entries, `Need`s, rides, `Default` written at an effect binder no handle takes | still run beside the holes and subsumed by the hole rule; deleting it changes no accepted program, which is what the deletion must show |
 
 **Cleanup** (found by the same review; not defects). Most of it is in code D36 deletes and goes with it; the rest is to
 do with the next change that touches the file:
@@ -1126,6 +1125,7 @@ do with the next change that touches the file:
 | 60 | a reference whose entry the call does not spell answered before the checker typed it | 2026-10-18, D36: the hole rule (`HoleRuleIntegrationTest`) |
 | 61 | an anonymous implementation's clause could not repeat a member's entry at the pattern's type | 2026-10-18: the member's entry is read at the implementation's pattern (`RowElaborationProcessor.memberEntriesAtPattern`); an entry spelled through an alias is still refused, loudly |
 | 62 | runs of one code parameter given different implementations refused | 2026-10-17, D35 step 5a; refused again by D36 point 6 |
+| 65 | `BindingWriter`'s D30 bookkeeping (spelled entries, `Need`s, rides, the threading's `with` arms) ran beside the holes | 2026-10-18: deleted, every example jar byte-identical and the suites unchanged; a run's listed effect is checked by name (`checkGiven`), its entry by the hole. Measured first: the `$with` lowering in a signature, an effect binder no handle takes and the keyed holes of an unhandled callee never fired over the suites; a closed callback's ride produced no accepted program (its callee is "declares … but does not perform it") |
 
 ## 9. The binding binder's mark (built 2026-09-11/12; D36 deletes it, §8 item 64)
 
@@ -1515,7 +1515,7 @@ and uses in `row` (`BindingWriter`). What is new:
    `Implementation[A]` mark (§9), which is how the walk tells a binding binder from an ordinary one and how a handed
    binder is recognised. `BindingWriter`'s by-name half of the scope check stays by design ("The scope check
    splits"); its spelled-entry bookkeeping (D30's `Need`s and rides) still runs and is subsumed by the hole rule.
-   These are §8 items 63–65.
+   These are §8 items 63–65. **Item 65 closed (2026-10-18)**: the bookkeeping is deleted, every jar byte-identical.
 
    **Part I rewritten (2026-10-18)** to the tree, with §12's restated entries, `CLAUDE.md`'s cornerstone and phases,
    and the `eliot-code` skill. §8 items 59–61 closed; 61 needed the `row` phase's anonymous-clause check to read the

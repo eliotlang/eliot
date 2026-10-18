@@ -40,13 +40,4 @@ object DeclaredEntries {
       case _                       => declared
     }
   }
-
-  /** The entries an implementation's **environment** holds, given each of its clauses with the member it implements:
-    * those a clause performs itself while its member does not declare them. `recordingConsole`'s `printLine` performs
-    * `Writer[String]`, which `Console.printLine` does not declare, so the implementation holds it from where it is
-    * bound; `standardFileSystem`'s `readFile` performs `Throw[IoError]`, which `FileSystem.readFile` declares, so that
-    * one is the call's.
-    */
-  def environment(clauses: Seq[(OperatorResolvedValue, OperatorResolvedValue)]): Set[Declared] =
-    clauses.flatMap((clause, member) => of(clause).values.toSet -- ofMember(member)).toSet
 }
