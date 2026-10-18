@@ -71,7 +71,10 @@ class PostDrainQuoter(
     // Required (no default): defaulting it to a no-op fetch would be a silent-degradation trap — a construction site
     // that omitted it would get an escalation loop that can never escalate (terms that should reduce stay stuck), with
     // no compile error and nothing to grep for. The one production site (`TypeStackLoop`) always passes the real fetch.
-    reduceInstance: (ValueFQN, Seq[GroundValue]) => CompilerIO[Option[SemValue]]
+    reduceInstance: (ValueFQN, Seq[GroundValue]) => CompilerIO[Option[SemValue]],
+    // The new effect path (`docs/effects.md` D36): a dispatched clause also takes the call's method-level type
+    // arguments, its handles' types among them, after its instance's.
+    handles: Boolean = false
 ) {
 
   private val erasedParams: Set[String]            = monoEnv.names.toSet
@@ -832,7 +835,10 @@ class PostDrainQuoter(
     * implementation's `printLine` on `recordingConsole`, not on what the implementation was resolved with.
     */
   private def forwarded[A](member: ValueFQN, method: ValueFQN, implArguments: Seq[A], callArguments: Seq[A]): Seq[A] =
-    bindingForwards.getOrElse((member, method), Seq.empty).foldLeft(implArguments) {
+    bindingForwards.getOrElse((member, method), Seq.empty).foldLeft(
+      if (handles) implArguments ++ callArguments.drop(abilityArities.getOrElse(member, callArguments.size))
+      else implArguments
+    ) {
       case (acc, (clauseIndex, memberIndex)) =>
         callArguments.lift(memberIndex).filter(_ => acc.isDefinedAt(clauseIndex)).fold(acc)(acc.updated(clauseIndex, _))
     }

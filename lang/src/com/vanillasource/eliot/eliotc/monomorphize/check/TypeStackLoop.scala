@@ -406,7 +406,8 @@ class TypeStackLoop(
       fqn =>
         implBindings.get(fqn).orElse(abilityMethodBindings.get(fqn)).orElse(state.bindingCache.getOrElse(fqn, None)),
       track.platform,
-      reduceInstance
+      reduceInstance,
+      handles
     )
 
   /** The post-check resolution sequence (D1) that settles every metavariable, in order:

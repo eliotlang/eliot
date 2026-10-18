@@ -100,8 +100,7 @@ class LangPlugin extends CompilerPlugin {
               // The native-binding merger built inside LangProcessors must consult every native contributor that other
               // layers registered in their configure() (e.g. stdlib's arithmetic natives). All configure() complete before
               // initialize, so the roster is already final here.
-              configuration.getOrElse(ContributedBinding.extraNativeLabelsKey, Set.empty[String]).toSeq,
-            handles = sys.props.get(LangPlugin.handlesProperty).contains("true")
+              configuration.getOrElse(ContributedBinding.extraNativeLabelsKey, Set.empty[String]).toSeq
           )
         )
       )
@@ -115,6 +114,12 @@ object LangPlugin {
     * one.
     */
   val handlesProperty: String = "eliot.effects.handles"
+
+  /** Whether the new effect path is asked for: [[handlesProperty]], or the environment variable `ELIOT_EFFECTS_HANDLES`,
+    * which a forked test JVM inherits without the notice a JVM prints for `JAVA_TOOL_OPTIONS`.
+    */
+  def handlesRequested: Boolean =
+    sys.props.get(handlesProperty).contains("true") || sys.env.get("ELIOT_EFFECTS_HANDLES").contains("true")
 
   /** Every source root: the positional `<path>` program and every `--path` layer. Both the runtime and compile-time
     * mount pools are derived from this one list (see `initialize` and [[eliotCompilerOverlay]]).

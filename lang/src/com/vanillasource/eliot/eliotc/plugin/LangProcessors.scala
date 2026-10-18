@@ -78,16 +78,16 @@ import com.vanillasource.eliot.eliotc.used.UsedNamesProcessor
   *   - `handles` — the **new effect path** being built beside the old one (`docs/effects.md` D36, order step 2): an
   *     effect desugars to an ability over a handle type, a `uses` entry to a handle parameter, a named implementation to
   *     a `data` and that ability's instance, and the checker fills each handle position with the nearest handle in
-  *     lexical scope whose entry answers it. Off by default, so `master` builds as before; `LangPlugin` turns it on
-  *     from the internal system property [[LangPlugin.handlesProperty]], never a CLI word, since the CLI is a
-  *     compatibility promise.
+  *     lexical scope whose entry answers it. Off unless the internal system property [[LangPlugin.handlesProperty]] is
+  *     set — never a CLI word, since the CLI is a compatibility promise — so `master` builds as before, and every
+  *     harness built on this list can be run on the new path by setting it.
   */
 object LangProcessors {
   def apply(
       systemModules: Seq[ModuleName] = ModuleName.defaultSystemModules,
       maxNestedRepeats: Int = UsedNamesProcessor.DefaultMaxNestedRepeats,
       extraNativeBindingLabels: Seq[String] = Seq.empty,
-      handles: Boolean = false
+      handles: Boolean = LangPlugin.handlesRequested
   ): Seq[CompilerProcessor] = Seq(
     Tokenizer(),
     ASTParser(),

@@ -84,8 +84,8 @@ class RowElaborationProcessor(handles: Boolean = false)
         AbilityKind.isEffect(ability, platform).flatMap { kind =>
           named match {
             // On the new effect path (`docs/effects.md` D36) a named implementation lowers to an anonymous instance keyed
-            // by its own handle type, which this would refuse; a user-written one still has to be refused there.
-            case None if kind.contains(true) && !handles =>
+            // by its own handle type, which is not refused; one a user writes still is.
+            case None if kind.contains(true) && !(handles && isHandleInstance(value)) =>
               refuse(
                 value,
                 platform,
@@ -123,6 +123,17 @@ class RowElaborationProcessor(handles: Boolean = false)
       case _                                                                                                    =>
         ().pure[CompilerIO]
     }
+
+  /** Whether an implementation's marker is the instance a named implementation lowers to: its first pattern argument
+    * is that implementation's handle type.
+    */
+  private def isHandleInstance(marker: OperatorResolvedValue): Boolean =
+    OperatorResolvedExpression.SignatureView.of(marker.signature).parameters.headOption.exists(first =>
+      OperatorResolvedExpression.spine(first.value)._1 match {
+        case OperatorResolvedExpression.ValueReference(name, _) => Handles.isDataType(name.value.name.name)
+        case _                                                  => false
+      }
+    )
 
   private def isHandleClause(value: OperatorResolvedValue): Boolean =
     value.runtime.exists(body => RowChecker.peelBinders(body.value)._1.headOption.contains(Handles.self))

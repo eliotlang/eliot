@@ -122,6 +122,17 @@ class AbilityResolver(
                             liftF(AbilityKind.isEffect(AbilityFQN(abilityVfqn.value.moduleName, abilityName), platform))
                               .flatMap {
                                 case Some(true) if ImplementationBinding.split(ground)._2.isDefined => pure(false)
+                                // A block a body-less callee runs is handed the opaque mark: nothing answers it.
+                                case Some(true) if ground.headOption.exists(isHandedMark)          =>
+                                  liftF(
+                                    compilerError(
+                                      abilityVfqn.as(
+                                        s"Nothing binds an implementation of the effect '$abilityName' here, and an " +
+                                          "effect has no default."
+                                      ),
+                                      Seq("The code is run by a definition with no body here to hand it a handle.")
+                                    ) >> abort[Boolean]
+                                  )
                                 case _                                                               =>
                                   resolveGround(abilityVfqn, abilityName, ground)
                               }
@@ -131,6 +142,11 @@ class AbilityResolver(
         } yield progressed
       case _                              => pure(false)
     }
+  }
+
+  private def isHandedMark(argument: GroundValue): Boolean = argument match {
+    case GroundValue.Structure(name, Seq(), _) => name == WellKnownTypes.handedTypeFQN
+    case _                                     => false
   }
 
   /** Resolve a reference at its ground ability-level arguments, recorded under them. Only an **ability** reaches here,

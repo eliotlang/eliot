@@ -29,6 +29,9 @@ object Handles {
     */
   def dataType(implementation: String): String = s"${implementation.capitalize}$$Handle"
 
+  /** Whether `name` is a handle `data` type's ([[dataType]]). */
+  def isDataType(name: String): Boolean = name.endsWith("$Handle")
+
   /** The named implementation whose handle `data` type is `dataType` ([[dataType]]'s inverse). */
   def implementationOf(dataType: String): String = {
     val capitalised = dataType.stripSuffix("$Handle")
