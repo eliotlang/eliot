@@ -30,12 +30,16 @@ object Expression {
   // A `{ … }` block, lowered to immediately-applied lambdas by BlockDesugaringProcessor; gone before matchdesugar.
   case class BlockExpression(lines: Seq[BlockLine]) extends Expression
 
-  /** `subject with implementation` — effects v6's binding of a named implementation for the calls lexically inside
-    * `subject` (`docs/effects.md` §9.3), with the name already resolved to the implementation's **marker**
-    * ([[ImplementationNameResolver]]). Consumed by the `row` phase, which writes the binding into every phantom
-    * binder inside the subject and erases the node.
+  /** `subject with implementation(arguments…)` — a named implementation's handle bound for `subject`
+    * (`docs/effects.md` §3.1), with the name already resolved to the implementation's **marker**
+    * ([[ImplementationNameResolver]]). The arguments are the implementation's parameters, values computed where the
+    * `with` is written. Consumed by the `row` phase, which binds the handle around the subject and erases the node.
     */
-  case class WithBinding(subject: Sourced[Expression], implementation: Sourced[ValueFQN]) extends Expression
+  case class WithBinding(
+      subject: Sourced[Expression],
+      implementation: Sourced[ValueFQN],
+      arguments: Seq[Sourced[Expression]]
+  ) extends Expression
 
   case class MatchCase(
       pattern: Sourced[Pattern],
@@ -74,8 +78,9 @@ object Expression {
               .mapN((bt, e) => BlockLine(line.binderName, bt, e))
           )
           .map(BlockExpression.apply)
-      case WithBinding(subject, implementation)     =>
-        f(subject.value).map(s => WithBinding(subject.as(s), implementation))
+      case WithBinding(subject, implementation, arguments) =>
+        (f(subject.value).map(subject.as), arguments.traverse(a => f(a.value).map(a.as)))
+          .mapN(WithBinding(_, implementation, _))
       case _: IntegerLiteral | _: StringLiteral | _: ParameterReference => expr.pure[F]
     }
 
@@ -98,6 +103,8 @@ object Expression {
         lines
           .map(l => l.binderName.map(n => s"val ${n.value} = ").getOrElse("") + l.expression.value.render)
           .mkString("{ ", "; ", " }")
-      case WithBinding(subject, implementation) => s"${subject.value.render} with ${implementation.value.show}"
+      case WithBinding(subject, implementation, arguments) =>
+        s"${subject.value.render} with ${implementation.value.show}" +
+          (if (arguments.isEmpty) "" else arguments.map(_.value.render).mkString("(", ", ", ")"))
     }
 }

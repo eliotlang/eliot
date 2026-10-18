@@ -11,8 +11,8 @@ import com.vanillasource.eliot.eliotc.processor.common.SingleKeyTypeProcessor
 import com.vanillasource.eliot.eliotc.resolve.fact.{AbilityFQN, Qualifier as ResolveQualifier}
 
 /** Checks the **anonymous** implementations of an ability that match the ground type arguments the two-site search
-  * resolves it at ([[ImplementationConformance]]). A named implementation is never searched, so it is checked where a
-  * binding dispatches to it instead ([[NamedImplementationCheckProcessor]]).
+  * resolves it at ([[ImplementationConformance]]). A named implementation lowers to such an implementation over its
+  * handle `data` (`docs/effects.md` §3.1), which the search finds and this checks like any other.
   */
 class AbilityImplementationCheckProcessor
     extends SingleKeyTypeProcessor[AbilityImplementationCheck.Key] {

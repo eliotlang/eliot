@@ -1,7 +1,7 @@
 package com.vanillasource.eliot.eliotc.row
 
 import cats.syntax.all.*
-import com.vanillasource.eliot.eliotc.ast.fact.{EffectRow, Handles, ImplementationParameters}
+import com.vanillasource.eliot.eliotc.ast.fact.{EffectRow, Handles}
 import com.vanillasource.eliot.eliotc.core.fact.RoleHint
 import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, Qualifier, Role, ValueFQN, WellKnownTypes}
 import com.vanillasource.eliot.eliotc.monomorphize.check.GuardChannel
@@ -522,9 +522,8 @@ object BindingWriter {
         applied: Int = 0
     ): Sourced[OperatorResolvedExpression] =
       expr.value match {
-        // A `with` the resolver did not lower is reached only while the universe still misses the implementation's
-        // binder ([[RowElaborationProcessor]]'s rounds), whose write is discarded: the subject is what it reads.
-        case WithBinding(subject, _) => walk(subject, scope, applied)
+        case WithBinding(subject, implementation, supplied) =>
+          walkHandleWith(expr, subject, implementation, supplied, scope, applied)
 
         case ParameterReference(name) if scope.captured.contains(name.value) =>
           violations += capturedCode(name, scope)
@@ -554,9 +553,6 @@ object BindingWriter {
         case _ =>
           val (head, args) = spine(expr.value)
           head match {
-            case ValueReference(callee, _) if ImplementationParameters.isBinder(callee.value) &&
-                  universe.lookup(callee.value).isDefined =>
-              walkHandleWith(expr, callee, args, scope, applied)
             case ValueReference(callee, existing)                                   =>
               val (written, holes, writtenBy) = writeBindings(expr.as(head), callee.value, existing, scope)
               unappliedEffectful(callee, args.size + applied, scope).foreach(violations += _)
@@ -571,118 +567,123 @@ object BindingWriter {
           }
       }
 
-    /** A `with` on the new effect path (`docs/effects.md` D36 point 5): the handle its implementation's `data` holds,
-      * bound around its subject as an ordinary `let`, where every hole in the subject may take it.
+    /** A `with` (`docs/effects.md` D36 point 5): the handle its implementation's `data` holds, bound around its
+      * subject as an ordinary `let`, where every hole in the subject may take it.
       *
       * {{{
-      * scripted$with(answer, greet("Bob") with scripted)
-      *   ⟶ ($with1 -> greet(?Console{$with1: Console | …}, "Bob"))(scripted$Handle(answer))
+      * greet("Bob") with scripted(answer)
+      *   ⟶ ($with1 -> greet(?Console{$with1: Console | …}, "Bob"))(Scripted$Handle(answer))
       * }}}
       *
-      * The arguments are computed where the `with` is written, outside its binding, as before. The handle's entry is
-      * the implementation's pattern, its type parameters keyed holes written at the data's constructor, so the checker
+      * The arguments are computed where the `with` is written, outside its binding. The handle's entry is the
+      * implementation's pattern, its type parameters keyed holes written at the data's constructor, so the checker
       * reads them off the arguments and the uses alike.
       */
     private def walkHandleWith(
         expr: Sourced[OperatorResolvedExpression],
-        callee: Sourced[ValueFQN],
-        args: Seq[Sourced[OperatorResolvedExpression]],
+        subject: Sourced[OperatorResolvedExpression],
+        implementation: Sourced[ValueFQN],
+        supplied: Seq[Sourced[OperatorResolvedExpression]],
         scope: Scope,
         applied: Int
-    ): Sourced[OperatorResolvedExpression] = {
-      val position = args.indexWhere(_.value match {
-        case WithBinding(_, named) => ImplementationParameters.binderOf(named.value) == callee.value
-        case _                     => false
-      })
-      if (position < 0) expr.as(applyChain(expr.as(ValueReference(callee)), args.map(walk(_, scope))))
-      else {
-        val declared                             =
-          universe.lookup(callee.value).fold(0)(orv => SignatureView.of(orv.signature).parameters.size - 1)
-        val (supplied, rest)                     = args.splitAt(position)
-        val WithBinding(subject, implementation) = rest.head.value: @unchecked
-        if (position != declared)
-          violations += Violation(
-            args(position).as(
-              s"The implementation '${implementationName(implementation.value)}' takes $declared parameter" +
-                s"${if (declared == 1) "" else "s"}, but this `with` supplies $position."
-            )
-          )
-        (abilityOf(implementation.value, universe), universe.lookup(implementation.value)) match {
-          // Only a layer that bodies the implementation mints its handle `data`: without one on the path — the base's
-          // `implement standardConsole: Console` and no platform layer — there is nothing to install.
-          case (Some(_), Some(marker)) if universe.lookup(handleConstructor(marker, implementation.value)).isEmpty =>
-            val name = implementationName(implementation.value)
-            violations += Violation(
-              implementation.as(s"The implementation '$name' has no body here."),
-              Seq(s"No layer on the path bodies '$name'; a platform layer is what bodies it.")
-            )
-            // The value is refused; the subject is left unwritten rather than reported again for what it performs.
-            expr
-          case (Some(ability), Some(marker)) =>
-            val view    = SignatureView.of(marker.signature)
-            // The data takes the implementation's own type parameters, never the binding a `~` constraint on one mints.
-            val own     = unmarkedBinders(marker)
-            // The handle's capture fields (`docs/effects.md` D36 point 2): a captured entry takes the handle in scope
-            // here, outside the binding, and any other `unit`.
-            val fields  = Captures.captured(marker, universe).getOrElse(Seq.empty)
-            // A type parameter the handle's value fixes — one its parameters' types or its clauses' entries mention — is
-            // one keyed hole, written at the data's constructor and in the entry alike. Any other is the pattern's
-            // alone: the handle's type does not take it, so its key is fresh at each hole the handle is offered to,
-            // which solves it from what it asks (`docs/effects.md` §8 item 30, as the core desugar's handle `data`
-            // reads it).
-            val types   = universe.lookup(callee.value).toSeq.flatMap(orv => SignatureView.of(orv.signature).parameters.dropRight(1))
-            val fixed   = own.filter(name =>
-              types.exists(t => containsVar(t.value, name)) || fields.exists(_._1._2.exists(containsVar(_, name)))
-            )
-            val keys    = own.map(_ -> keyedHole(implementation)).toMap
-            val perUse  = own.filterNot(fixed.contains).flatMap(name => holeKey(keys(name))).toSet
-            val held    = fields.map { case ((fieldAbility, arguments), isCaptured) =>
-              val key = keyedHole(implementation)
-              val arg =
-                if (isCaptured) {
-                  // The by-name half of the scope check (`docs/effects.md` D36): a captured entry with no handle of its
-                  // effect in scope at all is what this definition performs and does not declare.
-                  if (candidates(fieldAbility, scope).isEmpty) reportUncovered(fieldAbility, implementation, scope)
-                  handleHole(
-                    implementation,
-                    fieldAbility,
-                    arguments.map(argument => implementation.as(substituted(argument, keys))),
-                    scope
-                  )
-                } else unitValue(implementation)
-              (key, arg)
-            }
-            val entry   = HandleHole.Entry(
-              ability,
-              view.parameters.map(pattern =>
-                pattern.as(keys.foldLeft(pattern.value) { case (acc, (name, key)) => substitute(acc, name, key) })
+    ): Sourced[OperatorResolvedExpression] =
+      (abilityOf(implementation.value, universe), universe.lookup(implementation.value)) match {
+        case (Some(ability), Some(marker)) =>
+          universe.lookup(handleConstructor(marker, implementation.value)) match {
+            // Only a layer that bodies the implementation mints its handle `data`: without one on the path — the
+            // base's `implement standardConsole: Console` and no platform layer — there is nothing to install.
+            case None              =>
+              val name = implementationName(implementation.value)
+              violations += Violation(
+                implementation.as(s"The implementation '$name' has no body here."),
+                Seq(s"No layer on the path bodies '$name'; a platform layer is what bodies it.")
               )
-            )
-            val name    = implementation.as(Handles.binding(nextWith()))
-            val binding = Binding(ability, handle = Some(HandleHole.Candidate(name, entry)), perUse = perUse)
-            val bound   = walk(subject, scope.shadow(name.value).bind(binding), applied + rest.size - 1)
-            if (!used.contains(binding.serial)) violations += unusedWith(subject, implementation, ability, scope)
-            val handle  = applyChain(
-              implementation.as(
-                ValueReference(
-                  implementation.as(
-                    ValueFQN(
-                      marker.vfqn.moduleName,
-                      QualifiedName(Handles.dataType(implementationName(implementation.value)), Qualifier.Default)
+              // The value is refused; the subject is left unwritten rather than reported again for what it performs.
+              expr
+            case Some(constructor) =>
+              val view    = SignatureView.of(marker.signature)
+              // The data takes the implementation's own type parameters, never the binding a `~` constraint on one mints.
+              val own     = unmarkedBinders(marker)
+              // The handle's capture fields (`docs/effects.md` D36 point 2): a captured entry takes the handle in scope
+              // here, outside the binding, and any other `unit`.
+              val fields  = Captures.captured(marker, universe).getOrElse(Seq.empty)
+              // The handle's leading fields are the implementation's parameters, and its capture fields the rest.
+              val types   = SignatureView.of(constructor.signature).parameters.dropRight(fields.size)
+              checkSupplied(implementation, types.size, supplied)
+              // A type parameter the handle's value fixes — one its parameters' types or its clauses' entries mention —
+              // is one keyed hole, written at the data's constructor and in the entry alike. Any other is the pattern's
+              // alone: the handle's type does not take it, so its key is fresh at each hole the handle is offered to,
+              // which solves it from what it asks (`docs/effects.md` §8 item 30, as the core desugar's handle `data`
+              // reads it).
+              val fixed   = own.filter(name =>
+                types.exists(t => containsVar(t.value, name)) || fields.exists(_._1._2.exists(containsVar(_, name)))
+              )
+              val keys    = own.map(_ -> keyedHole(implementation)).toMap
+              val perUse  = own.filterNot(fixed.contains).flatMap(name => holeKey(keys(name))).toSet
+              val held    = fields.map { case ((fieldAbility, arguments), isCaptured) =>
+                val key = keyedHole(implementation)
+                val arg =
+                  if (isCaptured) {
+                    // The by-name half of the scope check (`docs/effects.md` D36): a captured entry with no handle of
+                    // its effect in scope at all is what this definition performs and does not declare.
+                    if (candidates(fieldAbility, scope).isEmpty) reportUncovered(fieldAbility, implementation, scope)
+                    handleHole(
+                      implementation,
+                      fieldAbility,
+                      arguments.map(argument => implementation.as(substituted(argument, keys))),
+                      scope
                     )
-                  ),
-                  fixed.map(name => implementation.as(keys(name))) ++ held.map((key, _) => implementation.as(key))
+                  } else unitValue(implementation)
+                (key, arg)
+              }
+              val entry   = HandleHole.Entry(
+                ability,
+                view.parameters.map(pattern =>
+                  pattern.as(keys.foldLeft(pattern.value) { case (acc, (name, key)) => substitute(acc, name, key) })
                 )
-              ),
-              supplied.map(walk(_, scope)) ++ held.map(_._2)
-            )
-            val let     = FunctionApplication(implementation.as(FunctionLiteral(name, None, bound)), implementation.as(handle))
-            expr.as(applyChain(implementation.as(let), rest.tail.map(walk(_, scope))))
-          case _                             =>
-            violations += Violation(implementation.as("This name is not an implementation."))
-            walk(subject, scope, applied)
-        }
+              )
+              val name    = implementation.as(Handles.binding(nextWith()))
+              val binding = Binding(ability, handle = Some(HandleHole.Candidate(name, entry)), perUse = perUse)
+              val bound   = walk(subject, scope.shadow(name.value).bind(binding), applied)
+              if (!used.contains(binding.serial)) violations += unusedWith(subject, implementation, ability, scope)
+              val handle  = applyChain(
+                implementation.as(
+                  ValueReference(
+                    implementation.as(constructor.vfqn),
+                    fixed.map(name => implementation.as(keys(name))) ++ held.map((key, _) => implementation.as(key))
+                  )
+                ),
+                supplied.map(walk(_, scope)) ++ held.map(_._2)
+              )
+              expr.as(FunctionApplication(implementation.as(FunctionLiteral(name, None, bound)), implementation.as(handle)))
+          }
+        case _                             =>
+          violations += Violation(implementation.as("This name is not an implementation."))
+          walk(subject, scope, applied)
       }
+
+    /** Whether a `with` supplies as many arguments as its implementation takes parameters. */
+    private def checkSupplied(
+        implementation: Sourced[ValueFQN],
+        declared: Int,
+        supplied: Seq[Sourced[OperatorResolvedExpression]]
+    ): Unit = {
+      val name = implementationName(implementation.value)
+      if (declared == 0 && supplied.nonEmpty)
+        violations += Violation(supplied.head.as(s"The implementation '$name' takes no parameters."))
+      else if (declared > 0 && supplied.isEmpty)
+        violations += Violation(
+          implementation.as(
+            s"The implementation '$name' takes parameters, and they are supplied where it is bound: `with $name(…)`."
+          )
+        )
+      else if (declared != supplied.size)
+        violations += Violation(
+          implementation.as(
+            s"The implementation '$name' takes $declared parameter${if (declared == 1) "" else "s"}, but this `with` " +
+              s"supplies ${supplied.size}."
+          )
+        )
     }
 
     private var withs: Long = 0
@@ -1119,7 +1120,7 @@ object BindingWriter {
         scope: Scope
     ): Violation = {
       def innermost(expr: OperatorResolvedExpression): OperatorResolvedExpression = expr match {
-        case WithBinding(inner, _) => innermost(inner.value)
+        case WithBinding(inner, _, _) => innermost(inner.value)
         case other                 => other
       }
       innermost(subject.value) match {

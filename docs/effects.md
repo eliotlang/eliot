@@ -559,8 +559,8 @@ parameter no field and no captured entry mentions is left out of the handle and 
 use, so one `with showing` serves `Source[Int]` and `Source[String]` (§8 item 30); one a field fixes is one per
 handle. Only a layer that **bodies** the implementation mints its handle `data` and instance — the base's body-less
 `implement standardConsole: Console` declares only the name a `with` resolves to — and every named implementation
-keeps its marker, its name marker (`QualifiedName(name, Qualifier.Implementation(name))`, what `with name` looks up)
-and its `$with` binder (below).
+keeps its marker and its name marker (`QualifiedName(name, Qualifier.Implementation(name))`, what `with name` looks
+up).
 
 **A `uses` entry is a handle parameter** (`core/…/EffectSugarDesugarer`): one marked binder and one value parameter
 per entry, after the handles the definition already takes (an effect member's own) and before its own parameters. A
@@ -585,12 +585,12 @@ one and which ability it binds; the walk erases it at the end of that phase, so 
 binders of kind `Type`. A clause entry, a handle and its binder are declaration metadata and a value parameter: no row
 ever flows into a type, so `unify` sees `Function[A, B]` on both sides of a code parameter and a value alike.
 
-**A `with` supplying arguments is a call before it is a `with`.** The resolver lowers `greet with scripted("Bob")` to
-`scripted$with("Bob", greet with scripted)`, a call of the implementation's body-less **binder** declaration
-`def scripted$with[Subject$](answer: String, subject$: Subject$): Subject$` (`ast/fact/ImplementationParameters`), so
-the arguments are resolved, operator-desugared and typed as any call's, and stand outside the `with`, where they are
-computed. Every `with` in a body is lowered so, one supplying nothing to a binder taking only its subject. The `row`
-phase turns the call into the handle (§3.2).
+**A `with` carries its arguments.** `greet with scripted("Bob")` reaches the `row` phase as one node,
+`WithBinding(subject, marker, arguments)`, through resolution, match desugaring and operators, each of which treats the
+arguments as ordinary expressions outside the subject. The `row` phase turns the node into the handle (§3.2): the
+arguments are the handle constructor's, so they are typed as any call's and computed where the `with` stands. How many
+the implementation takes is read off that constructor — its fields less its capture fields — so a `with` supplying
+none to one that takes some, or some to one that takes none, or the wrong number, is refused at the `with`.
 
 ### 3.2 The walk: holes, handles, blocks and the second-class rule
 
@@ -604,7 +604,7 @@ use into plumbing and checks what can be checked by name. Nothing it writes deci
   each `with`'s handle (a group each), and what a block captured from where it was written. The checker fills it
   (§3.3). A type argument the call leaves to the checker is a keyed hole (`CheckState.sharedHoles`), the same
   metavariable wherever the key appears, so an entry and the type it is written from stay one type.
-- **A `with` binds a handle** (D23): the binder call becomes a `let` of the implementation's handle around the subject,
+- **A `with` binds a handle** (D23): the node becomes a `let` of the implementation's handle around the subject,
   `($with1 -> greet(?Console{$with1 …}, "Bob"))(Scripted$Handle("Bob"))`, where every hole in the subject may take it;
   its arguments are computed outside, and each captured field is a hole of its own, answered **at the `with`**. A
   `with` whose handle no hole in its subject could take is *"This `with` binds nothing …"*; one whose implementation no
@@ -1042,7 +1042,6 @@ Each item is a defect to close or a decision to make, never a doc fix. Numbers a
 
 | # | what is left | why it is still there |
 | --- | --- | --- |
-| 63 | the `$with` and `$parameters` declarations (`ast/fact/ImplementationParameters`) | they carry a `with`'s arguments through resolution, operators and match desugaring as an ordinary call's; the `row` walk turns the call into the handle (§3.1). Reading 6 removes them, which needs a `with` node carrying its arguments through every phase |
 | 64 | the `Implementation[A]` mark (§9) | how the walk tells a binding binder from an ordinary one, and how a handed binder is recognised |
 
 **Cleanup** (found by the same review; not defects). Most of it is in code D36 deletes and goes with it; the rest is to
@@ -1050,7 +1049,7 @@ do with the next change that touches the file:
 
 - *Unused code:* `RowChecker.checkable`; `PostDrainQuoter.reduceSignatureToGround`; `CheckState.metaConstraints`/
   `recordMetaConstraints`/`MetaConstraint` and `CarrierKindChecker.recordMetaConstraints`; `WellKnownTypes.boolFoldFQN`/
-  `boolIfFQN`; `ImplementationParameters.isDeclaration`; `Unifier.occursInValue`; `CompilerMonomorphicValue.naturalArity`;
+  `boolIfFQN`; `Unifier.occursInValue`; `CompilerMonomorphicValue.naturalArity`;
   unused imports in `AbilityImplementationCheckProcessor`; the `IO`/`runMain` stub in `ProcessorTest.scala:50-52`; the
   compile-track type-keyed cell (`compiler/Cell.els`, `EffectIntrinsics`' cell operations, their `WellKnownTypes`
   FQNs), read only by tests.
@@ -1060,7 +1059,7 @@ do with the next change that touches the file:
   "deferred slots" (deleted in 4bb25c00; `Unifier.scala:48` links it); base `.els` docs (`File.els:123`,
   `Process.els:127` on `with standardFileSystem`; `lang/Implementation.els:4-7, 32` on `Default`; `Throw.els`,
   `Abort.els`, `State.els` saying there is "nothing to bind with `with`"; `compiler/Cell.els:6, 8`); Scaladoc in
-  `RowElaboratedValue`, `RowElaborationProcessor`, `ImplementationParameters`, `EffectIntrinsics`,
+  `RowElaboratedValue`, `RowElaborationProcessor`, `EffectIntrinsics`,
   `SuppliedRowArgumentsProcessor`, `NamedImplementationArguments`, `AbilityMatcher.patternParameters`, `LspPlugin`,
   `WellKnownTypes`; carrier-era and brace-row examples in `EffectRow`, `NamedImplementation`, `ImplementBlock`,
   `WithBinding`, `BindingWriter`, `ValueResolver`, `CoreExpressionConverter`, `AbilityImplementation(Processor)`,
@@ -1125,6 +1124,7 @@ do with the next change that touches the file:
 | 60 | a reference whose entry the call does not spell answered before the checker typed it | 2026-10-18, D36: the hole rule (`HoleRuleIntegrationTest`) |
 | 61 | an anonymous implementation's clause could not repeat a member's entry at the pattern's type | 2026-10-18: the member's entry is read at the implementation's pattern (`RowElaborationProcessor.memberEntriesAtPattern`); an entry spelled through an alias is still refused, loudly |
 | 62 | runs of one code parameter given different implementations refused | 2026-10-17, D35 step 5a; refused again by D36 point 6 |
+| 63 | a `with`'s arguments rode the call of a `$with` binder declaration through every phase (`ast/fact/ImplementationParameters`), and the `$parameters` declaration told how many it takes | 2026-10-18: the `with` node carries them (`WithBinding.arguments`); the count is read off the handle constructor. `NamedImplementationCheckProcessor`, which read `$parameters` and was demanded by nothing since the flip, went with them; every jar byte-identical |
 | 65 | `BindingWriter`'s D30 bookkeeping (spelled entries, `Need`s, rides, the threading's `with` arms) ran beside the holes | 2026-10-18: deleted, every example jar byte-identical and the suites unchanged; a run's listed effect is checked by name (`checkGiven`), its entry by the hole. Measured first: the `$with` lowering in a signature, an effect binder no handle takes and the keyed holes of an unhandled callee never fired over the suites; a closed callback's ride produced no accepted program (its callee is "declares … but does not perform it") |
 
 ## 9. The binding binder's mark (built 2026-09-11/12; D36 deletes it, §8 item 64)
@@ -1516,6 +1516,9 @@ and uses in `row` (`BindingWriter`). What is new:
    binder is recognised. `BindingWriter`'s by-name half of the scope check stays by design ("The scope check
    splits"); its spelled-entry bookkeeping (D30's `Need`s and rides) still runs and is subsumed by the hole rule.
    These are §8 items 63–65. **Item 65 closed (2026-10-18)**: the bookkeeping is deleted, every jar byte-identical.
+   **Item 63 closed (2026-10-18)**: the `with` node carries its arguments from `core` to the `row` phase; the `$with`
+   binder, the `$parameters` declaration and the named-implementation conformance check that read it (demanded by
+   nothing since the flip) are deleted, every jar byte-identical.
 
    **Part I rewritten (2026-10-18)** to the tree, with §12's restated entries, `CLAUDE.md`'s cornerstone and phases,
    and the `eliot-code` skill. §8 items 59–61 closed; 61 needed the `row` phase's anonymous-clause check to read the

@@ -45,9 +45,11 @@ class OperatorResolverProcessor
           resolvedParts <- parts.traverse(part => resolveInExpression(part.value).map(part.as))
           result        <- resolveFlatExpression(resolvedParts)
         } yield result
-      case MatchDesugaredExpression.WithBinding(subject, implementation) =>
-        resolveInExpression(subject.value)
-          .map(sub => OperatorResolvedExpression.WithBinding(subject.as(sub), implementation))
+      case MatchDesugaredExpression.WithBinding(subject, implementation, arguments) =>
+        (
+          resolveInExpression(subject.value).map(subject.as),
+          arguments.traverse(argument => resolveInExpression(argument.value).map(argument.as))
+        ).mapN(OperatorResolvedExpression.WithBinding(_, implementation, _))
       case MatchDesugaredExpression.FunctionApplication(target, arg)            =>
         for {
           resolvedTarget <- resolveInExpression(target.value).map(target.as)

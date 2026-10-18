@@ -43,13 +43,12 @@ object Expression {
   /** `subject with implementation` — effects v6's binding of a named implementation for the calls lexically inside
     * `subject` (`docs/effects.md` §9.3). The name is carried as written (plus its optional module qualifier) and
     * resolved at [[com.vanillasource.eliot.eliotc.resolve.processor.ImplementationNameResolver]] to the
-    * implementation's marker; the node itself is consumed by the `row` phase, which writes the binding into every
-    * phantom binder inside the subject and erases the node, so nothing from saturation onwards ever sees it.
+    * implementation's marker; the node itself is consumed by the `row` phase, which binds the implementation's handle
+    * around the subject and erases the node, so nothing from saturation onwards ever sees it.
     *
     * `arguments` are what a `with` supplies to an implementation that takes parameters (`greet with
-    * scripted(List("Bob"))`); the resolver lowers them to a call of the implementation's binder declaration around the
-    * resolved `with` ([[com.vanillasource.eliot.eliotc.ast.fact.ImplementationParameters]]), so no later phase's `with`
-    * carries any.
+    * scripted(List("Bob"))`), carried on the node through every phase to the `row` phase, which builds the handle from
+    * them, outside the `with`.
     */
   case class WithBinding(
       subject: Sourced[Expression],

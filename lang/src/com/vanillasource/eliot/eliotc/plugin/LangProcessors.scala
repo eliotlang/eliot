@@ -3,8 +3,7 @@ package com.vanillasource.eliot.eliotc.plugin
 import com.vanillasource.eliot.eliotc.ability.processor.{
   AbilityImplementationCheckProcessor,
   AbilityImplementationProcessor,
-  ModuleAbilityOverlapCheckProcessor,
-  NamedImplementationCheckProcessor
+  ModuleAbilityOverlapCheckProcessor
 }
 import com.vanillasource.eliot.eliotc.ast.processor.ASTParser
 import com.vanillasource.eliot.eliotc.block.processor.BlockDesugaringProcessor
@@ -100,7 +99,6 @@ object LangProcessors {
     SaturatedValueProcessor(),
     AbilityImplementationProcessor(),
     AbilityImplementationCheckProcessor(),
-    NamedImplementationCheckProcessor(),
     ModuleAbilityOverlapCheckProcessor(),
     SystemNativesProcessor(),
     DataTypeNativesProcessor(),

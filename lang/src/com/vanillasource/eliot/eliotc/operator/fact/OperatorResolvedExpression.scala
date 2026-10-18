@@ -27,15 +27,15 @@ object OperatorResolvedExpression {
       body: Sourced[OperatorResolvedExpression]
   ) extends OperatorResolvedExpression
 
-  /** `subject with implementation` — effects v6's binding of a named implementation for the calls lexically inside
-    * `subject` (`docs/effects.md` §9.3), as the resolver leaves it: inside the call of its implementation's binder
-    * ([[com.vanillasource.eliot.eliotc.ast.fact.ImplementationParameters]]). This is the last fact that carries it: the
-    * `row` phase checks the scope it opens and erases the node, keeping the binder's call, where the evidence after
-    * monomorphization installs the implementation (`docs/effects.md` D35).
+  /** `subject with implementation(arguments…)` — a named implementation's handle bound for `subject`
+    * (`docs/effects.md` §3.1): the implementation's marker, and its parameters, values computed where the `with` is
+    * written. This is the last fact that carries it: the `row` phase binds the handle — the implementation's `data`
+    * built from the arguments and its captures — around the subject as a `let`, and erases the node.
     */
   case class WithBinding(
       subject: Sourced[OperatorResolvedExpression],
-      implementation: Sourced[ValueFQN]
+      implementation: Sourced[ValueFQN],
+      arguments: Seq[Sourced[OperatorResolvedExpression]]
   ) extends OperatorResolvedExpression
 
   /** A **handle position** the `row` phase leaves for the checker to fill (`docs/effects.md` D36 point 4): the handle a
@@ -98,8 +98,12 @@ object OperatorResolvedExpression {
         if (pn.value == paramName) body
         else body.map(substitute(_, paramName, replacement))
       FunctionLiteral(pn, newParamType, newBody)
-    case WithBinding(subject, implementation)         =>
-      WithBinding(subject.map(substitute(_, paramName, replacement)), implementation)
+    case WithBinding(subject, implementation, arguments) =>
+      WithBinding(
+        subject.map(substitute(_, paramName, replacement)),
+        implementation,
+        arguments.map(_.map(substitute(_, paramName, replacement)))
+      )
     case hole: HandleHole                                    =>
       HandleHole.mapTypes(hole)(_.map(substitute(_, paramName, replacement)))
     case _: IntegerLiteral | _: StringLiteral                =>
@@ -119,7 +123,8 @@ object OperatorResolvedExpression {
       val inParamType = paramType.exists(pt => containsVar(pt.value, varName))
       val inBody      = pn.value != varName && containsVar(body.value, varName)
       inParamType || inBody
-    case WithBinding(subject, _)            => containsVar(subject.value, varName)
+    case WithBinding(subject, _, arguments)    =>
+      containsVar(subject.value, varName) || arguments.exists(a => containsVar(a.value, varName))
     case hole: HandleHole                      =>
       HandleHole.typeExpressions(hole).exists(t => containsVar(t.value, varName)) ||
         hole.candidates.flatten.exists(_.name.value == varName)
@@ -150,7 +155,8 @@ object OperatorResolvedExpression {
           case None     => s.pure[F]
         }
         withParam.flatMap(go(body.value, _))
-      case WithBinding(subject, _)          => go(subject.value, s)
+      case WithBinding(subject, _, arguments)  =>
+        arguments.foldLeft(go(subject.value, s))((a, argument) => a.flatMap(go(argument.value, _)))
       case hole: HandleHole                    =>
         HandleHole.typeExpressions(hole).foldLeft(s.pure[F])((a, t) => a.flatMap(go(t.value, _)))
       case _: IntegerLiteral | _: StringLiteral | _: ParameterReference =>
@@ -170,8 +176,9 @@ object OperatorResolvedExpression {
           .mapN(FunctionLiteral(paramName, _, _))
       case ValueReference(name, typeArgs)                               =>
         typeArgs.traverse(ta => f(ta.value).map(ta.as)).map(ValueReference(name, _))
-      case WithBinding(subject, implementation)                  =>
-        f(subject.value).map(sub => WithBinding(subject.as(sub), implementation))
+      case WithBinding(subject, implementation, arguments)       =>
+        (f(subject.value).map(subject.as), arguments.traverse(a => f(a.value).map(a.as)))
+          .mapN(WithBinding(_, implementation, _))
       case _: HandleHole | _: IntegerLiteral | _: StringLiteral | _: ParameterReference => expr.pure[F]
     }
 
@@ -295,8 +302,8 @@ object OperatorResolvedExpression {
       ValueReference(name, typeArgs.map(ta => ta.map(fromExpression)))
     case MatchDesugaredExpression.FunctionLiteral(paramName, paramType, body) =>
       FunctionLiteral(paramName, paramType.map(_.map(fromExpression)), body.map(fromExpression))
-    case MatchDesugaredExpression.WithBinding(subject, implementation) =>
-      WithBinding(subject.map(fromExpression), implementation)
+    case MatchDesugaredExpression.WithBinding(subject, implementation, arguments) =>
+      WithBinding(subject.map(fromExpression), implementation, arguments.map(_.map(fromExpression)))
     case MatchDesugaredExpression.FlatExpression(_)                           =>
       throw IllegalStateException("FlatExpression should not exist after operator resolution")
   }
@@ -313,8 +320,9 @@ object OperatorResolvedExpression {
       case ValueReference(name, typeArgs)                                     =>
         name.value.show +
           (if (typeArgs.isEmpty) "" else typeArgs.map(ta => ta.value.render).mkString("[", ", ", "]"))
-      case WithBinding(subject, implementation)                            =>
-        s"${subject.value.render} with ${implementation.value.show}"
+      case WithBinding(subject, implementation, arguments)                 =>
+        s"${subject.value.render} with ${implementation.value.show}" +
+          (if (arguments.isEmpty) "" else arguments.map(_.value.render).mkString("(", ", ", ")"))
       case HandleHole(entry, candidates)                                      =>
         def shown(e: HandleHole.Entry) =
           e.ability.abilityName + (if (e.typeArgs.isEmpty) "" else e.typeArgs.map(_.value.render).mkString("[", ", ", "]"))

@@ -4,7 +4,6 @@ import cats.data.Chain
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
-import com.vanillasource.eliot.eliotc.ability.fact.NamedImplementationCheck
 import com.vanillasource.eliot.eliotc.ast.fact.Visibility
 import com.vanillasource.eliot.eliotc.feedback.CompilerError
 import com.vanillasource.eliot.eliotc.module.fact.{
@@ -96,8 +95,8 @@ class AbilityResolverBindingTest extends AnyFlatSpec with Matchers {
     */
   private val abilities = ModuleAbilities(throwModule, Seq.empty, Seq.empty)
 
-  /** A [[CompilationProcess]] holding the named implementation's marker, its module's `clauses`, its passed
-    * conformance check and the ability's module: every other read answers "not produced".
+  /** A [[CompilationProcess]] holding the named implementation's marker, its module's `clauses`
+    * and the ability's module: every other read answers "not produced".
     */
   private class Implementation(clauses: Seq[String]) extends CompilationProcess {
     private val names =
@@ -108,7 +107,7 @@ class AbilityResolverBindingTest extends AnyFlatSpec with Matchers {
         ancestors: List[CompilerFactKey[?]]
     ): IO[Option[V]] =
       IO.pure(
-        Seq(implMarkerValue, names, NamedImplementationCheck(implMarker), abilities)
+        Seq(implMarkerValue, names, abilities)
           .find(_.key() == key)
           .map(_.asInstanceOf[V])
       )

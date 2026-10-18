@@ -10,7 +10,6 @@ import com.vanillasource.eliot.eliotc.ast.fact.{
   Expression,
   FunctionDefinition,
   Handles,
-  ImplementationParameters,
   ImplementationRows,
   LambdaParameterDefinition,
   NamedImplementation,
@@ -50,10 +49,6 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
   *     module's [[com.vanillasource.eliot.eliotc.module.fact.ModuleAbilities.markerOfImplementationName]], and only the
   *     real marker flows onward.
   *
-  * Every named implementation adds the binder a `with` naming it is lowered to, and one that takes **parameters**
-  * (`implement scripted(lines: List[String]): Terminal`) the parameters declaration too, as [[ImplementationParameters]]
-  * describes. Each clause receives the parameters ahead of its own.
-  *
   * A named implementation is always public: it exists to be named from elsewhere.
   */
 object NamedImplementationDesugarer {
@@ -71,11 +66,9 @@ object NamedImplementationDesugarer {
     *
     * The data's value is the **handle** a `with` puts in scope, and its fields are the implementation's parameters, so a
     * clause reads them off its own handle. Every implementation has a type of its own, so its instance is the only one
-    * at its pattern: the two-site search finds it in the data's module, and nothing overlaps it. The name marker and the
-    * `with` binder stay, unchanged, and so does its parameters declaration, so a `with` naming the implementation
-    * resolves and supplies its arguments as before; the `row` phase turns the
-    * binder's call into the handle in scope. So does the implementation's marker under its own name, with no clause
-    * beside it: it is what the resolver reaches the binder through.
+    * at its pattern: the two-site search finds it in the data's module, and nothing overlaps it. The name marker stays,
+    * so a `with` naming the implementation resolves; the `row` phase builds the handle from the `with`'s arguments. So
+    * does the implementation's marker under its own name, with no clause beside it: it is what a `with` resolves to.
     */
   def desugar(implementation: NamedImplementation): Seq[(FunctionDefinition, RoleHint)] = {
     val abilityName = implementation.ability.value
@@ -173,12 +166,7 @@ object NamedImplementationDesugarer {
     // own, which two layers could not both supply. The base's `implement standardConsole: Console`, and its
     // `standardFileSystem` whose clauses carry no body, only declare the name a `with` resolves to.
     val bodied      = implementation.functions.exists(f => f.name.value.qualifier != Qualifier.Type && f.body.isDefined)
-    val declaration =
-      (ImplementationParameters
-        .declaration(anchor, named, implementation.genericParameters, implementation.parameters, Seq.empty)
-        .toSeq :+ namedMarker :+ nameMarker :+
-        ImplementationParameters.binder(anchor, named, implementation.genericParameters, implementation.parameters))
-        .map(_ -> RoleHint.NoHint)
+    val declaration = Seq(namedMarker, nameMarker).map(_ -> RoleHint.NoHint)
     def recording(name: QualifiedName, genericParameters: Seq[GenericParameter], row: Seq[UnresolvedAbilityConstraint[Sourced[Expression]]]) =
       FunctionDefinition(
         anchor.as(name),

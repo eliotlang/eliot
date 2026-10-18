@@ -3,7 +3,6 @@ package com.vanillasource.eliot.eliotc.monomorphize.check
 import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.core.fact.RoleHint
 import com.vanillasource.eliot.eliotc.module.fact.{Qualifier => CoreQualifier}
-import com.vanillasource.eliot.eliotc.ast.fact.ImplementationParameters
 import com.vanillasource.eliot.eliotc.module.fact.{
   QualifiedName,
   UnifiedModuleNames,
@@ -227,21 +226,15 @@ class PostDrainQuoter(
   def runsControlEffects(expr: SemExpression): CompilerIO[Boolean] = reachesFrames(resolveAbilityRefs(expr))
 
   /** Whether evaluating `resolved` can reach a control effect's frame: some reference names a definition with an effect
-    * entry in its clauses, or a clause of an implementation that takes parameters.
+    * entry in its clauses.
     */
   private def reachesFrames(resolved: SemExpression): CompilerIO[Boolean] =
     valueRefsWithArgs(resolved).map(_._1).distinct.existsM { vfqn =>
       getFactIfProduced(UnifiedModuleNames.Key(vfqn.moduleName, platform)).flatMap {
         case Some(names) if names.names.contains(vfqn.name) =>
-          vfqn.name.qualifier match {
-            case _: CoreQualifier.AbilityImplementation
-                if names.names.contains(ImplementationParameters.of(vfqn).name) =>
-              true.pure[CompilerIO]
-            case _                                                            =>
-              getFactIfProduced(OperatorResolvedValue.Key(vfqn, platform)).map(_.exists { orv =>
-                orv.effectRow.returnEffects.nonEmpty || orv.effectRow.parameterEffects.exists(_.effects.nonEmpty)
-              })
-          }
+          getFactIfProduced(OperatorResolvedValue.Key(vfqn, platform)).map(_.exists { orv =>
+            orv.effectRow.returnEffects.nonEmpty || orv.effectRow.parameterEffects.exists(_.effects.nonEmpty)
+          })
         case _                                              => false.pure[CompilerIO]
       }
     }

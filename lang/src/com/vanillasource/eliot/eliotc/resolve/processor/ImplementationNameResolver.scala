@@ -1,7 +1,6 @@
 package com.vanillasource.eliot.eliotc.resolve.processor
 
 import cats.syntax.all.*
-import com.vanillasource.eliot.eliotc.ast.fact.ImplementationParameters
 import com.vanillasource.eliot.eliotc.module.fact.{
   ModuleAbilities,
   ModuleName,
@@ -43,21 +42,6 @@ object ImplementationNameResolver {
           case Some(nameMarker) => markerIn(nameMarker.moduleName, name)
         }
     }
-
-  /** What the implementation `marker` names takes: nothing, or parameters, read off its parameters declaration
-    * ([[ImplementationParameters.declaration]]), which only a named implementation with parameters has.
-    */
-  def parametersOf(marker: ValueFQN): ScopedIO[Parameters] =
-    for {
-      platform    <- getPlatform
-      declaration  = ImplementationParameters.of(marker)
-      names       <- getFactOrAbort(UnifiedModuleNames.Key(marker.moduleName, platform)).liftToScoped
-    } yield if (names.names.contains(declaration.name)) Parameters.Present else Parameters.None
-
-  /** What an implementation takes, as a `with` must supply it. */
-  enum Parameters {
-    case None, Present
-  }
 
   /** The implementation's real marker in `moduleName`, or the error at `name`. */
   private def markerIn(moduleName: ModuleName, name: Sourced[String]): ScopedIO[ValueFQN] =

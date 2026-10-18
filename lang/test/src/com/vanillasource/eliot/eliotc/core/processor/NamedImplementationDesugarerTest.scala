@@ -36,10 +36,10 @@ class NamedImplementationDesugarerTest extends ProcessorTest(new Tokenizer(), ne
       .asserting(clause(_, "readLine").visibility shouldBe Visibility.Public)
   }
 
-  it should "keep the marker, the name marker and the binder a `with` resolves through" in {
+  it should "keep the marker and the name marker a `with` resolves through" in {
     desugar("implement recordingConsole: Console {\n  def readLine: X = None\n}")
       .asserting(
-        _ should contain.allOf(("Console", named), ("recordingConsole", Qualifier.Implementation("recordingConsole")), ("$with", named))
+        _ should contain.allOf(("Console", named), ("recordingConsole", Qualifier.Implementation("recordingConsole")))
       )
   }
 

@@ -14,10 +14,9 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced.compilerError
 /** Whether an implementation's clauses conform to its ability: it gives every member the ability leaves abstract,
   * nothing the ability does not declare, and each clause at its member's signature.
   *
-  * Shared by the two checks that demand it: an anonymous implementation's, at the ground arguments the two-site search
-  * matched it at ([[com.vanillasource.eliot.eliotc.ability.processor.AbilityImplementationCheckProcessor]]), and a
-  * named one's, wherever a binding dispatches to it
-  * ([[com.vanillasource.eliot.eliotc.ability.processor.NamedImplementationCheckProcessor]]).
+  * Demanded at the ground arguments the two-site search matched an implementation at
+  * ([[com.vanillasource.eliot.eliotc.ability.processor.AbilityImplementationCheckProcessor]]); a named implementation is
+  * such an implementation over its handle `data` (`docs/effects.md` §3.1).
   */
 object ImplementationConformance {
 
@@ -40,29 +39,18 @@ object ImplementationConformance {
       _.declaredMethodsOf(ability.abilityName).traverse(method(_, platform))
     )
 
-  /** Report every way `implementation` (its clauses and its marker) fails to conform to `ability`'s `members`.
-    *
-    * @param complete
-    *   Whether a member the ability leaves abstract and the implementation does not give is an error. Not for a named
-    *   implementation that declares no clause at all — `implement standardConsole: Console`, which a platform layer
-    *   bodies — whose missing clause is reported where a binding dispatches to it.
-    * @param leadingParameters
-    *   How many parameters the implementation takes. Each clause receives them ahead of its member's own, so they are
-    *   not part of the member's contract and are dropped before comparing.
-    */
+  /** Report every way `implementation` (its clauses and its marker) fails to conform to `ability`'s `members`. */
   def check(
       ability: AbilityFQN,
       members: Seq[Method],
       implementation: Seq[Method],
-      platform: Platform,
-      complete: Boolean = true,
-      leadingParameters: Int = 0
+      platform: Platform
   ): CompilerIO[Unit] = {
-    // An implementation's own declarations on the new effect path (`docs/effects.md` D36) are not clauses.
+    // An implementation's own declarations (`docs/effects.md` D36) are not clauses.
     val clauses = implementation.filterNot(m => Handles.isDeclaration(m.vfqn.name.name))
-    checkCompleteness(ability, members, clauses).whenA(complete) >>
+    checkCompleteness(ability, members, clauses) >>
       checkNoExtras(members, clauses) >>
-      checkSignatures(ability, members, clauses, platform, leadingParameters)
+      checkSignatures(ability, members, clauses, platform)
   }
 
   /** A missing method is reported at the implementation's **marker** — the synthetic method named after the ability,
@@ -107,8 +95,7 @@ object ImplementationConformance {
       ability: AbilityFQN,
       members: Seq[Method],
       implementation: Seq[Method],
-      platform: Platform,
-      leadingParameters: Int
+      platform: Platform
   ): CompilerIO[Unit] = {
     val byName = implementation.map(m => m.vfqn.name.name -> m).toMap
     members
@@ -119,7 +106,7 @@ object ImplementationConformance {
           markerSignature <- markerSignature(clause.vfqn, ability.abilityName, platform)
           compatible      <- AbilityMatcher.signaturesCompatible(
                                withoutHandles(member.signature, ability),
-                               withoutHandles(withoutLeadingParameters(clause.signature, leadingParameters), ability),
+                               withoutHandles(clause.signature, ability),
                                markerSignature
                              )
           _               <- compilerError(clause.name.as("Signature of implementation does not match the ability definition."))
@@ -156,16 +143,6 @@ object ImplementationConformance {
           case _                                                    => false
         })
       case _                                                                                                                    => false
-    }
-
-  private def withoutLeadingParameters(
-      signature: Sourced[OperatorResolvedExpression],
-      count: Int
-  ): Sourced[OperatorResolvedExpression] =
-    if (count == 0) signature
-    else {
-      val view = SignatureView.of(signature)
-      signature.as(view.copy(parameters = view.parameters.drop(count)).toExpression)
     }
 
   /** The signature of the marker of the implementation `clause` belongs to. */

@@ -250,7 +250,7 @@ subset of its data.
     `RowElaboratedValue` before saturation, running `row/BindingWriter` over **both halves** of a definition (body *and*
     signature — a guarded return holds references too). It does all of an effect's plumbing and decides nothing
     (`docs/effects.md` §3.2): a **hole** (`HandleHole`) at every handle position — an operation's, a `uses` callee's, a
-    run's — carrying its entry and its lexical candidates nearest first; a `with` (the resolver's `$with` binder call)
+    run's — carrying its entry and its lexical candidates nearest first; a `with` (a node carrying its arguments from `core`)
     turned into a `let` of the implementation's handle around its subject; an actual at a listing slot wrapped in a
     lambda taking one handle per listed entry, a `uses *`-only one in a thunk; an implementation's clause shaped as its
     member (`row/Captures`). It is the scope check's **by-name** half: an effect with no handle of it in scope is the
@@ -616,9 +616,9 @@ mints its handle (`implement standardConsole: Console` in the base only declares
 also declares, at the implementation's pattern, is the **call's** (a handle parameter of the instance method,
 `standardFileSystem.readFile`'s `Throw[IoError]`); any other is **captured** at the `with`, a field holding the handle in
 scope there (`recordingConsole.printLine`'s `Writer[String]`, `row/Captures`). Parameters are supplied by the `with`
-(`greet with scripted("Bob")`), which the resolver lowers to a call of the implementation's body-less binder
-`scripted$with(args…, subject with scripted)` so the arguments are typed as any call's; the `row` walk turns it into a
-`let` of the handle around the subject. A type parameter no field fixes is the pattern's alone, solved at each use, so
+(`greet with scripted("Bob")`), carried on the `with` node to the `row` walk, which turns it into a `let` of the handle
+— the implementation's `data` built from the arguments — around the subject, so the arguments are typed as the
+constructor's. A type parameter no field fixes is the pattern's alone, solved at each use, so
 one `with showing` serves `Source[Int]` and `Source[String]`. **`with`** puts its handle in scope for its subject (D23):
 infix, subject-first, loosest precedence, left-associative, as an expression in a body only — on a parameter or a field
 it is a parse error. A `with` no hole in its subject takes is an error; one around a run of a code parameter is handed to

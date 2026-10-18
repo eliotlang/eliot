@@ -28,8 +28,8 @@ import com.vanillasource.eliot.eliotc.token.Token
   * @param parameters
   *   The implementation's **parameters** (`docs/effects.md` §11, "named implementations with parameters"), its runtime
   *   environment, supplied where it is bound: `implement scripted(lines: List[String]): Terminal { … }`, bound by
-  *   `greet with scripted(List("Bob"))`. Each clause receives them as leading value parameters, exactly as an
-  *   anonymous implementation's ([[ImplementationParameters]]).
+  *   `greet with scripted(List("Bob"))`. They are the fields of the implementation's handle `data`, which each clause
+  *   receives first (`docs/effects.md` §3.1).
   * @param doc
   *   The `/** ... */` documentation comment preceding the declaration, attached by position in `ASTParser`.
   */

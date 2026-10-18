@@ -1,7 +1,6 @@
 package com.vanillasource.eliot.eliotc.module.processor
 
 import cats.syntax.all.*
-import com.vanillasource.eliot.eliotc.ast.fact.ImplementationParameters
 import com.vanillasource.eliot.eliotc.module.fact.{
   ModuleAbilities,
   QualifiedName,
@@ -33,8 +32,7 @@ class ModuleAbilitiesProcessor extends SingleFactProcessor[ModuleAbilities.Key] 
               methodName,
               Qualifier.AbilityImplementation(abilityName, pattern, implementationName),
               Role.Runtime
-            ) if !ImplementationParameters.isAuxiliary(methodName) =>
-          // An implementation's parameters and binder declarations are looked up by name, never one of its clauses.
+            ) =>
           ModuleAbilities.Impl(ValueFQN(key.moduleName, qn), methodName, abilityName, pattern, implementationName)
       }
       ModuleAbilities(key.moduleName, declaredMethods, implementations, key.platform)
