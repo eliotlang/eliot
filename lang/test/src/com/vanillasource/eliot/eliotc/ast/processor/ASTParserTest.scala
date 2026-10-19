@@ -747,6 +747,12 @@ class ASTParserTest extends ProcessorTest(new Tokenizer(), new ASTParser()) {
     runEngineForErrors("implement Show[A] where a { def show: String = a }").asserting(_ shouldBe Seq.empty)
   }
 
+  it should "leave a parameter's meta brace to that parameter" in {
+    runEngineForParameterMetas("def f(a: Int {byte}, b: Int, c: Int {closed(0, 9)}): Int = a").asserting(
+      _ shouldBe Seq(("a", Seq("byte")), ("b", Seq.empty), ("c", Seq("closed(0, 9)")))
+    )
+  }
+
   private def runEngine(source: String): IO[Map[CompilerFactKey[?], CompilerFact]] =
     runGenerator(source, SourceAST.Key(file)).map(_._2)
 
@@ -844,6 +850,18 @@ class ASTParserTest extends ProcessorTest(new Tokenizer(), new ASTParser()) {
       results.values
         .collect { case SourceAST(_, Sourced(_, _, AST(_, functions, _, _, _))) =>
           functions.flatMap(f => f.args.map(a => (f.name.value.name, a.typeExpression.value)))
+        }
+        .toSeq
+        .flatten
+    }
+
+  private def runEngineForParameterMetas(source: String): IO[Seq[(String, Seq[String])]] =
+    for {
+      results <- runEngine(source)
+    } yield {
+      results.values
+        .collect { case SourceAST(_, Sourced(_, _, AST(_, functions, _, _, _))) =>
+          functions.flatMap(_.args.map(arg => (arg.name.value, arg.meta.map(_.value.render))))
         }
         .toSeq
         .flatten

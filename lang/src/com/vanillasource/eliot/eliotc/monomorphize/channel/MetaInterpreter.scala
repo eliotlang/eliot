@@ -2,7 +2,7 @@ package com.vanillasource.eliot.eliotc.monomorphize.channel
 
 import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.core.fact.Expression
-import com.vanillasource.eliot.eliotc.core.processor.{MetaCompanionLayout, MetaConstructorDesugarer}
+import com.vanillasource.eliot.eliotc.core.processor.{MetaCompanionLayout, MetaConstructorDesugarer, MetaParameterDesugarer}
 import com.vanillasource.eliot.eliotc.module.fact.{
   ModuleName,
   QualifiedName,
@@ -123,6 +123,78 @@ object MetaInterpreter {
   def declaresMetaStructure(typeName: ValueFQN): CompilerIO[Boolean] =
     getFactOrAbort(UnifiedModuleNames.Key(typeName.moduleName, Platform.Compiler))
       .map(_.names.contains(metaStructureName(typeName)))
+
+  /** A parameter's **statement** (`docs/total-meta-transfers.md` §8.9): the companion stating the meta of the value at
+    * parameter `parameter`, which is the `position`th of the `arity` its definition takes, handles included.
+    */
+  case class Statement(companion: ValueFQN, parameter: String, position: Int, arity: Int)
+
+  /** What a parameter's statement states at a callee's type arguments: a meta, or why there is none. */
+  enum Stated {
+
+    /** The stated meta, of meta type `metaType`. */
+    case Meta(value: GroundValue, metaType: GroundValue)
+
+    /** The parameter's type, `parameterType` once evaluated, carries no meta, so there is no constructor to apply the
+      * brace's slots to.
+      */
+    case Untracked(parameterType: GroundValue)
+
+    /** The statement did not reduce to a meta. */
+    case Unknown
+  }
+
+  /** The parameters of `callee` that carry a meta brace, in parameter order — each found as its statement companion in
+    * the callee's module ([[MetaParameterDesugarer.statedParameter]]), and placed by that companion's own placeholders,
+    * so a native, which has no body to name its parameters, is read the same way as a bodied value.
+    */
+  def parameterStatements(callee: ValueFQN): CompilerIO[Seq[Statement]] =
+    getFactOrAbort(UnifiedModuleNames.Key(callee.moduleName, Platform.Compiler)).flatMap { names =>
+      names.names.keys.toSeq
+        .flatMap(name => MetaParameterDesugarer.statedParameter(callee.name, name).map(ValueFQN(callee.moduleName, name) -> _))
+        .traverse { (companion, parameter) =>
+          companionParameters(companion).map { names =>
+            val placeholders = names.filter(_ =!= MetaCompanionLayout.constructorParameterName)
+            Statement(companion, parameter, placeholders.indexOf(MetaCompanionLayout.placeholderName(parameter)), placeholders.size)
+          }
+        }
+        .map(_.sortBy(_.position))
+    }
+
+  /** What `statement` states at the callee's type arguments. The companion is reduced at those, the meta types of the
+    * callee's parameters and the type of the stated parameter's meta constructor, which it takes first — as a
+    * slot-producing transfer does ([[reduceTransfer]]). It reads no parameter, so each is passed as a placeholder.
+    */
+  def statedMeta(callee: ValueFQN, calleeTypeArgs: Seq[GroundValue], statement: Statement): CompilerIO[Stated] =
+    payloadTypes(callee, calleeTypeArgs, statement.arity).flatMap {
+      case Some((parameters, _)) =>
+        parameters.traverse(metaTypeOf).flatMap { metaTypes =>
+          metaConstructorOf(metaTypes(statement.position)).flatMap {
+            case Some(constructor) =>
+              EscalatingReducer
+                .reduceApplied(
+                  statement.companion,
+                  calleeTypeArgs ++ metaTypes :+ constructor.valueType,
+                  Evaluator.groundToSem(constructor) +: Seq.fill(statement.arity)(SemValue.VType)
+                )
+                .map {
+                  case Some(meta: GroundValue.Structure) => Stated.Meta(meta, metaTypes(statement.position))
+                  case _                                 => Stated.Unknown
+                }
+            case None              => (Stated.Untracked(parameters(statement.position)): Stated).pure[CompilerIO]
+          }
+        }
+      case None                  => (Stated.Unknown: Stated).pure[CompilerIO]
+    }
+
+  /** Whether a value of meta `actual` fits where meta `stated` is stated: joining it into `stated` leaves `stated`, the
+    * structural comparison the reconcile pass makes. The join is the meta type's own `Meta` instance, reached through
+    * `eliot.compiler.Meta::joined` at that type by the one evaluator. Anything that does not reduce does not fit.
+    */
+  def fits(actual: GroundValue, stated: GroundValue, metaType: GroundValue): CompilerIO[Boolean] =
+    EscalatingReducer
+      .reduceApplied(WellKnownTypes.metaJoinedFQN, Seq(metaType), Seq(actual, stated).map(Evaluator.groundToSem))
+      .map(_.contains(stated))
 
   /** Flatten a curried application into its ultimate head and its arguments in source order. */
   private[channel] def flatten(
@@ -345,19 +417,25 @@ object MetaInterpreter {
   ): CompilerIO[Option[Seq[GroundValue]]] =
     companionArity(companion).flatMap {
       case arity if arity === appliedArgs =>
-        EscalatingReducer
-          .reduceApplied(ValueFQN(callee.moduleName, MetaCompanionLayout.payloadName(callee.name)), calleeTypeArgs, Seq.empty)
-          .flatMap {
-            case Some(payload) =>
-              peel(payload, arity) match {
-                case Some((parameters, result)) =>
-                  (if (withResult) parameters :+ result else parameters).traverse(metaTypeOf).map(_.some)
-                case None                       => none[Seq[GroundValue]].pure[CompilerIO]
-              }
-            case None          => none[Seq[GroundValue]].pure[CompilerIO]
-          }
+        payloadTypes(callee, calleeTypeArgs, arity).flatMap {
+          case Some((parameters, result)) =>
+            (if (withResult) parameters :+ result else parameters).traverse(metaTypeOf).map(_.some)
+          case None                       => none[Seq[GroundValue]].pure[CompilerIO]
+        }
       case _                              => none[Seq[GroundValue]].pure[CompilerIO]
     }
+
+  /** The callee's first `arity` parameter types and its result type, read from its **payload signature** evaluated at
+    * its type arguments ([[MetaCompanionLayout]]), or `None` if it does not reduce to that many arrows.
+    */
+  private def payloadTypes(
+      callee: ValueFQN,
+      calleeTypeArgs: Seq[GroundValue],
+      arity: Int
+  ): CompilerIO[Option[(Seq[GroundValue], GroundValue)]] =
+    EscalatingReducer
+      .reduceApplied(ValueFQN(callee.moduleName, MetaCompanionLayout.payloadName(callee.name)), calleeTypeArgs, Seq.empty)
+      .map(_.flatMap(peel(_, arity)))
 
   /** How many of its callee's parameters `companion` takes: its body's leading lambdas, one per parameter as the
     * desugarer writes them, less a meta constructor's. The arrow chain of a signature cannot say, since a function-typed

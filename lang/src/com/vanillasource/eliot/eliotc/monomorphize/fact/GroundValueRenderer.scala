@@ -14,7 +14,7 @@ import com.vanillasource.eliot.eliotc.module.fact.Qualifier
   *     with no args;
   *   - a function type as a right-associative arrow (`String -> Option[Int]`), parenthesising a function on the left of
   *     an arrow so `(A -> B) -> C` stays unambiguous;
-  *   - a direct (literal) value by its underlying `toString` (e.g. the `"hello"` of `Tag["hello"]`).
+  *   - a direct (literal) value as it is written (the `"hello"` of `Tag["hello"]`, the `300` of a range's endpoint).
   *
   * A type contains no compiler machinery to hide — a handle's type is an ordinary type parameter, and LSP hover leaves
   * handles out itself — so every type prints as what the user wrote.
@@ -24,7 +24,7 @@ object GroundValueRenderer {
   /** Render a ground type as a one-line string. */
   def render(value: GroundValue): String = value match {
     case GroundValue.Type                 => "Type"
-    case GroundValue.Direct(direct, _)    => direct.toString
+    case GroundValue.Direct(direct, _)    => literal(direct)
     case structure: GroundValue.Structure =>
       structure.asFunctionType match {
         case Some((from, to)) => s"${renderOperand(from)} -> ${render(to)}"
@@ -40,6 +40,11 @@ object GroundValueRenderer {
       case Some(_) => s"(${render(value)})"
       case None    => render(value)
     }
+
+  private def literal(direct: GroundValue.Literal): String = direct match {
+    case GroundValue.Literal.StringValue(value) => s"\"$value\""
+    case other                                  => other.debugString
+  }
 
   /** A plain application, bracketed by the head's qualifier so it reads the way the user writes it: `[]` for a type
     * constructor ([[Qualifier.Type]], e.g. `Box[String]` the type), `()` for a value constructor (e.g. `Box("a")` the

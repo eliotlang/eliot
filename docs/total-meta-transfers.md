@@ -676,6 +676,50 @@ and a type-parameter head is still exempt, being forwarded rather than originate
 brace lists slots over a result that carries no meta (a `String` stub, a `Bool`) is reported at the leaf: there is no
 constructor to apply them to, where before it failed to resolve `Bool$Meta`.
 
+**8.9 Parameter braces — LANDED (2026-10-19).** Decided in principle 2026-09-15 (`TODO.md`): a reusable "Byte" is a
+meta *value*, never a type — a transparent alias is erased by normalization, so there is nothing to attach a bound to —
+and the bound lives on the **occurrence** it bounds. A brace on a type occurrence states the meta of the value at that
+position, and *whoever supplies the value proves it*. A leaf's return has no supplier the language can see, so its
+brace is axiomatic (R2, unchanged). A parameter is supplied by the caller:
+
+```eliot
+def asByte(x: Int {closed(0, 255)}): Int = useByte(x)      // useByte's `where rangeWithin[0, 255](range(x))` holds
+  ⟶  asByte$Parameter$x[Meta$x, Constructor$](constructor$: Constructor$, x$: Meta$x): Meta$x = constructor$(closed(0, 255))
+```
+
+- **The grammar** is the adjacency rule a return brace already follows: a brace *before* a type is an effect row, one
+  *after* a value parameter's type is its meta. A code parameter (`body uses *: Int`) takes none, since its argument
+  reaches the channel as a thunk whose meta is never known; a `data` field takes none yet (below).
+- **The statement companion** (`MetaParameterDesugarer`) is one per braced parameter, named by the def and the
+  parameter in the def's meta namespace. It lists the slots of the parameter's meta, and takes the meta constructor the
+  way a slot-producing transfer does (§8.8), so a parameter typed by an alias needs no name. It reads **no parameter** —
+  the decided nullary statement: its parameters are placeholders (`x$`) a brace cannot name, there only so the channel
+  can count the def's parameters and place the stated one without knowing their names, which a native has no body to
+  give. Its result is typed by the stated parameter's own meta binder.
+- **At every full call** the argument's meta must fit: `join(argument, stated) ≡ stated`, compared structurally as the
+  reconcile pass compares verdicts. The join is the meta type's own `Meta` instance, reached through
+  `eliot.compiler.Meta::joined[D ~ Meta]` at that type by the one evaluator, so nothing is named from the type. ⊤
+  cannot discharge the demand, exactly as for a `where`; a brace on a parameter whose type carries no meta is reported
+  at the call, naming the parameter and the type.
+- **Inside the body** the parameter carries the stated meta instead of ⊤ — sound, since every manifest call proved it.
+  The walk binds it by position to the def's leading parameter lambdas (handles included, as the companion's
+  placeholders are) and a lambda's own binder of the same name shadows it. What a `where` could not give is this: a
+  predicate does not turn back into an interval, so `useByte(x)` inside `asByte` above was unprovable. The stated meta
+  reaches the body's *checks* and never its *layout*: a parameter reference still records ⊤, because the value arrives
+  at its boundary's width whatever is known of it.
+- **A def with a braced parameter cannot be passed as a value**, bare or partially applied, for the reason a
+  `where`-bearing one cannot (§2.1 of `docs/refinement-channel-follow-ups.md`).
+- **Layers.** Signature equality ignores the brace, so the layer rule for return braces applies unchanged.
+
+A reusable meta value is an ordinary def, but its literals must sit in type position until the `Int` literal handling
+is unified (`TODO.md`): an ordinary body is runtime-track, so `closed(0, 255)` there is an `Interval[Int]`.
+`def between[Lo: BigInteger, Hi: BigInteger]: Interval[BigInteger] = closed(Lo, Hi)` then
+`def byte: Interval[BigInteger] = between[0, 255]` and `x: Int {byte}` works.
+
+*Not built, by the decision's own split:* a brace on a **bodied return** — the body supplies it, so the derived meta
+would have to fit — reverses R3 and needs its own sign-off; and a **`data` field** `r: Int {byte}`, demanded at
+construction through the constructor call and stated by its generated accessor.
+
 ---
 
 ## 9. Staging

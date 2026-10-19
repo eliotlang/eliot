@@ -33,4 +33,12 @@ class GroundValueRendererTest extends AnyFlatSpec with Matchers {
     render(con(WellKnownTypes.functionDataTypeFQN, string, con(listFQN, string))) shouldBe "String -> List[String]"
   }
 
+  it should "render an integer literal as it is written" in {
+    render(con(listFQN, GroundValue.Direct(BigInt(300), string))) shouldBe "List[300]"
+  }
+
+  it should "render a string literal quoted" in {
+    render(con(listFQN, GroundValue.Direct("hello", string))) shouldBe "List[\"hello\"]"
+  }
+
 }

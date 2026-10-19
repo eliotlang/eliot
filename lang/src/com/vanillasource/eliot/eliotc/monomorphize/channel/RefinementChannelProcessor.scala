@@ -7,7 +7,12 @@ import com.vanillasource.eliot.eliotc.feedback.Logging
 import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, UnifiedModuleNames, ValueFQN}
 import com.vanillasource.eliot.eliotc.monomorphize.domain.SemValue
 import com.vanillasource.eliot.eliotc.monomorphize.eval.Evaluator
-import com.vanillasource.eliot.eliotc.monomorphize.fact.{GroundValue, MonomorphicExpression, MonomorphicValue}
+import com.vanillasource.eliot.eliotc.monomorphize.fact.{
+  GroundValue,
+  GroundValueRenderer,
+  MonomorphicExpression,
+  MonomorphicValue
+}
 import com.vanillasource.eliot.eliotc.monomorphize.fact.GroundValue.Literal
 import com.vanillasource.eliot.eliotc.monomorphize.processor.EscalatingReducer
 import com.vanillasource.eliot.eliotc.platform.Platform
@@ -82,28 +87,74 @@ class RefinementChannelProcessor
       records: Seq[RefinementTable.NodeMeta]
   )
 
+  /** The metas the parameters in scope are stated to have, by name ([[MetaInterpreter.Statement]]). Keyed by name
+    * because [[MonomorphicExpression.ParameterReference]] is, so a binder that does not state one must remove its name.
+    */
+  private type Env = Map[String, GroundValue]
+
   override protected def generateFromKeyAndFact(
       key: RefinementTable.Key,
       mv: MonomorphicValue
   ): CompilerIO[RefinementTable] = {
     for {
       result <- mv.runtime match {
-                  case Some(body) => walkDefinition(body.as(MonomorphicExpression(mv.signature, body.value)))
+                  case Some(body) =>
+                    statedParameters(key.vfqn, key.typeArguments).flatMap((stated, arity) =>
+                      walkDefinition(body.as(MonomorphicExpression(mv.signature, body.value)), stated, arity, 0, Map.empty)
+                    )
                   case None       => Flow(None, Seq.empty).pure[CompilerIO]
                 }
     } yield RefinementTable(key.vfqn, key.typeArguments, result.records)
   }
 
+  /** The metas the walked definition's parameters are stated to have at its own type arguments, by position, and how
+    * many parameters it takes — none when it states nothing. A statement that does not reduce leaves its parameter ⊤:
+    * a call is where it is demanded, and reported.
+    */
+  private def statedParameters(
+      vfqn: ValueFQN,
+      typeArguments: Seq[GroundValue]
+  ): CompilerIO[(Map[Int, GroundValue], Int)] =
+    MetaInterpreter.parameterStatements(vfqn).flatMap { statements =>
+      statements
+        .traverse(statement =>
+          MetaInterpreter.statedMeta(vfqn, typeArguments, statement).map {
+            case MetaInterpreter.Stated.Meta(meta, _) => Some(statement.position -> meta)
+            case _                                    => None
+          }
+        )
+        .map(stated => (stated.flatten.toMap, statements.headOption.fold(0)(_.arity)))
+    }
+
   /** A definition's leading **handle** parameters (`docs/effects.md` D36) are walked through as the parameters they
     * are, not as a lambda: an effect reaches a body as a handle, which neither carries a meta nor makes the body a
     * lambda's, so a body taking only handles records exactly as one taking nothing (`main`).
+    *
+    * Its first `arity` leading lambdas are its parameters, and one whose meta is `stated` carries it inside the body
+    * instead of ⊤ (`docs/total-meta-transfers.md` §8.9) — sound, since every manifest call proved its argument fits. Its
+    * records are discarded as any lambda's are ([[walkFlow]]), so the stated meta reaches the body's checks and never
+    * its layout: the parameter still arrives at the width of its boundary.
     */
-  private def walkDefinition(node: Sourced[MonomorphicExpression]): CompilerIO[Flow] =
+  private def walkDefinition(
+      node: Sourced[MonomorphicExpression],
+      stated: Map[Int, GroundValue],
+      arity: Int,
+      position: Int,
+      env: Env
+  ): CompilerIO[Flow] =
     node.value.expression match {
-      case MonomorphicExpression.FunctionLiteral(_, parameterType, body) if isHandle(parameterType) =>
-        walkDefinition(body).map(inner => Flow(None, inner.records ++ recordAt(node, None)))
-      case _                                                                                        => walkFlow(node)
+      case MonomorphicExpression.FunctionLiteral(name, parameterType, body) if isHandle(parameterType) =>
+        walkDefinition(body, stated, arity, position + 1, env - name.value)
+          .map(inner => Flow(None, inner.records ++ recordAt(node, None)))
+      case MonomorphicExpression.FunctionLiteral(name, _, body) if position < arity                    =>
+        walkDefinition(body, stated, arity, position + 1, bind(env, name.value, stated.get(position)))
+          .as(Flow(None, recordAt(node, None)))
+      case _                                                                                           => walkFlow(node, env)
     }
+
+  /** `env` with `name` bound to `meta`, or shadowed when there is none. */
+  private def bind(env: Env, name: String, meta: Option[GroundValue]): Env =
+    meta.fold(env - name)(env.updated(name, _))
 
   private def isHandle(tpe: GroundValue): Boolean = tpe match {
     case GroundValue.Structure(fqn, _, _) => Handles.isDataType(fqn.name.name)
@@ -114,7 +165,7 @@ class RefinementChannelProcessor
     * note. Bottom-up: a node's interval is derived from its children's, and a known interval is recorded at the node's
     * source position for representation lowering to read.
     */
-  private def walkFlow(node: Sourced[MonomorphicExpression]): CompilerIO[Flow] =
+  private def walkFlow(node: Sourced[MonomorphicExpression], env: Env): CompilerIO[Flow] =
     node.value.expression match {
       case MonomorphicExpression.IntegerLiteral(value)  =>
         // α (the one point a meta *originates*): a literal `n` seeds its singleton range. The seed's construction
@@ -144,8 +195,9 @@ class RefinementChannelProcessor
             // branch construct: which of the two applies is the callee's business, not this walk's. A lambda
             // argument's body is skipped by the `FunctionLiteral` case below.
             for {
-              argResults <- args.traverse(walkFlow)
+              argResults <- args.traverse(walkFlow(_, env))
               _          <- checkWhere(node, vfqn.value, typeArgs, args.size, argResults.map(_.own))
+              _          <- checkStatements(node, vfqn.value, typeArgs, args.size, argResults.map(_.own))
               meta       <- MetaInterpreter.metaOfCall(
                               vfqn.value,
                               typeArgs,
@@ -163,19 +215,19 @@ class RefinementChannelProcessor
             // records are discarded on the same grounds as that arm's (this node is a ⊤ boundary either way); only the
             // walk's `checkWhere`/rejection effects remain.
             for {
-              _          <- walkFlow(head)
-              argResults <- args.traverse(walkFlow)
+              _          <- walkFlow(head, env)
+              argResults <- args.traverse(walkFlow(_, env))
             } yield Flow(None, argResults.flatMap(_.records) ++ recordAt(node, None))
         }
 
-      case MonomorphicExpression.FunctionLiteral(_, _, body) =>
+      case MonomorphicExpression.FunctionLiteral(name, _, body) =>
         // A lambda body must not *record* narrow intervals: its `apply` bridge would `CHECKCAST` a narrowed result back
         // to the ⊤/bignum representation the caller expects, so it stays a bignum boundary for representation (Step
         // 6-iii). But it must still be *walked*, so a `where` precondition on a call inside it is demanded (a def's own
         // parameters make its body a leading lambda, so without this every call in a parametered def would escape the
         // check — the §4.3 use-site verification must not have that hole). The records are discarded; only `checkWhere`'s
         // effects during the walk remain.
-        walkFlow(body).as(Flow(None, recordAt(node, None)))
+        walkFlow(body, env - name.value).as(Flow(None, recordAt(node, None)))
 
       case MonomorphicExpression.MonomorphicValueReference(vfqn, typeArgs) =>
         // A **bare** reference to a def — *not* the head of a full application (that path is the `FunctionApplication`
@@ -189,12 +241,14 @@ class RefinementChannelProcessor
         // whose type carries no meta, so the same question answers ⊤ there without a special case.
         for {
           _    <- rejectWhereAsValueIfBearing(node, vfqn.value)
+          _    <- rejectStatementsAsValueIfBearing(node, vfqn.value)
           meta <- MetaInterpreter.metaOfCall(vfqn.value, typeArgs, node.value.expressionType, Seq.empty)
         } yield Flow(meta, recordAt(node, meta))
 
-      case _ =>
-        // A parameter reference: ⊤ (nothing is known about this node's value here).
-        Flow(None, recordAt(node, None)).pure[CompilerIO]
+      case MonomorphicExpression.ParameterReference(name) =>
+        // A parameter's meta is what its brace states, else ⊤. Recorded as ⊤ either way: the parameter arrives at the
+        // width of its boundary, whatever is known of its value.
+        Flow(env.get(name.value), recordAt(node, None)).pure[CompilerIO]
     }
 
   /** Record this node's verdict — its pinned meta, or ⊤. Every *walked* node records, ⊤ included: a consumer can only
@@ -317,6 +371,82 @@ class RefinementChannelProcessor
                 }
           }
       }
+
+  /** Demand what a callee's parameters state at this call (`docs/total-meta-transfers.md` §8.9): at a *full* call,
+    * each braced parameter's argument must have a known meta that fits the stated one ([[MetaInterpreter.fits]]) — ⊤
+    * cannot discharge a demand, exactly as for a `where`. A partial application is a function value whose demand can
+    * never be made, and is rejected as a bare reference is.
+    */
+  private def checkStatements(
+      callNode: Sourced[MonomorphicExpression],
+      callee: ValueFQN,
+      calleeTypeArgs: Seq[GroundValue],
+      appliedArgs: Int,
+      argMetas: Seq[Option[GroundValue]]
+  ): CompilerIO[Unit] =
+    MetaInterpreter.parameterStatements(callee).flatMap {
+      case statements if statements.exists(_.arity > appliedArgs) => rejectStatementsAsValue(callNode, callee)
+      case statements                                             =>
+        statements.traverse_(statement =>
+          demandStatement(callNode, callee, calleeTypeArgs, statement, argMetas(statement.position))
+        )
+    }
+
+  private def demandStatement(
+      callNode: Sourced[MonomorphicExpression],
+      callee: ValueFQN,
+      calleeTypeArgs: Seq[GroundValue],
+      statement: MetaInterpreter.Statement,
+      argMeta: Option[GroundValue]
+  ): CompilerIO[Unit] = {
+    val parameter = s"the parameter '${statement.parameter}' of '${callee.show}'"
+    MetaInterpreter.statedMeta(callee, calleeTypeArgs, statement).flatMap {
+      case MetaInterpreter.Stated.Meta(stated, metaType) =>
+        argMeta match {
+          case Some(actual) =>
+            MetaInterpreter
+              .fits(actual, stated, metaType)
+              .ifM(
+                ().pure[CompilerIO],
+                Sourced.compilerError(
+                  callNode.as(
+                    s"The argument's meta-information ${GroundValueRenderer.render(actual)} does not fit " +
+                      s"${GroundValueRenderer.render(stated)}, which $parameter states."
+                  )
+                )
+              )
+          case None         =>
+            Sourced.compilerError(
+              callNode.as(s"Cannot prove what $parameter states: the argument's meta-information is not known here."),
+              Seq("A stated parameter demands provable meta-information — pass a value the compiler can pin, such as a literal.")
+            )
+        }
+      case MetaInterpreter.Stated.Untracked(parameterType) =>
+        Sourced.compilerError(
+          callNode.as(
+            s"${parameter.capitalize} states meta-information, but its type " +
+              s"'${GroundValueRenderer.render(parameterType)}' carries none; " +
+              "remove the { ... } brace."
+          )
+        )
+      case MetaInterpreter.Stated.Unknown                  =>
+        Sourced.compilerError(callNode.as(s"Cannot evaluate the meta-information stated by $parameter."))
+    }
+  }
+
+  private def rejectStatementsAsValueIfBearing(node: Sourced[MonomorphicExpression], callee: ValueFQN): CompilerIO[Unit] =
+    MetaInterpreter.parameterStatements(callee).flatMap(statements =>
+      rejectStatementsAsValue(node, callee).whenA(statements.nonEmpty)
+    )
+
+  /** A def whose parameters state meta, referenced other than as the head of a full call: what it demands of its
+    * arguments could never be checked, as for a `where` ([[rejectWhereAsValue]]).
+    */
+  private def rejectStatementsAsValue(node: Sourced[MonomorphicExpression], callee: ValueFQN): CompilerIO[Unit] =
+    Sourced.compilerError(
+      node.as(s"A def stating meta-information on a parameter ('${callee.show}') cannot be passed as a value."),
+      Seq("Call it directly with all its arguments so what it states is checked at the use site.")
+    )
 
   private def cannotEvaluate(callNode: Sourced[MonomorphicExpression], callee: ValueFQN): CompilerIO[Unit] =
     Sourced.compilerError(callNode.as(s"Cannot evaluate the `where` precondition of '${callee.show}'."))

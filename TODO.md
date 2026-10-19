@@ -22,36 +22,15 @@ notes.
   as a thunk, whose meta is never known, so a `where` on a def with a code parameter yielding a tracked type
   (`body uses *: Int`) can never be proven (§8.8). Demanding only what the predicate reads would fix it, but narrows the
   decided "⊤ cannot discharge a demand" fail-safe — needs a decision.
-- **Meta braces in parameter position: `def writeByte(b: Int {byte}): Unit`.** Decided in principle
-  2026-09-15, not built. The problem it answers is a reusable "Byte": today a bound can only be *demanded* by a
-  `where` (`where within(byte, range(b))`, with `def byte: Interval[BigInteger] = closed(0, 255)` as the
-  reusable meta *value*), which puts the restriction away from the `Int` it restricts, and a `where` leaves the
-  parameter ⊤ inside the body because a predicate does not turn back into an interval. A **type alias cannot
-  carry it**, by construction: a transparent alias is erased by normalization (`Byte` and `Int` are
-  definitionally equal, per the cornerstone), so after evaluation there is nothing to read and before it there is
-  only syntax; attaching a statement to the type value while `unify` ignores it leaks through metavariables into
-  unrelated positions (the aliasing bug class the retired bounds-as-refinements design recorded, and why
-  refinements stay out of types). So "Byte" is a meta *value*, never a type, and the bound lives on the
-  **occurrence** it bounds. **One meaning**: a brace on a type occurrence states the meta of the value at that
-  position, and *whoever supplies that value proves it* — a leaf return has no supplier the language can see, so
-  it is axiomatic (today's return brace, R2 unchanged); a parameter is supplied by the caller, so at every full
-  call the argument's meta must fit (`join(argument, stated) ≡ stated`, structurally, the comparison the reconcile
-  pass already makes) and inside the body the parameter carries the stated meta instead of ⊤ (sound: every
-  manifest call proved it); a bodied return is supplied by the body, so the derived meta must fit — this last is
-  the one decided rule it touches (R3 makes a brace on a bodied def an error), a reversal to sign off on
-  separately, or ship parameter braces first and leave R3. Everything stays **callee-keyed** and desugared from
-  the def's own text: each braced parameter yields a nullary statement companion (named by def and parameter, in
-  the meta namespace) that the channel reads exactly as it reads `$Where` (companion membership test at the call,
-  reduction through the same executor, then the structural fit instead of a `Bool`); the walk's parameter-reference
-  arm consults the companions of the value being walked; signature equality keeps ignoring braces, so the layer
-  rule for return braces applies unchanged; the bare-reference / partial-application rejection extends to any def
-  with a braced parameter. A `data` field `r: Int {byte}` is demanded at construction through the ordinary
-  constructor call and its generated accessor may state it as a leaf would (construction is the only supplier).
-  Grammar is the adjacency rule already in use: a brace *before* a type is an effect row, a brace *adjacent after*
-  a type atom is its meta. This is Option B's deferred "contract annotation in value position" minus the splice it
-  feared; the *refined alias* half of that deferral is closed for the reason above. Its prerequisite is
-  built: a parameter brace's companion can take its meta constructor the way a transfer's does
-  (`docs/total-meta-transfers.md` §8.8), so a parameter typed by an alias needs no name.
+- **The rest of meta braces on occurrences.** Parameter braces (`def writeByte(b: Int {byte}): Unit`) are built
+  (`docs/total-meta-transfers.md` §8.9): every full call proves its argument fits, and inside the body the parameter
+  carries the stated meta. Two occurrences of the same decision (2026-09-15: a brace states the meta of the value at
+  that position, and whoever supplies the value proves it) remain. A **bodied return** brace is supplied by the body, so
+  the derived meta would have to fit the stated one — R3 makes such a brace an error today, so this is a reversal to
+  sign off on separately. A **`data` field** `r: Int {byte}` would be demanded at construction through the ordinary
+  constructor call, and its generated accessor may state it as a leaf would (construction is the only supplier).
+  A reusable meta value (`def byte: Interval[BigInteger] = …`) still has to write its literals in type position
+  (`between[0, 255]`) until the `Int` literal item above is solved.
 - **Flow grades: quantitative computation tracking (cycles/WCET, stack, peak memory) on the
   effect row.** Design sketched 2026-07-10 in the bounds-as-refinements discussion. The dependency
   ladder is ranges → sizes → grades (fold cost needs sizes, frame sizes need ranges): the

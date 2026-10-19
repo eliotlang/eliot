@@ -2,10 +2,11 @@ package com.vanillasource.eliot.eliotc.ast.fact
 
 import cats.syntax.all.*
 import cats.Eq
+import cats.data.StateT
 import ASTComponent.component
-import Primitives.{isIdentifier, keyword, sourced, symbol}
+import Primitives.{isIdentifier, keyword, optionalBracketedCommaSeparatedItems, sourced, symbol}
 import com.vanillasource.eliot.eliotc.ast.fact.Expression.{EffectfulType, FlatExpression, FunctionApplication}
-import com.vanillasource.eliot.eliotc.ast.parser.Parser
+import com.vanillasource.eliot.eliotc.ast.parser.{InputStream, Parser, ParserResult}
 import com.vanillasource.eliot.eliotc.source.content.Sourced
 import com.vanillasource.eliot.eliotc.token.Token
 import Parser.*
@@ -21,12 +22,18 @@ import Parser.*
   *   Whether the parameter's `uses` clause is **open** — it starts with `*` (`f uses *: A => B`), so the argument's
   *   text may use whatever is in scope where it is written. Read only by the definition's own parser, which then
   *   requires `uses *` on the definition too (`docs/effects.md` D24); nothing past the parser reads it.
+  * @param meta
+  *   The parameter's **meta brace** — the slot values in `b: Int {byte}`, one per slot of the type's meta, which state
+  *   the meta-information of the value at this position (`docs/total-meta-transfers.md` §8.9). Empty for an ordinary
+  *   parameter. Consumed at the core boundary by `MetaParameterDesugarer`, which emits the parameter's statement
+  *   companion from it, and never part of [[signatureEquality]], so the layer rule for a return brace applies unchanged.
   */
 case class ArgumentDefinition(
     name: Sourced[String],
     typeExpression: Sourced[Expression],
     closedRow: Boolean = false,
-    openRow: Boolean = false
+    openRow: Boolean = false,
+    meta: Seq[Sourced[Expression]] = Seq.empty
 )
 
 object ArgumentDefinition {
@@ -44,7 +51,9 @@ object ArgumentDefinition {
     // here — `f: A => B`. The run stops at the `,` separator and the closing `)` of the argument list (both reserved,
     // non-type-atom tokens), so a single-atom type is still returned verbatim and the list structure is unaffected.
     override def parser: Parser[Sourced[Token], ArgumentDefinition] =
-      acceptIf(isIdentifier, "argument name").flatMap(name => plainRest(name.map(_.content), Expression.fieldTypeRunParser))
+      acceptIf(isIdentifier, "argument name").flatMap(name =>
+        plainRest(name.map(_.content), Expression.fieldTypeRunParser, metaBrace = false)
+      )
   }
 
   /** A definition's parameter: a field's binder, or one carrying a **`uses` clause** (`docs/effects.md` D21) — the
@@ -64,10 +73,15 @@ object ArgumentDefinition {
     *
     * A parameter names no implementation: `body uses *, Console with fake: Unit` is refused ([[slotWith]]), since the
     * code's effects are bound where it runs, by a `with` around the run (`body with fake`, `docs/effects.md` D35).
+    *
+    * A value parameter may carry a **meta brace** after its type, `b: Int {byte}` ([[ArgumentDefinition.meta]]) — the
+    * adjacency rule a return brace already follows: a brace *before* a type is an effect row, one *after* it is its meta.
+    * The type run leaves it unconsumed, since it is followed by no type atom.
     */
   val parameter: Parser[Sourced[Token], ArgumentDefinition] = for {
     name     <- acceptIf(isIdentifier, "argument name")
-    argument <- clauseRest(name.map(_.content)) or plainRest(name.map(_.content), Expression.typeRunParser)
+    argument <- clauseRest(name.map(_.content)) or
+                  plainRest(name.map(_.content), Expression.typeRunParser, metaBrace = true)
   } yield argument
 
   private def clauseRest(name: Sourced[String]): Parser[Sourced[Token], ArgumentDefinition] = for {
@@ -78,12 +92,20 @@ object ArgumentDefinition {
 
   private def plainRest(
       name: Sourced[String],
-      typeRunParser: Parser[Sourced[Token], Expression]
+      typeRunParser: Parser[Sourced[Token], Expression],
+      metaBrace: Boolean
   ): Parser[Sourced[Token], ArgumentDefinition] = for {
     _              <- symbol(":")
     typeExpression <- sourced(typeRunParser)
+    meta           <- if (metaBrace) metaBraceParser else noMetaBrace
     _              <- slotWith
-  } yield ArgumentDefinition(name, typeExpression)
+  } yield ArgumentDefinition(name, typeExpression, meta = meta)
+
+  private val metaBraceParser: Parser[Sourced[Token], Seq[Sourced[Expression]]] =
+    optionalBracketedCommaSeparatedItems("{", sourced(component[Expression]), "}")
+
+  private val noMetaBrace: Parser[Sourced[Token], Seq[Sourced[Expression]]] =
+    StateT.pure[ParserResult, InputStream[Sourced[Token]], Seq[Sourced[Expression]]](Seq.empty)
 
   /** A `with` on a parameter, after a clause entry or its type: refused as itself, naming the `with` around the run that
     * replaced it (`docs/effects.md` D35), rather than whatever the parser would expect next.

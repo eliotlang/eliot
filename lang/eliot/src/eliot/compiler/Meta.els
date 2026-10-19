@@ -35,3 +35,11 @@ ability Meta[D] {
     */
    def join(a: D, b: D): D
 }
+
+/**
+ * The join of `a` and `b`, at a meta-information the compiler holds only as a type argument.
+ *
+ * The compiler asks for it when it checks an argument against a parameter's meta brace: the
+ * argument's meta fits when joining it into the stated one leaves the stated one unchanged.
+ */
+def joined[D ~ Meta](a: D, b: D): D = join(a, b)

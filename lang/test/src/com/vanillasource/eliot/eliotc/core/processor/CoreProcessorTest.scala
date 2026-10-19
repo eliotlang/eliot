@@ -604,6 +604,54 @@ class CoreProcessorTest extends ProcessorTest(Tokenizer(), ASTParser(), CoreProc
     }
   }
 
+  "parameter brace" should "state its parameter's meta by the meta constructor it takes, reading no parameter" in {
+    namedValue("def f(a: Foo, b: Foo {g(0)}): Foo", QualifiedName("f$Parameter$b", M)).asserting { nv =>
+      nv.runtimeStructure shouldBe Some(
+        Lambda("constructor$", Empty, Lambda("a$", Empty, Lambda("b$", Empty, App(Ref("constructor$"), App(Ref("g"), IntLit("0"))))))
+      )
+    }
+  }
+
+  it should "type its result by its own parameter's meta binder, after the meta constructor's" in {
+    namedValue("def f[A](h: A, a: Foo {g}): Foo", QualifiedName("f$Parameter$a", M)).asserting { nv =>
+      nv.signature.value.structure shouldBe Lambda(
+        "A",
+        Ref("Type", T),
+        Lambda(
+          "Meta$h",
+          Ref("Type", T),
+          Lambda(
+            "Meta$a",
+            Ref("Type", T),
+            Lambda(
+              "Constructor$",
+              Ref("Type", T),
+              App(
+                App(Ref("Function", T), Ref("Constructor$", T)),
+                App(
+                  App(Ref("Function", T), Ref("Meta$h", T)),
+                  App(App(Ref("Function", T), Ref("Meta$a", T)), Ref("Meta$a", T))
+                )
+              )
+            )
+          )
+        )
+      )
+    }
+  }
+
+  it should "describe its definition's types in a payload signature" in {
+    namedValue("def f(a: Foo {g}): Bar", QualifiedName("f$Payload", M)).asserting { nv =>
+      nv.runtimeStructure shouldBe Some(arrow(Ref("Foo", T), Ref("Bar", T)))
+    }
+  }
+
+  it should "generate no statement for a parameter without a brace" in {
+    namedValues("def f(a: Foo {g}, b: Foo): Foo").asserting { nvs =>
+      nvs.map(_.qualifiedName.value) should not contain QualifiedName("f$Parameter$b", M)
+    }
+  }
+
   "where clause (bounds Step 4c)" should "keep an integer literal in the predicate a compile-time BigInteger" in {
     namedValue("def f(a: Foo): Foo where g(0)", QualifiedName("f$Where", M)).asserting { nv =>
       nv.runtimeStructure shouldBe Some(Lambda("a", Empty, App(Ref("g"), IntLit("0"))))

@@ -11,8 +11,9 @@ import com.vanillasource.eliot.eliotc.core.fact.RoleHint
 import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, Qualifier, WellKnownTypes}
 import com.vanillasource.eliot.eliotc.source.content.Sourced
 
-/** The shape every **meta companion** shares — the `^Where` precondition ([[MetaWhereDesugarer]]) and the `^Meta`
-  * transfer ([[MetaTransferDesugarer]]) — and the **payload signature** the refinement channel instantiates them by.
+/** The shape every **meta companion** shares — the `^Where` precondition ([[MetaWhereDesugarer]]), the `^Meta`
+  * transfer ([[MetaTransferDesugarer]]) and a parameter's statement ([[MetaParameterDesugarer]]) — and the **payload
+  * signature** the refinement channel instantiates them by.
   *
   * Inside a companion a parameter denotes its *meta*, so each parameter is typed by the meta type of its type. That
   * meta type is never *named* here: a type is an expression, and naming its meta by its spelling (`Byte` ⤳ `Byte$Meta`)
@@ -24,7 +25,8 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
   *      search, which would be asked, does not;
   *   2. one binder per parameter ([[metaBinderName]]), typing that parameter;
   *   3. for a transfer, one binder for the result ([[resultBinderName]]), and, when its brace lists slots, one for the
-  *      meta constructor ([[constructorBinderName]]) its first parameter ([[constructorParameterName]]) is typed by.
+  *      meta constructor ([[constructorBinderName]]) its first parameter ([[constructorParameterName]]) is typed by; for
+  *      a parameter's statement, only the constructor's binder, since what it states is typed by its parameter's.
   *
   * {{{
   *   def fold[A](condition: Bool, whenTrue uses *: A, whenFalse uses *: A) uses *: A { join(whenTrue, whenFalse) }
@@ -64,6 +66,12 @@ object MetaCompanionLayout {
     */
   val constructorBinderName: String = "Constructor$"
 
+  /** The parameter a parameter's statement companion takes in `parameter`'s place: a placeholder its brace cannot name,
+    * since `$` is not an identifier character. A statement is about one parameter and reads none, so its parameters are
+    * there only to say how many the definition takes and where the stated one is ([[statementParameters]]).
+    */
+  def placeholderName(parameter: String): String = s"$parameter$$"
+
   /** Appended to a definition's name (in the [[Qualifier.Meta]] namespace) to name its payload signature. */
   val payloadSuffix: String = "$Payload"
 
@@ -74,7 +82,8 @@ object MetaCompanionLayout {
 
   /** The payload signature of `definition` when it has a companion — a `where` or a transfer brace — else empty. */
   def desugar(definition: FunctionDefinition): Seq[(FunctionDefinition, RoleHint)] =
-    if (definition.whereClause.isEmpty && definition.returnMeta.isEmpty) Seq.empty
+    if (definition.whereClause.isEmpty && definition.returnMeta.isEmpty && definition.args.forall(_.meta.isEmpty))
+      Seq.empty
     else Seq(payloadSignature(definition) -> RoleHint.NoHint)
 
   /** The definition's own binders, first in every companion (point 1 of the layout). */
@@ -93,6 +102,12 @@ object MetaCompanionLayout {
       parameters.map(arg => typeBinder(arg.name.map(metaBinderName))),
       parameters.map(arg => ArgumentDefinition(arg.name, typeReference(arg.name.map(metaBinderName))))
     )
+  }
+
+  /** [[metaParameters]] with each parameter a [[placeholderName]]: the same binders, the same arity, nothing to read. */
+  def statementParameters(definition: FunctionDefinition): (Seq[GenericParameter], Seq[ArgumentDefinition]) = {
+    val (binders, parameters) = metaParameters(definition)
+    (binders, parameters.map(arg => arg.copy(name = arg.name.map(placeholderName))))
   }
 
   /** A binder of kind `Type` named `name`. */

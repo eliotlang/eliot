@@ -184,6 +184,13 @@ object WellKnownTypes {
   val integerLiteralFQN: ValueFQN =
     ValueFQN(ModuleName(defaultSystemPackage, "Runtime"), QualifiedName("integerLiteral", Qualifier.Default))
 
+  /** `eliot.compiler.Meta::joined[D ~ Meta](a: D, b: D): D` — the `Meta` join at a meta type the refinement channel
+    * holds only as a value. The channel reduces it to check that an argument's meta fits a parameter's stated one
+    * (`docs/total-meta-transfers.md` §8.9), so the join dispatches through the meta type's own instance.
+    */
+  val metaJoinedFQN: ValueFQN =
+    ValueFQN(ModuleName(compilerPackage, "Meta"), QualifiedName("joined", Qualifier.Default))
+
   /** `stringLiteral[N]: String` — the string literal's *size* protocol, the [[integerLiteralFQN]] twin for the `String`
     * refinement domain. A string literal needs no conversion (its characters are already the value), so unlike
     * `integerLiteral` this declaration is never referenced by a program and no desugaring rewrites into it: it exists

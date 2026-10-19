@@ -419,7 +419,13 @@ contain `data` (a chosen representation), a native leaf, or any representation-d
   a generated type the one evaluator reduces at the callee's type arguments (a code parameter reads as what its code
   yields). A slot-producing brace's meta *constructor* is not named either: the companion takes it as its first
   parameter (`constructor$`) and the channel passes the one of the result's evaluated meta type, so `{closed(0, 255)}`
-  on a leaf returning an alias of `Int` states the same meta as on `Int`. R2 reads the evaluated result type too.
+  on a leaf returning an alias of `Int` states the same meta as on `Int`. R2 reads the evaluated result type too. A
+  **parameter brace** `x: Int {closed(0, 255)}` (§8.9) states the meta of the value at that parameter, and whoever
+  supplies it proves it: every full call demands its argument fit (`join(argument, stated) ≡ stated`, the join reached
+  through `eliot.compiler.Meta::joined`), the body reads the parameter at the stated meta instead of ⊤ (its checks only,
+  never its layout), and a def with one cannot be passed as a value. Its statement companion
+  (`MetaParameterDesugarer`, `<def>$Parameter$<p>`) reads no parameter: its parameters are placeholders that only count
+  and place. A brace on a bodied return and on a `data` field are the same decision, not yet built.
 - `def foldLeft[A, B](initial: B, combine: ..., list: List[A]): B` — an abstract function, signature only.
 - A `type X = ...` alias and a body-less `type X` differ only by having a body; `data X(...)` is the *concrete*
   form that additionally introduces a value constructor.

@@ -46,7 +46,11 @@ class CoreProcessor
     // `^Where` companion (bounds-as-refinements §4.3), the `Bool` the refinement channel demands at each call site.
     val desugaredWhereCompanions: Seq[(FunctionDefinition, RoleHint)] =
       sourceAstData.functionDefinitions.flatMap(MetaWhereDesugarer.desugar)
-    // The payload signature both companions are instantiated by: a def's parameter and result types as a companion
+    // A meta brace on a parameter (`def writeByte(b: Int {byte}): Unit`) → that parameter's statement companion, the
+    // meta the channel demands of the argument at each call and gives the parameter inside the body.
+    val desugaredParameterStatements: Seq[(FunctionDefinition, RoleHint)] =
+      sourceAstData.functionDefinitions.flatMap(MetaParameterDesugarer.desugar)
+    // The payload signature every companion is instantiated by: a def's parameter and result types as a companion
     // reads them, which the channel evaluates at each call (see MetaCompanionLayout).
     val desugaredPayloadSignatures: Seq[(FunctionDefinition, RoleHint)] =
       sourceAstData.functionDefinitions.flatMap(MetaCompanionLayout.desugar)
@@ -62,7 +66,7 @@ class CoreProcessor
     val allFunctions  =
       sourceAstData.functionDefinitions.map(_ -> RoleHint.NoHint) ++
         desugaredFromData ++ desugaredMetaConstructors ++ desugaredMetaTransfers ++ desugaredWhereCompanions ++
-        desugaredPayloadSignatures ++ desugaredNamedImplementations ++ desugaredEffects
+        desugaredParameterStatements ++ desugaredPayloadSignatures ++ desugaredNamedImplementations ++ desugaredEffects
     val coreAstData   = CoreASTData(
       sourceAstData.importStatements,
       // Effect-row sugar (`{E} A`) becomes one marked binding binder per entry before the function is converted, so
