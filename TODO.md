@@ -6,12 +6,6 @@ notes.
 
 ## Type system & language
 
-- **A `match` over a `data` whose nullary constructor is not first dispatches to the wrong arm.** Found
-  2026-10-10. With `data Shape = Circle(radius: String) | Dot`, `describe(Dot)` (a `match` with `case Circle(r) -> r`
-  and `case Dot -> "dot"`) returns `null`, and `describe(Circle("c"))` throws `ClassCastException: String cannot be
-  cast to Void` in the arm's lambda; with an `Int` field, `Dot` reaches `Circle`'s arm and dereferences a null field.
-  Declaring `Dot` first works. The arms are paired with the wrong constructors somewhere between `matchdesugar`'s
-  `handleCases` and the synthesized `PatternMatch` implementation; not yet traced, and no test covers the order.
 - Add generics to function literals.
 - Introduce arrays (records / multi-field `data` are already done).
 - **Unify `Int` literal handling across the two tracks.** Managing the `BigInteger`/`Int` split
@@ -138,12 +132,6 @@ Nothing effect-related is tracked here; add it there.
 
 ## Compiler architecture & tooling
 
-- **`getFact` still lives.** The processor-facing API is supposed to expose only `getFactOrAbort`
-  / `getFactOrError` / `getFactIfProduced` (see `.claude/rules/eliot-design.md`), but a plain
-  `getFact` is still there on `CompilationProcess` and its wrappers. Either rename it to
-  `getFactIfProduced` or hide it entirely behind the three intent-carrying reads.
-- `namedValues` can recurse — the reflection-driven enumeration is not protected against a value
-  that reaches itself.
 - **The warm build's dominant cost is JVM/library startup, and it is a packaging fix, not a
   compiler one.** Replacing Java serialization with explicit codecs over a content-addressed
   object store cut a warm build in half (load −79%, save −77%) and the cache is down to ~36% of

@@ -142,18 +142,18 @@ class JvmClassGenerator extends SingleKeyTypeProcessor[GeneratedModule.Key] with
                                                                           ).whenA(erasedAll.map(_.map(p => valueType(p.parameterType))).distinct.size > 1)
                                                            } yield (vfqn, stats, instances.head.copy(parameters = erasedAll.head))
                                                          }
-                                      sortedCtors      = ctorsWithInfo.sortBy { case (_, _, umv) =>
-                                                           (umv.name.range.from.line, umv.name.range.from.col)
-                                                         }
                                       classes          <- if (ctorsWithInfo.size === 1) {
                                                             val (vfqn, _, umv) = ctorsWithInfo.head
                                                             DataClassGenerator.createSingleConstructorData[CompilerIO](
                                                               mainClassGenerator, vfqn, typeVFQ, umv.parameters, handleCasesUsed
                                                             )
                                                           } else {
+                                                            // The index is the constructor's handler position, which
+                                                            // `DataMatchDesugarer` takes from the same declaration
+                                                            // order: `ModuleConstructors`, never re-sorted here.
                                                             DataClassGenerator.createMultiConstructorData[CompilerIO](
                                                               mainClassGenerator, typeVFQ,
-                                                              sortedCtors.zipWithIndex.map { case ((v, _, umv), idx) => (v, umv.parameters, idx) },
+                                                              ctorsWithInfo.zipWithIndex.map { case ((v, _, umv), idx) => (v, umv.parameters, idx) },
                                                               handleCasesUsed
                                                             )
                                                           }
