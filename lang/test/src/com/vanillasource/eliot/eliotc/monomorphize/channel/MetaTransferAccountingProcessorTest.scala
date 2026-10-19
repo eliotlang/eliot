@@ -53,6 +53,25 @@ class MetaTransferAccountingProcessorTest extends ProcessorTest(LangProcessors()
       }
   }
 
+  "a body-less leaf producing a meta-carrying type through an alias" should "be rejected when it states no transfer" in {
+    runGenerator(prelude + "type Reading = Gauge\ndef readGauge: Reading", accountingKey("readGauge"), ambientStubsWith())
+      .map { case (errors, _) => errors.map(_.message).mkString("\n") should include(missingTransfer) }
+  }
+
+  it should "be accepted when it states a transfer" in {
+    runGenerator(
+      prelude + "type Reading = Gauge\ndef readGauge: Reading {level(readGauge)}",
+      accountingKey("readGauge"),
+      ambientStubsWith()
+    ).map { case (_, facts) => facts.keySet should contain(accountingKey("readGauge")) }
+  }
+
+  "a body-less leaf stating slots over a non-meta type" should "be rejected" in {
+    runGenerator(prelude + "def readName: String {0}", accountingKey("readName"), ambientStubsWith()).map {
+      case (errors, _) => errors.map(_.message).mkString("\n") should include("but 'String' carries none")
+    }
+  }
+
   "a bodied value producing a meta-carrying type" should "be accepted (it derives, states nothing)" in {
     runGenerator(prelude + "def echo(g: Gauge): Gauge = g", accountingKey("echo"), ambientStubsWith()).map {
       case (errors, facts) =>

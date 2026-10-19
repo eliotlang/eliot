@@ -512,7 +512,7 @@ class CoreProcessorTest extends ProcessorTest(Tokenizer(), ASTParser(), CoreProc
     }
   }
 
-  it should "type each parameter and the result by a meta binder of its own, after the definition's binders" in {
+  it should "type each parameter, the result and the meta constructor by a binder of its own, after the definition's binders" in {
     namedValue("type Foo {bar: D}\ndef f[A](h: A, a: Foo): Foo {a.bar}", QualifiedName("f", M)).asserting { nv =>
       nv.signature.value.structure shouldBe Lambda(
         "A",
@@ -526,14 +526,27 @@ class CoreProcessorTest extends ProcessorTest(Tokenizer(), ASTParser(), CoreProc
             Lambda(
               "Meta$",
               Ref("Type", T),
-              App(
-                App(Ref("Function", T), Ref("Meta$h", T)),
-                App(App(Ref("Function", T), Ref("Meta$a", T)), Ref("Meta$", T))
+              Lambda(
+                "Constructor$",
+                Ref("Type", T),
+                App(
+                  App(Ref("Function", T), Ref("Constructor$", T)),
+                  App(
+                    App(Ref("Function", T), Ref("Meta$h", T)),
+                    App(App(Ref("Function", T), Ref("Meta$a", T)), Ref("Meta$", T))
+                  )
+                )
               )
             )
           )
         )
       )
+    }
+  }
+
+  it should "take no meta constructor when the result is a type parameter" in {
+    namedValue("def f[A](a: A): A {a}", QualifiedName("f", M)).asserting { nv =>
+      nv.runtimeStructure shouldBe Some(Lambda("a", Empty, Ref("a")))
     }
   }
 
@@ -554,9 +567,11 @@ class CoreProcessorTest extends ProcessorTest(Tokenizer(), ASTParser(), CoreProc
   private def arrow(domain: ExprStructure, codomain: ExprStructure): ExprStructure =
     App(App(QualRef("Function", "eliot.lang.Function"), domain), codomain)
 
-  it should "build the result via the meta value constructor" in {
-    namedValue("type Foo {bar: D}\ndef f(a: Foo): Foo {a}", QualifiedName("f", M)).asserting { nv =>
-      nv.runtimeStructure shouldBe Some(Lambda("a", Empty, App(Ref("Foo$Meta"), Ref("a"))))
+  it should "build the result by the meta constructor it takes, never by naming it" in {
+    namedValue("type Foo {bar: D}\ntype Bar = Foo\ndef f(a: Foo): Bar {a}", QualifiedName("f", M)).asserting { nv =>
+      nv.runtimeStructure shouldBe Some(
+        Lambda("constructor$", Empty, Lambda("a", Empty, App(Ref("constructor$"), Ref("a"))))
+      )
     }
   }
 
@@ -583,7 +598,9 @@ class CoreProcessorTest extends ProcessorTest(Tokenizer(), ASTParser(), CoreProc
 
   it should "keep an integer literal in the brace a compile-time BigInteger" in {
     namedValue("type Foo {bar: D}\ndef f(a: Foo): Foo {g(0)}", QualifiedName("f", M)).asserting { nv =>
-      nv.runtimeStructure shouldBe Some(Lambda("a", Empty, App(Ref("Foo$Meta"), App(Ref("g"), IntLit("0")))))
+      nv.runtimeStructure shouldBe Some(
+        Lambda("constructor$", Empty, Lambda("a", Empty, App(Ref("constructor$"), App(Ref("g"), IntLit("0")))))
+      )
     }
   }
 

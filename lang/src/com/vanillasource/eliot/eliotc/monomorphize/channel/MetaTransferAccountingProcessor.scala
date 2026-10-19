@@ -3,12 +3,14 @@ package com.vanillasource.eliot.eliotc.monomorphize.channel
 import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.feedback.Logging
 import com.vanillasource.eliot.eliotc.module.fact.{Qualifier, UnifiedModuleNames, ValueFQN}
-import com.vanillasource.eliot.eliotc.monomorphize.fact.MonomorphicValue
+import com.vanillasource.eliot.eliotc.monomorphize.fact.{GroundValue, MonomorphicValue}
 import com.vanillasource.eliot.eliotc.operator.fact.{OperatorResolvedExpression, OperatorResolvedValue}
 import com.vanillasource.eliot.eliotc.platform.Platform
 import com.vanillasource.eliot.eliotc.processor.CompilerIO.*
 import com.vanillasource.eliot.eliotc.processor.common.TransformationProcessor
 import com.vanillasource.eliot.eliotc.source.content.Sourced.compilerAbort
+
+import scala.annotation.tailrec
 
 /** **R2 + R3 enforcement** (docs/total-meta-transfers.md §2/§3/§P2/§P3) — the two halves of *"every named value has a
   * meta transfer, and exactly one way of having it"*:
@@ -82,20 +84,43 @@ class MetaTransferAccountingProcessor
 
   /** R2: a body-less leaf whose declared return head is a concrete meta-carrying type must state its transfer, else it
     * is reported at the value. A type-parameter return head (a forwarded, non-originated meta) is exempt.
+    *
+    * Whether the result carries meta is read from the **evaluated** result type — the instance's signature past as
+    * many arrows as the declaration has parameters — never from the declared type's name, which for an alias
+    * (`type Byte = Int`) names a type declaring no meta structure and would exempt the leaf. Read the same way, a leaf
+    * whose brace lists slots over a result carrying no meta is reported too: there is no meta constructor to apply
+    * them to.
     */
-  private def verifyStated(mv: MonomorphicValue, orv: OperatorResolvedValue): CompilerIO[Unit] =
-    returnHead(OperatorResolvedExpression.SignatureView.of(orv.signature).returnType.value) match {
+  private def verifyStated(mv: MonomorphicValue, orv: OperatorResolvedValue): CompilerIO[Unit] = {
+    val view = OperatorResolvedExpression.SignatureView.of(orv.signature)
+    returnHead(view.returnType.value) match {
       case OperatorResolvedExpression.ValueReference(typeName, _) =>
         for {
-          metaCarrying   <- MetaInterpreter.declaresMetaStructure(typeName.value)
+          metaCarrying   <- resultHead(mv.signature, view.parameters.size) match {
+                              case GroundValue.Structure(fqn, _, _) => MetaInterpreter.declaresMetaStructure(fqn)
+                              case _                                => false.pure[CompilerIO]
+                            }
           statesTransfer <- declaresTransfer(mv.vfqn)
+          statesSlots    <- if (statesTransfer)
+                              MetaInterpreter.takesConstructor(RefinementChannelProcessor.metaCompanionFqn(mv.vfqn))
+                            else false.pure[CompilerIO]
           _              <- if (metaCarrying && !statesTransfer) reportMissing(mv, typeName.value)
+                            else if (!metaCarrying && statesSlots) reportSlotsWithoutMeta(mv, typeName.value)
                             else ().pure[CompilerIO]
         } yield ()
       case _                                                      =>
         // A type-parameter (or literal) return head: the meta is forwarded from an argument/instantiation, not
         // originated here — exempt, its (higher-order) transfer is the meta-interpretation slice (§P4).
         ().pure[CompilerIO]
+    }
+  }
+
+  /** The evaluated result type of a signature with `parameters` parameters: what remains past that many arrows. */
+  @tailrec
+  private def resultHead(signature: GroundValue, parameters: Int): GroundValue =
+    signature.asFunctionType match {
+      case Some((_, codomain)) if parameters > 0 => resultHead(codomain, parameters - 1)
+      case _                                     => signature
     }
 
   /** The ultimate application head of a (return) type expression — `F[B]` ⤳ `F`, `Int` ⤳ `Int`. */
@@ -126,6 +151,14 @@ class MetaTransferAccountingProcessor
       mv.name.as(
         s"This native value produces '${typeName.name.name}', which carries meta-information, but states no meta " +
           s"transfer; add a { ... } return brace saying what it does to the meta-information."
+      )
+    )
+
+  private def reportSlotsWithoutMeta(mv: MonomorphicValue, typeName: ValueFQN): CompilerIO[Unit] =
+    compilerAbort[Unit](
+      mv.name.as(
+        s"This native value states meta-information, but '${typeName.name.name}' carries none; remove the { ... } " +
+          s"return brace."
       )
     )
 

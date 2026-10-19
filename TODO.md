@@ -18,11 +18,6 @@ notes.
   written `Bounded(0)` / `Bounded(0 - 1)`. What remains is the general case: an *ordinary def body* is
   runtime-track, so a helper called from a brace still cannot name a `BigInteger` constant in value position —
   which is why `rangeWithin[Lo, Hi]` takes its bounds as type parameters.
-- **A slot-producing transfer brace names its meta *constructor* from the spelled result type.** Companions no longer
-  name meta *types* (`docs/total-meta-transfers.md` §8.8), but a brace like `{closed(0, 255)}` on a leaf builds its
-  result as `Int$Meta(…)`, the constructor named by suffixing the result type as written, so a leaf whose result type
-  is an alias fails to resolve it (loudly). Parameter braces below need the same thing. The likely shape: the channel
-  applies the meta value constructor beside the meta type `metaTypeOf` already finds, and the companion returns slots.
 - **A `where` demands every argument's meta, even one its predicate never reads.** A code argument reaches the channel
   as a thunk, whose meta is never known, so a `where` on a def with a code parameter yielding a tracked type
   (`body uses *: Int`) can never be proven (§8.8). Demanding only what the predicate reads would fix it, but narrows the
@@ -54,8 +49,9 @@ notes.
   constructor call and its generated accessor may state it as a leaf would (construction is the only supplier).
   Grammar is the adjacency rule already in use: a brace *before* a type is an effect row, a brace *adjacent after*
   a type atom is its meta. This is Option B's deferred "contract annotation in value position" minus the splice it
-  feared; the *refined alias* half of that deferral is closed for the reason above. Depends on the meta-constructor
-  item above for a parameter not typed by a bare slotted name.
+  feared; the *refined alias* half of that deferral is closed for the reason above. Its prerequisite is
+  built: a parameter brace's companion can take its meta constructor the way a transfer's does
+  (`docs/total-meta-transfers.md` §8.8), so a parameter typed by an alias needs no name.
 - **Flow grades: quantitative computation tracking (cycles/WCET, stack, peak memory) on the
   effect row.** Design sketched 2026-07-10 in the bounds-as-refinements discussion. The dependency
   ladder is ranges → sizes → grades (fold cost needs sizes, frame sizes need ranges): the

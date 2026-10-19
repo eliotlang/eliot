@@ -1,7 +1,7 @@
 package com.vanillasource.eliot.eliotc.core.processor
 
 import cats.syntax.all.*
-import com.vanillasource.eliot.eliotc.ast.fact.{FunctionDefinition, Expression as SourceExpression}
+import com.vanillasource.eliot.eliotc.ast.fact.{ArgumentDefinition, FunctionDefinition, Expression as SourceExpression}
 import com.vanillasource.eliot.eliotc.core.fact.RoleHint
 import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, Qualifier}
 import com.vanillasource.eliot.eliotc.source.content.Sourced
@@ -11,7 +11,8 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
   *
   * {{{
   *   def add(a: Int, b: Int): Int {a.range + b.range}
-  *     ⟶  add^Meta[Meta$a, Meta$b, Meta$](a: Meta$a, b: Meta$b): Meta$ = Int$Meta(a.range + b.range)
+  *     ⟶  add^Meta[Meta$a, Meta$b, Meta$, Constructor$](constructor$: Constructor$, a: Meta$a, b: Meta$b): Meta$ =
+  *            constructor$(a.range + b.range)
   * }}}
   *
   * The companion lives in the [[Qualifier.Meta]] namespace of the def's own qualifier ([[companionName]]), so it never
@@ -21,12 +22,14 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
   * types ([[MetaCompanionLayout]]) — so a generic def's type parameters are bound to what they are, and
   * `integerLiteral`'s `V` is its literal.
   *
-  * The body is the meta *value* constructor `T$Meta(...)` applied to the brace's slot expressions when the result type
-  * is concrete (slot-producing), or the single brace expression directly when it is a bare type parameter of the def
-  * (structure-producing — `fold`'s `join(whenTrue, whenFalse)`, whose `Meta.join` already returns the result meta
-  * type). The constructor is still named from the result type's spelling, so a leaf whose result type is not a bare
-  * slotted name fails to resolve it — loudly, at the leaf. Companions are compiler-pool-only (the channel evaluates
-  * them), dead in the runtime pool.
+  * When the result type is concrete the brace lists **slots** (slot-producing), and the body applies the meta *value*
+  * constructor to them. That constructor is not named here: naming it by the result type's spelling (`Byte` ⤳
+  * `Byte$Meta`) fails for an alias or a computed type, exactly as naming a meta *type* did. It is the companion's first
+  * parameter instead ([[MetaCompanionLayout.constructorParameterName]]), typed by a binder of its own, and the channel
+  * passes the constructor of the result's evaluated meta type. When the result type is a bare type parameter of the def
+  * there is no constructor to apply, so the single brace expression *is* the result meta structure (structure-producing
+  * — `fold`'s `join(whenTrue, whenFalse)`, whose `Meta.join` already returns the result meta type). Companions are
+  * compiler-pool-only (the channel evaluates them), dead in the runtime pool.
   */
 object MetaTransferDesugarer {
 
@@ -49,50 +52,37 @@ object MetaTransferDesugarer {
     if (definition.returnMeta.isEmpty) Seq.empty
     else transferCompanion(definition).map(_ -> RoleHint.NoHint).toSeq
 
-  private def transferCompanion(f: FunctionDefinition): Option[FunctionDefinition] = {
-    val (metaBinders, metaParameters) = MetaCompanionLayout.metaParameters(f)
-    val result                        = MetaCompanionLayout.typeBinder(f.name.as(MetaCompanionLayout.resultBinderName))
-    metaBody(MetaCompanionLayout.payloadResult(f), f.returnMeta, f.genericParameters.map(_.name.value).toSet).map(body =>
-      FunctionDefinition(
-        f.name.map(companionName),
-        MetaCompanionLayout.ownBinders(f) ++ metaBinders :+ result,
-        metaParameters,
-        MetaCompanionLayout.typeReference(result.name),
-        Some(body),
-        visibility = f.visibility
-      )
-    )
-  }
-
-  /** The companion's body. When the result type is **concrete**, the meta value is the meta *constructor* applied to
-    * the brace's slot expressions (`<ResultHead>$Meta(<slots>)`, slot-producing). When the result type is a bare **type
-    * parameter** there is no concrete constructor to wrap in, so the (single) brace expression *is* the result meta
-    * structure directly (structure-producing — e.g. `fold`'s `join(whenTrue, whenFalse)`, whose `Meta.join` already
-    * returns the arm meta type).
-    */
-  private def metaBody(
-      resultType: Sourced[SourceExpression],
-      braceExprs: Seq[Sourced[SourceExpression]],
-      generics: Set[String]
-  ): Option[Sourced[SourceExpression]] =
-    resultType.value match {
+  private def transferCompanion(f: FunctionDefinition): Option[FunctionDefinition] =
+    MetaCompanionLayout.payloadResult(f).value match {
       case SourceExpression.FunctionApplication(None, fnName, _, args)
-          if args.isEmpty && generics.contains(fnName.value) =>
-        braceExprs match {
-          case Seq(single) => Some(single)
+          if args.isEmpty && f.genericParameters.exists(_.name.value === fnName.value) =>
+        f.returnMeta match {
+          case Seq(single) => Some(companion(f, None, single))
           case _           => None
         }
-      case SourceExpression.FunctionApplication(_, fnName, _, _) =>
-        Some(
-          resultType.as(
-            SourceExpression.FunctionApplication(
-              None,
-              fnName.map(_ + MetaConstructorDesugarer.metaTypeSuffix),
-              None,
-              braceExprs
-            )
-          )
-        )
-      case _                                                     => None
+      case _                                                                          =>
+        val constructor = f.name.as(MetaCompanionLayout.constructorParameterName)
+        Some(companion(f, Some(constructor), f.name.as(SourceExpression.FunctionApplication(None, constructor, None, f.returnMeta))))
     }
+
+  /** The companion with `body`, taking the meta constructor as its first parameter when `constructor` names one. */
+  private def companion(
+      f: FunctionDefinition,
+      constructor: Option[Sourced[String]],
+      body: Sourced[SourceExpression]
+  ): FunctionDefinition = {
+    val (metaBinders, metaParameters) = MetaCompanionLayout.metaParameters(f)
+    val result                        = MetaCompanionLayout.typeBinder(f.name.as(MetaCompanionLayout.resultBinderName))
+    val constructorBinder             =
+      constructor.map(c => MetaCompanionLayout.typeBinder(c.as(MetaCompanionLayout.constructorBinderName)))
+    FunctionDefinition(
+      f.name.map(companionName),
+      MetaCompanionLayout.ownBinders(f) ++ metaBinders ++ (result +: constructorBinder.toSeq),
+      constructor.zip(constructorBinder).map((c, b) => ArgumentDefinition(c, MetaCompanionLayout.typeReference(b.name))).toSeq ++
+        metaParameters,
+      MetaCompanionLayout.typeReference(result.name),
+      Some(body),
+      visibility = f.visibility
+    )
+  }
 }

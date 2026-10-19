@@ -14,7 +14,12 @@ import com.vanillasource.eliot.eliotc.module.fact.{
 }
 import com.vanillasource.eliot.eliotc.monomorphize.domain.SemValue
 import com.vanillasource.eliot.eliotc.monomorphize.eval.Evaluator
-import com.vanillasource.eliot.eliotc.monomorphize.fact.{GroundValue, MonomorphicExpression, MonomorphicValue}
+import com.vanillasource.eliot.eliotc.monomorphize.fact.{
+  CompilerMonomorphicValue,
+  GroundValue,
+  MonomorphicExpression,
+  MonomorphicValue
+}
 import com.vanillasource.eliot.eliotc.monomorphize.processor.EscalatingReducer
 import com.vanillasource.eliot.eliotc.platform.Platform
 import com.vanillasource.eliot.eliotc.processor.CompilerIO.*
@@ -270,7 +275,10 @@ object MetaInterpreter {
   /** Reduce a **stated** transfer — a `^Meta` companion — on the argument metas, and read back the domain structure it
     * produced. The companion is reduced at [[companionTypeArguments]] — the callee's own type arguments, then the meta
     * types of its parameters and result — so a generic companion's `join`/arithmetic always lands on a real `Meta`
-    * instance rather than a stuck non-existent `T$Meta`.
+    * instance rather than a stuck non-existent `T$Meta`. A slot-producing companion also takes the meta *constructor* of
+    * that result meta type, first ([[MetaCompanionLayout.constructorParameterName]]), at its own type
+    * ([[metaConstructorOf]]); a result whose meta type is `Unit` has none, so its transfer is ⊤ — R2 reports a leaf
+    * stating slots over such a result ([[MetaTransferAccountingProcessor]]).
     *
     * `None` (⊤) when an input is unknown in a way the companion's body actually projects: an unknown argument is a
     * `SemValue.VType` placeholder the reduction ignores unless it feeds a slot projection, in which case the projection
@@ -285,20 +293,38 @@ object MetaInterpreter {
       argMetas: Seq[Option[GroundValue]]
   ): CompilerIO[Option[GroundValue]] = {
     val companion = RefinementChannelProcessor.metaCompanionFqn(callee)
+    val arguments = argMetas.map {
+      case Some(gv) => Evaluator.groundToSem(gv) // the argument's own meta value, passed opaquely
+      case None     => SemValue.VType            // ⊤ placeholder: an unknown/untracked argument
+    }
+    def reduce(typeArguments: Seq[GroundValue], leading: Seq[SemValue]): CompilerIO[Option[GroundValue]] =
+      EscalatingReducer
+        .reduceApplied(companion, typeArguments, leading ++ arguments)
+        .map(_.collect { case s: GroundValue.Structure => s })
     companionTypeArguments(callee, companion, calleeTypeArgs, argMetas.size, withResult = true).flatMap {
       case Some(metaTypes) =>
-        EscalatingReducer
-          .reduceApplied(
-            companion,
-            calleeTypeArgs ++ metaTypes,
-            argMetas.map {
-              case Some(gv) => Evaluator.groundToSem(gv) // the argument's own meta value, passed opaquely
-              case None     => SemValue.VType            // ⊤ placeholder: an unknown/untracked argument
-            }
-          )
-          .map(_.collect { case s: GroundValue.Structure => s })
+        takesConstructor(companion).ifM(
+          metaConstructorOf(metaTypes.last).flatMap {
+            case Some(constructor) =>
+              reduce(calleeTypeArgs ++ metaTypes :+ constructor.valueType, Seq(Evaluator.groundToSem(constructor)))
+            case None              => none[GroundValue].pure[CompilerIO]
+          },
+          reduce(calleeTypeArgs ++ metaTypes, Seq.empty)
+        )
       case None            => none[GroundValue].pure[CompilerIO]
     }
+  }
+
+  /** The meta *value* constructor of `metaType`, as a ground reference typed by its own signature (a function from the
+    * slots to the meta type) — or `None` for a meta type that declares no structure (`Unit`). It is the value
+    * constructor [[MetaConstructorDesugarer]] declares beside the meta type, of the same name.
+    */
+  private def metaConstructorOf(metaType: GroundValue): CompilerIO[Option[GroundValue.Structure]] = metaType match {
+    case GroundValue.Structure(fqn, Seq(), _) if metaType != unitType =>
+      val constructor = ValueFQN(fqn.moduleName, QualifiedName(fqn.name.name, Qualifier.Default))
+      getFactOrAbort(CompilerMonomorphicValue.Key(constructor, Seq.empty))
+        .map(cmv => GroundValue.Structure(constructor, Seq.empty, cmv.signature).some)
+    case _                                                            => none[GroundValue.Structure].pure[CompilerIO]
   }
 
   /** The meta types a companion of `callee` is instantiated at after the callee's own type arguments — one per parameter
@@ -333,17 +359,25 @@ object MetaInterpreter {
       case _                              => none[Seq[GroundValue]].pure[CompilerIO]
     }
 
-  /** How many parameters `companion` takes: its body's leading lambdas, one per parameter as the desugarer writes them.
-    * The arrow chain of a signature cannot say, since a function-typed result is an arrow too.
+  /** How many of its callee's parameters `companion` takes: its body's leading lambdas, one per parameter as the
+    * desugarer writes them, less a meta constructor's. The arrow chain of a signature cannot say, since a function-typed
+    * result is an arrow too.
     */
   private[channel] def companionArity(companion: ValueFQN): CompilerIO[Int] =
+    companionParameters(companion).map(_.count(_ =!= MetaCompanionLayout.constructorParameterName))
+
+  /** Whether `companion` takes the meta constructor of its result meta type — a slot-producing transfer. */
+  private[channel] def takesConstructor(companion: ValueFQN): CompilerIO[Boolean] =
+    companionParameters(companion).map(_.headOption.contains(MetaCompanionLayout.constructorParameterName))
+
+  private def companionParameters(companion: ValueFQN): CompilerIO[Seq[String]] =
     getFactOrAbort(UnifiedModuleValue.Key(companion, Platform.Compiler))
-      .map(_.namedValue.runtime.fold(0)(body => leadingLambdas(body.value)))
+      .map(_.namedValue.runtime.fold(Seq.empty)(body => leadingLambdas(body.value)))
 
   @tailrec
-  private def leadingLambdas(expression: Expression, count: Int = 0): Int = expression match {
-    case Expression.FunctionLiteral(_, _, body) => leadingLambdas(body.value, count + 1)
-    case _                                      => count
+  private def leadingLambdas(expression: Expression, names: Seq[String] = Seq.empty): Seq[String] = expression match {
+    case Expression.FunctionLiteral(name, _, body) => leadingLambdas(body.value, names :+ name.value)
+    case _                                         => names
   }
 
   /** The first `count` parameter types of a function type and what remains, or `None` if it has fewer arrows. */

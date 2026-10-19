@@ -417,7 +417,9 @@ contain `data` (a chosen representation), a native leaf, or any representation-d
   leaves them, so they line up with the callee's key), one binder per parameter and, for a transfer, one for the result;
   the channel instantiates them with `MetaInterpreter.metaTypeOf` of the def's **payload signature** `<name>$Payload`,
   a generated type the one evaluator reduces at the callee's type arguments (a code parameter reads as what its code
-  yields). What is still named from spelling is a slot-producing brace's meta *constructor* (`Int$Meta(…)`).
+  yields). A slot-producing brace's meta *constructor* is not named either: the companion takes it as its first
+  parameter (`constructor$`) and the channel passes the one of the result's evaluated meta type, so `{closed(0, 255)}`
+  on a leaf returning an alias of `Int` states the same meta as on `Int`. R2 reads the evaluated result type too.
 - `def foldLeft[A, B](initial: B, combine: ..., list: List[A]): B` — an abstract function, signature only.
 - A `type X = ...` alias and a body-less `type X` differ only by having a body; `data X(...)` is the *concrete*
   form that additionally introduces a value constructor.

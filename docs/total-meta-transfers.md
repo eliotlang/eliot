@@ -596,7 +596,7 @@ an untracked parameter still fails loudly. `MetaWhereDesugarer` had the identica
 `where` over an `Int` parameter failed if any *other* parameter of the def was untracked — and took the same rule,
 until §8.8 replaced the name transform, and this rule with it.
 
-**8.8 A companion's parameter meta types are read from evaluated types, not named — LANDED (2026-10-19).**
+**8.8 A companion's meta types and meta constructor are read from evaluated types, not named — LANDED (2026-10-19).**
 §8.7 fixed the symptom, not the cause: `T` ⤳ `T$Meta` reads the *spelling* of a type, and a type is an expression.
 Three shapes failed for a `where`: a parameter typed by an alias (`type Byte = Int`, "Name not defined." at
 `Byte$Meta`), or by any other type that is not a bare slotted name (an alias of an alias, a computed type, a type
@@ -651,8 +651,30 @@ admitted it by accident.) Demanding only what the predicate reads is the obvious
 can observe a meta only through its type's eliminators, which stall on the placeholder — but it narrows a decided
 fail-safe and is left for a decision.
 
-Still open: a slot-producing brace's meta *constructor* (`Int$Meta(…)`) is named from the spelled result type, so a
-leaf whose result type is an alias fails to resolve it, loudly; parameter braces need the same thing.
+*The meta constructor is passed, not named (2026-10-19).* A slot-producing brace lists slots, and its body used to apply
+the constructor named by suffixing the result type as written (`Int$Meta(…)`), so a leaf whose result type is an alias
+failed to resolve it — the same spelling read, one name later. Now the companion takes the constructor as its first
+parameter, `constructor$`, typed by a binder of its own (`Constructor$`, after the result's), and the channel passes
+the value constructor of the result's evaluated meta type at that constructor's own signature
+(`MetaInterpreter.metaConstructorOf`):
+
+```eliot
+def add(a: Int, b: Int): Int {a.range + b.range}
+  ⟶  add^Meta[Meta$a, Meta$b, Meta$, Constructor$](constructor$: Constructor$, a: Meta$a, b: Meta$b): Meta$ =
+         constructor$(a.range + b.range)
+```
+
+A structure-producing brace (a bare type-parameter result, `fold`'s) takes none. The channel tells the two apart by the
+companion's own leading parameter, as it counts the companion's parameters, and a companion's arity counts the
+callee's parameters only. Nothing is named from spelling any more, and every layer brace's reduction is unchanged:
+all example jars are byte-identical.
+
+*R2 read the same spelling, and it was a fail-open.* Whether a leaf's result carries meta was decided by the declared
+return head's name, so `def readGauge: Reading` over `type Reading = Gauge` was exempt from stating a transfer. R2 now
+reads the **evaluated** result type — the instance's signature past as many arrows as the declaration has parameters —
+and a type-parameter head is still exempt, being forwarded rather than originated. Read the same way, a leaf whose
+brace lists slots over a result that carries no meta (a `String` stub, a `Bool`) is reported at the leaf: there is no
+constructor to apply them to, where before it failed to resolve `Bool$Meta`.
 
 ---
 

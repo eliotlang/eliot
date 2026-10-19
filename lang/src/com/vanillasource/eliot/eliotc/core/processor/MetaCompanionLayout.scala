@@ -23,7 +23,8 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
   *      only a handle binder's constraint is dropped, since a handle's type answers it by construction and the two-site
   *      search, which would be asked, does not;
   *   2. one binder per parameter ([[metaBinderName]]), typing that parameter;
-  *   3. for a transfer, one binder for the result ([[resultBinderName]]).
+  *   3. for a transfer, one binder for the result ([[resultBinderName]]), and, when its brace lists slots, one for the
+  *      meta constructor ([[constructorBinderName]]) its first parameter ([[constructorParameterName]]) is typed by.
   *
   * {{{
   *   def fold[A](condition: Bool, whenTrue uses *: A, whenFalse uses *: A) uses *: A { join(whenTrue, whenFalse) }
@@ -51,6 +52,17 @@ object MetaCompanionLayout {
     * [[metaBinderName]].
     */
   val resultBinderName: String = "Meta$"
+
+  /** The parameter a slot-producing transfer companion takes the meta *value* constructor of its result's meta type by,
+    * first. The channel passes it, so the companion never names it by the result type's spelling. `$` is not an
+    * identifier character, so it collides with no parameter the user wrote.
+    */
+  val constructorParameterName: String = "constructor$"
+
+  /** The binder [[constructorParameterName]] is typed by: the constructor's function type, from the slots to the meta
+    * type. It does not start with `Meta$`, so it collides with no [[metaBinderName]].
+    */
+  val constructorBinderName: String = "Constructor$"
 
   /** Appended to a definition's name (in the [[Qualifier.Meta]] namespace) to name its payload signature. */
   val payloadSuffix: String = "$Payload"

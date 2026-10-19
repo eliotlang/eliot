@@ -347,7 +347,7 @@ to bytes.
 Multi-slot metas are structurally free: `MetaConstructorDesugarer` reuses `DataDefinitionDesugarer` verbatim and the
 auto-derived `Meta` instance joins field-wise, so `String$Meta(size, bytes)` and its lattice would fall out with no
 compiler change. The cost is on the *transfer* side. A brace is a positional comma-separated list applied straight
-to the meta constructor (`MetaTransferDesugarer.metaBody` builds `String$Meta(braceExprs*)`, parsed by
+to the meta constructor (the companion applies the `constructor$` the channel passes it to `braceExprs*`, parsed by
 `optionalBracketedCommaSeparatedItems`), so **partial statement is not expressible**: a def either states every slot
 or carries no brace at all and is ⊤ in all of them.
 
