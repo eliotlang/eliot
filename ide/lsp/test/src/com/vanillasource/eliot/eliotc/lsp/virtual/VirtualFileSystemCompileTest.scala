@@ -21,9 +21,9 @@ import scala.jdk.CollectionConverters.*
   * edited file's dependency cone is invalidated and the *buffer* is checked, not the stale disk file.
   */
 class VirtualFileSystemCompileTest extends AsyncFlatSpec with AsyncIOSpec with Matchers {
-  // A source that type-checks against the *abstract* platform-independent workspace the LSP compiles (no JVM layer, so
-  // no concrete `Console`/`IO` instances): a plain `String` value depends on nothing platform-specific. (`printLine` is
-  // now the `Console` effect's method and needs a carrier impl, which the abstract workspace deliberately lacks.)
+  // A source that type-checks against the *abstract* platform-independent workspace the LSP compiles (no JVM layer): a
+  // plain `String` value depends on nothing platform-specific. (A `printLine` would not: the entry point binds `Console`
+  // to `standardConsole`, which only a platform layer bodies.)
   private val validSource  = """def greeting: String = "Hello World!""""
   private val brokenSource = """def greeting: String = notDefinedAnywhere("Hello World!")"""
 

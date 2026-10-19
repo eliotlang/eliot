@@ -62,19 +62,16 @@ class AbilityGuardOverlapLintTest
       ) ++
       // `fold`'s arms are **suspended**, as the real `eliot.lang.Bool` declares them: the compile-time reduction
       // applies the arm it selects, so a stub with plain arms hands it a value where it expects a thunk and the guard
-      // silently stops reducing. A row-typed slot lowers to a thunk `Unit -> A` and the arm is applied to
-      // `eliot.lang.Unit::unit`, so both must be loadable, and the `{}` row's synthesised constraint resolves at
-      // `eliot.carrier.Effect`.
+      // silently stops reducing. A `uses *` slot listing no effect lowers to a thunk `Unit -> A` and the arm is applied
+      // to `eliot.lang.Unit::unit`, so both must be loadable.
       compilerScan(
         Seq("eliot", "lang"),
         "Bool",
         "import eliot.lang.Function\ntype Bool\ndef true: Bool\ndef false: Bool\ndef fold[A](cond: Bool, whenTrue uses *: A, whenFalse uses *: A) uses *: A"
       ) ++
       compilerScan(Seq("eliot", "lang"), "Unit", "type Unit\ndef unit: Unit") ++
-      // Every `ability` block and every effect row declares a binding binder, whose `Implementation[A]` mark and
-      // `Default` sentinel the compiler writes module-qualified — so this module is in every pool.
-      compilerScan(Seq("eliot", "lang"), "Implementation", ProcessorTest.implementationStubContent) ++
-      compilerScan(Seq("eliot", "carrier"), "Effect", "ability Effect[F] { }")).collect { case f: CompilerFact => f }
+      // The `row` phase writes `Implementation::Inferred`/`Handed` module-qualified — so this module is in every pool.
+      compilerScan(Seq("eliot", "lang"), "Implementation", ProcessorTest.implementationStubContent)).collect { case f: CompilerFact => f }
 
   private val moduleName = ModuleName(Seq("test"), "M")
 

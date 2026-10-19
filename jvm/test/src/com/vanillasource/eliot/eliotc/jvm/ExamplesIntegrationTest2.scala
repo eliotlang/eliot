@@ -100,8 +100,8 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
   }
 
   // The everyday discharge: a SINGLE `import eliot.effect.Throw` brings in `raise` AND the `catch` utility, which
-  // discharges `{Throw[E]}` and recovers a raised error to a value of the same type — no `Either`/`ThrowCarrier`/`Effect`
-  // import, no transformer named. Written infix with a parenthesized lambda operand (`p catch (e -> …)`), which the
+  // discharges `Throw[E]` and recovers a raised error to a value of the same type — no `Either` import, nothing else
+  // named. Written infix with a parenthesized lambda operand (`p catch (e -> …)`), which the
   // adjacency-sensitive call parser keeps separate from a call.
   it should "discharge-and-recover in one step via a single import and infix catch" in {
     compileAndRun(
@@ -118,15 +118,10 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
     ).asserting(_ shouldBe "parsed-value\nmalformed input")
   }
 
-  // Row-argument type-pinning (docs/effects-as-channel.md §10 U4-f, pinned finding 7): a `catch` whose handler does NOT
-  // itself pin the error type — a non-identity `err -> "default"` (identity handlers `err -> err` masked the bug by
-  // pinning `E := A` through the handler). The open-row argument `parseBad : {Throw[String]}` captured into `catch`'s
-  // pinned `{Throw[E] | G} A` parameter solved `?F := ThrowCarrier[?E, G]` structurally but left the error slot `?E`
-  // disconnected from the constraint's `String`; it junk-grounded to `Type`, selecting the `where E1 != E2` lift whose
-  // inner `raise` demanded the nonexistent `Throw[String, Id]`. The row-directed pin (`?E := String`) resolves the
-  // native carrier instance instead, in both the pure-boundary `recovered` (the shape that also un-breaks the stdlib doc
-  // idiom) and the ambient position.
-  it should "discharge with a non-identity handler (row-argument type-pinning, finding 7)" in {
+  // A `catch` whose handler does NOT itself fix the error type — a non-identity `err -> "default"` (an identity handler
+  // `err -> err` fixes `E := A` through itself, which once masked a bug that left the error type unsolved) — in a pure
+  // definition (`recovered`) and directly in `main`.
+  it should "discharge with a non-identity handler, in a pure definition and in main" in {
     compileAndRun(
       """import eliot.effect.Console
         |import eliot.effect.Throw
@@ -144,15 +139,12 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
     ).asserting(_ shouldBe "recovered-default\nok-value\nambient-default")
   }
 
-  // Effectful `catch` handler (docs/effects-as-channel.md §7): `catch`'s handler is `onError: E => G[A]`, so the
-  // recovery may itself perform effects on the same carrier — `catch (err -> printLine(err))` logs the failure and
-  // recovers to Unit. The row-directed-at-elaboration pin (finding 13 §4) keeps the discharged computation's error
-  // slot from junk-grounding, and the single-node `pureLift` at the return boundary keeps a *pure* handler body from
-  // double-wrapping into a `ClassCastException` — so both effectful and pure handlers compose.
+  // Effectful `catch` handler: `catch`'s handler is the code parameter `onError uses *: E => A`, so the recovery may
+  // itself perform the caller's effects — `catch (err -> printLine(err))` logs the failure and recovers to `Unit`.
   "an effectful catch handler" should "run its own effect while recovering the raised value" in {
-    // A pure handler (`err -> err`, recovering to a value) and an effectful handler (`err -> printLine(err)`, logging on
-    // the same `{Console}` carrier) compose in one block. `failUnit` succeeds with `Unit`, so its handler's `printLine`
-    // (also `Unit`) matches the success type `A` — the handler's `G[A]` codomain is what makes the effect legal there.
+    // A pure handler (`err -> err`, recovering to a value) and an effectful handler (`err -> printLine(err)`,
+    // performing `main`'s `Console`) compose in one block. `failUnit` succeeds with `Unit`, so its handler's `printLine`
+    // (also `Unit`) matches the success type `A` — the handler's `uses *` clause is what makes the effect legal there.
     compileAndRun(
       """import eliot.effect.Console
         |import eliot.effect.Throw
@@ -167,13 +159,11 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
     ).asserting(_ shouldBe "parsed-value\nboom")
   }
 
-  // Ability-implementation guards, the Throw client (ability-guards Stage 4): TWO distinct error types in one effect
-  // row force the `ThrowCarrier` to nest, which needs both the native `Throw[E, ThrowCarrier[E, G]]` instance and the
-  // lift `Throw[E2, ThrowCarrier[E1, G]] where E1 != E2`. Those structurally overlap on the diagonal `E1 = E2`; the
-  // `where E1 != E2` guard (discharged at the concrete use site by reducing `Eq[Type]`) makes them disjoint, so the
-  // lift routes the foreign error inward while the native owns its own slot. Here `fetch` raises first, so the
-  // outer `NetError` catch recovers to its reason. This is the `examples/src/EffectsTwoThrows.els` probe end to end.
-  "two distinct Throw error types in one row" should "compile via the guarded self-lift and catch each by its type" in {
+  // TWO distinct error types in one clause (`uses Throw[NetError], Throw[ParseError]`): each `raise` is answered by the
+  // handle whose entry its error type matches, and each `catch` hands its block a `Throw` of its own error type. Here
+  // `fetch` raises first, so the `NetError` catch recovers to its reason. This is the
+  // `examples/src/EffectsTwoThrows.els` probe end to end.
+  "two distinct Throw error types in one row" should "catch each by its type" in {
     compileAndRun(
       """import eliot.effect.Console
         |import eliot.effect.Throw
@@ -192,9 +182,8 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
   }
 
   it should "recover the inner error type when the outer computation succeeds" in {
-    // `fetch` succeeds, `parse` raises: the residual row after the `NetError` catch is `{Throw[ParseError]}`, recovered
-    // by the second catch — exercising the lift routing a *foreign* error inward (off the diagonal) and then its own
-    // native discharge.
+    // `fetch` succeeds, `parse` raises: the `NetError` catch lets the `ParseError` pass, and the second catch recovers
+    // it.
     compileAndRun(
       """import eliot.effect.Console
         |import eliot.effect.Throw
@@ -212,11 +201,9 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
     ).asserting(_ shouldBe "unexpected token")
   }
 
-  // The degenerate diagonal: the *same* error type appears in both throwing functions, so the row collapses to one
-  // `{Throw[String]}` on a single carrier. The guarded lift declines on the diagonal (`where String != String` = false),
-  // so the native `Throw[String, ThrowCarrier[String, IO]]` wins deterministically — no "Multiple ability
-  // implementations" ambiguity — and the single `catch` recovers the raised error.
-  "two same-typed throws composed on one carrier" should "resolve to the native instance (the lift declines)" in {
+  // The degenerate diagonal: the *same* error type appears in both throwing functions, so `combined` declares one
+  // `Throw[String]` and both raises take its one handle; the single `catch` recovers the first raised error.
+  "two same-typed throws under one entry" should "be recovered by a single catch" in {
     compileAndRun(
       """import eliot.effect.Console
         |import eliot.effect.Throw
@@ -231,7 +218,7 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
   }
 
   // The Abort analogue: a single `import eliot.effect.Abort` brings in `abort` AND the infix `else` utility, which
-  // discharges `{Abort}` and supplies a fallback on short-circuit — no `Option`/`AbortCarrier` named.
+  // discharges `Abort` and supplies a fallback on short-circuit — no `Option` named.
   "the Abort effect's else" should "discharge-and-default in one step via a single import and infix else" in {
     compileAndRun(
       """import eliot.effect.Console
@@ -247,13 +234,12 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
     ).asserting(_ shouldBe "config-value\n<fallback>")
   }
 
-  // Regression for the carrier-depth mangling collision. `grade`'s `if..else if..else` chain monomorphizes `if` at the
-  // nested carrier `AbortCarrier[AbortCarrier[IO]]`, while the plain `if(..) else ..` in `main` uses `AbortCarrier[IO]`.
-  // Both once mangled to a single `if$AbortCarrier$String` method (head-only type-argument suffix), so the backend's
-  // signature-dedup treated the two different bodies as byte-identical and dropped one; the surviving wrong-carrier body
-  // then produced a value one nesting level off, crashing at runtime with a ClassCastException in the `runAbort`
-  // accessor. Recursive type-argument mangling keeps the two depths distinct.
-  "if..else used at two effect-carrier nesting depths" should "not collapse into one mangled JVM method" in {
+  // Regression for a name-mangling collision: `grade`'s `if..else if..else` chain and the plain `if(..) else ..` in
+  // `main` are two instantiations of `if` that once differed only in a nested type argument under one head. A head-only
+  // type-argument suffix mangled both to one JVM method, the backend's signature-dedup dropped one body, and the
+  // survivor crashed at runtime with a `ClassCastException`. Recursive type-argument mangling
+  // (`CommonPatterns.mangleTypeArgument`) keeps such instantiations distinct.
+  "if..else chained and plain in one program" should "not collapse into one mangled JVM method" in {
     compileAndRun(
       """
         |import eliot.effect.Console
@@ -269,8 +255,8 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
     ).asserting(_ shouldBe "excellent\ntaken")
   }
 
-  // `if`'s branch is a carrier value `F[T]`, so a branch may itself be effectful. Only the SELECTED branch's effect
-  // runs — both branches are built, the unchosen one is never executed — matching an imperative `if`.
+  // `if`'s branch is a code parameter (`value uses *, Abort: T`), so a branch may itself be effectful. Only the
+  // SELECTED branch's effect runs — the unchosen one is never run — matching an imperative `if`.
   "if..else with effectful branches" should "run only the selected branch's effect" in {
     compileAndRun(
       """
@@ -284,11 +270,10 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
     ).asserting(_ shouldBe "then\nelse")
   }
 
-  // Pure-boundary Id defaulting (the identity carrier): a fully-discharged `if..else` meets a PURE declared return
-  // directly — the residual carrier defaults to the built-in `Id` (the lang layer's identity carrier) and the checker unwraps it with `runId`
-  // (`EffectLifter.tryIdDefault`), so branching needs no carrier in the signature. Exercises the direct return, an
-  // `else if` chain, a block `val` holding the discharged branch, and a genuinely runtime condition (from stdin).
-  "if..else in a pure function" should "discharge to the Id carrier and unwrap automatically" in {
+  // A fully-discharged `if..else` in a PURE definition: `else` discharges `if`'s `Abort`, so branching needs no `uses`
+  // clause. Exercises the direct return, an `else if` chain, a block `val` holding the discharged branch, and a
+  // genuinely runtime condition (from stdin).
+  "if..else in a pure function" should "need no uses clause once else discharges the Abort" in {
     compileAndRun(
       """import eliot.effect.Console
         |import eliot.effect.Abort
@@ -316,11 +301,10 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
     ).asserting(_ shouldBe "+\n-\nsecond\n+\nyes")
   }
 
-  // The other pure control effects discharge to a pure return the same way: `catch` fully discharges `{Throw}` and
-  // `runStateToPair` fully discharges `{State}`, so both results land in bare pure types via the Id defaulting. No
-  // `Suspend[Id]` instance exists, so a genuinely side-effecting body under a pure return still fails to resolve —
-  // the defaulting can never smuggle real I/O.
-  "catch and runStateToPair in a pure function" should "discharge to pure values via the Id carrier" in {
+  // The other control effects discharge to a pure definition the same way: `catch` fully discharges `Throw` and
+  // `runStateToPair` fully discharges `State`, so both results are plain values. A genuinely side-effecting body in a
+  // pure definition is still rejected by the scope check — a discharger can never smuggle real I/O.
+  "catch and runStateToPair in a pure function" should "discharge to pure values" in {
     compileAndRun(
       """import eliot.effect.Console
         |import eliot.effect.Throw
@@ -356,10 +340,10 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
     ).asserting(_ shouldBe "hello\ntyped")
   }
 
-  // Static testability: the SAME `{Abort}` business logic a program runs is what a test runs, discharged to a plain
-  // `Option` with no I/O anywhere. Under v6 there is no test *carrier* to substitute — `runAbort` installs a frame and
-  // answers ordinary data — so the "pure test run" is just calling it from a pure function.
-  "an {Abort} program" should "discharge to an Option in a pure function, with no I/O" in {
+  // Static testability: the SAME `Abort` business logic a program runs is what a test runs, discharged to a plain
+  // `Option` with no I/O anywhere. `runAbort` installs a frame and answers ordinary data, so the "pure test run" is
+  // just calling it from a pure function.
+  "an Abort program" should "discharge to an Option in a pure function, with no I/O" in {
     compileAndRun(
       """import eliot.effect.Console
         |import eliot.effect.Abort
@@ -424,12 +408,9 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
     ).asserting(_ shouldBe "before\nafter")
   }
 
-  // Effect-accounting migration: a `{State}` computation discharged
-  // via a DOT-chained `runStateToValue` inside a `{Console}`-declaring body compiles and runs. The pre-mono accounting
-  // rejected this (a dot-chained discharger was not credited — "performs the effect 'State'"); the monomorphize-phase
-  // residual check verifies exactly, so the discharged `State` (its ability method on the inner `StateCarrier`, not the
-  // ambient carrier) is absent from `show`'s `{Console}` residual.
-  "a dot-chained State discharge inside a {Console} body" should "compile and run, the State absent from the residual" in {
+  // A `State` computation discharged by `runStateToValue` inside a `uses Console` body compiles and runs: the
+  // discharged `State` is not `show`'s to declare.
+  "a State discharge inside a uses-Console body" should "compile and run without declaring State" in {
     compileAndRun(
       """import eliot.effect.Console
         |import eliot.effect.State
@@ -471,34 +452,11 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
     ).asserting(_ shouldBe "on")
   }
 
-  // A COMPOUND state type `State[List[String]]`, kept because it is the shape a state slot most easily mis-resolves
-  // at: an equal-arity data-constructor application at the state position once unified the carrier with `List` and
-  // resolved the `State` ability at `[String, List]`. With no carrier to unify there is nothing to get wrong, and the
-  // case stays as the regression it was.
+  // A COMPOUND state type `State[List[String]]`, kept because it is the shape a state slot once mis-resolved at: an
+  // equal-arity data-constructor application at the state position resolved the `State` ability at `[String, List]`.
+  // It is also the guard that a block of `State` statements sequences, threading the state through every statement
+  // rather than keeping only the last.
   "the derived updateState over a compound List state" should "resolve the State ability at the whole list type" in {
-    compileAndRun(
-      """import eliot.effect.Console
-        |import eliot.effect.State
-        |import eliot.collection.List
-        |
-        |def pushName(n: String) uses State[List[String]]: Unit =
-        |   updateState(names -> append(names, n))
-        |
-        |def collectNames uses State[List[String]]: Unit = {
-        |   pushName("ada")
-        |   pushName("bob")
-        |}
-        |
-        |def main uses Console: Unit =
-        |   foreach(printLine, runStateToFinalState(empty, collectNames))""".stripMargin
-    ).asserting(_ shouldBe "ada\nbob")
-  }
-
-  // A BLOCK of `{State}` statements must SEQUENCE, threading the state through every statement rather than keeping
-  // only the last. It is the plainest thing a block has to do, and it once failed for a whole class of returns whose
-  // carrier the lowering did not recognise; under v6 a block is strict evaluation order and there is no carrier to
-  // recognise, so this stands as the behavioural guard it always was.
-  "a block of State statements" should "sequence, threading the state through all of them" in {
     compileAndRun(
       """import eliot.effect.Console
         |import eliot.effect.State
@@ -590,8 +548,8 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
 
   // --- Block syntax: `val` bindings and statement sequencing ---
 
-  // The headline: a multi-step body written as a block instead of a hand-nested flatMap. Each bare statement is a `val`
-  // with a discarded binder, so the steps are sequenced through the carrier automatically, in order.
+  // The headline: a multi-step body written as a block. Each bare statement runs in order — a block is strict
+  // evaluation order.
   "a block of statements" should "sequence effectful steps in order" in {
     compileAndRun(
       """import eliot.effect.Console
@@ -603,9 +561,9 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
     ).asserting(_ shouldBe "first\nsecond\nthird")
   }
 
-  // A `val` binds the *carried* result of an effectful step (here the discharged `readLine`), so the body sees the
-  // plain value; the block lowers to `flatMap(line -> printLine(line), <the read>)`.
-  "a val binding an effectful result" should "bind the carried value and use it" in {
+  // A `val` binds the result of an effectful step (here the discharged `readLine`): the step runs where the `val` is
+  // written, and the body sees the plain value.
+  "a val binding an effectful result" should "bind the value and use it" in {
     compileAndRun(
       """import eliot.effect.Console
         |def echo uses Console: Unit = {
@@ -618,8 +576,7 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
     ).asserting(_ shouldBe "typed line")
   }
 
-  // A non-effectful `val` binds a plain value (no carrier), used twice in the body. This is the immediately-applied
-  // lambda `let` form: the block lowers to `(msg -> …)(greeting)`, with `greeting` a pure value, not a carried action.
+  // A non-effectful `val` binds a plain value, used twice in the body.
   "a non-effectful val binding" should "bind a plain value usable multiple times" in {
     compileAndRun(
       """import eliot.effect.Console
@@ -633,8 +590,7 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
     ).asserting(_ shouldBe "Hi\nHi")
   }
 
-  // A pure `val` and an effectful `val` interleaved in one block: the pure binding inlines as a plain `let`, the
-  // effectful one threads through `flatMap` — both in the same lowered tower.
+  // A pure `val` and an effectful `val` interleaved in one block, each bound in order.
   it should "interleave a pure binding with an effectful one" in {
     compileAndRun(
       """import eliot.effect.Console
@@ -668,15 +624,10 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
         |}""".stripMargin
     ).asserting(_ shouldBe "before\nafter")
   }
-  // A deferred Generic slot whose domain later rigidifies to a *generic data container* — the dot operator's own
-  // `.[A, B](a: A, f: Function[A, B]): B`, whose `A` is bare when the effectful subject is checked and only becomes
-  // `Either[?E, ?A]` once the function argument lands. The ladder's unify arm then decomposed `?F[T] ~ Either[?E, ?A]`
-  // *successfully* — solving the ambient carrier meta to a partially applied data constructor (`?F := Either[?E]`) —
-  // so bind-lift never ran and the whole chain came out typed `Either[String, String]` instead of `String`, while the
-  // identical `foldEither(e -> e, s -> s, outcome)` compiled. A concrete `Either[String, String]` domain never showed
-  // it (the same decomposition fails on the payload), which is why only the generic shape was broken. Phase B now
-  // sequences before whole-unify against a rigid non-carrier domain (`Checker.sequenceBeforeUnify`).
-  "a discharger dot-chained into a generic container fold" should "sequence the effect rather than steal the carrier" in {
+  // A discharger's result folded by a generic container fold: `runThrow(bad)` runs at the call site and `foldEither`'s
+  // generic `Either[E, A]` parameter receives its value. The chain once came out typed `Either[String, String]`
+  // instead of `String` when the subject was dot-chained, which is what the second case compares.
+  "a discharger's result folded by a generic container fold" should "run the effect, then fold its value" in {
     compileAndRun(
       """import eliot.effect.Console
         |import eliot.effect.Throw
@@ -702,8 +653,8 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
     ).asserting(_ shouldBe "boom\nboom")
   }
 
-  // The same shape with an effect riding alongside the discharged one: `Console` stays on the ambient carrier while
-  // `Throw` is discharged, so the sequenced bind must run the print before folding the Either.
+  // The same shape with an effect alongside the discharged one: `Console` is `main`'s, passed through `runThrow`'s
+  // `uses *`, while `Throw` is discharged, so the print runs before the Either is folded.
   it should "keep a co-riding effect running while the discharged one folds" in {
     compileAndRun(
       """import eliot.effect.Console

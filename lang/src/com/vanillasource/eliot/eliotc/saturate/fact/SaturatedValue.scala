@@ -16,8 +16,8 @@ import com.vanillasource.eliot.eliotc.processor.{CompilerFact, CompilerFactKey}
   *
   * The name is historical: this fact once carried a *saturated* signature (the retired implicit-generics `auto` feature
   * rewrote bare omittable type-constructor references into explicit applications over fresh binders). With no user
-  * surface for omittable binders and the effect carrier already written by the row elaborator,
-  * [[SaturatedValueProcessor]] is a pass-through and this value equals its [[OperatorResolvedValue]] verbatim.
+  * surface for omittable binders, [[SaturatedValueProcessor]] is a pass-through and this value equals its
+  * [[OperatorResolvedValue]] verbatim.
   *
   * @param value
   *   The operator-resolved value carrying the signature.

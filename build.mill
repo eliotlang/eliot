@@ -133,10 +133,11 @@ object `package` extends Module {
      *
      * A layer *may* also ship a `compiler/` root beside its `src/`: its **compile-time (compiler platform)
      * contribution**, the redefinitions/instances the NbE type checker uses that its runtime sources can't express (a
-     * `data` carrier reaching a bytecode leaf, a checking-only ability instance). The compiler pool scans the whole
-     * runtime track *plus* each root's `compiler/` sibling (override-preferred); `stdlib` ships one (`Either`,
-     * `Option`, the guard combinators). The `--path <module>/eliot/src` argument carries both — the sibling is derived
-     * from it at runtime — so no separate compiler path or compiler module is needed.
+     * definition whose only runtime body is a sibling target's, a checking-only ability instance). The compiler pool
+     * scans the whole runtime track *plus* each root's `compiler/` sibling (override-preferred); `stdlib` ships one
+     * (`Either`, `Option`, `Pair`, `Bound`/`Interval`, and the `Abort`/`Throw` implementations). The
+     * `--path <module>/eliot/src` argument carries both — the sibling is derived from it at runtime — so no separate
+     * compiler path or compiler module is needed.
      */
    trait EliotLayerModule extends DefaultScalaModule {
      def eliotSource: T[PathRef] = Task.Source("eliot/src")

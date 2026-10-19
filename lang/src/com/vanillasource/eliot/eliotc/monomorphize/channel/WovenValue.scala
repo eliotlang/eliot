@@ -52,9 +52,8 @@ case class WovenValue(
 
 object WovenValue {
 
-  /** Keyed exactly like [[com.vanillasource.eliot.eliotc.monomorphize.fact.MonomorphicValue.Key]] — one weave stack per
-    * instance in this slice (the Suspend-riding base carrier), so the key is the mono key. (`weave key = mono key ×
-    * stack`, docs/effects-as-channel.md §6; the stack dimension is added when control-effect carriers arrive.)
+  /** Keyed exactly like [[com.vanillasource.eliot.eliotc.monomorphize.fact.MonomorphicValue.Key]] — one woven value
+    * per monomorphic instance, so the key is the mono key.
     */
   case class Key(vfqn: ValueFQN, typeArguments: Seq[GroundValue]) extends CompilerFactKey[WovenValue] {
     override def valueCodec: Option[FactCodec[WovenValue]] = Some(LangFactCodecs.wovenValueCodec)

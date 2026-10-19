@@ -7,16 +7,17 @@ import com.vanillasource.eliot.eliotc.monomorphize.domain.*
 import com.vanillasource.eliot.eliotc.monomorphize.domain.SemValue.*
 import com.vanillasource.eliot.eliotc.monomorphize.eval.Evaluator
 import com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedExpression
-import com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedExpression.{SignatureView, asArrow}
+import com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedExpression.SignatureView
 import com.vanillasource.eliot.eliotc.platform.Platform
 import com.vanillasource.eliot.eliotc.processor.CompilerIO.*
 import com.vanillasource.eliot.eliotc.saturate.fact.SaturatedValue
 import com.vanillasource.eliot.eliotc.source.content.Sourced
 
-/** The higher-kinded-carrier *kind system* (D8): the effects-era "is this `[F[_]]` carrier solved to something of the
-  * right kind" checks, factored out of the [[com.vanillasource.eliot.eliotc.monomorphize.check.Checker]] into one
-  * cohesive module — the same move D4 made for the refinement lattice. None of this is definitional equality: it
-  * reconstructs a *kind* from a binder's signature and verifies a carrier meta's solution against it, post-drain.
+/** The higher-kinded *kind system* (D8): the "is this `[F[_]]` binder solved to something of the right kind" checks,
+  * factored out of the [[com.vanillasource.eliot.eliotc.monomorphize.check.Checker]] into one cohesive module — the
+  * same move D4 made for the refinement lattice. A *carrier* here is the instantiation meta of a higher-kinded binder.
+  * None of this is definitional equality: it reconstructs a *kind* from a binder's signature and verifies a carrier
+  * meta's solution against it, post-drain.
   *
   * Two entry points, mirroring the two phases:
   *   - [[recordCarrierMetas]] — at *instantiation* time (called from `Checker.instantiatePolymorphic`), tag each
@@ -105,7 +106,7 @@ class CarrierKindChecker(
     *     H r..` (only a non-injective constant/projection lambda would, which a carrier never is). It is reported here
     *     rather than being silently dropped from the postponement queue. A carrier postponed against a *non-rigid*
     *     `VPi` (`?F[A, B] ~ Function[A, B]`) is left alone — that is legitimately higher-order unification the pattern
-    *     unifier cannot solve, backstopped when the callee is monomorphized at the defaulted carrier.
+    *     unifier cannot solve, backstopped when the callee is monomorphized at its concrete instantiation.
     */
   def verifyCarrierKinds: CheckIO[Unit] =
     for {
@@ -187,18 +188,4 @@ class CarrierKindChecker(
       case Some(sv) => evalExpr(sv.value.signature.value, Some(Env.empty)).map(Some(_))
     }
 
-}
-
-object CarrierKindChecker {
-
-  /** Whether a generic binder is **higher-kinded** (`Type -> Type`) — the one structural reading left of what used to
-    * be carrier identification.
-    *
-    * It is not a question about effects, and there is nothing to recognise any more: effects v6 removed carriers, so a
-    * row entry is a phantom binder of kind `Type` and a computation is a thunk. This is a *kind* question, asked to
-    * reject an `[F[_]]` binder instantiated at a fully-applied proper type — which is soundness, and measured
-    * (`docs/effects.md` §12, "do not re-propose").
-    */
-  def isHktBinder(binder: SignatureView.Binder): Boolean =
-    binder.parameterType.exists(pt => asArrow(pt.value).isDefined)
 }

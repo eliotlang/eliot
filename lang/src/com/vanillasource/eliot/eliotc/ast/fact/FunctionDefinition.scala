@@ -43,10 +43,10 @@ case class FunctionDefinition(
     // the def's `^Where` companion (a `T$Meta… -> Bool` function in `Qualifier.Meta`) the refinement channel evaluates
     // at each call site to demand the precondition; then dropped (never part of `NamedValue`/`signatureEquality`).
     whereClause: Option[Sourced[Expression]] = None,
-    // The effects-as-channel **declared effect row** (docs/effects-as-channel.md §4, Phase 1): the open effect rows of
-    // this signature, position-attributed, captured by `EffectSugarDesugarer.desugar` before the carrier rewrite erases
-    // them. Unlike the fields above it is *not* dropped at the core boundary — it forwards down the value fact chain to
-    // the monomorphize phase (see [[EffectRow]]). Dark/inert in Phase 1 and never part of `signatureEquality`.
+    // The **declared clauses** of this signature (docs/effects.md §3.1): its `uses` entries, position-attributed, and
+    // the handles they lower to, recorded by `EffectSugarDesugarer.desugar` as it lowers the clauses themselves to
+    // plain parameters. Unlike the fields above it is *not* dropped at the core boundary — it forwards down the value
+    // fact chain as declaration metadata (see [[EffectRow]]). Never part of `signatureEquality`.
     effectRow: EffectRow[UnresolvedAbilityConstraint[Sourced[Expression]]] = EffectRow.empty
 )
 

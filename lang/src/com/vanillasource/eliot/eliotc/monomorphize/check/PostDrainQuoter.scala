@@ -181,8 +181,8 @@ class PostDrainQuoter(
     * arguments** ([[reduceInstance]] → the reference's own `CompilerMonomorphicValue`), splice those in, and
     * re-evaluate. Loop until it quotes or no new reduced binding is available.
     *
-    * This is the single mechanism the guarded signature, ability-guard markers, and any future stacked-carrier
-    * compile-time code share: each fetched reduced form was itself produced by a read-back that ran this same loop, so
+    * This is the single mechanism the guarded signature, ability-guard markers, and any other compile-time code
+    * share: each fetched reduced form was itself produced by a read-back that ran this same loop, so
     * the recursion lives in the cached, `activeFactKeys`-guarded fact graph rather than in a closure-composition flag.
     * It is shape-agnostic and stuck-driven — it never inspects whether the term is a guard. The loop skeleton itself is
     * [[EscalatingReducer.escalatingLoop]], shared with the channel's post-monomorphize executor

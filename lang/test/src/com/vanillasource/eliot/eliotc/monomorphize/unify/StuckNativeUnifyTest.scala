@@ -16,7 +16,7 @@ import java.net.URI
   * injectivity-decomposes a non-injective native (the F1 landmine), two stuck natives are equal only when their FQN and
   * arguments match, and the quoter fails loudly on one that survives to read-back.
   *
-  * The adversarial case is a carrier meta `?F[a]` unified against a stuck-native-headed value `add(x, y)`: a real
+  * The adversarial case is an applied meta `?F[a]` unified against a stuck-native-headed value `add(x, y)`: a real
   * (injective) constructor decomposes (`?F := Box`), the stuck native must not — it has to postpone instead, leaving
   * the meta for `renormalize`/defaulting once its arguments concretise.
   */
@@ -42,13 +42,13 @@ class StuckNativeUnifyTest extends AnyFlatSpec with Matchers {
     (id, Unifier.create(store, 0))
   }
 
-  "a carrier meta unified against a constructor application" should "decompose injectively, solving the meta to the constructor" in {
+  "an applied meta unified against a constructor application" should "decompose injectively, solving the meta to the constructor" in {
     val (id, u) = withMeta()
     val result  = u.unify(VMeta(id, spineOf(rigid("a"))), VTopDef(boxFqn, None, spineOf(rigid("a"))), ctx).drain()
     (result.errors, result.metaStore.lookup(id)) shouldBe (Nil, Some(VTopDef(boxFqn, None, Spine.SNil)))
   }
 
-  "a carrier meta unified against a stuck native application" should "not injectivity-decompose the non-injective native" in {
+  "an applied meta unified against a stuck native application" should "not injectivity-decompose the non-injective native" in {
     val (id, u) = withMeta()
     u.unify(VMeta(id, spineOf(rigid("a"))), stuck(addFqn, rigid("x"), rigid("y")), ctx).drain().metaStore.lookup(id) shouldBe None
   }

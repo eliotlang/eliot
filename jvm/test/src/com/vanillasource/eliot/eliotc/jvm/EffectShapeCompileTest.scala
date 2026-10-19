@@ -13,29 +13,23 @@ import java.util.zip.ZipInputStream
   * the whole base layer (`lang` + `stdlib` + `jvm`). Each program pulls in the base and is compiled to a jar; a clean
   * compile (classes produced, no errors) is the assertion, plus one program that must *not* compile.
   *
-  * The programs, not the machinery under them, are the durable content — which is why the suite has outlived two of
-  * those machineries. It began as a byte-identity oracle comparing the v2 uniform-carrier path against the
-  * pre-uniform fallback, was kept as a compile-success gate when that fallback went, and is kept again now that the
-  * bridge itself is gone (effects-as-rows A.11.7): the same shapes are placed by the row elaborator from declarations,
-  * and every one of them still has to compile. The per-program comments name the mechanism each shape exercised when
-  * it was added; that history is why the shape is here, not a claim about the current path.
+  * The programs, not the machinery under them, are the durable content: the suite has outlived several effect
+  * mechanisms, and every shape here still has to compile under whichever one decides it.
   */
 class EffectShapeCompileTest extends AsyncFlatSpec with AsyncIOSpec with Matchers {
 
-  // Exercises the shapes the uniform gate routes: a pure value return (`label`'s `line`), a pure argument into a payload
-  // slot (`printLine(<pure>)`), and an *effectful* argument into a payload slot (`label(readLine)` — `readLine` is
-  // `{Console} Option[String]`, bound at the call site).
+  // A pure value return (`label`), a pure argument into `printLine`, and an *effectful* argument (`label(readLine)`):
+  // `readLine` performs `Console` at the call site and its `Option[String]` is what `label` receives.
   private val source =
     """def label(line: Option[String]): String = line.orAbort else ""
       |
       |def main uses Console: Unit = printLine(label(readLine))
       |""".stripMargin
 
-  // Exercises the whole conditional surface (`if`/`else`/`fold` are ordinary functions, never hardcoded): a
-  // discharge-to-pure `if..else` whose residual carrier defaults to `Id` and unwraps with `runId` (`sign`), an
-  // effectful `if..else` whose `Abort` is discharged by `else` while `Console` rides the ambient (`report`), a
-  // multi-arm `fold` (both bare-`A` Generic arms, only the selected one run — `pick`), and a `val`-bound discharged
-  // chain (`describe`).
+  // The whole conditional surface (`if`/`else`/`fold` are ordinary functions, never hardcoded): an `if..else` in a
+  // pure definition, its `Abort` discharged by `else` (`sign`), an effectful `if..else` whose `Abort` is discharged by
+  // `else` while `Console` is `report`'s own (`report`), a `fold` over two effectful code arms, only the selected one
+  // run (`pick`), and a `val`-bound discharged chain (`describe`).
   private val conditionalSource =
     """def line uses Console: String = readLine.orAbort else ""
       |
@@ -58,21 +52,16 @@ class EffectShapeCompileTest extends AsyncFlatSpec with AsyncIOSpec with Matcher
       |}
       |""".stripMargin
 
-  // Exercises the Generic-arm BIND case (U4-a(i)): a generic callee whose type parameter is *discarded* from the result
-  // (`first[A, B](a: A, b: B): A` — `B` absent from `A`) receiving an *effectful* argument in the discarded slot
-  // (`first("x", readLine)`). The domain meta `B` does not ride the result, so the effect cannot ride up as a first-class
-  // value — it must be *sequenced* (bound) at the call site, exactly as the Phase-B `tryBindLift` does.
+  // An *effectful* argument at a generic parameter the result discards (`first[A, B](a: A, b: B): A`, called as
+  // `first("x", readLine)`): the effect still runs at the call site, strict call-by-value.
   private val genericBindSource =
     """def first[A, B](a: A, b: B): A = a
       |
       |def main uses Console: Unit = printLine(first("x", readLine))
       |""".stripMargin
 
-  // Exercises the payload-slot CAPTURE case (U4-a(ii)): an effectful actual captured *whole* into a carrier-stack /
-  // pinned domain. `parseOk : {Throw[String]} String` (desugars to a role-carrier `?F[String]`) is passed to `catch`'s
-  // `computation: {Throw[E] | G} A` slot (a pinned `ThrowCarrier[E, G, A]`); its payload `String` does not fit the
-  // domain, but the whole `?F[String]` pass-through-unifies (`?F := ThrowCarrier[E, G]`, `A := String`), storing the
-  // computation — the uniform ladder's arm-1 whole-type pass-through.
+  // An effectful definition passed whole to a discharger: `parseOk`, declared `uses Throw[String]`, at `catch`'s
+  // `computation uses *, Throw[E]: A` slot, whose run hands it the `Throw[String]` handle `catch` makes.
   private val captureSource =
     """def parseOk uses Throw[String]: String = fold(true, "parsed-value", raise("unparseable"))
       |
@@ -80,10 +69,8 @@ class EffectShapeCompileTest extends AsyncFlatSpec with AsyncIOSpec with Matcher
       |""".stripMargin
 
   // A fully-polymorphic aborting actual (`abort` stands in for a value of any type) delivered into `printLine`'s
-  // `String` domain, with the `Abort` it performs discharged at the caller. Under v5 this was the "doomed under-applied
-  // bind" case, named for a whole-type unify (`?F[?A] ~ String`) with no injective solution; there is no carrier to
-  // unify now, so what is left is the shape itself — which still has to compile, and whose `runAbort` still has to
-  // reach the frame `abort` exits to.
+  // `String` parameter, with the `Abort` it performs discharged at the caller: `runAbort` has to reach the frame
+  // `abort` exits to.
   private val abortingActualSource =
     """import eliot.effect.Console
       |import eliot.effect.Abort
@@ -93,11 +80,9 @@ class EffectShapeCompileTest extends AsyncFlatSpec with AsyncIOSpec with Matcher
       |def main uses Console: Unit = printLine(foldOption("done", s -> "got", runAbort(demo)))
       |""".stripMargin
 
-  // A rich stateful program (the `EffectsState` example, inlined): a `{State[String]}` computation in direct style
-  // (`val old = state; putState(next); old`), discharged by `runStateToPair`. Under v5 this needed a hand-written `Id`
-  // carrier and an `eliot.carrier.Effect` instance to discharge *into*; a discharge is a runtime frame now, so the
-  // program is what a user would actually write and the shape it covers — several statements sequencing one control
-  // effect, read back as data — is the same.
+  // A rich stateful program (the `EffectsState` example, inlined): a `State[String]` computation in direct style
+  // (`val old = state; putState(next); old`), discharged by `runStateToPair` — several statements sequencing one
+  // control effect, read back as data.
   private val stateSource =
     """import eliot.effect.Console
       |import eliot.effect.State
@@ -116,9 +101,8 @@ class EffectShapeCompileTest extends AsyncFlatSpec with AsyncIOSpec with Matcher
       |}
       |""".stripMargin
 
-  // Exercises NESTED effect-carrier stacks (the `CarrierJoin` prefix-unify fix): `grade`'s `if..else if..else`
-  // monomorphizes the `Effect[AbortCarrier[G]]` instance at `AbortCarrier[AbortCarrier[IO]]`, whose inner binder `G` the
-  // uniform join must solve (it dropped the `Con` prefix before, leaving `G` unsolved → "contains unresolved variable").
+  // Nested conditionals: `grade`'s `if..else if..else` chain, where one `if` is the fallback of another's `else` and
+  // its `Abort` reaches `grade`'s caller, beside a plain `if..else` in `main` — two different instantiations of `if`.
   private val nestedAbortSource =
     """import eliot.effect.Console
       |import eliot.effect.Abort
@@ -131,10 +115,8 @@ class EffectShapeCompileTest extends AsyncFlatSpec with AsyncIOSpec with Matcher
       |}
       |""".stripMargin
 
-  // Exercises two distinct-typed nested `Dep` carriers (`DepCarrier[Database, DepCarrier[Logger, IO]]`): the second
-  // dep's lift instance (`Dep[X2, DepCarrier[X1, G]] where X1 != X2`) resolves only if the uniform join solves the inner
-  // carrier prefix — before the fix it reported "No ability implementation found for ability 'Dep' with type arguments
-  // [Logger]".
+  // Two `Dep` entries of distinct types in one clause (`Dep[Database], Dep[Logger]`): each `dependency` is answered by
+  // the handle whose entry its use's type decides, and two nested `provide`s discharge them.
   private val twoDepsSource =
     """import eliot.effect.Console
       |import eliot.effect.Dep
@@ -148,7 +130,7 @@ class EffectShapeCompileTest extends AsyncFlatSpec with AsyncIOSpec with Matcher
       |def main uses Console: Unit = printLine(provide(Logger("the-logger"), provide(Database("the-db"), firstDep)))
       |""".stripMargin
 
-  "the uniform-carrier checker" should "compile a pure value return + payload slots over the whole base" in {
+  "an effectful program" should "compile a pure value return + pure and effectful arguments over the whole base" in {
     compileClasses(source).asserting(_ should not be empty)
   }
 
@@ -156,15 +138,15 @@ class EffectShapeCompileTest extends AsyncFlatSpec with AsyncIOSpec with Matcher
     compileClasses(conditionalSource).asserting(_ should not be empty)
   }
 
-  it should "compile the Generic-arm bind case (effectful arg into a discarded type-param slot)" in {
+  it should "compile an effectful argument into a discarded type-parameter slot" in {
     compileClasses(genericBindSource).asserting(_ should not be empty)
   }
 
-  it should "compile the payload-slot capture case (effectful computation captured by a discharger)" in {
+  it should "compile an effectful definition passed whole to a discharger" in {
     compileClasses(captureSource).asserting(_ should not be empty)
   }
 
-  it should "compile a fully-polymorphic aborting actual at a payload slot" in {
+  it should "compile a fully-polymorphic aborting actual at a String parameter" in {
     compileClasses(abortingActualSource).asserting(_ should not be empty)
   }
 
@@ -172,11 +154,11 @@ class EffectShapeCompileTest extends AsyncFlatSpec with AsyncIOSpec with Matcher
     compileClasses(stateSource).asserting(_ should not be empty)
   }
 
-  it should "compile a NESTED AbortCarrier stack (if..else if..else at two carrier depths)" in {
+  it should "compile an if..else if..else chain beside a plain if..else" in {
     compileClasses(nestedAbortSource).asserting(_ should not be empty)
   }
 
-  it should "compile two distinct-typed nested Dep carriers" in {
+  it should "compile two distinct-typed Dep entries in one clause" in {
     compileClasses(twoDepsSource).asserting(_ should not be empty)
   }
 
@@ -211,9 +193,9 @@ class EffectShapeCompileTest extends AsyncFlatSpec with AsyncIOSpec with Matcher
       .asserting(_ should not be empty)
   }
 
-  it should "report a payload-slot mismatch (pure actual not fitting, no capture)" in {
-    // `printLine(true)` — `Bool` into the `String` domain — reaches `uniformCaptureSlot`'s mismatch leaf (not doomed, no
-    // whole-type capture), which commits the mismatch directly. The reported errors must be non-empty.
+  it should "report a pure argument of the wrong type" in {
+    // `printLine(true)` — a `Bool` where a `String` is expected — is a plain type mismatch. The reported errors must be
+    // non-empty.
     compileErrors("def main uses Console: Unit = printLine(true)\n").asserting(_ should not be empty)
   }
 

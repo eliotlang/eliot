@@ -5,12 +5,11 @@ import com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedExpression.*
 import com.vanillasource.eliot.eliotc.operator.fact.{OperatorResolvedExpression, OperatorResolvedValue}
 
 /** The declared world the `row` phase reads, and the two small readings of a definition it needs
-  * (`docs/effects.md` §9.4).
+  * (`docs/effects.md` §3.2).
   *
-  * Under v6 there is no row *derivation* here. An effect is performed because a callee's declaration says so, and the
-  * write ([[BindingWriter]]) reads that declaration directly at every reference; the row-set algebra that used to
-  * derive `derived ⊆ declared` from a body went with the carrier it was written for. What is left is the universe the
-  * write consults and the two predicates it shares with its processor.
+  * There is no row *derivation* here. An effect is performed because a callee's declaration says so, and the write
+  * ([[BindingWriter]]) reads that declaration directly at every reference. What is here is the universe the write
+  * consults and the two predicates it shares with its processor.
   */
 object RowChecker {
 

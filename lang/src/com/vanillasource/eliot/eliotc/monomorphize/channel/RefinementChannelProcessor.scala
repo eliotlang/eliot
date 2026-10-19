@@ -85,9 +85,6 @@ class RefinementChannelProcessor
       key: RefinementTable.Key,
       mv: MonomorphicValue
   ): CompilerIO[RefinementTable] = {
-    // The Id-normalization this used to do up front (the uniform-carrier path wrapped every literal in
-    // `pure@Effect[Id]`, hiding its `[n,n]` range from the flow) went with the carrier: effects v6 inserts no
-    // machinery at a pure boundary, so the flow already sees the bare literal.
     for {
       result <- mv.runtime match {
                   case Some(body) => walkDefinition(body.as(MonomorphicExpression(mv.signature, body.value)))

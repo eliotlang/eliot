@@ -11,11 +11,11 @@ import com.vanillasource.eliot.eliotc.processor.CompilerIO.*
 import com.vanillasource.eliot.eliotc.source.content.Sourced
 import com.vanillasource.eliot.eliotc.source.content.Sourced.compilerError
 
-/** The **effectful-signatures discharge** (W2b), factored out of the
+/** The **effectful-signature guard discharge** (W2b), factored out of the
   * [[com.vanillasource.eliot.eliotc.monomorphize.check.Checker]] into one cohesive module: a return-type expression may
-  * be a `{Throw[String]}` computation on the compile-time `Either[String, _]` carrier, which the compiler is the
-  * handler for. "Run a compile-time computation to obtain the return type": the guard `runThrow`s the signature's
-  * `Either` and reads `Right(t)` (the type) or `Left(msg)` (a rejection).
+  * be a guard, `if(cond, T) else raise(msg)`, which the compiler runs to obtain the return type. The `row` phase reads
+  * such a return inside the compile track's `runThrow` ([[WellKnownTypes.guardDischargers]]), so its value is a
+  * compile-time `Either[String, Type]`: `Right(t)` (the type) or `Left(msg)` (a rejection).
   *
   * Three discharge hook points:
   *   - [[isGuardCarrier]] (the *kind* position — accept an `Either[..]`-valued return where a bare `Type` is expected),
@@ -39,10 +39,10 @@ class GuardDischargeResolver(
     * expression whose *value* is a guard denotes a type/verdict but may instead reject, so its inferred *type* is not
     * the bare `Type` an ordinary return position has. Two guard-carrier shapes are accepted where a `Type` kind is
     * expected:
-    *   - the effectful-signatures carrier `Either[String, _]` ([[WellKnownTypes.eitherFQN]]-headed), from an inline
-    *     `if(cond, T) else raise(msg)` / bare `raise(msg)` guard on the compile-time `Throw[String]` channel —
-    *     discharged to its payload type (or rejected) by [[dischargeGuardedSignature]] / [[dischargeGuardedReturn]]
-    *     once concrete;
+    *   - the guard verdict `Either[String, _]` ([[WellKnownTypes.eitherFQN]]-headed), what an inline
+    *     `if(cond, T) else raise(msg)` / bare `raise(msg)` guard read inside the compile track's `runThrow` evaluates
+    *     to — discharged to its payload type (or rejected) by [[dischargeGuardedSignature]] /
+    *     [[dischargeGuardedReturn]] once concrete;
     *   - a bare `Bool` ([[WellKnownTypes.boolFQN]]-headed), the applicability verdict of an ability-implementation
     *     `where` guard riding the marker's return slot (ability-guards §2.3) — read as keep/decline at the use-site
     *     discharge in the ability processor.
@@ -66,7 +66,7 @@ class GuardDischargeResolver(
     * Here the leaf is the return **type itself**, and `Bool` or `Either[String, String]` is then simply what the
     * definition returns — `==`, `isEmpty`, `first`, every `FileSystem` predicate. Deferring those to a fresh
     * metavariable happened to be harmless whenever the body's own type pinned it, and broke outright whenever it did
-    * not: `def exists(path: Path): {Throw[IoError]} Bool = { … resultValue(r) }` reads its result through a generic
+    * not: `def exists(path: Path) uses Throw[IoError]: Bool = { … resultValue(r) }` reads its result through a generic
     * leaf, so nothing solved the meta and the definition was rejected as "the body leaves it unconstrained" — with an
     * explicit return type written right there.
     *
@@ -86,14 +86,14 @@ class GuardDischargeResolver(
       case _                                                             => pure(false)
     }
 
-  /** Discharge a *single* return value on the compile-time `Throw[String]` carrier — the W2b handler. The return
-    * computation has been forced to a ground `Either[String, Type]`:
+  /** Discharge a *single* guarded return value — the W2b read. The return computation, read inside the compile track's
+    * `runThrow`, has been forced to a ground `Either[String, Type]`:
     *   - `Right(t)` ⟹ `Some(t)`: the resolved return type is the payload `t`.
     *   - `Left(msg)` ⟹ `compilerError(at.as(msg))` then abort: the guard rejected, with the author's message primary.
     *   - anything else (an ordinary type, or a still-stuck guard whose bounds are abstract) ⟹ `None`: nothing to
     *     discharge / defer to the use site (a stuck guard is correct, not an error — Use-Site Verification).
     *
-    * `Right`/`Left` are body-less value constructors, so a constructed carrier value is a `VTopDef` headed by
+    * `Right`/`Left` are body-less value constructors, so a constructed verdict is a `VTopDef` headed by
     * [[WellKnownTypes.rightFQN]]/[[WellKnownTypes.leftFQN]]; the payload spine entry and the rejection fallback are the
     * [[GuardChannel]] protocol shared with the ability-guard verdict interpreter.
     */
@@ -110,7 +110,7 @@ class GuardDischargeResolver(
       case _                                                            => pure(None)
     }
 
-  /** The author message carried by a `Left(msg)` rejection. The carrier's error type is `String`, so a rejection's
+  /** The author message carried by a `Left(msg)` rejection. The verdict's error type is `String`, so a rejection's
     * message is a literal `String` that reads back directly; a non-literal (computed, not-yet-reduced) message falls
     * back to the shared [[GuardChannel]] rejection message so the guard is still reported, never silently dropped
     * (fail-safe).
@@ -128,11 +128,11 @@ class GuardDischargeResolver(
     *   - `Right(t)` ⟹ rebuild the arrows over the payload `t`, so the published signature and the body's expected type
     *     become the plain type `t`; no return meta.
     *   - `Left` ⟹ the discharge aborts (the author message).
-    *   - an `Either`/`Bool` **carrier-headed** return ([[isGuardCarrier]]) — a guard the twin published *undischarged*
-    *     (its verdict depends on a leftover generic binder the twin left as a `GroundValue.Param`) — with a body ⟹
-    *     **defer**: a fresh return metavariable the body solves, so the body type-checks instead of erroring against
-    *     the undischarged carrier, and the guard is re-decided at each concrete use (Use-Site Verification).
-    *   - anything else (an ordinary type, or a body-less carrier-headed return) ⟹ returned untouched (the latter stays
+    *   - an undischarged guard ([[isUndischargedGuard]]) — one the twin published *undischarged* (its verdict depends
+    *     on a leftover generic binder the twin left as a `GroundValue.Param`) — with a body ⟹ **defer**: a fresh
+    *     return metavariable the body solves, so the body type-checks instead of erroring against the undischarged
+    *     guard, and the guard is re-decided at each concrete use (Use-Site Verification).
+    *   - anything else (an ordinary type, or a body-less undischarged guard) ⟹ returned untouched (the latter stays
     *     stuck and hard-errors at read-back — fail-safe).
     *
     * @return

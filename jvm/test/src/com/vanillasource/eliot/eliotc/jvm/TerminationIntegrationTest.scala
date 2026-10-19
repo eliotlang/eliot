@@ -7,9 +7,7 @@ package com.vanillasource.eliot.eliotc.jvm
   * rejected through the full pipeline, while covariant self-reference (structural recursion in data) still compiles.
   *
   * M1 (the no-recursion rule): a self or mutual cycle in the body-level value-reference graph is rejected (the
-  * `RecursionCheckProcessor`), while a non-recursive helper chain — however deep — compiles and runs, and the
-  * monad-transformer lifting pattern (an impl method calling the same-named abstract method on an inner carrier) is not
-  * mistaken for recursion.
+  * `RecursionCheckProcessor`), while a non-recursive helper chain — however deep — compiles and runs.
   *
   * M2 (higher-order propagation, the function-coloring piece): because `Inf` is an ordinary effect and a suspended
   * slot supplies nothing, a single effect-transparent higher-order combinator is `Inf`-iff-its-step-is — terminating
@@ -110,9 +108,9 @@ class TerminationIntegrationTest extends FullIntegrationTest {
 
   // --- M1 (the `Inf` effect): declare, propagate, run ---
 
-  // Propagation: calling `forever` performs the `Inf` effect, so a carrier-polymorphic value that uses it must declare
-  // `{Inf}`. A `{Console}`-only value that loops is rejected by the same subset check that governs every effect — `Inf`
-  // rides the ordinary effect pipeline, it is not a special termination lattice.
+  // Propagation: calling `forever` performs the `Inf` effect, so a value that uses it must declare `Inf`. A
+  // `uses Console`-only value that loops is rejected by the same scope check that governs every effect — `Inf` is an
+  // ordinary effect, not a special termination lattice.
   "a {Console} value that calls forever without declaring Inf" should "be rejected (Inf propagation)" in {
     compileForErrors(
       """import eliot.effect.Console
@@ -167,8 +165,8 @@ class TerminationIntegrationTest extends FullIntegrationTest {
   }
 
   // Function-coloring, Inf side. The *same* `runStep` definition over an `Inf` step loops endlessly: the step's `Inf`
-  // reaches the result through the shared carrier with no change to the combinator — one combinator serves both colours
-  // (Nystrom's function-coloring win), because `Inf` is a carrier effect, not a separate lattice slot.
+  // reaches `main` through `runStep`'s `uses *` with no change to the combinator — one combinator serves both colours
+  // (Nystrom's function-coloring win), because `Inf` is an ordinary effect, not a separate lattice slot.
   "the same higher-order combinator over an Inf step" should "loop endlessly" in {
     compileAndRunBounded(
       """import eliot.effect.Console

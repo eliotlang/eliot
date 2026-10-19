@@ -95,11 +95,8 @@ class ReificationTest extends ProcessorTest(LangProcessors()*) {
           }
       }
 
-  /** Id-normalize a monomorphic value's runtime body exactly as [[com.vanillasource.eliot.eliotc.monomorphize.channel.
-    * WovenValueProcessor]] does before codegen (docs/effects-as-channel.md §6), so the structural asserts see the
-    * effects-as-channel normalized shape rather than the raw uniform-carrier mono body's `pure@Id`/`runId` wrapper
-    * noise. Under the legacy carrier path (or a compile-time-track body) no `Id` machinery is inserted, so this is a
-    * no-op — the same body either way.
+  /** A monomorphic value's runtime body, as the structural asserts read it. The identity: the checker wraps a body in
+    * nothing, so the monomorphic body is already the shape the asserts describe.
     */
   private def idNormalized(
       v: MonomorphicValue,

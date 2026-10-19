@@ -5,7 +5,7 @@ def allowed uses Abort: String = access("admin")
 def denied uses Abort: String = access("guest")
 
 // Discharged into a PURE function: `runAbort` installs the frame `abort` leaves through and answers a plain Option.
-// There is no test carrier to declare and no pure interpreter to write — discharging IS running purely.
+// There is no test double to declare and no pure interpreter to write — discharging IS running purely.
 def testAllowed: Option[String] = runAbort(allowed)
 def testDenied: Option[String] = runAbort(denied)
 

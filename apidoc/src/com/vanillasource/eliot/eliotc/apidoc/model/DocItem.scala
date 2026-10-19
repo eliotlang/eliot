@@ -33,8 +33,7 @@ case class DocItem(
 object DocItem {
 
   /** The three top-level shapes a documented name can take, in the order they are presented within a module: abilities
-    * lead (they are the most interesting surface for a reader), then types (which include the less-important effect
-    * carriers), then plain definitions.
+    * lead (they are the most interesting surface for a reader), then types, then plain definitions.
     */
   enum Kind(val label: String) {
     case Ability  extends Kind("ability")

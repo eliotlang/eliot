@@ -1,6 +1,6 @@
 /**
  * Substituting a fake implementation of an **application-owned effect** for a test, without the production code
- * knowing. (Was `EffectsFakeCarrier` before effects v6 — there is no carrier to fake any more.)
+ * knowing.
  *
  * The point: `greet` below is ordinary production code. It declares `uses Terminal` and nothing else — no injected
  * handler, no extra parameter, no test hook. What decides whether `Terminal` means a real terminal or a recorded

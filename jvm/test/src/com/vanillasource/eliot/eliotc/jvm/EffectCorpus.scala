@@ -63,12 +63,12 @@ object EffectCorpus {
       |   printLine(prog.first)
       |}""".stripMargin
 
-  /** An effect performed while **building** an argument that a carrier-codomain slot receives — §1 rule 1, where the
-    * slot's declared type is an arrow and therefore a rowless *value* position, the row belonging to what applying that
-    * function later does.
+  /** An effect performed while **building** an argument that a function-typed code slot receives (`.`'s
+    * `f uses *: A => B`) — §1 rule 1: the effect runs where it is written, while the argument is built, not when the
+    * function is later applied.
     *
     * `labelOf` is the shape as the user meets it: `s.take(s.indexOf("="))` is `.(s, take(indexOf("=", s)))`, so the
-    * `{Abort}` of `indexOf` is performed while constructing the argument handed to `.`'s `f: A => {Effect} B`. It was
+    * `Abort` of `indexOf` is performed while constructing the argument handed to `.`'s `f`. It was
     * rejected outright ("No ability implementation found for ability 'Abort' with type arguments [Id]", reported inside
     * `stdlib`'s `Bool.els`, a file the user never wrote), which is why the equivalent plain call `take(indexOf("=", s),
     * s)` was the only spelling that compiled.

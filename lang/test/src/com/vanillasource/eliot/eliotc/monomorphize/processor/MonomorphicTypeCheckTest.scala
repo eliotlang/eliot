@@ -529,12 +529,10 @@ class MonomorphicTypeCheckTest
     ).asserting(_.nonEmpty shouldBe true)
   }
 
-  // A *fitting* payload is rejected too, and that is the point: `F[_]` here carries no `~ Effect` constraint, so no
-  // declaration calls it a carrier and nothing may instantiate it at `Id` on the program's behalf. The v2 bridge did
-  // — its return boundary defaulted the binder to `Id` and inserted `runId` — which is the checker inventing a
-  // carrier, the premise A.10 reversed and A.11.7-Y shape 2 removed with the bridge. `Id` is still perfectly
-  // available; it just has to be *written* (`runId(id[Id](Id(someString)))`, exercised end to end in the jvm suites).
-  it should "reject a higher-kinded binder no declaration calls a carrier, even at a fitting pure return" in {
+  // A *fitting* payload is rejected too, and that is the point: `?F[String] ~ String` has no injective solution whatever
+  // the return, and the checker never invents an identity constructor to make one — a `[F[_]]` binder is instantiated
+  // only at a constructor the program supplies.
+  it should "reject a higher-kinded binder at a plain type, even at a fitting pure return" in {
     runForErrors(
       "def id[F[_]](x: F[String]): F[String] = x\ndef someString: String\ndef f: String = id(someString)"
     ).asserting(_.nonEmpty shouldBe true)
@@ -780,9 +778,9 @@ class MonomorphicTypeCheckTest
 
   // --- Effectful signatures: compile-time `Throw[String]` guard discharge (W2b) ---
 
-  // The compile-time `Throw[String]` carrier the discharge reads back (`Right(t)` ⤳ the type `t`, `Left(msg)` ⤳ a
-  // rejection). In a real build this is the always-linked compiler-platform `Either` layer; the suite supplies it as a
-  // concrete `data Either` so the constructors carry the well-known `eliot.lang.Either.Left`/`Right` FQNs.
+  // The `Either` a guarded return reduces to and the discharge reads back (`Right(t)` ⤳ the type `t`, `Left(msg)` ⤳ a
+  // rejection). In a real build this is the compiler overlay's `Either` (`stdlib/eliot/compiler/`); the suite supplies
+  // it as a concrete `data Either` so the constructors carry the well-known `eliot.lang.Either.Left`/`Right` FQNs.
   // Override the ambient `Either` stub (a bare `type Either[E, A]`) with the concrete `data` the guard tests need,
   // rather than appending a second `Either` entry (which would register `eliot/lang/Either.els` twice).
   private val guardImports: Seq[SystemImport] =
@@ -790,7 +788,7 @@ class MonomorphicTypeCheckTest
       if (s.module == "Either") s.copy(content = "data Either[E, A] = Left(error: E) | Right(value: A)") else s
     )
 
-  // A guarded `head`: its return type is a `{Throw[String]} Type` computation that yields the payload `String` when the
+  // A guarded `head`: its return type is an `Either[String, Type]` computation that yields the payload `String` when the
   // boolean type parameter `COND` is `true` and rejects with "empty" when it is `false`. The condition is a plain `Bool`
   // type parameter (no literal-in-bounds arithmetic), keeping the test on the discharge rather than on `Int` widening.
   private val guardedHead: String =
@@ -860,15 +858,14 @@ class MonomorphicTypeCheckTest
 
   // --- Effectful signatures G1: guards via the combinator vocabulary (no auto-lift) ---
 
-  // The G1 claim (docs/effectful-signatures.md): a guard written with ordinary combinators on the carrier needs *no*
-  // auto-lift and *no* carrier pinning. The return is a plain function application the NbE evaluator *reduces* through
+  // The G1 claim (docs/effectful-signatures.md): a guard written with ordinary combinators over `Either` needs no
+  // compiler support of its own. The return is a plain function application the NbE evaluator *reduces* through
   // the combinator's body to `Right(t)`/`Left(msg)`, which the W2b discharge then reads. So this exercises the discharge
   // through real vocabulary (combinator *calls* in the signature, reduced via their bodies), not the raw inline
   // `Right`/`Left` the leaf tests above use — with zero new compiler code.
   //
-  // These combinators bottom out in only the `Bool` `fold` leaf + the `Either` carrier (no `Option`/`match`): the
-  // designed `Option`-mediated `when`/`orError` additionally need a compile-time `Option` carrier (a CP4-style
-  // promotion — its auto-generated `match` ability must reduce at check time), which is a separate G1 sub-task.
+  // These combinators bottom out in only the `Bool` `fold` leaf and `Either`'s constructors (no `Option`, no `match`),
+  // so the suite's stubs are all they need.
   private val combinators: String =
     "def fail[A](msg: String): Either[String, A] = Left(msg)\n" +
       "def requireOr[A](cond: Bool, a: A, msg: String): Either[String, A] = fold(cond, Right(a), Left(msg))\n"
@@ -900,10 +897,8 @@ class MonomorphicTypeCheckTest
 
   // --- The scope check: an effect performed but not declared ---
 
-  // Effects v6 has no elaboration to observe here. The rewrite-shape group that used to sit in this place read the
-  // `RowElaborator`'s output — the inserted `Effect.flatMap`/`pure` spine — off the monomorphic body; there is no
-  // carrier, so nothing is inserted, and what the `row` phase writes now (an implementation per phantom binder) is
-  // pinned by the `jvm` suites end to end. What survives is the one diagnostic that phase owns.
+  // What the `row` phase writes (a hole at every handle position, a `let` of a handle per `with`) is pinned by the `jvm`
+  // suites end to end; asserted here is the by-name half of the scope check, the diagnostic that phase owns.
 
   // Reported **at each reference**, not at the definition name: the check falls out of the same walk that writes the
   // bindings, so it knows exactly which call has nothing covering it. Both `printLine` and the `readLine` it takes are

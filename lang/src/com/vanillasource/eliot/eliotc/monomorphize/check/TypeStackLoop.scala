@@ -57,16 +57,7 @@ class TypeStackLoop(
       typeArguments: Seq[GroundValue],
       resolvedValue: OperatorResolvedValue
   ): CompilerIO[TypeStackLoop.Result] =
-    processWithState(typeArguments, resolvedValue).map(_._2)
-
-  /** Test seam: [[process]] but also returning the final [[CheckState]], so checker bookkeeping the
-    * [[TypeStackLoop.Result]] does not carry (ambient carrier heads, metavariable roles) can be asserted directly.
-    */
-  private[monomorphize] def processWithState(
-      typeArguments: Seq[GroundValue],
-      resolvedValue: OperatorResolvedValue
-  ): CompilerIO[(CheckState, TypeStackLoop.Result)] =
-    processIO(typeArguments, resolvedValue).run(CheckState.initial)
+    processIO(typeArguments, resolvedValue).run(CheckState.initial).map(_._2)
 
   private def processIO(
       typeArguments: Seq[GroundValue],
@@ -93,10 +84,10 @@ class TypeStackLoop(
 
       // Settle the return position at the read (signature-unification C1) — one stateless, shape-driven step:
       //   - on the **runtime** track, discharge a guard off the re-inflated leaf shape (`dischargeGuardedSignature`):
-      //     `Right(t)` ⤳ the plain type `t`, `Left(msg)` aborts with the author message, an `Either`/`Bool`
-      //     carrier-headed return (a guard the twin published undischarged) is deferred to the body — all recognised on
-      //     the ground shape, no `sawGuard` flag;
-      //   - on the **compiler** track (the guard's *producer*) the carrier signature is left undischarged for a consumer.
+      //     `Right(t)` ⤳ the plain type `t`, `Left(msg)` aborts with the author message, a guard the twin published
+      //     undischarged is deferred to the body — all recognised on the ground shape, no `sawGuard` flag;
+      //   - on the **compiler** track (the guard's *producer*) the guarded signature is left undischarged for a
+      //     consumer.
       settled               <- settleAtRead(instantiated, bodyToCheck.isDefined, resolvedValue)
       (checkSig, returnMeta) = settled
 
@@ -461,7 +452,7 @@ class TypeStackLoop(
   /** Settle the value's return position at the read (signature-unification C1), stateless and shape-driven: the
     * **runtime** track discharges/defers a guard off the re-inflated ground leaf
     * ([[GuardDischargeResolver.dischargeGuardedSignature]], recognising the guard by its `Right`/`Left`/carrier shape,
-    * not a flag), while the **compiler** track (the guard's *producer*) leaves the carrier undischarged.
+    * not a flag), while the **compiler** track (the guard's *producer*) leaves the guard undischarged.
     */
   private def settleAtRead(
       instantiated: SemValue,

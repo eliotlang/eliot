@@ -11,25 +11,17 @@ import java.nio.file.{Files, Path}
 /** The gate on the *diagnostic* side: an error a user reads speaks payload and effect-row vocabulary, never compiler
   * machinery.
   *
-  * Under effects v6 there is no carrier to leak into a message — the machinery the v5 version of this suite guarded
-  * against (`AbortCarrier`, `ThrowCarrier`, the identity carrier `Id`, and the one inverter that rendered a stack back
-  * as a pinned row) is deleted, and with it the two shapes that used to *need* the inverter: a carrier-stack ability
-  * demand, and a pure-base `Id` row a side effect could not run on. Those cases are gone rather than rewritten,
-  * because their subject is; what is left is the claim itself, which outlives the mechanism, plus the standing net
-  * that no message names machinery.
-  *
-  * One of them is now a *positive* case: the `State`-over-`Throw` program that used to fail for want of a cross-lift
-  * compiles and runs, because frames nest at the run site rather than needing an instance per layer pair.
+  * One case is *positive*: two control effects discharged at one run site compile and run, because each discharger
+  * installs its own frame there and the nesting the user writes is the whole of the interaction. The last case is the
+  * standing net that no message names the retired effect machinery.
   *
   * The failing programs here are compiled over the real base layer (`lang` + `stdlib` + `jvm`), because the shapes
   * only arise against the platform's own implementations.
   */
 class EffectDiagnosticVocabularyTest extends AsyncFlatSpec with AsyncIOSpec with Matchers {
 
-  /** An effect performed under a return that cannot host a carrier — the everyday "I forgot the effect set" mistake.
-    * The per-definition row verification decides it from declarations and reports it at `helper`, in effect
-    * vocabulary; before A.11.6 it surfaced only after a failed monomorphization, as "performs an effect but is
-    * declared pure", without naming the effect.
+  /** An effect performed in a definition that declares none — the everyday "I forgot the `uses` clause" mistake. The
+    * scope check decides it from declarations and reports it at `helper`, naming the effect.
     */
   private val pureReturnLeak =
     """def orEmpty(o: Option[String]): String = o.orAbort else ""
@@ -52,22 +44,19 @@ class EffectDiagnosticVocabularyTest extends AsyncFlatSpec with AsyncIOSpec with
       |   printLine(foldEither(e -> e, s -> s, runStateToValue("i", runThrow(counted))))
       |""".stripMargin
 
-  // Two control effects stacked. Under v5 this failed for want of a cross-lift instance (`State` over a `Throw`
-  // layer), and its diagnostic was the everyday way a *carrier stack* reached a user. There is no stack now: each
-  // discharger installs its own frame at the run site, and the nesting the user writes there is the whole of the
-  // interaction — so the program simply compiles and runs.
+  // Two control effects discharged at one run site: each discharger installs its own frame there, so the program
+  // needs no instance per pair of effects and simply compiles and runs.
   "two control effects discharged at one run site" should "need no cross-lift and run" in {
     compileToRun(stackedControlEffects).asserting(_ shouldBe "boom")
   }
 
-  "an undeclared effect under a pure return" should "read as an effect leak at the definition, in row vocabulary" in {
+  "an undeclared effect under a pure return" should "read as an undeclared effect at the definition" in {
     compileErrors(pureReturnLeak).asserting(
       _.mkString should include("performs the effect 'Console' but does not declare it")
     )
   }
 
-  // The standing net. It is trivially satisfied now that no carrier exists, and it stays exactly for that reason: it
-  // is what would notice machinery re-entering user-facing text.
+  // The standing net: it names the retired effect machinery, and is what would notice it re-entering user-facing text.
   it should "name no machinery" in {
     compileErrors(pureReturnLeak).asserting(errors =>
       errors.mkString should (not include "Carrier" and not include "ability 'Suspend'" and not include "Id[")

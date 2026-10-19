@@ -29,29 +29,28 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced.compilerError
   *     equality.
   *
   * Reifying the enumeration as *code* rather than as data is what lets it gather **computations**. A `List[V]` element
-  * lands in `prepend`'s plain generic slot — a payload by *Effects Are a Channel* §1 rule 4 — so a gathered value
-  * performing effects is either charged as a leak at the collecting definition or written at that definition's own
-  * ambient carrier; there is no `V` that works. A fold's element lands in whatever slot `combine` *declares*, so the
-  * ordinary elaboration machinery answers for it: an open row (`test: {Effect} Unit`) runs it on the caller's carrier,
-  * a pinned row (`test: {Throw[E] | G} Unit`) lets the algebra discharge it, a concrete carrier
-  * (`program: Recorded[Unit]`) fixes it to a test double. Each element is elaborated and monomorphized independently,
-  * so gathered values may differ in both row and type — `combine[V ~ Show](name, v, acc)` gathers heterogeneous values
-  * sharing an ability, which one `List[V]` cannot hold.
+  * lands in `prepend`'s plain generic slot — a value (`docs/effects.md` §1 rule 2) — so a gathered value performing
+  * effects is performed at the collecting definition, never stored; there is no `V` that works. A fold's element lands
+  * in whatever slot `combine` *declares*, so the ordinary `row` machinery answers for it: a code parameter (`test uses
+  * *, Throw[String]: Unit`) receives it as code, run on the effects in scope where it was written plus what `combine`
+  * hands it for the listed `Throw[String]`, which `combine` may discharge (`catch`). Each element is checked and
+  * monomorphized independently, so gathered values may differ in both clause and type — `combine[V ~ Show](name, v,
+  * acc)` gathers heterogeneous values sharing an ability, which one `List[V]` cannot hold.
   *
   * Placed after `OperatorResolverProcessor` (FQNs and application structure are final) and before
   * `RecursionCheckProcessor` (whose input is repointed to this fact), so the emitted references and calls are
   * recursion-checked, effect-checked, saturated and monomorphized exactly like hand-written code — reachability
   * included, so the reflected values are marked live with no separate root mechanism. Nothing here knows about effects:
-  * the elaborator reads `combine`'s declaration, exactly as it would had the user typed the chain out.
+  * the `row` phase reads `combine`'s declaration, exactly as it would had the user typed the chain out.
   *
   * A value that uses no reflection reads no facts here and is wrapped unchanged, so only values that actually reflect
   * depend on the (whole-pool) enumeration.
   *
   * Fail-safes: a non-literal `name`, a `combine` that is not a reference to a declared value, or an under-applied
   * reflection call is a hard error (never a silent empty fold); a name in the index that cannot be enumerated aborts
-  * loudly via [[getFactOrError]]. `combine` must be a declared value because the row elaborator decides capture-vs-run
-  * from a *callee's declaration* — a lambda has none, so its parameters are rowless payloads and every gathered
-  * computation would run eagerly at the fold.
+  * loudly via [[getFactOrError]]. `combine` must be a declared value because the `row` phase decides code-vs-value
+  * from a *callee's declaration* — a lambda has none, so its parameters are values and every gathered computation
+  * would run eagerly at the fold.
   *
   * The whole emitted chain is attributed to the call's `name` position, so a downstream mismatch points at the
   * reflection call rather than at synthesized code. The cost is that one bad gathered value is not distinguished from

@@ -8,7 +8,7 @@ import com.vanillasource.eliot.eliotc.ast.parser.{Parser, ParserError}
 import com.vanillasource.eliot.eliotc.source.content.Sourced
 import com.vanillasource.eliot.eliotc.token.Token
 
-/** An `effect` declaration — effects v6's ability with no carrier binder (`docs/effects.md` §9.3):
+/** An `effect` declaration (`docs/effects.md` §2):
   *
   * {{{
   * effect Console {
@@ -17,9 +17,9 @@ import com.vanillasource.eliot.eliotc.token.Token
   * }
   * }}}
   *
-  * Its members are the effect's operations; a member's own row lists what it performs *beyond* this effect. Landed dark
-  * (§10.1 step 4): parsed into this node, carried on the [[AST]] beside the ordinary definitions, and rejected at core
-  * as not supported yet. Unlike [[AbilityBlock]] the members are kept as written — the flag-day desugar (§10.2 F1)
+  * Its members are the effect's operations; a member's own clause lists what it performs *beyond* this effect. Carried
+  * on the [[AST]] beside the ordinary definitions. Unlike [[AbilityBlock]] the members are kept as written —
+  * `EffectDefinitionDesugarer` lowers them at core as an ability's, each marked as performing the effect, and so
   * decides their qualifier and marker.
   *
   * @param doc

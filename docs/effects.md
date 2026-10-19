@@ -1054,15 +1054,22 @@ Each item is a defect to close or a decision to make, never a doc fix. Numbers a
 cell, which no compile-track effect was written over), and its two "possibly dead" pieces — `GuardDischargeResolver`'s
 higher-kinded-meta arms and `UnifiedModuleValueProcessor.mergeEffectRows` — deleted after a probe on each never fired
 over `__.test`, the 46 examples, eliot-test's and eliot-build's suites and eliot-build's launcher, every example jar
-byte-identical; the stale text it named rewritten. Two things the pass found and left, each its own change:
+byte-identical; the stale text it named rewritten. Two things the pass found and left were each their own change:
 
 - *Done 2026-10-19*: `ast/fact/ImplementationRows` gave every `implement` clause its block's union row (v6's single
   prefix of phantom binders) and the core phase took it off again (`own`, `anonymousOnHandles`), with
   `FunctionDefinition.carriedEffects` and `BindingWriter.wrote` telling the two kinds of entry apart. All four are
   deleted: a clause keeps the row it wrote, and the one union left — the entries a named implementation's handle may
   capture (`row/Captures`) — is taken in `NamedImplementationDesugarer`.
-- "carrier" survives as vocabulary in about thirty files beyond the review's list, much of it the kind checker's
-  legitimate `[F[_]]` sense and the guard channel's own name (`isGuardCarrier`); a sweep has to tell those from history.
+- *Done 2026-10-19*: the "carrier" vocabulary sweep. What is left has one of three live senses — a higher-kinded
+  binder (`CarrierKindChecker`), the representation a value erases to (`GroundValue.carrierFQN`), and the guard read's
+  `Either` verdict (`isGuardCarrier`) — or is a guardrail naming what must not come back. Every comment, test
+  description and example doc telling the carrier's story as live was rewritten to the handles, or deleted where it
+  was changelog. It found and deleted `CarrierKindChecker.isHktBinder` (no caller), an unused test seam, two inert
+  `eliot.carrier` stubs, three test cases that had become byte-identical copies of a sibling once the carrier context
+  that told them apart was gone, and two name-extraction tests over frozen carrier-era fixtures (one test over the
+  shipped `Either` overlay, `CompilerMarkerNamesTest`, replaces them). The design records under `docs/` other than
+  this one are history and were left as written.
 
 **Closed.** One line each; the full record is at `14b61527` (§13).
 

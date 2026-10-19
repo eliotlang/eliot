@@ -106,9 +106,8 @@ case class Unifier(
 
       // Flex-flex where the left meta is *applied* but the right is a *bare, unsolved* meta: solve the bare meta to
       // the applied one rather than postponing (the mirror orientation — bare left — already solves directly via the
-      // next case). Without this, a carrier application produced through a polymorphic combinator — the `.` operator's
-      // result `?B := ?carrier[payload]` — stays hidden behind `?B`, so a downstream effect-lift never sees the
-      // argument as carrier-headed and mis-solves `?B` to the pure payload type.
+      // next case), so a higher-kinded application produced through a polymorphic combinator — the `.` operator's
+      // result `?B := ?F[payload]` — is visible through `?B` instead of postponed behind it.
       case (VMeta(idA, spineA), VMeta(idB, Spine.SNil))
           if spineA.toList.nonEmpty && idA.value != idB.value && metaStore.lookup(idB).isEmpty =>
         if (occursIn(idB, fl)) addOccursError(context)
@@ -173,9 +172,9 @@ case class Unifier(
     * projection/constant lambda):
     *   - **Equal arity** (`m == n`): `?id := H` (unapplied) plus pointwise spine unification `s_i ~ r_i`.
     *   - **Partial application** (`n > m`): `?id := H r1..r(n-m)` (the head applied to the leading prefix) plus
-    *     pointwise unification of the trailing `m` args `s_i ~ r(n-m+i)`. This is what lets a *carrier* meta solve to a
-    *     type constructor partially applied to a prefix — `?F[A] ~ AbortCarrier[G, A] ⟹ ?F := AbortCarrier[G]` (the
-    *     effects discharge path) — exactly as `?F[A] ~ Box[A] ⟹ ?F := Box` works for the equal-arity case. The solution
+    *     pointwise unification of the trailing `m` args `s_i ~ r(n-m+i)`. This is what lets a higher-kinded meta solve
+    *     to a type constructor partially applied to a prefix — `?F[A] ~ Either[E, A] ⟹ ?F := Either[E]` — exactly as
+    *     `?F[A] ~ Box[A] ⟹ ?F := Box` works for the equal-arity case. The solution
     *     is unique: with `H` injective, only `?F = H r1..r(n-m)` makes `?F s1..sm = H r1..rn` hold for all the trailing
     *     args.
     *
@@ -221,7 +220,7 @@ case class Unifier(
     else {
       val (prefix, suffix) = rhsList.splitAt(rhsList.length - metaSpine.length)
       val headWithPrefix   = rebuildHead(prefix.foldLeft(Spine.SNil: Spine)(_ :+ _))
-      // Occurs-check the injective solution too: `?F[A] ~ AbortCarrier[?F, A]` would solve `?F := AbortCarrier[?F]` (infinite).
+      // Occurs-check the injective solution too: `?F[A] ~ Either[?F, A]` would solve `?F := Either[?F]` (infinite).
       // Returning None here postpones rather than committing the cycle, so it surfaces as an unresolved type, never a
       // silently-accepted recursive one.
       if (occursIn(id, headWithPrefix)) None

@@ -242,9 +242,9 @@ object DocModelBuilder {
       .map { case (signature, group) => DocItem.Implementation(signature, DocText.sortLayers(group.map(_._2)), None) }
 
   /** The distinct concrete type names an `implement` marker targets — the head name of each pattern argument, minus the
-    * implementation's own generic parameters. A carrier-generic `implement[F[_] ~ Suspend] Console[F]` targets no
-    * concrete type (its only pattern head is the generic `F`), so it is listed under its ability only, never a type
-    * page. A heterogeneous `implement Arithmetic[Int, BigInteger]` targets both `Int` and `BigInteger`.
+    * implementation's own generic parameters. A generic `implement[A] Show[A]` targets no concrete type (its only
+    * pattern head is its own generic `A`), so it is listed under its ability only, never a type page. A heterogeneous
+    * `implement Arithmetic[Int, BigInteger]` targets both `Int` and `BigInteger`.
     */
   private def implementedTypeNames(marker: FunctionDefinition): Seq[String] = {
     val ownGenerics = marker.genericParameters.map(_.name.value).toSet

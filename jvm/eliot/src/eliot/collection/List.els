@@ -1,9 +1,8 @@
 type List[A]
 
 /**
- * The JVM `foldLeft`: the list-first primitive, applied strictly. With no carrier to thread there is nothing to bind —
- * `combine` performs whatever the caller's own declarations cover, where it is written, so this reduces to the plain
- * strict fold it always was underneath.
+ * The JVM `foldLeft`: the list-first primitive, applied strictly. `combine` is the caller's code and performs whatever
+ * the caller's own declarations cover, so this is the plain strict fold.
  */
 def foldLeft[A, B](initial: B, combine uses *: A => B => B, list: List[A]) uses *: B =
   foldLeftInternal(list, initial, combine)

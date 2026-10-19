@@ -5,10 +5,10 @@ import java.nio.file.Path
 /** End-to-end coverage of `eliot.system` — the `Environment` effect (arguments, variables, working directory) and the
   * `Process` effect (running another program, capturing or inheriting its streams).
   *
-  * `Environment` rides `Suspend` alone, like `Console`: nothing it does can fail. `Process` additionally requires
-  * `Throw[IoError]` of its carrier — it shares `eliot.file`'s error type, so a program that reads files and runs
-  * programs has one failure channel — and each process program is therefore wrapped the way the file tests wrap theirs:
-  * `main` runs the report through `runThrow` and folds the `Either`, printing "failed" on an `IoError`.
+  * `Environment` performs nothing else, like `Console`: nothing it does can fail. `Process`'s running operations also
+  * perform `Throw[IoError]` — it shares `eliot.file`'s error type, so a program that reads files and runs programs has
+  * one failure channel — and each process program is therefore wrapped the way the file tests wrap theirs: `main`
+  * discharges the report's failure with `catch`, printing "failed" on an `IoError`.
   *
   * The child process is this test JVM's own `java` binary, located from `java.home` and interpolated into the Eliot
   * source, so the tests spawn something that certainly exists without assuming anything about the machine's `PATH`.

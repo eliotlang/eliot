@@ -16,7 +16,7 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced.compilerError
   * primitives. There is no "mark it `Inf`" escape: `Inf` originates only on a native, never by annotating one's own
   * recursion.
   *
-  * Run by [[RecursionCheckProcessor]] as a standalone gate phase before effect desugaring — the per-value gate the
+  * Run by [[RecursionCheckProcessor]] as a standalone gate phase before the `row` phase — the per-value gate the
   * whole compiled program passes through, before monomorphization. A reported cycle leaves the value's
   * [[com.vanillasource.eliot.eliotc.termination.fact.RecursionCheckedValue]] unregistered (the error trips
   * `registerFactIfClear`), so the recursive value never reaches monomorphization — where it would otherwise silently
@@ -26,15 +26,15 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced.compilerError
   * signature), so the patterns that merely look self-referential are not flagged:
   *   - a covariantly self-referential `data` (`data Tree(left: Tree, right: Tree)`) references itself only in field
   *     *types*; its constructors are body-less natives, hence leaves here (M0 strict positivity vets the declaration);
-  *   - the monad-carrier lifting pattern (`ThrowCarrier.pure` whose body calls `pure` on the inner carrier) references
-  *     the *abstract* ability method (`Qualifier.Ability`, a body-less leaf), a different FQN from the *implementation*
-  *     method (`Qualifier.AbilityImplementation`) that contains it. Ability-mediated potential recursion, if any, is
-  *     resolved — and its convergence policed — by monomorphization, not here.
+  *   - an instance delegating to its own ability at an inner type (`Numeric[Interval[T]]`'s `add` calls `add` on the
+  *     `T` endpoints) references the *abstract* ability method (`Qualifier.Ability`, a body-less leaf), a different
+  *     FQN from the *implementation* method (`Qualifier.AbilityImplementation`) that contains it. Ability-mediated
+  *     potential recursion, if any, is resolved — and its convergence policed — by monomorphization, not here.
   *
   * The check runs on every value's runtime body. A genuinely cyclic type *alias* (`type Foo = Foo`, mutual
   * `type A = B` / `type B = A`) is caught here too, because a `Type`-qualified value's runtime body *is* its alias RHS
-  * (the fail-safe property — a recursive alias cannot diverge type-level reduction); a covariant `data Tree` and the
-  * monad-transformer lift stay accepted (their self-reference is in the signature, not the runtime body).
+  * (the fail-safe property — a recursive alias cannot diverge type-level reduction); a covariant `data Tree` and an
+  * instance delegating to its own ability stay accepted, for the reasons above.
   */
 class RecursionChecker {
 

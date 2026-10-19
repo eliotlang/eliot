@@ -52,9 +52,9 @@ abstract class NbeEvaluator[E](lookupTopDef: ValueFQN => Option[SemValue]) {
     * value argument one to the left, silently computing the wrong answer.
     *
     * **A native leaf.** A native's binding is the host-runnable function that remains once erased type arguments are
-    * gone: `fold`'s takes its three value arguments and no type argument at all, and an implicit type argument was never
-    * threaded into it. Since the row elaboration now *writes* a call's carrier (`fold[Id](..)`,
-    * docs/effects-as-rows.md A.11.4), a native can meet a type argument it has no parameter for. A few natives do model
+    * gone: `fold`'s takes its three value arguments and no type argument at all. A call's value reference still carries
+    * its type arguments, written or appended by the checker at instantiation, so a native can meet a type argument it
+    * has no parameter for. A few natives do model
     * leading arguments — `Function[A, B]`'s two types, `integerLiteral[128]`'s `BigInteger` *value* (types are values,
     * so a literal is an ordinary type argument) — and those must still receive them. The native's own declared
     * `paramType` decides.

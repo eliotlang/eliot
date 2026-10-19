@@ -26,9 +26,9 @@ import scala.jdk.CollectionConverters.*
   * reference whose type is the value's signature; `guarded` exercises a computation *captured* by a discharger, which
   * effects v6 renders as the thunk it is; and `parsed` / `sign` exercise discharge under a pure return.
   *
-  * The machinery sweeps stay, and are the reason the suite exists: nothing the checker inserts may reach a user. Under
-  * v6 there is no carrier machinery left to insert, so they are a standing net rather than a live hazard — which is
-  * exactly when a net is worth keeping.
+  * The machinery sweeps stay, and are the reason the suite exists: nothing the checker inserts may reach a user. Today
+  * nothing it inserts renders as a type of its own (a handle is a parameter hover leaves out), so they are a standing
+  * net against a reintroduction rather than a live hazard — which is exactly when a net is worth keeping.
   */
 class TypeHintIndexCompileTest extends AsyncFlatSpec with AsyncIOSpec with Matchers {
   private val imports     = "import eliot.effect.Console\nimport eliot.effect.Throw"
@@ -37,8 +37,8 @@ class TypeHintIndexCompileTest extends AsyncFlatSpec with AsyncIOSpec with Match
   private val mainLine    = """   greeting"""
   private val catchLine   = """   printLine(guarded catch (e -> e))"""
   private val pureLine    = """   printLine(parsed)"""
-  // A discharge-to-pure: `parsed` has no effect row, so this instantiation of `guarded` runs on the identity carrier
-  // and the checker inserts `Id` machinery (a `runId` / `pure@Effect[Id]` node) at these very source ranges.
+  // A discharge under a pure return: `parsed` declares no effect, and `catch` discharges `guarded`'s `Throw` by running
+  // it under a frame and a handle of its own — plumbing that sits at these very source ranges.
   private val parsedLine  = """def parsed: String = guarded catch (e -> e)"""
   private val signLine    = """def sign(f: Bool): String = if(f, "+") else "-""""
   private val signUseLine = """   printLine(sign(true))"""
@@ -82,16 +82,14 @@ class TypeHintIndexCompileTest extends AsyncFlatSpec with AsyncIOSpec with Match
     renderedTypesAt(pureGuardedPosition).asserting(_ should contain("String"))
   }
 
-  /** The effects-as-channel §9 gate: hover never shows carrier machinery. Swept over *every* position of the
-    * discharge-to-pure definition, because the machinery the checker inserts there (`runId`, `pure@Effect[Id]`, an
-    * `Id[String]`-typed node) sits at the user's own ranges — which is why the index Id-normalizes its input rather
-    * than relying on rendering alone.
+  /** Hover never shows compiler machinery. Swept over *every* position of the definition discharging into a pure
+    * return, because what a discharger brings with it (the frame, the handle it binds) sits at the user's own ranges.
     */
-  it should "never surface carrier machinery or an Id payload wrapper anywhere in a discharge-to-pure definition" in {
+  it should "never surface compiler machinery anywhere in a definition discharging into a pure return" in {
     renderedTypesAcross(parsedLineNumber, parsedLine.length).asserting(_.filter(machinery) shouldBe Seq.empty)
   }
 
-  it should "keep an if..else discharged into a pure return free of carrier machinery too" in {
+  it should "keep an if..else discharged into a pure return free of compiler machinery too" in {
     renderedTypesAcross(signLineNumber, signLine.length).asserting(_.filter(machinery) shouldBe Seq.empty)
   }
 
@@ -112,7 +110,9 @@ class TypeHintIndexCompileTest extends AsyncFlatSpec with AsyncIOSpec with Match
   private def renderedTypesAt(position: Position): IO[Seq[String]] =
     typesAt(position).map(_.fold(Seq.empty[String])(_._2.map(GroundValueRenderer.render)))
 
-  /** Carrier machinery that must never reach a user: a carrier type name, or the identity carrier's payload wrapper. */
+  /** The names machinery would render under if it reached a user: the retired carrier encoding's `…Carrier` types and
+    * its `Id[…]` payload wrapper. Nothing produces them today; the check guards against their return.
+    */
   private def machinery(rendered: String): Boolean = rendered.contains("Carrier") || rendered.contains("Id[")
 
   /** Every distinct type rendered at any column of one source line. */

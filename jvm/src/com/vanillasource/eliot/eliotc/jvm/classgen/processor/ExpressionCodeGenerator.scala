@@ -674,10 +674,9 @@ object ExpressionCodeGenerator {
       } yield condClasses ++ trueClasses ++ falseClasses
     }
 
-  /** Run the arm a `fold` selected. Effects v6 lowers a row-typed slot to a thunk (`whenTrue: {} A` is `Unit -> A`,
-    * `docs/effects.md` §9.4), so the arm on the stack is the *computation*, not its value — selecting it and leaving it
-    * there would hand `fold`'s caller a lambda. Under v5 the arm was a carrier value the caller ran, which is why this
-    * had nothing to do.
+  /** Run the arm a `fold` selected. A code parameter listing no effects is a thunk (`whenTrue uses *: A` is
+    * `Unit => A`, `docs/effects.md` §3.1), so the arm on the stack is the *computation*, not its value — selecting it
+    * and leaving it there would hand `fold`'s caller a lambda.
     */
   private def runThunk(mv: MethodVisitor): Unit = {
     mv.visitInsn(Opcodes.ACONST_NULL)

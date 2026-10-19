@@ -238,7 +238,8 @@ object FullIntegrationTest {
         Path.of(Option(System.getenv("ELIOT_REPO_ROOT")).getOrElse(System.getProperty("user.dir")))
       def root(module: String) = repoRoot.resolve(module).resolve("eliot").resolve("src").toString
       // One `--path` per layer `eliot/src` root; the compiler pool additionally scans each root's sibling `compiler/`
-      // overlay (only `stdlib` ships one — the compile-time `Either`/`Option`/guard carriers).
+      // overlay (only `stdlib` ships one — the compile-time `Either`/`Option`/`Pair`/`Bound`/`Interval`, `Abort` and
+      // `Throw`).
       List("--path", root("lang"), "--path", root("stdlib"), "--path", root("jvm"))
     }
 

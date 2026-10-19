@@ -18,8 +18,8 @@ object WellKnownTypes {
   val functionCarrierFQN: ValueFQN =
     ValueFQN(ModuleName.systemFunctionModuleName, QualifiedName("Function", Qualifier.Default))
 
-  /** `eliot.lang.Unit` — the domain of a **thunk**, which is what effects v6 lowers a row-typed slot to
-    * (`docs/effects.md` §9.4 step 2): `{Abort} T` is `Unit => T`, a computation the callee runs when it chooses.
+  /** `eliot.lang.Unit` — the domain of a **thunk**, which is what a code parameter listing no entry lowers to
+    * (`docs/effects.md` §3.1): `body uses *: T` is `body: Unit => T`, code the callee runs when it chooses.
     */
   val unitTypeFQN: ValueFQN =
     ValueFQN(ModuleName(defaultSystemPackage, "Unit"), QualifiedName("Unit", Qualifier.Type))
@@ -102,11 +102,11 @@ object WellKnownTypes {
 
   private val eitherModule: ModuleName = ModuleName(defaultSystemPackage, "Either")
 
-  /** The `Either[E, A]` type constructor — the discharge carrier of the `Throw[E]` effect (`runThrow` reflects a
-    * `{Throw[E]}` computation into an `Either[E, A]`). Abstract in the base layer (`type Either[E, A]`), redefined
-    * concretely per platform (the `jvm` layer for the runtime phase, the compiler platform for the compile-time phase).
-    * The effectful-signatures discharge (W2) reads back a `{Throw[String]} Type` signature as a ground `Either[String,
-    * Type]` and inspects its head by [[leftFQN]]/[[rightFQN]].
+  /** The `Either[E, A]` type constructor — what `runThrow` discharges a `Throw[E]` into (`runThrow(body)` answers an
+    * `Either[E, A]`). Abstract in the base layer (`type Either[E, A]`), redefined concretely per platform (the `jvm`
+    * layer for the runtime phase, the compiler platform for the compile-time phase). The guard discharge
+    * (W2) reads a guarded return inside the compile track's `runThrow` ([[guardDischargers]]) as a ground
+    * `Either[String, Type]` and inspects its head by [[leftFQN]]/[[rightFQN]].
     */
   val eitherFQN: ValueFQN = ValueFQN(eitherModule, QualifiedName("Either", Qualifier.Type))
 

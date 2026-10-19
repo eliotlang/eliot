@@ -40,13 +40,11 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
   *
   * The key is [[CheckState.AbilityResolutionKey]] — the source-positioned FQN **and the ability-level type arguments
   * the impl was chosen for**. Both halves are load-bearing: the position+FQN is what the post-drain quoter can
-  * re-derive while walking the tree, but it is *not* a node identity. Compiler-synthesized machinery inherits the span
-  * of the expression it wraps ([[com.vanillasource.eliot.eliotc.row.RowElaborator]]'s `pureWrap`/`bindNodes` build
-  * their reference with `value.as(...)`), so one source expression wrapped at two carriers yields two `Effect::pure`
-  * references with *identical* position and FQN and *different* carriers. Keyed by position alone they collapse to one
-  * entry: the second reference is filtered out as "already resolved" and silently inherits the first one's impl — a
-  * `pure@Effect[Id]` emitted as `pure@Effect[IO]`, which `IdNormalizer` then cannot erase, shipping an `IO` value into
-  * a slot typed `Id[Unit]` (a `ClassCastException` at runtime, no diagnostic anywhere).
+  * re-derive while walking the tree, but it is *not* a node identity. A compiler-synthesized reference inherits the
+  * span of the expression it is written for (the `row` phase builds its references with `value.as(...)`), so two
+  * references to one ability method, resolved at *different* type arguments, can share an identical position and FQN.
+  * Keyed by position alone they collapse to one entry: the second reference is filtered out as "already resolved" and
+  * silently inherits the first one's impl — a miscompilation with no diagnostic anywhere.
   *
   * @param abilityArities
   *   Ability-method FQN → its ability's arity (how many leading type arguments of a method reference belong to the
@@ -156,7 +154,7 @@ object CheckState {
     *   - the exact key — the reference's own ground arguments pinned this impl;
     *   - the unique entry for this position+FQN, *only if every entry recorded there agrees*. This is what preserves
     *     the pre-fix behaviour in the ordinary case (one reference, one entry, arguments re-derived identically), while
-    *     a genuine collision — two carriers at one span — yields `None` and the reference stays abstract, which the
+    *     a genuine collision — two impls at one span — yields `None` and the reference stays abstract, which the
     *     checker reports downstream, instead of silently picking whichever resolved first.
     */
   def lookupAbilityResolution(

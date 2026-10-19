@@ -349,7 +349,7 @@ class AbilityImplementationCheckProcessorTest
     """).asserting(_ shouldBe Seq.empty)
   }
 
-  it should "fail a higher-kinded ability constraint when the carrier type has no implementation" in {
+  it should "fail a higher-kinded ability constraint when the type constructor has no implementation" in {
     // `Bag` implements no `Monad`, so resolving `flatMap` at F := Bag must fail at the concrete use site.
     runEngineForErrors("""
         ability Monad[F[_]] {
@@ -371,13 +371,10 @@ class AbilityImplementationCheckProcessorTest
 
   // --- a constrained generic instance, `implement[F[_] ~ Suspend] Console[F]` ---
   //
-  // The `{E} A`-desugars-to-a-carrier case that used to open this group is deleted: effects v6 has no carrier, so the
-  // sugar's meaning is not the M0 form and there is nothing to compare. The M0 form itself — a constructor class
-  // reached through `[F[_] ~ Monad]` — is asserted above and is the durable half. What the two cases below assert is
-  // likewise not about effects: an implementation generic over its own pattern and *constrained*, resolving at a
-  // concrete argument; and an obligation the signature does not name, deferred to the use site. Neither ability spells
-  // a row, because a member of a *parameterised* ability may not carry one (its parameters are inferred at each call
-  // and stand between the binding and the member's own).
+  // Neither case below is about effects, whatever the ability names suggest — `Suspend`, `Console` and `Effect` here are
+  // ordinary higher-kinded abilities declared by the snippet, declaring no `effect` and no `uses` clause. What they
+  // assert: an implementation generic over its own pattern and *constrained*, resolving at a concrete argument; and an
+  // obligation the signature does not name, deferred to the use site.
 
   it should "resolve a constrained higher-kinded instance through a recursive constraint" in {
     // A generic instance `Console[F]` constrained by another ability of the same parameter (`F ~ Suspend`), never

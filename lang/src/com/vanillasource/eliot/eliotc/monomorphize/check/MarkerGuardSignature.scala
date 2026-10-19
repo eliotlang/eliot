@@ -12,8 +12,8 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
   * A marker is a synthetic value whose local name equals the ability's name and whose curried argument types encode the
   * implementation's head pattern; its return-type slot carries the `where` guard (ability-guards §2.3). The pattern
   * arguments are what `AbilityMatcher` unifies at a call site — they are *not* ordinary value parameters and need not
-  * be of kind `Type` (a higher-kinded ability argument like `Throw[E2, ThrowCarrier[E1, G]]` puts a `Type -> Type`
-  * carrier in an argument position). Monomorphizing the marker to read its guard would run the full kind checker over
+  * be of kind `Type` (a higher-kinded ability argument like `Functor[List]` puts a `Type -> Type` constructor in an
+  * argument position). Monomorphizing the marker to read its guard would run the full kind checker over
   * those argument types and reject the higher-kinded ones.
   *
   * Since the guard verdict depends only on the marker's leading type-parameter *binders* (the pattern arguments are

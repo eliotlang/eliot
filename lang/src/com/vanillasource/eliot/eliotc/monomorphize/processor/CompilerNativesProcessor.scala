@@ -18,7 +18,7 @@ import com.vanillasource.eliot.eliotc.saturate.fact.SaturatedValue
   * [[com.vanillasource.eliot.eliotc.source.scan.PathScan.overrideFiles]] and `UnifiedModuleValueProcessor`), so this
   * contributor reads the value's own [[Platform.Compiler]]-marker
   * [[com.vanillasource.eliot.eliotc.saturate.fact.SaturatedValue]] for *every* name reachable in the build. That marker
-  * sees the overlay's redefinition where one exists (e.g. the compile-time `Either` carrier) and otherwise the
+  * sees the overlay's redefinition where one exists (e.g. the compile-time `Either`) and otherwise the
   * platform's own definition (e.g. jvm's `foldEither`): the compiler *borrows* a platform body when it is
   * compiler-runnable, which is how compile-time code reaches a function a platform codebase defines. It is registered as
   * a **native** label, so its reduction is preferred for checking while the runtime layer's body is still what
@@ -27,7 +27,7 @@ import com.vanillasource.eliot.eliotc.saturate.fact.SaturatedValue
   *
   * **Body vs. native — borrow is fail-safe.** [[BodyContributorProcessor]] contributes a `Body` for a body-ful value and
   * `None` for a body-less one (a native leaf, whose checking implementation is a native — never an empty binding that
-  * would shadow a reducing native, the `add` bug). So a pure platform body (jvm's `foldEither`, an `Effect[IO]` method)
+  * would shadow a reducing native, the `add` bug). So a pure platform body (jvm's `foldEither`)
   * becomes a compile-time `Body` and reduces if forced, whereas a body that bottoms out in a bytecode leaf
   * (the `Numeric[Int]` `add`) reduces only until it stalls on that leaf, surfacing a loud stuck term rather
   * than a silently wrong reduction, and a bare native leaf stays `None`.
@@ -62,22 +62,20 @@ class CompilerNativesProcessor extends BodyContributorProcessor(ContributedBindi
   private def inCompilerPool(vfqn: ValueFQN): CompilerIO[Boolean] =
     getFactOrAbort(UnifiedModuleNames.Key(vfqn.moduleName, Platform.Compiler)).map(_.names.contains(vfqn.name))
 
-  /** A **compile-time** value — one the compiler layer defines (concrete here) but the runtime pool leaves abstract, e.g.
-    * the compiler-layer effect-carrier overlays that reduce an inline `if..else..raise` guard (the `Effect`/`Abort`
-    * instances on `AbortCarrier`, `foldEither`/`foldOption`) — whose checking body performs ability dispatch
-    * (`raise`/`pure`) cannot be reduced by the pure NbE evaluator against the abstract ability method (which has no
-    * binding), so its raw body would stall on it. For such a value the compile-time reduction is the **compiler
-    * backend's** output — the [[CompilerMonomorphicValue]] whose ability calls are resolved to the concrete impls and
-    * folded — built here into a self-contained [[BindingContribution.Leaf]] ([[ReducedBindingClosure]]). Both tracks then
-    * get the reducible form: the runtime track evaluates it in a type position (compiler-as-platform Increment E, the
-    * guard consumer), and the compiler track inlines it when reducing another compile-time value (e.g. `pure` inside the
-    * `AbortCarrier` `Effect` instance).
+  /** A **compile-time** value — one the compiler layer defines (concrete here) but the runtime pool leaves abstract —
+    * whose checking body performs ability dispatch cannot be reduced by the pure NbE evaluator against the abstract
+    * ability method (which has no binding), so its raw body would stall on it. For such a value the compile-time
+    * reduction is the **compiler backend's** output — the [[CompilerMonomorphicValue]] whose ability calls are resolved
+    * to the concrete impls and folded — built here into a self-contained [[BindingContribution.Leaf]]
+    * ([[ReducedBindingClosure]]). Both tracks then get the reducible form: the runtime track evaluates it in a type
+    * position (compiler-as-platform Increment E, the guard consumer), and the compiler track inlines it when reducing
+    * another compile-time value.
     *
     * The gate is deliberately narrow. Reducing an ability-using value at compile time only makes sense for a genuine
-    * compile-time value; a *runtime* value that merely uses effects (`catch`/`runStateToPair`, or any user `{Console}` body)
-    * is runtime-concrete and reaches runtime-only leaves (`runThrow`), so eagerly reducing it would raise a spurious
-    * native-leaf error. So the reduced path is taken only when the value is **runtime-abstract** (no runtime body) — the
-    * compiler-only / redefined-in-compiler-layer case. Everything else keeps the ordinary raw-body
+    * compile-time value; a *runtime* value that merely uses effects (`catch`/`runStateToPair`, or any user body with a
+    * `uses` clause) is runtime-concrete and reaches runtime-only leaves (`runThrow`), so eagerly reducing it would
+    * raise a spurious native-leaf error. So the reduced path is taken only when the value is **runtime-abstract** (no
+    * runtime body) — the compiler-only / redefined-in-compiler-layer case. Everything else keeps the ordinary raw-body
     * [[BindingContribution.Body]] path.
     *
     * On a missing reduction — the value did not produce a `CompilerMonomorphicValue` (an upstream compile error) — the

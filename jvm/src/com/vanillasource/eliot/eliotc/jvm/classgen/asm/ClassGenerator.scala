@@ -328,8 +328,9 @@ object ClassGenerator {
     * classpath, and cannot work for a class this compiler is in the middle of emitting — a generated lambda or data
     * class — which surfaces as `TypeNotPresentException` from deep inside `visitMaxs`.
     *
-    * Merges only became reachable with effects v6: a row-typed slot is a thunk, so a branch now yields a lambda
-    * *instance* rather than a carrier value, and two arms of one `fold` are two different generated classes.
+    * Merges are reachable because a code parameter listing no effects is a thunk (`fold`'s `whenTrue uses *: A` is
+    * `Unit => A`), so a branch yields a lambda *instance*, and two arms of one `fold` are two different generated
+    * classes.
     *
     * The fallback is deliberately narrow. Two generated lambdas join at `java/util/function/Function`, which every one
     * of them implements ([[com.vanillasource.eliot.eliotc.jvm.classgen.processor.LambdaGenerator]]) and which is

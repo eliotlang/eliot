@@ -9,17 +9,18 @@ import com.vanillasource.eliot.eliotc.monomorphize.fact.GroundValue
 import com.vanillasource.eliot.eliotc.processor.CompilerIO.CompilerIO
 import org.objectweb.asm.{Label, Opcodes}
 
-/** Effects v6's two control-flow primitives on the JVM (`docs/effects.md` §9.6) — the **escape** (a non-local exit)
+/** Two of the three control-flow primitives on the JVM (`docs/effects.md` §3.4) — the **escape** (a non-local exit)
   * and the **cell** (a value threaded through calls that never mention it). Neither is expressible as a def in a
-  * strict pure core, which is the whole reason the carrier existed; they are the only two things left of it.
+  * strict pure core.
   *
-  * **A frame is passed, never searched for** (effects D20c option 5, `docs/effects.md` §11). The leaf that installs one
-  * makes a fresh frame — an escape's is a plain `Object` compared by identity, a cell is a one-slot `Object[]` — and
-  * hands it to the thunk it runs, which is the computation it discharges; the environment threading at the
-  * `WovenValue` seam passes it on to exactly the operations written inside that computation. So an exit leaves through
-  * the frame it was given, and a cell is read and written through the one it was given: a helper's own discharge of
-  * the same effect is a different object, invisible to an operation it was not given, and nothing lives in a static
-  * field a nested discharge would have to save and restore.
+  * **A frame is passed, never searched for** (`docs/effects.md` §3.4, "A frame is a handle's field"). The leaf that
+  * installs one makes a fresh frame — an escape's is a plain `Object` compared by identity, a cell is a one-slot
+  * `Object[]` — and hands it to the function it runs, whose body binds it as a field of the named implementation's
+  * handle (`escapeInternal((frame: ThrowFrame[E]) -> obj with escaping(frame), …)`); the operations written inside that
+  * computation reach it only through that handle. So an exit leaves through the frame it was given, and a cell is read
+  * and written through the one it was given: a helper's own discharge of the same effect is a different object,
+  * invisible to an operation it was not given, and nothing lives in a static field a nested discharge would have to
+  * save and restore.
   *
   * Each group is still declared `private` in the module that needs it (`eliot.effect.Throw` and `eliot.effect.Abort`
   * each own an escape; `State`, `Writer` and `Dep` each own a cell) and emitted once per instantiation, but neither

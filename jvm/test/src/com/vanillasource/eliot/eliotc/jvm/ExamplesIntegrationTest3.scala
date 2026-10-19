@@ -26,9 +26,9 @@ class ExamplesIntegrationTest3 extends FullIntegrationTest {
     ).asserting(_ shouldBe "World!")
   }
 
-  // The `examples/src/Blocks.els` shape: a two-effect {Console, State[String]} interaction in block form, with a `val`
-  // binding the carried result of a sub-computation (`swap`). Console and State share one carrier, threaded across the
-  // block; pinned here so the shipped example cannot silently regress.
+  // The `examples/src/Blocks.els` shape: a two-effect `Console`, `State[String]` interaction in block form, with a
+  // `val` binding the result of a sub-computation (`swap`). Each effect has its own handle and the state threads across
+  // the block; pinned here so the shipped example cannot silently regress.
   "a {Console, State} interaction in block form (the Blocks example)" should "run end to end" in {
     compileAndRun(
       """import eliot.effect.Console

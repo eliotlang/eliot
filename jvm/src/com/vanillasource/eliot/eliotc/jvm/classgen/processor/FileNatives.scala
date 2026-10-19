@@ -64,9 +64,8 @@ object FileNatives {
     pathFqn("isNull")                 -> GenericNativeSignature(Seq(systemAnyValue), boolType),
     fileFqn("isNull")                 -> GenericNativeSignature(Seq(systemAnyValue), boolType),
     fileFqn("resultValue")            -> GenericNativeSignature(Seq(ioResultType), systemAnyValue),
-    // A `List`-headed generic return (element `E` erased) rather than the bare `Any` of `resultValue`: a value whose
-    // static head is the concrete `List` constructor auto-lifts into the operation's carrier, where a value typed by a
-    // bare type-parameter (`resultValue`'s `A` solved to `List`) mis-binds the carrier to `List` in the checker.
+    // A `List`-headed generic return (element `E` erased) rather than the bare `Any` of `resultValue`: the
+    // directory/line operations read a `List`-shaped result back at its own head.
     fileFqn("resultAsList")           -> GenericNativeSignature(Seq(ioResultType), listType),
     fileFqn("foldLinesInternal")      ->
       GenericNativeSignature(Seq(systemAnyValue, systemFunctionValue, pathType), ioResultType),

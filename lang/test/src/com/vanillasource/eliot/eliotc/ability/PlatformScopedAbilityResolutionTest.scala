@@ -17,12 +17,12 @@ import java.nio.file.Path
 
 /** W2a leaf test (effectful-signatures): ability-instance resolution is platform-scoped, the ability analogue of CP3's
   * `CompilerNativesProcessor` for value bodies. An `implement` block present only in the **compiler** source pool — the
-  * shape of the compile-time carrier's `Monad`/`Throw[Either[String]]` instances, which the W2 discharge must reach —
-  * resolves when [[AbilityImplementation.Key]] is queried under [[Platform.Compiler]] and is **absent** under
+  * shape of the `stdlib/eliot/compiler/` overlay's `aborting`/`escaping` instances, which a guard's discharge must
+  * reach — resolves when [[AbilityImplementation.Key]] is queried under [[Platform.Compiler]] and is **absent** under
   * [[Platform.Runtime]].
   *
-  * The two pools share the ability declaration and the implemented type (`Show` + `Int`), exactly as the real carrier
-  * shares the abstract `Throw`/`Either` base across both markers; only the `implement` lives compiler-only. The pools
+  * The two pools share the ability declaration and the implemented type (`Show` + `Int`), exactly as the overlay shares
+  * the base's `Abort`/`Throw` declarations across both markers; only the `implement` lives compiler-only. The pools
   * are injected as one [[PathScan]] per marker (distinct URIs, same logical paths), mirroring `CompilerNativesProcessorTest`.
   */
 class PlatformScopedAbilityResolutionTest
@@ -51,9 +51,9 @@ class PlatformScopedAbilityResolutionTest
     internal("TypeMatch")    -> ""
   )
 
-  // Shared by both pools: the ability and the type it is implemented for (cf. the abstract `Throw`/`Either` base).
+  // Shared by both pools: the ability and the type it is implemented for (cf. the base's abstract `Throw`).
   private val sharedM = "ability Show[A] { def show(x: A): A }\ndata Int"
-  // The implementation lives ONLY in the compiler pool (cf. the carrier's compile-time `Monad`/`Throw` instances).
+  // The implementation lives ONLY in the compiler pool (cf. the overlay's compile-time `escaping` instance).
   private val implM   = "\nimplement Show[Int] { def show(x: Int): Int = x }"
 
   private def source(uri: URI, content: String): SourceContent =

@@ -243,9 +243,9 @@ subset of its data.
 9. **termination** — the recursion gate (see the *Total by Default* cornerstone)
 10. *(There is no `effect` package. It held carrier identification and the `Effect`/`Suspend` machinery recognition,
     and effects v6 left nothing in it: nothing mints those abilities, no `.els` declares them and there is no
-    `eliot.carrier` package. The one predicate that survived — "is this binder higher-kinded?", a **kind** question,
-    not an effect one — is `CarrierKindChecker.isHktBinder`, beside its only caller. The carrier-stack renderer that
-    lived there is gone too, because a type now prints as what the user wrote.)*
+    `eliot.carrier` package. The kind question that sat beside it — is a higher-kinded binder instantiated at a
+    proper type? — is `check/CarrierKindChecker`'s, and is soundness, not effect machinery. The carrier-stack
+    renderer that lived there is gone too, because a type now prints as what the user wrote.)*
 11. **row** — the effect phase, right after the gate. `row/processor/RowElaborationProcessor` produces
     `RowElaboratedValue` before saturation, running `row/BindingWriter` over **both halves** of a definition (body *and*
     signature — a guarded return holds references too). It does all of an effect's plumbing and decides nothing

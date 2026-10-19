@@ -12,10 +12,10 @@
  * mention of `recordingConsole`. It declares `uses Console` and names no implementation, and that is the whole of its
  * testability.
  *
- * Neither shape v5 forced is here any more. A test is no longer **run-then-assert** — there is no carrier to
- * instantiate, so `transcriptOf(greet("Bob"))` may be written anywhere, effectful body included. And the fake still
- * cannot cheat: a user module declares no natives, and the platform's are private to its layer, so a double reaches
- * the outside only through effects its own clauses declare — which are charged and bound like any others.
+ * A test is not **run-then-assert**: `transcriptOf(greet("Bob"))` is an ordinary call answering a `String`, so it may
+ * be written anywhere, effectful body included. And the fake cannot cheat: a user module declares no natives, and the
+ * platform's are private to its layer, so a double reaches the outside only through effects its own clauses declare —
+ * which are charged and bound like any others.
  *
  * ```sh
  * ./mill examples.run jvm exe-jar examples/src/ -m EffectsTestFramework

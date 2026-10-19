@@ -315,10 +315,10 @@ class OperatorResolverProcessorTest
       }
   }
 
-  // --- effect-set sugar `{E} A` (effects v6 §9.4 step 2). There is no hand-written equivalent to compare against any
-  // more — the carrier form this pair used to mirror is gone — so the shape is asserted directly. ---
+  // --- a `uses` clause, as the desugar writes it into the signature: per entry a handle type binder and a handle
+  // parameter, and per entry a code parameter's clause lists a handed binder. ---
 
-  "effect-set sugar" should "mint the handle's type, take its handle, hand the code a handle for what its slot lists, and leave the return bare" in {
+  "a uses clause" should "mint the handle's type, take its handle, hand the code a handle for what its slot lists, and leave the return bare" in {
     val source =
       "data Str\ndata Unt\neffect Suspend { def delay(value: Str): Str }\n" +
         "def sugar(x uses *, Suspend: Str) uses *, Suspend: Unt"
@@ -333,7 +333,7 @@ class OperatorResolverProcessorTest
     }
   }
 
-  it should "resolve {Suspend, Abort} and {Abort, Suspend} to the same effect set and the same payload" in {
+  it should "resolve `uses Suspend, Abort` and `uses Abort, Suspend` to the same effect set and the same payload" in {
     // The *set* is what a row means; which minted binder carries which entry follows declaration order and is not part
     // of it. Since §9.2 that assignment is written down — each binder's mark names its ability — so the two signatures
     // differ in their marks and agree on everything else: the same abilities, and the same payload once the binders
@@ -366,11 +366,10 @@ class OperatorResolverProcessorTest
   private def abilitySet(rv: OperatorResolvedValue): Set[String] =
     constraintShow(rv).values.flatten.map(_._1).toSet
 
-  // --- effects-as-channel Phase 1: the declared row is recorded as inert signature metadata (docs/effects-as-channel.md
-  // §4). The carrier desugar still runs (asserted above), and *in parallel* the open rows are captured, position-
-  // attributed, on `OperatorResolvedValue.effectRow`. ---
+  // --- beside the desugared signature (asserted above), the declared clauses are recorded as declaration metadata,
+  // position-attributed, on `OperatorResolvedValue.effectRow`. ---
 
-  "the effect channel metadata" should "record open rows by position, resolved to ability FQNs" in {
+  "the declared effect row" should "record open rows by position, resolved to ability FQNs" in {
     val source =
       "data Str\ndata Unt\neffect Suspend { def delay(value: Str): Str }\n" +
         "def sugar(x uses *, Suspend: Str) uses *, Suspend: Unt"
@@ -379,7 +378,7 @@ class OperatorResolverProcessorTest
     }
   }
 
-  it should "stay empty for the hand-written carrier form (only the `{…}` sugar feeds the channel)" in {
+  it should "stay empty for a `~` constraint on a higher-kinded binder (only a `uses` clause feeds it)" in {
     val source =
       "data Str\ndata Unt\nability Suspend[F[_]] { def delay(value: Str): F[Str] }\n" +
         "def hand[F[_] ~ Suspend](x: F[Str]): F[Unt]"

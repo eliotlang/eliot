@@ -5,11 +5,10 @@ package com.vanillasource.eliot.eliotc.jvm
   * (`wrap`), so before the fix their generated closure classes both mangled to `Test$wrap$lambda$1` — a
   * `java.util.zip.ZipException: duplicate entry` at JAR assembly (then a `NoClassDefFoundError`).
   *
-  * The generated JVM *method* names already disambiguate the two impls (`wrap$Wrap$impl$0$Foo` vs
-  * `wrap$Wrap$impl$1$Bar`, via [[CommonPatterns.mangledMethodName]]); the closure-class prefix must use that same
+  * The generated JVM *method* names already disambiguate the two impls (`wrap$Wrap$impl$<hash>`, the hash of each
+  * implementation's pattern, via [[CommonPatterns.mangledMethodName]]); the closure-class prefix must use that same
   * disambiguated name rather than the bare local name, so the two impls' lambdas land in distinct classes. This is what
-  * lets both instances be co-located in a single module (the workaround was to split every carrier's instances into its
-  * own module).
+  * lets both instances be co-located in a single module (the workaround was to split them into separate modules).
   */
 class LambdaClassCollisionIntegrationTest extends FullIntegrationTest {
 

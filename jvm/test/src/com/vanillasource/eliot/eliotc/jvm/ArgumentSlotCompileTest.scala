@@ -9,21 +9,20 @@ import org.scalatest.matchers.should.Matchers
 
 import java.nio.file.{Files, Path}
 
-/** A **compile-succeeds** gate for the shapes where a slot meets something carrier-headed and the carrier must
-  * neither be stolen nor lost. All three were regressions once, under successive mechanisms; the programs are what
-  * must keep working, whichever mechanism decides them (today: the row elaborator, from the slot's declaration).
+/** A **compile-succeeds** gate for the shapes where an argument meets a parameter slot whose type it must neither
+  * take over nor lose. All three were regressions once, under successive mechanisms; the programs are what must keep
+  * working, whichever mechanism decides them.
   *
-  *   - **mixed conditional arms** — `if(c, None) else Some(x)` puts a pure `None : Option[?E]` beside a
-  *     `Some(x) : Option[Int]`. The pure arm has to lift into the carrier's *payload* slot so the sibling decides the
-  *     element type; unifying the whole type instead stole the carrier (`?G := Option`) and failed.
-  *   - **an effectful value into a data slot** — `items : {Console} List[String]` passed to `foldLeft`'s
-  *     `list : List[A]`. The effect runs at the call site and the `List[String]` payload fills `List[A]`
-  *     (`A := String`); stealing the carrier here (`?F := List`) left `Effect[List]` with no instance and forced a
-  *     `val` workaround.
-  *   - **a `where` precondition over a carried argument** — the refinement must see the argument's range *through*
-  *     the carrier, so an out-of-range literal is still rejected (this one asserts the error, not a clean compile).
+  *   - **mixed conditional arms** — `if(c, None) else Some(x)` puts a `None : Option[?E]` beside a
+  *     `Some(x) : Option[Int]`; the sibling arm decides the element type.
+  *   - **an effectful value into a data slot** — `items`, declared `uses Console` with a `List[String]` result, passed
+  *     to `foldLeft`'s `list : List[A]`. The effect runs at the call site (strict call-by-value) and the `List[String]`
+  *     fills `List[A]` (`A := String`), with no `val` needed to separate them.
+  *   - **a `where` precondition over an argument in an effectful body** — the refinement must see the literal
+  *     argument's range, so an out-of-range literal is still rejected (this one asserts the error, not a clean
+  *     compile).
   */
-class CarrierSlotCompileTest extends AsyncFlatSpec with AsyncIOSpec with Matchers {
+class ArgumentSlotCompileTest extends AsyncFlatSpec with AsyncIOSpec with Matchers {
 
   private val conditionalSource =
     """def choose(c: Bool, x: Int): Option[Int] = if(c, None) else Some(x)
@@ -44,10 +43,8 @@ class CarrierSlotCompileTest extends AsyncFlatSpec with AsyncIOSpec with Matcher
       |def main uses Console: Unit = printLine(summary)
       |""".stripMargin
 
-  // Effects-as-channel §6/§10 (U4-e prerequisite): a post-mono MonomorphicValue consumer must see through the uniform
-  // path's pervasive `Id`. `useByte(1000)`'s argument range `[1000,1000]` sits inside `pure@Effect[Id]( 1000 )`; before
-  // the refinement channel normalized `Id` away it read "meta-information is not known here" (a wrong diagnostic) instead of
-  // the bound violation. This pins that the range survives the `Id` wrapper under the uniform-carrier checker.
+  // `useByte(1000)`'s argument range `[1000,1000]` must reach the `where` check as the bound violation, not as
+  // "meta-information is not known here" (a wrong diagnostic it once read, when a wrapper hid the literal).
   private val refinementSource =
     """import eliot.effect.Console
       |
@@ -57,16 +54,16 @@ class CarrierSlotCompileTest extends AsyncFlatSpec with AsyncIOSpec with Matcher
       |def main uses Console: Unit = printLine(show(useByte(1000)))
       |""".stripMargin
 
-  "a where-precondition over a uniform-carriered argument" should "see the argument's range through the Id wrapper" in {
+  "a where-precondition over a literal argument in an effectful body" should "see the argument's range" in {
     compileErrors(refinementSource)
       .asserting(_.map(_.message).mkString should include("is not satisfied"))
   }
 
-  "if(c, None) else Some(x)" should "compile (the CarrierSlot arm pure-wraps instead of stealing the carrier)" in {
+  "if(c, None) else Some(x)" should "compile (the sibling arm decides the element type)" in {
     compileErrors(conditionalSource).asserting(_ shouldBe empty)
   }
 
-  "an effectful list into foldLeft's List[A]" should "compile (the payload binds, the carrier is split off first)" in {
+  "an effectful list into foldLeft's List[A]" should "compile (the effect runs at the call, the value binds A)" in {
     compileErrors(compoundStateSource).asserting(_ shouldBe empty)
   }
 

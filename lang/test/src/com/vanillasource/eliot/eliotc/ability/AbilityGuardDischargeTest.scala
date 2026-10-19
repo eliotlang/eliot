@@ -59,8 +59,7 @@ class AbilityGuardDischargeTest
 
   // The self-contained base every guard needs: `Function` (arrow signatures), `Type`, `String`, the compile-time
   // `Bool` (its `true`/`false` reductions come from `SystemNativesProcessor` and its `fold` reduction from
-  // `StdlibNativesProcessor`), and the compile-time `Either` carrier whose `Left`/`Right` constructors the discharge
-  // inspects.
+  // `StdlibNativesProcessor`), and the compile-time `Either` whose `Left`/`Right` constructors the discharge inspects.
   private val baseFacts: Seq[CompilerFact] =
     (compilerScan(Seq("eliot", "compiler"), "Type", "type Type") ++
       compilerScan(
@@ -69,21 +68,18 @@ class AbilityGuardDischargeTest
         "type Function[A, B]\ndef apply[A, B](f: Function[A, B], a: A): B"
       ) ++
       compilerScan(Seq("eliot", "lang"), "String", "type String") ++
-      // Every `ability` block and every effect row declares a binding binder, whose `Implementation[A]` mark and
-      // `Default` sentinel the compiler writes module-qualified — so this module is in every pool.
+      // The `row` phase writes `Implementation::Inferred`/`Handed` module-qualified — so this module is in every pool.
       compilerScan(Seq("eliot", "lang"), "Implementation", ProcessorTest.implementationStubContent) ++
-      // A row-typed slot lowers to a thunk `Unit -> A`, and the compile-time `fold` applies the arm it selects to
-      // `eliot.lang.Unit::unit` — so both the `Unit` type (the thunk's parameter type) and that value must be
-      // loadable, and the `{}` row's synthesised constraint resolves at `eliot.carrier.Effect`.
+      // A `uses *` slot listing no effect lowers to a thunk `Unit -> A`, and the compile-time `fold` applies the arm it
+      // selects to `eliot.lang.Unit::unit` — so both the `Unit` type (the thunk's parameter type) and that value must
+      // be loadable.
       compilerScan(Seq("eliot", "lang"), "Unit", "type Unit\ndef unit: Unit") ++
-      compilerScan(Seq("eliot", "carrier"), "Effect", "ability Effect[F] { }") ++
       compilerScan(
         Seq("eliot", "lang"),
         "Bool",
         // `fold`'s arms are **suspended**, as the real `eliot.lang.Bool` declares them: the compile-time reduction
         // applies the arm it selects, so a stub with plain arms hands it a value where it expects a thunk and the
-        // guard silently stops reducing. The `{}` row synthesises a constraint at `eliot.carrier.Effect`, which is
-        // why that module is in the base set below.
+        // guard silently stops reducing.
         "import eliot.lang.Function\ntype Bool\ndef true: Bool\ndef false: Bool\ndef fold[A](cond: Bool, whenTrue uses *: A, whenFalse uses *: A) uses *: A"
       ) ++
       compilerScan(
@@ -139,7 +135,7 @@ class AbilityGuardDischargeTest
       .map { case (impl, errors) => (impl, toTestErrors(errors)) }
 
   /** Resolve the generic guarded impl at an arbitrary query argument, so a call can pass the **defaulted universe**
-    * `GroundValue.Type` in the operand slot (the junk a junk-grounded carrier slot reads back as).
+    * `GroundValue.Type` in the operand slot (the junk a type-argument slot unification never solved reads back as).
     */
   private def resolveGeneric(
       guardClause: String,
@@ -202,7 +198,7 @@ class AbilityGuardDischargeTest
   }
 
   "a guarded impl whose operand junk-grounded to the universe" should "decline rather than reduce the guard over junk" in {
-    // The fail-safe: `A := Type` (the defaulted universe — what a junk-grounded carrier slot reads back as). Without
+    // The fail-safe: `A := Type` (the defaulted universe — what an unsolved type-argument slot reads back as). Without
     // it, `fold(false, false, true)` would still reduce to `true` and silently keep the candidate on a junk operand;
     // with it, the guard is not discharged and the outcome falls through to `NoImplementation`, which the demanding
     // use site reports located — never a silent wrong instance choice.

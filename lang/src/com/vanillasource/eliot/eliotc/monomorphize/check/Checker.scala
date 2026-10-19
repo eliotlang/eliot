@@ -40,16 +40,16 @@ class Checker(
   /** The track's platform — fact keys read it off the [[track]] rather than threading a bare [[Platform]]. */
   private val platform: Platform = track.platform
 
-  /** The higher-kinded-carrier kind checker (D8): seeds each `[F[_]]` carrier instantiation meta with its expected kind
-    * and verifies the solution post-drain. A non-equality *kind system*, kept out of this checker's definitional
-    * equality concern. Called from [[instantiatePolymorphic]] (seed) and [[TypeStackLoop]]'s `carrier-kinds` pass
+  /** The higher-kinded kind checker (D8): seeds each `[F[_]]` binder's instantiation meta with its expected kind and
+    * verifies the solution post-drain. A non-equality *kind system*, kept out of this checker's definitional
+    * equality concern. Called from [[instantiatePolymorphic]] (seed) and [[TypeStackLoop]]'s post-drain resolution
     * (verify). See [[CarrierKindChecker]].
     */
   private[check] val carriers: CarrierKindChecker =
     new CarrierKindChecker(force, (tm, env) => evalExpr(tm, env), doUnify, platform)
 
-  /** The effectful-signatures guard discharge (W2b): runs a `{Throw[String]}` return guard on the compile-time
-    * `Either[String, _]` carrier to obtain (or reject) the return type. A non-equality concern, kept out of this
+  /** The effectful-signature guard discharge (W2b): reads a guarded return inside the compile track's `runThrow`, whose
+    * `Either[String, _]` verdict gives (or rejects) the return type. A non-equality concern, kept out of this
     * checker's definitional equality concern. Called from [[infer]] / [[applyInferred]] (read sides) and
     * [[TypeStackLoop]] (callee side). See [[GuardDischargeResolver]].
     */
@@ -211,8 +211,7 @@ class Checker(
     checkAgainstDefault(tm, expr, inferred, expected)
 
   /** The return-boundary resolution: [[resolveGuardedLadder]] (see [[checkAgainst]]'s doc). The one path, on both
-    * tracks, since the v2 uniform bridge was deleted — the elaborator writes the carrier, so a return boundary is an
-    * ordinary definitional-equality judgment with the pure-lift arm behind it.
+    * tracks: a return boundary is an ordinary definitional-equality judgment.
     */
   private def checkAgainstDefault(
       tm: Sourced[OperatorResolvedExpression],
@@ -223,8 +222,8 @@ class Checker(
     resolveGuardedLadder(tm, expr, inferred, expected)
 
   /** The check-mode resolution ladder shared by return boundaries ([[checkAgainst]]) and spine argument slots
-    * ([[checkArgumentSlot]]), fronted by the W2b guard-kind acceptance. A value whose type is on the compile-time
-    * `Throw[String]` carrier types as `Either[..]`, not `Type`; where a `Type` kind is expected, accept it as a
+    * ([[checkArgumentSlot]]), fronted by the W2b guard-kind acceptance. A guarded return, read inside the compile
+    * track's `runThrow`, types as `Either[..]`, not `Type`; where a `Type` kind is expected, accept it as a
     * *guarded type* (discharged to its payload — or rejected — by the signature/read-site discharge) rather than
     * letting the unifier reject `Either[..]` ≠ `Type`. Otherwise runs the plain [[resolveLadder]]. The expectation is
     * forced here (not at the callers): by the time the ladder runs, inference of the term may have solved metas in it.
@@ -248,16 +247,10 @@ class Checker(
     } yield outcome
 
   /** The check-mode resolution ladder proper — the algorithm shared verbatim by return boundaries and argument slots
-    * (R3-1 dedup): polytype instantiation, then the pure-wrap pre-arm for the shape definitional equality can only
-    * *degenerately* solve, then unify → pure-wrap → committed mismatch.
+    * (R3-1 dedup): polytype instantiation, then unify → committed mismatch.
     *
-    * Position no longer changes the ladder. Under effects-as-rows the desugar writes every bind the elaboration needs
-    * and, since §1 rule 4, classifies every position from its declaration, so the position-dependent arms the v2 ladder
-    * carried — the bind-lift pre-arm and failure arm (argument slots only) and the pure-boundary `Id` defaulting
-    * (return boundaries only) — became unreachable and were deleted with the `allowBindLift` flag that selected them
-    * (docs/effects-as-rows.md §4; every one of their call sites fired zero times across the full gate). A carrier
-    * reaching a pure position that this ladder cannot reconcile is now a committed mismatch, which is the fail-safe
-    * direction: a loud error, never a silently stripped effect.
+    * Position does not change the ladder: a return boundary and an argument slot are the same judgment. A term it
+    * cannot reconcile is a committed mismatch, which is the fail-safe direction: a loud error, never a coercion.
     */
   private def resolveLadder(
       tm: Sourced[OperatorResolvedExpression],
@@ -270,10 +263,7 @@ class Checker(
       out                         <- resolveFailureLadder(tm, updatedExpr, instantiated, expected)
     } yield out
 
-  /** The failure ladder consulted when definitional equality does not immediately unify: commit the exact mismatch.
-    * Since effects v6 there is no arm between the two — a pure term meeting a carrier-headed expectation was the one
-    * shape that recovered here, and there is no carrier.
-    */
+  /** The failure ladder consulted when definitional equality does not immediately unify: commit the exact mismatch. */
   private def resolveFailureLadder(
       tm: Sourced[OperatorResolvedExpression],
       updatedExpr: SemExpression,
@@ -593,8 +583,7 @@ class Checker(
     * then resolve the arguments left to right:
     *
     *   - **each slot** ([[applyInferred]]) runs the resolution ladder immediately, left to right. There is no second
-    *     phase: the deferral that used to hold a bare flex domain receiving a carrier-headed argument went with the
-    *     carrier (effects v6, F3), and nothing is folded *around* the core — the checker inserts no binds.
+    *     phase, and nothing is folded *around* the core — the checker inserts no code.
     *
     * Each fold step receives the intermediate application node's own [[Sourced]] target, so diagnostics and the
     * rebuilt [[SemExpression]] keep the exact positions the former per-curried-node recursion produced.
@@ -636,7 +625,7 @@ class Checker(
       case _                                                           => (tm, Nil)
     }
 
-  /** Apply one argument of a spine ([[inferSpine]]'s Phase-A fold step): peel any polytype (`VLam`) layers with fresh
+  /** Apply one argument of a spine ([[inferSpine]]'s fold step): peel any polytype (`VLam`) layers with fresh
     * metas, then apply the argument to the resulting monotype. If the monotype isn't already `VPi`, it gets unified
     * against a fresh one. The implicit metas introduced by peeling are baked into the target reference. The argument
     * itself is resolved by [[checkArgumentSlot]].
@@ -708,12 +697,8 @@ class Checker(
         } yield outcome
     }
 
-  /** Phase-A argument-slot resolution — the one path for every slot on both tracks since the v2 uniform bridge was
-    * deleted. Every slot runs the shared resolution ladder.
-    *
-    * The *deferral* arm went with the carrier (effects v6, F3): it existed to hold a bare flex domain receiving an
-    * effect-carrier-headed argument until the compile track's Phase B could pin the carrier. There is no carrier to
-    * pin — an implementation is a written phantom binder — so no slot's decision waits on one.
+  /** Argument-slot resolution — the one path for every slot on both tracks: the shared resolution ladder, run
+    * immediately, so no slot's decision waits on a later phase.
     */
   private def defaultArgSlot(
       arg: Sourced[OperatorResolvedExpression],
@@ -736,10 +721,8 @@ class Checker(
     * against `expected` when known (pushing the type down) and inferred otherwise. Returns the rebuilt application
     * expression and its type.
     *
-    * It is an ordinary `let` and nothing more. The bind rule that used to sit here — an effect-carrier-headed argument
-    * sequenced into `flatMap/map(param -> body, arg)` — went with the carrier (effects v6, F3): a block `val` binding
-    * an effectful call binds its *value*, because the effect is performed by the callee under the implementation the
-    * write handed it, not staged into a carrier the checker has to thread.
+    * It is an ordinary `let` and nothing more: a block `val` binding an effectful call binds its *value*, because the
+    * callee performs the effect itself, through the handle its caller passes it.
     */
   private def typeImmediateLambda(
       target: Sourced[OperatorResolvedExpression],

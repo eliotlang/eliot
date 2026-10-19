@@ -191,9 +191,8 @@ class MonomorphicTypeCheckProcessorTest
         }
     }
 
-  /** The value's runtime body, Id-normalized exactly as `WovenValueProcessor` does before codegen
-    * (docs/effects-as-channel.md §6) — so a body-shape assert sees the normalized leaf (`IntegerLiteral`, the resolved
-    * ability-impl reference) rather than the uniform-carrier `pure@Id`/`runId` wrapper. A no-op on the legacy path.
+  /** The value's runtime body, as a body-shape assert reads it: the leaf itself (`IntegerLiteral`, the resolved
+    * ability-impl reference), since the checker wraps it in nothing.
     */
   private def normalizedBody(result: MonomorphicValue): MonomorphicExpression.Expression =
     result.runtime.get.value

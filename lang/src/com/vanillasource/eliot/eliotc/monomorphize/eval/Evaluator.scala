@@ -130,7 +130,7 @@ object Evaluator {
     * name: a type-level body binds its own parameters, an ordinary `def`'s body binds only what
     * [[com.vanillasource.eliot.eliotc.monomorphize.processor.BindingClosure]] wrapped it for, and both present as
     * leading [[SemValue.VLam]]s. `applied` is clamped to the spine's actual length, so a spine some phase peeled an
-    * entry off of (a carrier's payload) can only ever under-skip, never drop a value argument.
+    * entry off of can only ever under-skip, never drop a value argument.
     */
   private def applySpine(topDef: VTopDef, base: SemValue): SemValue = topDef.typeArgFit match {
     case None      => topDef.spine.toList.foldLeft(base)(applyValue)

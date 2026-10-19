@@ -4,10 +4,8 @@ import com.vanillasource.eliot.eliotc.module.fact.{ModuleName, QualifiedName, Qu
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 
-/** User-facing rendering of ground types ([[GroundValueRenderer]]): a type prints the way the user writes it.
-  *
-  * The carrier-inversion cases this suite used to carry — a canonical stack rendered as the pinned row that spells it,
-  * `Id[X]` rendered as `X` — went with the carrier (effects v6, F3). There is no machinery in a type to hide.
+/** User-facing rendering of ground types ([[GroundValueRenderer]]): a type prints the way the user writes it, since
+  * there is no machinery in a type to hide.
   */
 class GroundValueRendererTest extends AnyFlatSpec with Matchers {
 

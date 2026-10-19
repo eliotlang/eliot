@@ -35,14 +35,12 @@ object CommonPatterns {
     * application so that structurally-distinct instantiations sharing a head constructor get distinct names.
     *
     * The head token is the argument's erased carrier ([[valueType]]); the type-constructor arguments applied to it are
-    * appended recursively. This is required because an effect carrier can appear at different *nesting depths* —
-    * `AbortCarrier[IO]` for a top-level `{Abort}` computation versus `AbortCarrier[AbortCarrier[IO]]` for one nested
-    * inside another `{Abort}` function (e.g. every `if` used inside another effectful body). Both share the head
-    * `AbortCarrier` and, once carriers erase to reference types, the *same* JVM descriptor, yet they are genuinely
-    * different specializations with different bodies (`AbortCarrier(IO(..))` vs `AbortCarrier(AbortCarrier(..))`). A
-    * head-only suffix collapses them onto one method name; [[JvmClassGenerator]]'s signature-dedup then treats them as
-    * byte-identical and silently drops one body — a whole-program miscompile surfacing as a runtime
-    * `ClassCastException` in the wrong-carrier accessor. Recursing on the applied arguments keeps the depth distinct.
+    * appended recursively. This is required because two instantiations sharing a head constructor can be different
+    * specializations of one JVM descriptor: a `def describe[A ~ Show](value: A): String` at `List[Int]` and at
+    * `List[String]` takes a `java.util.List` both times, yet each body calls its own element's `show`. A head-only
+    * suffix collapses them onto one method name; [[JvmClassGenerator]]'s signature-dedup then treats them as
+    * byte-identical and silently drops one body — a whole-program miscompile. Recursing on the applied arguments keeps
+    * them distinct.
     *
     * A value-level (`Direct`) argument is mangled as its type followed by the constant itself, for the same reason:
     * `def pick[C: Bool]` at `false` and at `true` are two bodies of one descriptor, and with the constant dropped both
@@ -83,13 +81,13 @@ object CommonPatterns {
   /** The JVM method name for a monomorphic value: its base name, plus an impl-disambiguator when the value is an
     * ability-implementation method, plus the type-argument suffix for generic instantiations.
     *
-    * The impl-disambiguator is required because two implementations of the same ability share the method's *local* name
-    * (`dependency`) and, when the method is return-type-dispatched into an erasing carrier, also share the erased JVM
-    * descriptor: the `Dep` reader's native `Dep[X, DepCarrier[X, G]].dependency` and its cross-lift `Dep[X2,
-    * DepCarrier[X1, G]].dependency` are both `() -> DepCarrier`. Without the implementation index in the name they
-    * collide into one JVM method (a duplicate-method `ClassFormatError`, or one call silently binding to the wrong
-    * impl). Implementations whose methods differ in their value-parameter descriptors (the common
-    * `Show[Hello]`/`Show[World]` case) never collided, but folding the index in uniformly is harmless for them.
+    * The impl-disambiguator is required because implementations of one ability share the method's *local* name
+    * (`printLine`), and nothing forces their descriptors apart: two named implementations of one effect whose handles
+    * are erased (`HandleErasure`, a handle with no surviving field is no parameter) take exactly the operation's own
+    * parameters. Without the implementation's identity in the name they collide into one JVM method (a
+    * duplicate-method `ClassFormatError`, or one call silently binding to the wrong implementation). Implementations
+    * whose methods differ in their value-parameter descriptors (`Show[Hello]`/`Show[World]`) never collided, but
+    * folding the identity in uniformly is harmless for them.
     */
   def mangledMethodName(vfqn: ValueFQN, typeArgs: Seq[GroundValue]): String =
     vfqn.name.name + implementationSuffix(vfqn.name.qualifier) + mangleSuffix(typeArgs)

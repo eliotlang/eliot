@@ -32,8 +32,8 @@ implement recordingConsole: Console {
 }
 
 // Running the fake: `with` binds `greeting`'s `printLine` to the double, whose `Writer[String]` the `runWriterToLog`
-// slot supplies and discharges. The result is a plain `String` a test can assert on — and, because there is no carrier
-// to instantiate, it may be written anywhere, including inside an effectful body as `main` does below.
+// slot supplies and discharges. The result is a plain `String` a test can assert on, and it may be written anywhere,
+// including inside an effectful body as `main` does below.
 def transcript: String = runWriterToLog(greeting("Bob") with recordingConsole)
 
 def main uses Console: Unit = {

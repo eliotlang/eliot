@@ -32,8 +32,9 @@ class JvmProgramGenerator(targetDir: Path) extends SingleFactProcessor[GenerateE
       // Generate everything reachable from the synthesized entry point (module `main`, mounted into the runtime scan
       // pool by SyntheticMainMount and served by SyntheticMainSourceProcessor — ordinary facts, nothing is injected
       // here). The wrapper calls the configured user `main`, so the whole user program is reached through it — and it
-      // is the ONLY valid monomorphization root: the idiomatic user `main` is carrier-generic (`{Console} Unit`), so
-      // demanding it as a standalone root would leave its carrier neutral.
+      // is the ONLY valid monomorphization root: the idiomatic user `main` declares effects (`def main uses Console:
+      // Unit`), each a handle type parameter, so demanding it as a standalone root would leave those neutral; the
+      // wrapper binds each with a `with`.
       allModules <- generateModulesFrom(SyntheticMainSourceProcessor.syntheticMainVfqn)
       _          <- generateJarFile(key.vfqn, allModules).to[CompilerIO]
       // Depend on the output JAR's presence (a leaf), so a deleted JAR forces a rewrite under incremental compilation.

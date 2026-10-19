@@ -1,7 +1,7 @@
 package com.vanillasource.eliot.eliotc.monomorphize.unify
 
 import cats.syntax.all.*
-import com.vanillasource.eliot.eliotc.module.fact.{Qualifier, ValueFQN, WellKnownTypes}
+import com.vanillasource.eliot.eliotc.module.fact.{Qualifier, ValueFQN}
 import com.vanillasource.eliot.eliotc.monomorphize.domain.*
 import com.vanillasource.eliot.eliotc.monomorphize.domain.SemValue.*
 import com.vanillasource.eliot.eliotc.monomorphize.eval.Evaluator
@@ -13,19 +13,8 @@ import com.vanillasource.eliot.eliotc.monomorphize.fact.{GroundValue, GroundValu
   * Function types (both [[VPi]] at the semantic level and [[GroundValue.Structure]] encoding `Function[A, B]`) are
   * rendered with arrow notation `A -> B`. A constructor application is bracketed by its head's qualifier — `[]` for a
   * type constructor, `()` for a value constructor — so a type reads `Box[String]` and a value reads `Box("a")`,
-  * agreeing with [[GroundValueRenderer]]. Unsolved metas appear as `?N`.
-  *
-  * '''Effect carriers and `Id` are never printed''' (docs/effects-as-channel.md §9): a carrier stack is inverted back
-  * to the **pinned effect row** that spells it (`{Abort | IO} String`, not `AbortCarrier(IO, String)`) and the identity
-  * carrier's payload wrapper `Id[X]` prints as `X`. Without this, the `Expected:`/`Actual:` lines of an ordinary
-  * mismatch on a carrier-headed judgment hand the user machinery names that no surface syntax even spells — e.g. the
-  * documented "discharge the expression, not a `val`-bound binder" limitation reports its expectation as a carrier.
-  *
-  * Ground values delegate to [[GroundValueRenderer]] (one inverter, one set of `Id` rules). At the *semantic* level
-  * there is no `valueType` to say whether a carrier application is applied to its payload, so a layer with two or more
-  * arguments is rendered as payload-applied and a one-argument layer as payload-less. That is exact for the type
-  * positions this printer serves (an `Expected:`/`Actual:` line is a type, hence fully applied) and, being confined to
-  * a message, cosmetic if a future shape falls outside it — never a typing decision (finding 14).
+  * agreeing with [[GroundValueRenderer]], to which ground values delegate. Unsolved metas appear as `?N`. Nothing in a
+  * type is compiler machinery, so `Expected:` / `Actual:` show exactly the names the user wrote.
   */
 object SemValuePrinter {
 
@@ -75,10 +64,6 @@ object SemValuePrinter {
   /** An FQN-headed application: `name[args]` for a **type constructor** ([[Qualifier.Type]]) and `name(args)` for a
     * **value constructor**, matching how the user writes them (`Box[String]` the type, `Box("a")` the value) and
     * agreeing with [[com.vanillasource.eliot.eliotc.monomorphize.fact.GroundValueRenderer]] on the ground side.
-    *
-    * The carrier inverter that used to front this — an `Id[X]` payload wrapper printed as `X`, a canonical stack as
-    * the pinned row that spells it — went with the carrier (effects v6, F3). Nothing in a type is machinery now, so
-    * `Expected:` / `Actual:` show exactly the names the user wrote.
     */
   private def showHeaded(fqn: ValueFQN, spine: Spine, metaStore: MetaStore, depth: Int): String =
     appliedHeaded(fqn, spine, metaStore, depth)

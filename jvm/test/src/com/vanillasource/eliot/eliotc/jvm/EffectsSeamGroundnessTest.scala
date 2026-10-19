@@ -12,28 +12,27 @@ import org.scalatest.matchers.should.Matchers
 import java.nio.file.{Files, Path}
 import scala.collection.concurrent.TrieMap
 
-/** The **seam-groundness** measurement, re-pointed at bindings for effects v6 (`docs/effects.md` §9.5, F2's "kept"
-  * list — it was `EffectsV4SeamGroundnessTest`, which asked the same question of carriers).
+/** The **seam-groundness** measurement over handles (`docs/effects.md` §3.1, §3.3).
   *
-  * §9.5 says every binding is decided from `main` inward, so at the `WovenValue` codegen seam every operation
-  * reference resolves to exactly one implementation. That claim has a mechanical form the compiler can be held to: a
-  * definition's implementations are *phantom binders*, so they are ordinary type arguments of its mono key, and the
-  * claim is that at the seam **no key argument is still a parameter**. Nothing there is waiting to be solved.
+  * Every handle is decided from `main` inward, so at the `WovenValue` codegen seam every operation reference resolves
+  * to exactly one implementation. That claim has a mechanical form the compiler can be held to: each `uses` entry is a
+  * handle type parameter, so a definition's handle types are ordinary type arguments of its mono key, and the claim is
+  * that at the seam **no key argument is still a parameter**. Nothing there is waiting to be solved.
   *
-  * The second half is the other side of the same coin: because a binding is part of the key, binding the *same*
-  * definition to two different implementations yields **two instances**. Specialisation is not an optimisation added
-  * later; it is what a phantom binder does.
+  * The second half is the other side of the same coin: because a handle's type is part of the key, running the *same*
+  * definition with two different implementations yields **two instances**. Specialisation is not an optimisation added
+  * later; it is what monomorphizing along the ordinary key does.
   *
   * Two shapes, over the real `lang`/`stdlib`/`jvm` layers:
   *
   *   - **S1, a `{Console}` def** — one operation, one implementation, one instance;
-  *   - **S2, a program that binds one definition twice** — the production default and a named `with`, which is the
-  *     fake-implementation testing strategy in its smallest form.
+  *   - **S2, a program that binds one definition twice** — two named implementations, each bound by a `with`, which is
+  *     the fake-implementation testing strategy in its smallest form.
   */
 class EffectsSeamGroundnessTest extends AsyncFlatSpec with AsyncIOSpec with Matchers {
   import EffectsSeamGroundnessTest.*
 
-  "a {Console} def (S1)" should "reach the seam with one instance" in {
+  "a uses-Console def (S1)" should "reach the seam with one instance" in {
     keysOf(consoleBlock, "echo").asserting(_.size shouldBe 1)
   }
 
@@ -106,7 +105,7 @@ object EffectsSeamGroundnessTest {
   /** One compilation per shape, shared by that shape's assertions. */
   private val cache = TrieMap[String, Map[CompilerFactKey[?], CompilerFact]]()
 
-  /** S1 — a `{Console}` def: `echo` names no implementation, so the one it runs on is the one `main`'s boundary binds. */
+  /** S1 — a `uses Console` def: `echo` names no implementation, so it runs on the one the entry point binds. */
   private val consoleBlock =
     """def echo uses Console: Unit = {
       |   printLine("a")
@@ -116,8 +115,8 @@ object EffectsSeamGroundnessTest {
       |def main uses Console: Unit = echo
       |""".stripMargin
 
-  /** S2 — one definition reached at two implementations of its own effect: the platform's default (through `main`'s
-    * boundary) and a named one bound by `with`. Two bindings, therefore two mono keys, therefore two instances.
+  /** S2 — one definition reached at two named implementations of its own effect, each bound by a `with`. Two handle
+    * types, therefore two mono keys, therefore two instances.
     */
   private val boundTwice =
     """effect Terminal {

@@ -1,31 +1,26 @@
 package com.vanillasource.eliot.eliotc.jvm
 
 /** **Substituting a fake implementation** for a test, without the production code knowing — the testing strategy of
-  * `docs/effects.md` §6, as effects v6 realises it.
+  * `docs/effects.md` §6.
   *
-  * The mechanism is a **named implementation** plus a `with`. A named `implement` is never a default and is never
-  * searched for, so it is free to overlap the platform's own instance without being checked against it (§9.4 step 4:
-  * `with` *replaces* the search rather than parameterising it). Production code is untouched: it declares `{Console}`,
-  * names no implementation, and what that row means is decided entirely at the test site.
-  *
-  * This suite replaces the v5 `AbilityConstraintDeclinationTest`, whose subject was carrier substitution and whose
-  * mechanism — a jvm catch-all `implement[F[_] ~ Suspend] Console[F]` declining for a test's own pure carrier — went
-  * with the carrier and with `Suspend`. The *claims* are the same and are kept here one for one; only the negative
-  * cases changed shape, because what can go wrong changed.
+  * The mechanism is a **named implementation** plus a `with`. A named `implement` is its effect's instance at its own
+  * handle's type, so it is never a default and overlaps nothing — the platform's `standardConsole` included. Production
+  * code is untouched: it declares `uses Console`, names no implementation, and which implementation answers is decided
+  * entirely at the test site.
   *
   * Run end to end over the real base layer, because the point is precisely how the *stdlib's* instances behave.
   */
 class FakeImplementationIntegrationTest extends FullIntegrationTest {
 
-  /** Production code, identical in every program here: it declares `{Console}`, names no implementation, and is never
-    * edited for the test — the whole claim of the strategy.
+  /** Production code, identical in every program here: it declares `uses Console`, names no implementation, and is
+    * never edited for the test — the whole claim of the strategy.
     */
   private val production =
     """def greeting(name: String) uses Console: Unit = printLine("Hello, " ++ name ++ "!")
       |""".stripMargin
 
   /** The test double. It needs no type of its own and no colocation with `Console`. Its clauses declare what the
-    * double itself performs — `{Writer[String]}` — and that is charged wherever the name is bound, which is what makes
+    * double itself performs — `Writer[String]` — and that is captured wherever the name is bound, which is what makes
     * the transcript come out. It cannot cheat: a user module declares no natives and the platform's are private to its
     * layer, so a double reaches the outside world only through effects its own clauses declare.
     */
@@ -75,8 +70,8 @@ class FakeImplementationIntegrationTest extends FullIntegrationTest {
   }
 
   // A `with` binds the calls lexically inside its subject, so a **block** of several statements is the same shape as
-  // one call. This is what a test framework wants, and it needs no carrier and no region of its own — there is nothing
-  // to instantiate, so it may be written inside an effectful body, as `main` is here.
+  // one call. This is what a test framework wants, and it needs no region of its own, so it may be written inside an
+  // effectful body, as `main` is here.
   it should "bind a multi-statement block written inline inside an effectful body" in {
     compileAndRun(
       s"""import eliot.effect.Console

@@ -131,7 +131,7 @@ class DocModelBuilderTest extends AnyFlatSpec with Matchers {
     )
   }
 
-  it should "not list a carrier-generic implementation on any type page" in {
+  it should "not list an implementation generic over its own pattern on any type page" in {
     val consoleModule = ModuleName(Seq("eliot", "effect"), "Console")
     val modules       = DocModelBuilder.build(
       Seq(

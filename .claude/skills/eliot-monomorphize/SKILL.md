@@ -61,8 +61,7 @@ monomorphize/
 ├── fact/
 │   ├── GroundValue.scala       (output: Direct, Structure, Type)
 │   ├── GroundValueRenderer.scala (the USER-FACING rendering — LSP hover + ability-demand diagnostics. ONE entry
-│   │                            point since effects v6: the carrier inverter and its second entry point went with
-│   │                            the carrier, so a type prints as `Name[arg, …]` / an arrow, as written.
+│   │                            point: a type prints as `Name[arg, …]` / an arrow, as written.
 │   │                            `Show[GroundValue]` stays the terse debug instance — never user-facing)
 │   ├── MonomorphicValue.scala  (runtime output fact: signature + runtime, keyed by (vfqn, typeArgs))
 │   ├── CompilerMonomorphicValue.scala (compiler-track output fact — a DISTINCT type; cannot name MonomorphicValue.Key)
@@ -296,9 +295,7 @@ is **no `platform match` anywhere in the checking core**, only `track.<hook>` di
 ### Track — the per-track strategy (no `platform match` in the core)
 
 `check/Track` is a sealed trait with two case objects, `Track.Runtime` / `Track.Compiler`, each carrying its `platform:
-Platform` plus the **two** places the two tracks still genuinely differ (effects v6 deleted the other two with the
-carrier — `pinCarriers` had nothing to pin, and `settleReturnPosition`'s calculated-return branch went with the
-`auto` feature):
+Platform` plus the **two** places the two tracks genuinely differ:
 
 | Hook | Runtime | Compiler |
 |---|---|---|
@@ -338,9 +335,7 @@ comments):
 `instantiatePolymorphic` plus the shared primitives (`force`, `freshMeta`, `doUnify`, `evalExpr`, `ensureBinding`,
 `prefetchBindings`). Application checking is **spine-level** (`inferSpine`): the whole curried spine is decomposed at
 the root and each argument slot runs the resolution ladder left to right. The check-mode **resolution ladder** per slot
-is now just **instantiate → unify → mismatch**: since effects v6 there is no arm between the two, because the one
-shape that recovered there was a pure term meeting a carrier-headed expectation and there is no carrier. There is no
-bind arm either — a slot that must sequence never needed one, the `row/` phase having already written every binding
+is just **instantiate → unify → mismatch**, with no arm between the two. There is no bind arm either — a slot that must sequence never needed one, the `row/` phase having already written every binding
 from the declaration (§1 rule 4).
 
 No slot is deferred past its spine on either track: the compile track's deferred slots and `resolveDeferredSlot` were
@@ -353,10 +348,9 @@ boundary), and invoked from named hook points:
 | `check/GuardDischargeResolver` — `checker.guards` (W2b) | effectful-guard discharge (the calculated-return half went with the `auto`/implicit-generics feature) | `Checker.infer`/`applyInferred`; `TypeStackLoop.settleAtRead` |
 | `check/CarrierKindChecker` — `checker.carriers` (D8) | HKT kind seeding + verification | `Checker.instantiatePolymorphic` → `recordCarrierMetas`; `TypeStackLoop` post-drain → `verifyCarrierKinds` |
 | `check/AbilityResolver` — `checker.abilityResolver` | ability-ref collection + the `resolve-abilities` saturation pass (resolve each ability-qualified ref to its impl) | `TypeStackLoop.processIO` → `collectAbilityRefs`; `TypeStackLoop` post-drain → `resolveAbilities` |
-| `check/ImplementationBinding` | reads a reference's written implementation argument back off its type arguments | `AbilityResolver`, and the ability processor's dispatch |
 
-`check/EffectLifter` is **gone** (effects v6): its pure-wrap arm needed a carrier-headed expected type, and there is
-none. Do not reintroduce a lift, a `pure`, or an `Id` decision here — that is a reversal of the design, not a fix.
+Do not reintroduce a lift, a `pure`, or an `Id` decision here (the deleted `check/EffectLifter`) — that is a reversal
+of the design, not a fix.
 
 Per-meta bookkeeping (the binder's kind + its call-site context) lives in the **single** `higherKindedMetas` map on
 the `Unifier`; the collaborators own the *algorithm*, not a private store.
@@ -365,26 +359,24 @@ the `Unifier`; the collaborators own the *algorithm*, not a private store.
 
 One `Map[Int, (SemValue, Sourced[String])]` on the `Unifier`, seeded by `CarrierKindChecker.recordCarrierMetas` for
 *higher-kinded* instantiation metas (`[F[_]]`) only: the binder's expected kind plus a call-site context, verified
-post-drain (a carrier solved to a value of the wrong kind is rejected rather than silently accepted).
-
-Its whole live surface is the **compile track's** inline guard, whose carrier is still inferred and pinned post hoc
-(`GuardDischargeResolver.isGuardCarrier`). On the runtime track nothing reads it for effects: `verifyCarrierKinds`
-uses it for the *kind* check alone, which is soundness and not effect machinery.
+post-drain (a binder solved to a value of the wrong kind is rejected rather than silently accepted). Its one reader
+is `verifyCarrierKinds`, for the *kind* check alone, which is soundness and not effect machinery.
 
 Every meta without an entry is plain: solved by ordinary unification, else defaulted to `VType` by
 `defaultUnsolvedMetas`.
 
 ### Guard discharge (W2b) — `GuardDischargeResolver`
 
-A return-type expression may be a `{Throw[String]}` computation on the compile-time `Either[String, _]` carrier (the
-compiler is the handler). Three hook points recognise the carrier's `Right`/`Left` **by FQN**
+A return-type expression may `raise` or `abort`: the guard read runs it inside the compile track's `runThrow` (an
+uncovered `abort` as `… else raise("…")`, `WellKnownTypes.guardDischargers`), so its verdict is an `Either[String, _]`
+(the compiler is the handler). Three hook points recognise that verdict's `Right`/`Left` **by FQN**
 (`WellKnownTypes.eitherFQN` / `rightFQN` / `leftFQN`) and reduce `fold`/`foldEither` via the merged `NativeBinding`:
 `isGuardCarrier` (the *kind* position — accept an `Either[..]`- or `Bool`-valued return where a bare `Type` is
 expected), `dischargeGuardedSignature` (the *callee* side — `Right(t)` ⤳ the published type `t`, `Left(msg)` ⤳ a
 diagnostic, an abstract-bounds guard deferred to the body via a return meta), and `dischargeGuardedReturn` (the
 *applied / by-name read* sides). The `Left`/`Right` payload convention and the fallback rejection message live in
 `GuardChannel`, shared with the ability processor's `where`-verdict interpreter so the two cannot drift. The compiler
-track skips discharge (it is the *producer*: `pure(A)` ⤳ `Right(A)`, publishing the undischarged carrier signature for
+track skips discharge (it is the *producer*: `pure(A)` ⤳ `Right(A)`, publishing the undischarged `Either` signature for
 a consumer to discharge); the runtime track also skips it for an ability-impl *marker* (`MarkerGuardSignature`), whose
 verdict the ability processor interprets per candidate.
 
@@ -454,10 +446,9 @@ Pattern unification on `SemValue`s with a `postponed` queue (`drain()` retries u
    the applied side is on the left, so an application aliased through a polymorphic combinator does not stay hidden
    behind `?B`. Pinned by `unify/MetaApplicationUnifyTest`.
 
-`unify` is **pure definitional equality**: no assignability, no widening, no `refinements` map, and **no carrier
-decomposition rule** (`Int` is nullary; value ranges ride the `channel/` post-pass, strictly downstream of typing).
-Teaching it carrier decomposition was considered and rejected — with the carrier written, the flex-flex
-`?F[X] ~ ?G[Y]` shape it would solve does not arise on either track.
+`unify` is **pure definitional equality**: no assignability, no widening, no `refinements` map (`Int` is nullary;
+value ranges ride the `channel/` post-pass, strictly downstream of typing), and no flex-flex `?F[X] ~ ?G[Y]`
+decomposition rule.
 
 `flushPostponed` runs after the finalizer: still-postponed constraints become hard mismatch errors (fail-safe — see the
 post-drain sequence above). Pinned by `unify/PostponedFlushTest`.
@@ -579,8 +570,8 @@ quiet-probe pattern.
 
 Tests live under `lang/test/src/com/vanillasource/eliot/eliotc/monomorphize/`:
 
-- `processor/MonomorphicTypeCheckTest.scala` — the main end-to-end checker cases (inference, HKT decomposition, carrier
-  kinds, dependent bounds, calculated returns W3/W4, guard signatures). **Extend these named end-to-end cases** rather
+- `processor/MonomorphicTypeCheckTest.scala` — the main end-to-end checker cases (inference, HKT decomposition, HKT
+  binder kinds, dependent bounds, calculated returns W3/W4, guard signatures). **Extend these named end-to-end cases** rather
   than mock-unit-testing a collaborator (the collaborators were pure moves; their behaviour is pinned here).
 - `processor/MonomorphicTypeCheckProcessorTest.scala` — processor-level cases.
 - `processor/MatchNativesProcessorTest.scala` — `match` reduction via `handleCases`/`typeMatch` natives.
@@ -590,12 +581,12 @@ Tests live under `lang/test/src/com/vanillasource/eliot/eliotc/monomorphize/`:
 - `processor/EqOperatorResolutionTest.scala`, `processor/EqTypeLeafTest.scala` — the `Eq[Type]` structural-equality leaf
   and its resolution through `==`/`!=`.
 - `processor/CompilerMonomorphicTypeCheckProcessorTest.scala`, `processor/CompilerNativesProcessorTest.scala`,
-  `processor/CompilerNativeLeafBoundaryTest.scala`, `processor/CompilerEitherCarrierTest.scala`,
+  `processor/CompilerNativeLeafBoundaryTest.scala`, `processor/CompilerMarkerNamesTest.scala`,
   `processor/CompilerAbilityResolutionTest.scala` — the compiler-as-platform track (register a `Platform.Compiler`
   `PathScan` for the compiler pool; see `CompilerNativesProcessorTest`'s `twoPoolFacts` template).
 - `processor/CompilerOnlyDataNativesTest.scala` — the `DeclaringPool` compiler-pool fallback for the datatype native.
-- `check/ImplementationBindingTest.scala`, `check/AbilityResolverBindingTest.scala`,
-  `check/AbilityResolutionKeyTest.scala` — reading a written implementation argument back, and keying a resolution.
+- `check/AbilityResolverBindingTest.scala`, `check/AbilityResolutionKeyTest.scala` — ability resolution and keying a
+  resolution.
 - `channel/RefinementChannelProcessorTest.scala` — the refinement channel's flow analysis and `^Where` demands.
 - `eval/EvaluatorApplyValueTest.scala` — the F1 loud `$bad-apply` fallback shape + quoter failure.
 - `unify/UnifyResultTest.scala`, `unify/OccursCheckTest.scala`, `unify/StuckNativeUnifyTest.scala`,

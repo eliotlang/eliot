@@ -10,10 +10,9 @@ import com.vanillasource.eliot.eliotc.resolve.fact.ResolvedValue
 /** An ability may require other abilities **of the parameter this use bound to this binder**, and a use of it declares
   * what it requires — the superability relation (`ValueResolver.superConstraints`).
   *
-  * Effects v6 narrowed what this is *for*, not how it works: naming a set of effects with it
-  * (`ability Web[F[_] ~ Console & Log]`) went with the carrier binder that spelled it (`docs/effects.md` §12, "not
-  * now"), and what stays is the closure over ordinary binders — a `~ Pretty[T]` bringing `Show[T]` with it. The
-  * closure lands in `resolveParamConstraints` only, so what these assert is the resolved constraints of the binder.
+  * It is a closure over ordinary binders — a `~ Pretty[T]` bringing `Show[T]` with it — and never names a set of
+  * effects, which has no spelling beyond a row alias (`docs/effects.md` D20a). The closure lands in
+  * `resolveParamConstraints` only, so what these assert is the resolved constraints of the binder.
   */
 class AbilityRequirementTest extends ProcessorTest(LangProcessors()*) {
 

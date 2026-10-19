@@ -22,11 +22,7 @@ import java.nio.file.Path
   * marker signature from the track's platform: before it, the arity query hit the (empty) runtime pool, the method
   * reference's type arguments were never sliced to the ability prefix, and resolution silently never fired.
   *
-  * **Increment D is gone with its subject.** It pinned the carrier of a `{Throw[String]}` sugar signature to the
-  * compile-time `Either[String]`, and effects v6 has neither: there is no carrier to pin, `TypeStackLoop.pinCarriers`
-  * is deleted, and the compile track's only control effect is `Abort` over its own frame primitive (F5). The ability
-  * resolution and the body fold those cases exercised are what is kept here, over an ordinary constructor class — which
-  * is the shape that has nothing to do with effects and was always what B and C were about.
+  * The scenario is an ordinary constructor class, with nothing to do with effects.
   */
 class CompilerAbilityResolutionTest extends ProcessorTest(LangProcessors(systemModules = Seq.empty)*) {
 

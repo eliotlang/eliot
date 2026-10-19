@@ -12,12 +12,10 @@ def main uses Console: Unit = printLine("Hello World!")""")
       .asserting(_ shouldBe "Hello World!")
   }
 
-  // --- Effects M2: library spine (Effect/Suspend/Console) + the Console -> Suspend -> IO layering, run end-to-end ---
+  // --- The Console effect, run end to end ---
 
-  // The headline M2 acceptance: a hand-monadic `{Console}` computation reading a line and echoing it. `flatMap` is an
-  // `Effect[IO]` op resolved at the concrete use site (the carrier is not in `echo`'s declared effect set); `readLine`
-  // and `printLine` resolve through the constrained HKT instance `implement[F[_] ~ Suspend] Console[F]` at `F := IO`, which
-  // in turn discharges `Suspend[IO]`. `main` commits to the concrete runnable carrier `IO[Unit]` (Decision 8).
+  // A `uses Console` computation reading a line and echoing it: `readLine` and `printLine` are `Console`'s operations,
+  // dispatched by the type of the handle `echo` receives — the jvm `standardConsole`, which the entry point binds.
   "console effect" should "read a line and echo it" in {
     compileAndRun(
       """import eliot.effect.Console
@@ -39,8 +37,9 @@ def main uses Console: Unit = printLine("Hello World!")""")
       .asserting(_ shouldBe "Hello World!")
   }
 
-  // A `{Console}` business function reached from `main`: both operations run on the implementation the boundary binds.
-  it should "run a {Console} function reached from main" in {
+  // A `uses Console` business function reached from `main`: both operations run on the implementation the entry point
+  // binds.
+  it should "run a uses-Console function reached from main" in {
     compileAndRun(
       """import eliot.effect.Console
         |
@@ -60,14 +59,13 @@ def main uses Console: Unit = printLine("Hello World!")""")
       .asserting(_ should include("Name is private."))
   }
 
-  // --- Effects M3: body auto-lift (the headline) — direct-style code, no hand-written flatMap ---
+  // --- Direct-style code: an effect runs where it is written ---
 
-  // THE headline: a direct-style program. `readLine` is effectful (`F[Option[String]]`) but flows into `orEmpty`, which
-  // expects a plain `Option[String]`; the checker's effect lift binds it, producing `flatMap(x -> printLine(orEmpty(x)),
-  // readLine)`, with the carrier pinned to `IO` by `main`'s return. No `import eliot.carrier.Effect`, no hand-written
-  // `flatMap`. (`orEmpty` discharges `readLine`'s end-of-input `Option`; the effect machinery under test is the same
-  // either way, so every program below carries it rather than complicating what it is probing.)
-  "effect auto-lift" should "sequence a direct-style printLine(readLine) at a concrete IO main" in {
+  // A direct-style program. `readLine` performs `Console` and flows into `orEmpty`, which expects a plain
+  // `Option[String]`: it runs where it is written and its value is the argument (rule 1). (`orEmpty` discharges
+  // `readLine`'s end-of-input `Option`; the effect under test is the same either way, so every program below carries it
+  // rather than complicating what it is probing.)
+  "direct-style code" should "run printLine(orEmpty(readLine)) directly in main" in {
     compileAndRun(
       """import eliot.effect.Console
         |def orEmpty(o: Option[String]): String = o.orAbort else ""
@@ -77,8 +75,8 @@ def main uses Console: Unit = printLine("Hello World!")""")
     ).asserting(_ shouldBe "echoed line")
   }
 
-  // The same direct-style body in a carrier-polymorphic `{Console}` business function, pinned to `IO` at the call site.
-  it should "sequence a direct-style {Console} business function pinned to IO" in {
+  // The same direct-style body in a `uses Console` business function reached from `main`.
+  it should "run the same body in a uses-Console function reached from main" in {
     compileAndRun(
       """import eliot.effect.Console
         |def orEmpty(o: Option[String]): String = o.orAbort else ""
@@ -117,10 +115,8 @@ def main uses Console: Unit = printLine("Hello World!")""")
 
   // An effectful subject dotted into a *function-typed parameter*: `readLine` is run where written and `f` receives
   // its payload, `.`'s `A` being instantiated at a plain value.
-  // The handler is a named pure function rather than an inline `s -> s.orAbort else ""`: a lambda body at a
-  // *rowless* arrow slot is still elaborated in the enclosing region, so an inline discharge there lands on the
-  // caller's carrier (`IO[String]`) instead of reaching the `Id` boundary, and no longer matches the slot's declared
-  // `String`. That is a live gap, unrelated to the dotted subject this case is about.
+  // The handler is a named pure function rather than an inline `s -> s.orAbort else ""`, which once could not be
+  // checked at a value arrow slot; that is unrelated to the dotted subject this case is about.
   it should "bind an effectful subject dotted into a function-typed parameter" in {
     compileAndRun(
       """import eliot.effect.Console
@@ -134,14 +130,8 @@ def main uses Console: Unit = printLine("Hello World!")""")
     ).asserting(_ shouldBe "through f")
   }
 
-  // A user-defined pipe with `.`'s shape, but declaring no row anywhere (`|>[A, B](a: A, f: A => B): B`): handing it
-  // a computation is the same §1 rule-4 violation as the dot above, and here the elaborator names the slot itself
-  // rather than leaving a type mismatch downstream. Rule 4 is what makes the two spellings agree — the decision is
-  // The two pipe rejections that stood here — `readLine |> flatMap(f)` through a user-defined operator and through a
-  // plain function — went with `flatMap`. The rule they guarded (an effect passes through a position only if that
-  // position declares one) is unchanged and is what the scope check reports; the shape they used to write it is gone.
-
-  // flex slot rigidifies and the subject is sequenced.
+  // An effectful subject piped through a user-defined operator with `.`'s shape (`|>[A, B](a: A, f: A => B): B`) into a
+  // plain-value function: `readLine` runs where it is written and `shout` receives its value.
   it should "bind an effectful subject piped into a concrete slot" in {
     compileAndRun(
       """import eliot.effect.Console
@@ -157,13 +147,8 @@ def main uses Console: Unit = printLine("Hello World!")""")
     ).asserting(_ shouldBe "piped loud")
   }
 
-  // Author-written machinery into a pure slot is a §1 rule-4 violation, and has been rejected since A.11.7-X:
-  // `printLine`'s parameter is a plain `String`, which declares no effect row, so a computation may not land there.
-  // The tree used to accept it — the checker hoisted it into a real `IO.pure` + `IO.flatMap` round trip for a string
-  // "Author-written machinery flowing into a pure slot" (`printLine(pure("lifted"))`) has no v6 subject: there is no
-  // machinery to write. `pure`/`flatMap`/`map` were the carrier's, and nothing replaces them.
-
-  // with a row, and `Ctr` declares none.
+  // A constructor-class ability (`Ctr[F[_]]`) is an ordinary ability, not an effect: its methods declare no `uses`
+  // clause, so they perform nothing and drop into pure code.
   "a constructor-class ability" should "perform no effect, and drop into pure code" in {
     compileAndRun(
       """import eliot.effect.Console
@@ -188,8 +173,8 @@ def main uses Console: Unit = printLine("Hello World!")""")
     ).asserting(_ shouldBe "boxed")
   }
 
-  // Fail-safe: a value that performs an effect but is declared with a non-carrier (pure) return type is rejected by the
-  // per-definition row verification, not silently miscompiled.
+  // Fail-safe: a definition that performs an effect but declares no `uses` clause is rejected by the scope check, not
+  // silently miscompiled.
   "an effectful body under a pure return" should "be rejected" in {
     compileForErrors(
       """import eliot.effect.Console
@@ -203,8 +188,8 @@ def main uses Console: Unit = printLine("Hello World!")""")
 
   // --- Effects M4: multi-effect composition + propagation + Dep ---
 
-  // The `Log` effect mirrors `Console` (a fine effect riding the `Suspend` base): `log` writes a tagged line. A `{Log}`
-  // business function pinned to `IO` at the call site runs through the JVM `Log` instance.
+  // The `Log` effect mirrors `Console`: `log` writes a tagged line. A `uses Log` business function reached from `main`
+  // runs on the jvm `standardLog`, which the entry point binds.
   "log effect" should "emit a tagged diagnostic line" in {
     compileAndRun(
       """import eliot.effect.Log
@@ -214,8 +199,8 @@ def main uses Console: Unit = printLine("Hello World!")""")
     ).asserting(_ shouldBe "[LOG] starting up")
   }
 
-  // Multiple effects in one signature, carrier-unified across callees: `log` (Log) and `readLine` (Console) share the
-  // one carrier `F`, auto-lifted into a single `flatMap` chain.
+  // Multiple effects in one clause: `log` (Log) and `readLine` (Console) each take their own handle from `echoLog`'s
+  // clause.
   "multiple effects in one signature" should "run both in a direct-style body" in {
     compileAndRun(
       """import eliot.effect.Console
@@ -266,7 +251,7 @@ def main uses Console: Unit = printLine("Hello World!")""")
 
   // Two distinct-typed `Dep`s in one body each read their own environment and yield the correct distinct value (the
   // first dependency's url, then the second's name) — proving by-type dispatch does not collapse the two. Each is
-  // supplied by its own chained `.provide` (fully discharged to a pure result — the flex-flex carrier-alias case).
+  // supplied by its own nested `provide` (fully discharged to a pure result).
   "two distinct-typed Deps" should "each resolve dependency to its own value in one body" in {
     val program =
       """import eliot.effect.Console
@@ -300,12 +285,10 @@ def main uses Console: Unit = printLine("Hello World!")""")
 
   // --- Testing strategy: a fake implementation supplied by the test, with production code untouched ---
 
-  /** The substitution mechanism (`docs/effects.md` §9.3, `examples/src/EffectsNamedEffect.els`): `greet` is ordinary
-    * production code declaring `{Terminal}` and nothing else, and the test binds a **named implementation** to it with
-    * `with`. Under v5 the same claim needed a fake *carrier* — a `Session` data type, an `Effect[Session]` instance and
-    * a `Terminal[Session]` one — because what a test substituted was the thing the effects ran in. Under v6 it
-    * substitutes a name, and the double reaches nothing it does not declare: a user module declares no natives, so
-    * `session` can only reach the world through effects its own clauses declare, which the binding site is charged for.
+  /** The substitution mechanism (`docs/effects.md` §6, `examples/src/EffectsNamedEffect.els`): `greet` is ordinary
+    * production code declaring `uses Terminal` and nothing else, and the test binds a **named implementation** to it
+    * with `with`. The double reaches nothing it does not declare: a user module declares no natives, so `session` can
+    * only reach the world through effects its own clauses declare, which it captures at the binding site.
     */
   private val namedImplementation =
     """effect Terminal {

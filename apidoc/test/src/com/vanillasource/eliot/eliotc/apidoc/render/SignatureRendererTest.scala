@@ -124,7 +124,7 @@ class SignatureRendererTest extends AnyFlatSpec with Matchers {
     ) shouldBe "data Hello(name: String)"
   }
 
-  it should "render an ability header with a higher-kinded carrier" in {
+  it should "render an ability header with a higher-kinded parameter" in {
     SignatureRenderer.abilityHeader("Monad", Seq(gp("F", ty("Function", ty("Type"), ty("Type"))))) shouldBe
       "ability Monad[F[_]]"
   }

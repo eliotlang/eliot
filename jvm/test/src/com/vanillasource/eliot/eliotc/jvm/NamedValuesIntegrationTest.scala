@@ -118,7 +118,7 @@ class NamedValuesIntegrationTest extends AsyncFlatSpec with AsyncIOSpec with Mat
       |   rest
       |}""".stripMargin
 
-  "foldNamedValues" should "run gathered effectful values on the caller's carrier, in qualified-name order" in {
+  "foldNamedValues" should "run gathered effectful values with the caller's effects, in qualified-name order" in {
     runProject(
       suite(
         runningStep,

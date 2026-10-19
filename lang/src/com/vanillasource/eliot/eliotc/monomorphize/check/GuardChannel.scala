@@ -9,13 +9,13 @@ package com.vanillasource.eliot.eliotc.monomorphize.check
   *     ability-implementation `where` guard's verdict in the ground domain (`true`/`false`/`Right`/`Left` ⤳
   *     keep/decline/reject — ability-guards §3.1).
   *
-  * Both read the same constructed carrier values, recognised by
+  * Both read the same constructed `Either` values, recognised by
   * [[com.vanillasource.eliot.eliotc.module.fact.WellKnownTypes.leftFQN]] /
   * [[com.vanillasource.eliot.eliotc.module.fact.WellKnownTypes.rightFQN]] heads.
   */
 object GuardChannel {
 
-  /** The payload of a constructed `Left`/`Right` carrier value: the constructor's value field is the **last** argument
+  /** The payload of a constructed `Left`/`Right` value: the constructor's value field is the **last** argument
     * — any leading arguments are the implicit `E`/`A` type arguments. The one place this convention is written down;
     * both interpreters extract through it.
     */

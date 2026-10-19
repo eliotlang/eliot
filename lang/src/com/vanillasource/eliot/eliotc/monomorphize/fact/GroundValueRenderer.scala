@@ -7,20 +7,17 @@ import com.vanillasource.eliot.eliotc.module.fact.Qualifier
   * for anything a user reads: LSP hover / type hints, and the type arguments of an ability-demand diagnostic.
   *
   * The compiler's own `GroundValue.debugString` is deliberately terse (it collapses every non-`Type` structure to
-  * `"Structure(...)"` and drops type arguments), which is fine for debug logging but useless — and, for a carrier,
-  * actively misleading — in front of a user. This renderer instead shows the structure a reader expects:
+  * `"Structure(...)"` and drops type arguments), which is fine for debug logging but useless in front of a user. This
+  * renderer instead shows the structure a reader expects:
   *
-  *   - a data/type-constructor application as `Name[arg, …]` (`Int[0, 255]`, `IO[Unit]`), or just `Name` with no args;
-  *   - a function type as a right-associative arrow (`String -> IO[Unit]`), parenthesising a function on the left of an
-  *     arrow so `(A -> B) -> C` stays unambiguous;
-  *   - a direct (literal / bound) value by its underlying `toString` (e.g. the `0` / `255` bounds of `Int[0, 255]`).
+  *   - a data/type-constructor application as `Name[arg, …]` (`List[String]`, `Either[String, Int]`), or just `Name`
+  *     with no args;
+  *   - a function type as a right-associative arrow (`String -> Option[Int]`), parenthesising a function on the left of
+  *     an arrow so `(A -> B) -> C` stays unambiguous;
+  *   - a direct (literal) value by its underlying `toString` (e.g. the `"hello"` of `Tag["hello"]`).
   *
-  * The **carrier inverter** this used to front — a canonical `ThrowCarrier[E, StateCarrier[S, Id], A]` stack rendered
-  * back as the pinned row `{Throw[E], State[S] | Id} A`, plus the `Id[X]` ⤳ `X` erasure — went with the carrier
-  * (effects v6, F3). An effect is an ordinary nullary ability now and an implementation is a name, so a type contains
-  * no machinery to hide and there is nothing to invert: every type prints as what the user wrote. That also collapsed
-  * the two entry points this had, which existed only because a carrier's last argument means one thing when the stack
-  * is applied to a payload and another when it is not.
+  * A type contains no compiler machinery to hide — a handle's type is an ordinary type parameter, and LSP hover leaves
+  * handles out itself — so every type prints as what the user wrote.
   */
 object GroundValueRenderer {
 

@@ -177,14 +177,12 @@ object EscalatingReducer {
     * Keyed by FQN; one instantiation per FQN.
     *
     * A **monomorphic** callee (empty ground type arguments) is escalated too — `wrap(0, sem) = sem` splices its reduced
-    * body directly. The former `groundArgs.nonEmpty` gate was conservatism inherited from the guard tower (whose
-    * escalation candidates are all carrier-generic, so an empty-arg ref never needed escalation), not a correctness
-    * requirement: a runtime-*concrete* (borrowed-body) monomorphic callee performing ability dispatch — which the
-    * refinement channel's transfers reach — has no `CompilerNativesProcessor` `Leaf` and must be linked at its own
-    * `CompilerMonomorphicValue(fqn, [])`. This is sound: escalation only ever fires on a [[reducibleStuck]] term
-    * (splicing more reduced bodies can make it quote, never change an already-quoting result), a native leaf / `data`
-    * constructor still returns `None` (unchanged), and the `CompilerMonomorphicValue.Key(fqn, [])` ancestor check still
-    * guards cycles.
+    * body directly. It needs escalation as much as a generic one: a runtime-*concrete* (borrowed-body) monomorphic
+    * callee performing ability dispatch — which the refinement channel's transfers reach — has no
+    * `CompilerNativesProcessor` `Leaf` and must be linked at its own `CompilerMonomorphicValue(fqn, [])`. This is
+    * sound: escalation only ever fires on a [[reducibleStuck]] term (splicing more reduced bodies can make it quote,
+    * never change an already-quoting result), a native leaf / `data` constructor still returns `None` (unchanged), and
+    * the `CompilerMonomorphicValue.Key(fqn, [])` ancestor check still guards cycles.
     *
     * '''Ambiguous-FQN decline (§2.3).''' The binding map and both evaluators' lookups are keyed by **FQN only**, so an
     * FQN referenced at ≥2 *distinct* ground-arg vectors cannot be served correctly — one instantiation's reduced body
