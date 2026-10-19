@@ -12,12 +12,8 @@ import java.net.URI
 
 /** Flex-flex unification where one side is an *applied* meta (`?F[a]`) and the other a *bare, unsolved* meta (`?B`).
   * The unifier solves the bare meta to the application in *both* orientations — the Miller-pattern most-general
-  * unifier — rather than postponing when the applied meta happens to be on the left.
-  *
-  * The case arises in a `.` chain: the combinator (`.[A, B](a: A, f: Function[A, B]): B`) aliases its result meta `?B`
-  * to a callee's meta-headed result `?F[payload]`, and postponing hides that application from whatever reads `?B` next,
-  * which may then mis-solve it to the bare payload type. Solving `?B := ?F[payload]` eagerly — it is an alias, so there
-  * is nothing to choose — keeps the application visible.
+  * unifier — rather than postponing when the applied meta happens to be on the left, so the outcome does not depend on
+  * which side a constraint is written.
   */
 class MetaApplicationUnifyTest extends AnyFlatSpec with Matchers {
   private val ctx: Sourced[String] = Sourced(URI.create("Test.els"), PositionRange.zero, "ctx")

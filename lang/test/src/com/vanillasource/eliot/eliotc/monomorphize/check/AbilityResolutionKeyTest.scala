@@ -67,8 +67,8 @@ class AbilityResolutionKeyTest extends AnyFlatSpec with Matchers {
       Some(standardImpl)
   }
 
-  it should "still be found when the reader cannot derive the arguments, being the only entry at that span" in {
-    lookup(Map((writeRef, Seq(standardBinding)) -> standardImpl), None) shouldBe Some(standardImpl)
+  it should "not be found when the reader cannot derive the arguments, even as the only entry at that span" in {
+    lookup(Map((writeRef, Seq(standardBinding)) -> standardImpl), None) shouldBe None
   }
 
   "an unresolved reference" should "be absent" in {

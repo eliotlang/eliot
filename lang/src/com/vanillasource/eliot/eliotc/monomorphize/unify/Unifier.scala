@@ -105,9 +105,9 @@ case class Unifier(
         unifySpines(fl, fr, sp1, sp2, context)
 
       // Flex-flex where the left meta is *applied* but the right is a *bare, unsolved* meta: solve the bare meta to
-      // the applied one rather than postponing (the mirror orientation — bare left — already solves directly via the
-      // next case), so a higher-kinded application produced through a polymorphic combinator — the `.` operator's
-      // result `?B := ?F[payload]` — is visible through `?B` instead of postponed behind it.
+      // the application, which is the most general unifier, exactly as the mirror orientation (bare left) does via the
+      // next case. Without this arm the pattern rule would get `?F[a] ~ ?B` and postpone it, so the outcome would
+      // depend on which side a constraint happens to be written.
       case (VMeta(idA, spineA), VMeta(idB, Spine.SNil))
           if spineA.toList.nonEmpty && idA.value != idB.value && metaStore.lookup(idB).isEmpty =>
         if (occursIn(idB, fl)) addOccursError(context)

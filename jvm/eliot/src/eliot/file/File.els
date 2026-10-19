@@ -66,7 +66,7 @@ implement standardFileSystem: FileSystem {
    def readLines(path: Path) uses Throw[IoError]: List[String] = {
       val r = readLinesInternal(path)
       raiseError(r)
-      resultAsList(r)
+      resultValue(r)
    }
 
    def exists(path: Path) uses Throw[IoError]: Bool = {
@@ -84,13 +84,13 @@ implement standardFileSystem: FileSystem {
    def listDirectory(path: Path) uses Throw[IoError]: List[Path] = {
       val r = listDirectoryInternal(path)
       raiseError(r)
-      resultAsList(r)
+      resultValue(r)
    }
 
    def walk(path: Path) uses Throw[IoError]: List[Path] = {
       val r = walkInternal(path)
       raiseError(r)
-      resultAsList(r)
+      resultValue(r)
    }
 
    def createDirectories(path: Path) uses Throw[IoError]: Unit = raiseError(createDirectoriesInternal(path))
@@ -177,12 +177,6 @@ private def foldCodePointsInternal[B](initial: B, step: B => Int => B, path: Pat
  * The value slot of a result holder (`null` when it holds an error). Implemented by the backend.
  */
 private def resultValue[A](r: IoResult): A
-
-/**
- * The value slot of a result holder as a `List[E]` — a `List`-headed sibling of `resultValue` for the directory/line
- * operations, so a `List`-shaped result is read back at its own head. Implemented by the backend.
- */
-private def resultAsList[E](r: IoResult): List[E]
 
 /**
  * The error-message slot of a result holder (`null` when it holds a value). Implemented by the backend.

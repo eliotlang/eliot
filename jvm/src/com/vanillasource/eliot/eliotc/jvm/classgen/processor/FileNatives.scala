@@ -4,7 +4,6 @@ import com.vanillasource.eliot.eliotc.jvm.classgen.asm.{ClassGenerator, JvmIdent
 import com.vanillasource.eliot.eliotc.jvm.classgen.asm.NativeType
 import com.vanillasource.eliot.eliotc.jvm.classgen.asm.NativeType.{
   systemAnyValue,
-  systemCollectionType,
   systemFunctionValue,
   systemLangType
 }
@@ -34,7 +33,6 @@ object FileNatives {
   private val ioResultType: ValueFQN = NativeType.systemFileType("File", "IoResult")
   private val stringType: ValueFQN   = systemLangType("String")
   private val boolType: ValueFQN     = systemLangType("Bool")
-  private val listType: ValueFQN     = systemCollectionType("List")
 
   // Internal JVM class names used across the natives.
   private val Files       = "java/nio/file/Files"
@@ -64,9 +62,6 @@ object FileNatives {
     pathFqn("isNull")                 -> GenericNativeSignature(Seq(systemAnyValue), boolType),
     fileFqn("isNull")                 -> GenericNativeSignature(Seq(systemAnyValue), boolType),
     fileFqn("resultValue")            -> GenericNativeSignature(Seq(ioResultType), systemAnyValue),
-    // A `List`-headed generic return (element `E` erased) rather than the bare `Any` of `resultValue`: the
-    // directory/line operations read a `List`-shaped result back at its own head.
-    fileFqn("resultAsList")           -> GenericNativeSignature(Seq(ioResultType), listType),
     fileFqn("foldLinesInternal")      ->
       GenericNativeSignature(Seq(systemAnyValue, systemFunctionValue, pathType), ioResultType),
     fileFqn("foldCodePointsInternal") ->
@@ -97,7 +92,6 @@ object FileNatives {
     genericEntry(fileFqn("foldLinesInternal"), impure = true)(wrap(3)(foldLines)),
     genericEntry(fileFqn("foldCodePointsInternal"), impure = true)(wrap(3)(foldCodePoints)),
     genericEntry(fileFqn("resultValue"))(resultValue),
-    genericEntry(fileFqn("resultAsList"))(resultAsList),
     entry(fileFqn("resultErrorMessage"), Seq(ioResultType), stringType)(resultErrorMessage),
     genericEntry(fileFqn("isNull"))(isNull)
   )
@@ -150,14 +144,6 @@ object FileNatives {
     mv.visitTypeInsn(CHECKCAST, ObjectArray)
     mv.visitInsn(ICONST_1)
     mv.visitInsn(AALOAD)
-  }
-
-  private def resultAsList(mv: MethodVisitor): Unit = {
-    mv.visitVarInsn(ALOAD, 0)
-    mv.visitTypeInsn(CHECKCAST, ObjectArray)
-    mv.visitInsn(ICONST_1)
-    mv.visitInsn(AALOAD)
-    mv.visitTypeInsn(CHECKCAST, JList)
   }
 
   private def resultErrorMessage(mv: MethodVisitor): Unit = {

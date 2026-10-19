@@ -148,24 +148,14 @@ object CheckState {
   type AbilityResolutionKey = (Sourced[ValueFQN], Seq[GroundValue])
 
   /** Look one reference's resolved impl out of `resolutions`, given the ability-level type arguments the reader could
-    * derive for it (`None` if they would not quote).
-    *
-    * Two arms, tried in order, and the second is a **fail-safe rather than a guess**:
-    *   - the exact key — the reference's own ground arguments pinned this impl;
-    *   - the unique entry for this position+FQN, *only if every entry recorded there agrees*. This is what preserves
-    *     the pre-fix behaviour in the ordinary case (one reference, one entry, arguments re-derived identically), while
-    *     a genuine collision — two impls at one span — yields `None` and the reference stays abstract, which the
-    *     checker reports downstream, instead of silently picking whichever resolved first.
+    * derive for it (`None` if they would not quote). Only the exact key answers: a reader that cannot derive the
+    * arguments gets `None` and the reference stays abstract, which the checker reports downstream — never the impl of
+    * whichever reference at the same span resolved first.
     */
   def lookupAbilityResolution(
       resolutions: Map[AbilityResolutionKey, (ValueFQN, Seq[GroundValue])],
       ref: Sourced[ValueFQN],
       abilityArgs: Option[Seq[GroundValue]]
   ): Option[(ValueFQN, Seq[GroundValue])] =
-    abilityArgs
-      .flatMap(args => resolutions.get((ref, args)))
-      .orElse {
-        val atRef = resolutions.collect { case ((r, _), impl) if r == ref => impl }.toSeq.distinct
-        Option.when(atRef.sizeIs == 1)(atRef.head)
-      }
+    abilityArgs.flatMap(args => resolutions.get((ref, args)))
 }

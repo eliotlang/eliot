@@ -36,8 +36,8 @@ object CommonPatterns {
     *
     * The head token is the argument's erased carrier ([[valueType]]); the type-constructor arguments applied to it are
     * appended recursively. This is required because two instantiations sharing a head constructor can be different
-    * specializations of one JVM descriptor: a `def describe[A ~ Show](value: A): String` at `List[Int]` and at
-    * `List[String]` takes a `java.util.List` both times, yet each body calls its own element's `show`. A head-only
+    * specializations of one JVM descriptor: a `def loud[B ~ Show](b: B): String` at `Box[Int]` and at `Box[String]`
+    * takes a `Box` both times, yet each body calls its own element's `show` (`ExamplesIntegrationTest2`). A head-only
     * suffix collapses them onto one method name; [[JvmClassGenerator]]'s signature-dedup then treats them as
     * byte-identical and silently drops one body — a whole-program miscompile. Recursing on the applied arguments keeps
     * them distinct.

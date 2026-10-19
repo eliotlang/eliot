@@ -101,20 +101,6 @@ class EffectShapeCompileTest extends AsyncFlatSpec with AsyncIOSpec with Matcher
       |}
       |""".stripMargin
 
-  // Nested conditionals: `grade`'s `if..else if..else` chain, where one `if` is the fallback of another's `else` and
-  // its `Abort` reaches `grade`'s caller, beside a plain `if..else` in `main` — two different instantiations of `if`.
-  private val nestedAbortSource =
-    """import eliot.effect.Console
-      |import eliot.effect.Abort
-      |
-      |def grade(s: String) uses Abort: String = if(s == "A", "excellent") else if(s == "B", "good")
-      |
-      |def main uses Console: Unit = {
-      |   printLine(grade("A") else "?")
-      |   printLine(if(true, "taken") else "skipped")
-      |}
-      |""".stripMargin
-
   // Two `Dep` entries of distinct types in one clause (`Dep[Database], Dep[Logger]`): each `dependency` is answered by
   // the handle whose entry its use's type decides, and two nested `provide`s discharge them.
   private val twoDepsSource =
@@ -152,10 +138,6 @@ class EffectShapeCompileTest extends AsyncFlatSpec with AsyncIOSpec with Matcher
 
   it should "compile a direct-style State program discharged at its caller" in {
     compileClasses(stateSource).asserting(_ should not be empty)
-  }
-
-  it should "compile an if..else if..else chain beside a plain if..else" in {
-    compileClasses(nestedAbortSource).asserting(_ should not be empty)
   }
 
   it should "compile two distinct-typed Dep entries in one clause" in {

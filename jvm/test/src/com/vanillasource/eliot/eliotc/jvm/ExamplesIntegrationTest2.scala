@@ -234,12 +234,8 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
     ).asserting(_ shouldBe "config-value\n<fallback>")
   }
 
-  // Regression for a name-mangling collision: `grade`'s `if..else if..else` chain and the plain `if(..) else ..` in
-  // `main` are two instantiations of `if` that once differed only in a nested type argument under one head. A head-only
-  // type-argument suffix mangled both to one JVM method, the backend's signature-dedup dropped one body, and the
-  // survivor crashed at runtime with a `ClassCastException`. Recursive type-argument mangling
-  // (`CommonPatterns.mangleTypeArgument`) keeps such instantiations distinct.
-  "if..else chained and plain in one program" should "not collapse into one mangled JVM method" in {
+  // `grade`'s `if..else if..else` chain, whose `Abort` reaches `grade`'s caller, beside a plain `if..else` in `main`.
+  "if..else chained and plain in one program" should "run each" in {
     compileAndRun(
       """
         |import eliot.effect.Console
@@ -253,6 +249,30 @@ class ExamplesIntegrationTest2 extends FullIntegrationTest {
         |   printLine(if(true, "taken") else "skipped")
         |}""".stripMargin
     ).asserting(_ shouldBe "excellent\ntaken")
+  }
+
+  // Regression for a name-mangling collision: `loud` at `Box[Int]` and at `Box[String]` share the head `Box`, and so the
+  // JVM descriptor, while each body calls its own element's `show`. A head-only type-argument suffix mangles both to
+  // one method, the backend's signature-dedup drops one body, and the survivor fails at runtime. Recursive
+  // type-argument mangling (`CommonPatterns.mangleTypeArgument`) keeps them distinct; with it head-only, this fails.
+  "one generic definition at Box[Int] and Box[String]" should "not collapse into one mangled JVM method" in {
+    compileAndRun(
+      """
+        |import eliot.effect.Console
+        |
+        |data Box[A](content: A)
+        |
+        |implement[A ~ Show] Show[Box[A]] {
+        |   def show(b: Box[A]): String = show(content(b))
+        |}
+        |
+        |def loud[B ~ Show](b: B): String = show(b) ++ "!"
+        |
+        |def main uses Console: Unit = {
+        |   printLine(loud(Box(1)))
+        |   printLine(loud(Box("x")))
+        |}""".stripMargin
+    ).asserting(_ shouldBe "1!\nx!")
   }
 
   // `if`'s branch is a code parameter (`value uses *, Abort: T`), so a branch may itself be effectful. Only the

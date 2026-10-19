@@ -443,8 +443,8 @@ Pattern unification on `SemValue`s with a `postponed` queue (`drain()` retries u
    not decomposed** — `CarrierKindChecker` documents this as higher-order unification the pattern unifier cannot solve
    (see the diagnosing note on the two-arg HKT-over-Function limitation). **Flex-flex `?F[a..] ~ ?B`** (applied meta vs a
    *bare, unsolved* meta) solves the bare meta **in either orientation** — `?B := ?F[a..]` — rather than postponing when
-   the applied side is on the left, so an application aliased through a polymorphic combinator does not stay hidden
-   behind `?B`. Pinned by `unify/MetaApplicationUnifyTest`.
+   the applied side is on the left, so the outcome does not depend on which side a constraint is written. Pinned by
+   `unify/MetaApplicationUnifyTest`.
 
 `unify` is **pure definitional equality**: no assignability, no widening, no `refinements` map (`Int` is nullary;
 value ranges ride the `channel/` post-pass, strictly downstream of typing), and no flex-flex `?F[X] ~ ?G[Y]`
