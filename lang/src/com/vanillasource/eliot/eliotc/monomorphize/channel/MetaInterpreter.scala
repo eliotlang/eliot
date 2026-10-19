@@ -296,7 +296,7 @@ object MetaInterpreter {
     * This is the total-meta rule of R1: a generic `^Meta` companion reduced at these always lands on a real `Meta`
     * instance (`Meta[Int$Meta]` or `Meta[Unit]`). A non-structure type argument is left unchanged.
     */
-  private def metaTypeOf(baseType: GroundValue): CompilerIO[GroundValue] = baseType match {
+  private[channel] def metaTypeOf(baseType: GroundValue): CompilerIO[GroundValue] = baseType match {
     case GroundValue.Structure(fqn, _, _) =>
       declaresMetaStructure(fqn).map {
         case true  =>

@@ -576,11 +576,23 @@ class CoreProcessorTest extends ProcessorTest(Tokenizer(), ASTParser(), CoreProc
     }
   }
 
-  it should "keep a parameter the predicate never mentions at its own type" in {
-    namedValue("def f(h: Handle, a: Foo): Foo where g(a)", QualifiedName("f$Where", M)).asserting { nv =>
-      nv.signature.value.structure shouldBe App(
-        App(Ref("Function", T), Ref("Handle", T)),
-        App(App(Ref("Function", T), Ref("Foo$Meta", T)), QualRef("Bool", "eliot.lang.Bool"))
+  it should "type each parameter by a meta binder of its own, after the definition's binders" in {
+    namedValue("def f[A](h: A, a: Foo): Foo where g(a)", QualifiedName("f$Where", M)).asserting { nv =>
+      nv.signature.value.structure shouldBe Lambda(
+        "A",
+        Ref("Type", T),
+        Lambda(
+          "Meta$h",
+          Ref("Type", T),
+          Lambda(
+            "Meta$a",
+            Ref("Type", T),
+            App(
+              App(Ref("Function", T), Ref("Meta$h", T)),
+              App(App(Ref("Function", T), Ref("Meta$a", T)), QualRef("Bool", "eliot.lang.Bool"))
+            )
+          )
+        )
       )
     }
   }

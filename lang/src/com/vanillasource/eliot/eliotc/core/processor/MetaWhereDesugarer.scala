@@ -1,7 +1,12 @@
 package com.vanillasource.eliot.eliotc.core.processor
 
 import cats.syntax.all.*
-import com.vanillasource.eliot.eliotc.ast.fact.{ArgumentDefinition, FunctionDefinition, Expression as SourceExpression}
+import com.vanillasource.eliot.eliotc.ast.fact.{
+  ArgumentDefinition,
+  FunctionDefinition,
+  GenericParameter,
+  Expression as SourceExpression
+}
 import com.vanillasource.eliot.eliotc.core.fact.RoleHint
 import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, Qualifier, WellKnownTypes}
 import com.vanillasource.eliot.eliotc.source.content.Sourced
@@ -10,25 +15,27 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
   * §4.3) — the `Bool` function the refinement channel evaluates at each call site to demand the precondition.
   *
   * {{{
-  *   def useByte(x: Int): Int where withinByte(range(x))
-  *     ⟶  useByte$Where(x: Int$Meta): Bool = withinByte(range(x))
+  *   def useByte(x: Byte): Int where withinByte(range(x))
+  *     ⟶  useByte$Where[Meta$x: Type](x: Meta$x): Bool = withinByte(range(x))
   * }}}
   *
-  * Like the `^Meta` transfer companion ([[MetaTransferDesugarer]]) it lives in the [[Qualifier.Meta]] namespace and its
-  * parameter types are the *meta* structures of the originals — the pure name transform `Int` ⤳ `Int$Meta`
-  * ([[MetaConstructorDesugarer.metaTypeSuffix]]) — so inside the predicate a parameter `x` denotes its `Int$Meta` value
-  * and `range(x)` projects the tracked range (an `Interval`). Distinct from the transfer companion by the extra
-  * [[whereSuffix]] on the name, so a def may carry both a return brace and a `where`. The body is the predicate itself,
-  * unwrapped (a `Bool`), and the declared return type is `Bool` written module-qualified so it resolves without the def
-  * importing `Bool` (mirroring [[SourceExpression.trueReference]]).
+  * Inside the predicate a parameter denotes its **meta** — `range(x)` projects the range an `Int`'s meta carries — so
+  * each parameter is retyped to the meta type of its type. That meta type is not *named* here: a type is an expression,
+  * and naming its meta by its spelling (`Byte` ⤳ `Byte$Meta`) fails for an alias, a type computed by a type-level
+  * function, or a type parameter, none of which declares one. Instead every parameter gets a binder of its own
+  * ([[metaBinderName]]), and the channel supplies, at each call, the meta type of the parameter's **evaluated** type —
+  * `T$Meta` for a slotted type, `Unit` for every other
+  * ([[com.vanillasource.eliot.eliotc.monomorphize.channel.MetaInterpreter.metaTypeOf]]). The companion is then
+  * monomorphized at those types by the one checker, which is where `range(x)` is checked.
   *
-  * A **mentioned** parameter whose type has no meta structure (an untracked type, or a bare generic) has no `T$Meta`,
-  * so its retyped reference does not resolve and the companion fails to compile — a loud error at the precondition
-  * rather than a silently-unenforced `where` (per the gaps-must-be-fail-safe rule). A parameter the predicate never
-  * mentions is dead in the companion and keeps its own type ([[MetaCompanionReferences]]), so an untracked parameter
-  * standing beside a tracked one does not fail a `where` that does not read it. The tracked types today are `Int` and
-  * `String`; broadening to more domains is the second-domain work (§7). Companions are compiler-pool-only (the channel
-  * evaluates them), dead in the runtime pool, never code-generated.
+  * The companion is built from the definition **after** its effect sugar is desugared, so its leading binders and
+  * parameters are exactly the ones the callee's monomorphization key and signature have — its handles included — and
+  * the channel passes the callee's own type arguments through unchanged. Only the constraint a handle's binder carries is
+  * dropped: a handle's type answers it by construction, and the two-site search, which would be asked, does not.
+  *
+  * The body is the predicate itself, unwrapped (a `Bool`), and the declared return type is `Bool` written
+  * module-qualified so it resolves without the def importing `Bool` (mirroring [[SourceExpression.trueReference]]).
+  * Companions are compiler-pool-only (the channel evaluates them), dead in the runtime pool, never code-generated.
   */
 object MetaWhereDesugarer {
 
@@ -52,45 +59,32 @@ object MetaWhereDesugarer {
   def desugar(definition: FunctionDefinition): Seq[(FunctionDefinition, RoleHint)] =
     definition.whereClause.toSeq.map(predicate => whereCompanion(definition, predicate) -> RoleHint.NoHint)
 
-  private def whereCompanion(f: FunctionDefinition, predicate: Sourced[SourceExpression]): FunctionDefinition =
+  /** The binder a `^Where` companion types parameter `parameter` by: `Meta$<parameter>`. `$` is not an identifier
+    * character, so it collides with no binder the user wrote.
+    */
+  def metaBinderName(parameter: String): String = s"Meta$$$parameter"
+
+  private def whereCompanion(f: FunctionDefinition, predicate: Sourced[SourceExpression]): FunctionDefinition = {
+    val desugared   = EffectSugarDesugarer.desugar(f)
+    val handles     = desugared.effectRow.handles.map(_.binder).toSet
+    val ownBinders  =
+      desugared.genericParameters.map(gp => if (handles.contains(gp.name.value)) gp.copy(abilityConstraints = Seq.empty) else gp)
+    val metaBinders = desugared.args.map(arg =>
+      GenericParameter(arg.name.map(metaBinderName), arg.name.as(typeReference(arg.name.as("Type"))), Seq.empty)
+    )
     FunctionDefinition(
       f.name.map(companionName),
-      Seq.empty,
-      retypedArgs(f, predicate),
+      ownBinders ++ metaBinders,
+      desugared.args.map(arg => ArgumentDefinition(arg.name, arg.name.as(typeReference(arg.name.map(metaBinderName))))),
       boolTypeRef(f.name),
       Some(predicate),
       visibility = f.visibility
     )
-
-  /** The companion's parameters: those the predicate mentions retyped to their meta structures (so `range(x)` projects
-    * a tracked range), the rest kept verbatim ([[MetaCompanionReferences]]) — a parameter the predicate never reads is
-    * dead in the companion, and a slotless type has no `T$Meta` to name it by, so retyping it would fail a `where` for
-    * a parameter it does not even look at.
-    */
-  private def retypedArgs(f: FunctionDefinition, predicate: Sourced[SourceExpression]): Seq[ArgumentDefinition] = {
-    val referenced = MetaCompanionReferences.namesIn(Seq(predicate))
-    f.args.map(arg =>
-      if (referenced.contains(arg.name.value)) arg.copy(typeExpression = metaTypeRef(arg.typeExpression)) else arg
-    )
   }
 
-  /** The meta *type* reference for a value type expression: the head type's name suffixed `$Meta`, bare (no args), the
-    * same transform [[MetaTransferDesugarer]] uses. A non-application head is left unchanged (it will not resolve to a
-    * meta structure, surfacing the limitation above as a loud error rather than a silent skip).
-    */
-  private def metaTypeRef(typeExpr: Sourced[SourceExpression]): Sourced[SourceExpression] =
-    typeExpr.value match {
-      case SourceExpression.FunctionApplication(module, fnName, _, _) =>
-        typeExpr.as(
-          SourceExpression.FunctionApplication(
-            module,
-            fnName.map(_ + MetaConstructorDesugarer.metaTypeSuffix),
-            None,
-            Seq.empty
-          )
-        )
-      case _                                                          => typeExpr
-    }
+  /** A bare reference to the type named `name`. */
+  private def typeReference(name: Sourced[String]): SourceExpression =
+    SourceExpression.FunctionApplication(None, name, None, Seq.empty)
 
   /** A module-qualified reference to the `Bool` type (`eliot.lang.Bool::Bool`), so the companion's return type resolves
     * without the originating file importing `Bool`.

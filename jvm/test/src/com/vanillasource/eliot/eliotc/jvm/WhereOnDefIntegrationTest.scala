@@ -140,4 +140,104 @@ class WhereOnDefIntegrationTest extends FullIntegrationTest {
     compileForErrors(picking("""(if(pickOf(1), pickOf("a")) else true)"""))
       .asserting(_ should include("precondition of 'Test::checked' is not satisfied"))
   }
+
+  // A parameter's meta type is read from its *evaluated* type at each call, never named from how the type is spelled:
+  // `Byte$Meta`, `T$Meta` or `Box$Meta` exist for nothing, and naming them failed every shape below.
+  private def byteOf(declarations: String, parameterType: String, argument: String) =
+    "import eliot.effect.Console\n" + declarations +
+      s"def asByte(x: $parameterType): Int where rangeWithin[0, 255](range(x)) = x\n" +
+      s"def main uses Console: Unit = printLine(show(asByte($argument)))"
+
+  "a where precondition on a parameter typed by an alias" should "accept a call whose argument range fits" in {
+    compileAndRun(byteOf("type Byte = Int\n", "Byte", "7")).asserting(_ shouldBe "7")
+  }
+
+  it should "reject a call whose argument range exceeds the bound" in {
+    compileForErrors(byteOf("type Byte = Int\n", "Byte", "300"))
+      .asserting(_ should include("precondition of 'Test::asByte' is not satisfied"))
+  }
+
+  "a where precondition on a parameter typed by an alias of an alias" should "accept a call whose argument range fits" in {
+    compileAndRun(byteOf("type Number = Int\ntype Byte = Number\n", "Byte", "7")).asserting(_ shouldBe "7")
+  }
+
+  "a where precondition on a parameter typed by a computed type" should "accept a call whose argument range fits" in {
+    compileAndRun(
+      byteOf("data Box[A](content: A)\n", "(Box[Int] match {\n case Box[a] -> a\n case _ -> String\n})", "7")
+    ).asserting(_ shouldBe "7")
+  }
+
+  "a where precondition naming its definition's type parameters" should "accept a call whose argument range fits" in {
+    compileAndRun(
+      "import eliot.effect.Console\n" +
+        "def within[Lo: BigInteger, Hi: BigInteger](x: Int): Int where rangeWithin[Lo, Hi](range(x)) = x\n" +
+        "def main uses Console: Unit = printLine(show(within[0, 9](7)))"
+    ).asserting(_ shouldBe "7")
+  }
+
+  it should "reject a call whose argument range exceeds the bound" in {
+    compileForErrors(
+      "import eliot.effect.Console\n" +
+        "def within[Lo: BigInteger, Hi: BigInteger](x: Int): Int where rangeWithin[Lo, Hi](range(x)) = x\n" +
+        "def main uses Console: Unit = printLine(show(within[0, 5](7)))"
+    ).asserting(_ should include("precondition of 'Test::within' is not satisfied"))
+  }
+
+  "a where precondition on a parameter typed by a type parameter" should "accept a call whose argument range fits" in {
+    compileAndRun(
+      "import eliot.effect.Console\n" +
+        "def asByte[T](x: T): T where rangeWithin[0, 255](range(x)) = x\n" +
+        "def main uses Console: Unit = printLine(show(asByte(7)))"
+    ).asserting(_ shouldBe "7")
+  }
+
+  // A type that carries no meta has the meta `Unit`, which is known — so such a parameter beside a tracked one no longer
+  // makes every call unprovable.
+  private val pickByte =
+    "import eliot.effect.Console\n" +
+      "data Box(label: String)\n" +
+      "def pick(x: Int, b: Box): Int where rangeWithin[0, 255](range(x)) = x\n"
+
+  "a where precondition beside a parameter whose type carries no meta" should "accept a call whose argument range fits" in {
+    compileAndRun(pickByte + """def main uses Console: Unit = printLine(show(pick(7, Box("b"))))""").asserting(_ shouldBe "7")
+  }
+
+  it should "reject a call whose argument range exceeds the bound" in {
+    compileForErrors(pickByte + """def main uses Console: Unit = printLine(show(pick(300, Box("b"))))""")
+      .asserting(_ should include("precondition of 'Test::pick' is not satisfied"))
+  }
+
+  "a where precondition reading the meta of a type that carries none" should "be rejected, not accepted" in {
+    compileForErrors(
+      "import eliot.effect.Console\n" +
+        "data Box(label: String)\n" +
+        "def pick(x: Int, b: Box): Int where rangeWithin[0, 255](range(b)) = x\n" +
+        """def main uses Console: Unit = printLine(show(pick(7, Box("b"))))"""
+    ).asserting(_ should include("Cannot evaluate the `where` precondition of 'Test::pick'"))
+  }
+
+  // The companion takes the callee's binders as the effect desugar leaves them, handles and handed binders included.
+  "a where precondition on a definition taking handles" should "accept a call whose argument range fits" in {
+    compileAndRun(
+      "import eliot.effect.Console\n" +
+        "def loud(x: Int) uses Console: Int where rangeWithin[0, 255](range(x)) = {\n   printLine(\"loud\")\n   x\n}\n" +
+        "def main uses Console: Unit = printLine(show(loud(7)))"
+    ).asserting(_ shouldBe "loud\n7")
+  }
+
+  "a where precondition on a definition handing its code a handle" should "accept a call whose argument range fits" in {
+    compileAndRun(
+      "import eliot.effect.Console\n" +
+        "def guarded(x: Int, body uses *, Abort: Int) uses *: Int where rangeWithin[0, 255](range(x)) = body else 0\n" +
+        "def main uses Console: Unit = printLine(show(guarded(7, 3)))"
+    ).asserting(_ shouldBe "3")
+  }
+
+  it should "reject a call whose argument range exceeds the bound" in {
+    compileForErrors(
+      "import eliot.effect.Console\n" +
+        "def guarded(x: Int, body uses *, Abort: Int) uses *: Int where rangeWithin[0, 255](range(x)) = body else 0\n" +
+        "def main uses Console: Unit = printLine(show(guarded(300, 3)))"
+    ).asserting(_ should include("precondition of 'Test::guarded' is not satisfied"))
+  }
 }

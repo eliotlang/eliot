@@ -593,7 +593,39 @@ type. The fix is the rule the *generic* branch of the same desugarer already rel
 per-parameter: a parameter the brace never mentions is dead in the companion, so it keeps its own type
 (`core/processor/MetaCompanionReferences`). A parameter the brace *does* mention is retyped as before, so projecting
 an untracked parameter still fails loudly. `MetaWhereDesugarer` had the identical defect for `where` predicates — a
-`where` over an `Int` parameter failed if any *other* parameter of the def was untracked — and takes the same rule.
+`where` over an `Int` parameter failed if any *other* parameter of the def was untracked — and took the same rule,
+until §8.8 replaced the name transform for `where` altogether.
+
+**8.8 A companion's parameter meta types are read from evaluated types, not named — LANDED for `where` (2026-10-19).**
+§8.7 fixed the symptom, not the cause: `T` ⤳ `T$Meta` reads the *spelling* of a type, and a type is an expression.
+Three shapes failed for a `where`: a parameter typed by an alias (`type Byte = Int`, "Name not defined." at
+`Byte$Meta`), or by any other type that is not a bare slotted name (an alias of an alias, a computed type, a type
+parameter); a predicate naming the def's own type parameters (`rangeWithin[Lo, Hi](range(x))`, since the companion had
+no binders and was reduced at none); and every call to a def with a parameter whose type carries no meta ("an
+argument's meta-information is not known", because that argument's meta was ⊤ rather than the known `Unit`).
+
+The fix delegates to what already exists. The `^Where` companion is generic: it takes the def's binders as the effect
+desugar leaves them (handles and handed binders included, so they line up with the callee's monomorphization key by
+construction) and then one binder per parameter, typing that parameter —
+
+```eliot
+def asByte(x: Byte): Byte where rangeWithin[0, 255](range(x)) = x
+  ⟶  asByte$Where[Meta$x: Type](x: Meta$x): Bool = rangeWithin[0, 255](range(x))
+```
+
+— and at each full call the channel monomorphizes it at the callee's own type arguments followed by
+`MetaInterpreter.metaTypeOf` of each parameter's type, read from the callee's `MonomorphicValue` signature. The
+monomorphizer has already evaluated that type (`Byte` is `Int` there), `metaTypeOf` is the one rule mapping a type to
+its meta type (`T$Meta` if slotted, else `Unit`), and the companion's body is checked by the one checker at those
+types, as every generic body is. Nothing is added to the evaluator or the checker; a `metaOf(T)` the checker evaluates
+was the alternative, and it was rejected for the reasons `64f5f1ee` deleted the earlier `metaOf` intrinsic: a native is a
+pure function and cannot ask whether a type declares a meta, and a per-type generated function collides across layers.
+
+A parameter whose meta type is `Unit` counts as **known** (there is nothing to know) and is passed as an opaque
+placeholder; a predicate that reads it anyway fails to check in the companion and is reported. A *tracked* argument
+whose meta is ⊤ still cannot discharge a demand. The `^Meta` transfer companion still uses the name transform and
+§8.7's rule; moving it to the same shape is the next step, and its slot-producing body's meta *constructor*
+(`Int$Meta(…)`, named from the spelled return type) is a separate, open question.
 
 ---
 

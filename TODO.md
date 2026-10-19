@@ -18,19 +18,16 @@ notes.
   written `Bounded(0)` / `Bounded(0 - 1)`. What remains is the general case: an *ordinary def body* is
   runtime-track, so a helper called from a brace still cannot name a `BigInteger` constant in value position —
   which is why `rangeWithin[Lo, Hi]` takes its bounds as type parameters.
-- **The meta companions read a type's *head name*; they must evaluate the type instead.** The `^Meta`
-  transfer companion and the `$Where` precondition companion type each mentioned parameter by the pure name
-  transform `Int` ⤳ `Int$Meta` (`MetaConstructorDesugarer.metaTypeSuffix`, applied by `MetaTransferDesugarer` /
-  `MetaWhereDesugarer`). That reads the *syntax* of a type expression for a bare application head, and a type is
-  an expression in general: a plain alias `type Byte = Int` already breaks it — `def asByte(x: Byte): Byte where
-  withinByte(range(x))` fails with "Name not defined." at the parameter, because `Byte$Meta` exists for nothing
-  (probed 2026-09-15). An alias of an alias, a type computed by a type-level function or a generic instantiated
-  at such a type fail the same way. The channel's one legitimate read of a type is the one `MetaInterpreter.metaTypeOf`
-  makes: the *evaluated* ground value's constructor, a value the evaluator produced. The companions should get
-  their parameter meta types the same way — by evaluating the parameter's type and taking its meta type, which the
-  channel already does for a *generic* companion (reduced at the meta type arguments) — instead of renaming at the
-  core boundary, where no lookup is possible. Minting a `T$Meta` alias per alias is *not* the fix: it is the same
-  structural read one level up and still misses every non-name type.
+- **The `^Meta` transfer companion reads a type's *head name*; it must take its parameters' meta types from evaluated
+  types instead.** Done for the `$Where` companion (`docs/total-meta-transfers.md` §8.8): it takes one binder per
+  parameter, and the channel monomorphizes it at `metaTypeOf` of each parameter's *evaluated* type, so an alias, a
+  computed type or a type parameter works, and a predicate may name the def's own type parameters. The transfer
+  companion (`MetaTransferDesugarer`) still types each mentioned parameter by the name transform `Int` ⤳ `Int$Meta`
+  (with `MetaCompanionReferences` keeping unmentioned ones at their own type) and binds a generic def's own type
+  parameters to their *meta* types; it should move to the same shape — the def's binders at their real arguments, one
+  meta binder per parameter and one for the return — which deletes `MetaCompanionReferences`. Separate and open: a
+  slot-producing brace's body builds its result with the meta *constructor* named from the spelled return type
+  (`Int$Meta(…)`), so a leaf whose return is an alias still fails (loudly); parameter braces below need the same thing.
 - **Meta braces in parameter position: `def writeByte(b: Int {byte}): Unit`.** Decided in principle
   2026-09-15, not built. The problem it answers is a reusable "Byte": today a bound can only be *demanded* by a
   `where` (`where within(byte, range(b))`, with `def byte: Interval[BigInteger] = closed(0, 255)` as the
@@ -59,7 +56,7 @@ notes.
   Grammar is the adjacency rule already in use: a brace *before* a type is an effect row, a brace *adjacent after*
   a type atom is its meta. This is Option B's deferred "contract annotation in value position" minus the splice it
   feared; the *refined alias* half of that deferral is closed for the reason above. Depends on the companion fix
-  above for any parameter not typed by a bare slotted name.
+  above for the meta constructor of a parameter not typed by a bare slotted name.
 - **Flow grades: quantitative computation tracking (cycles/WCET, stack, peak memory) on the
   effect row.** Design sketched 2026-07-10 in the bounds-as-refinements discussion. The dependency
   ladder is ranges → sizes → grades (fold cost needs sizes, frame sizes need ranges): the
