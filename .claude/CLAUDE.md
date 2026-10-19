@@ -542,12 +542,13 @@ scope whose entry answers it after evaluation (36 eliot-build declarations carry
 choice by effect name alone cannot work). Authoritative design: `docs/effects.md` — Part I states the shipped design
 (§1 the user rules, §2 the surface, §3 the mechanism — §3.1 the desugar, §3.2 the walk, §3.3 the hole rule and a
 block's handle types, §3.4 the primitives and frames —, §4 the scope check, §5 the standing rules, §6 testing, §7 the
-live limitations); Part II is what is left (§8 where the tree diverges, empty since items 63–65 closed; §9 which
+live limitations); Part II is the record (§8 the closed divergences, none open; §9 which
 binders are handles — the declaration's `EffectRow.handles` record, which replaced the `Implementation[A]` mark and the
 ability binding slot; §10 the gate and method; §11 the decisions — D36, the
 open questions **D20a** naming a set of effects, **D20c** storing an open computation, **D3**, and every earlier decision
 one entry each); Part III holds §12's **do-not-re-propose** list and §13, the citation map (D35's Part I is at
-`e03aa15c`; the record before the 2026-10-18 compaction at `14b61527`). **There is no carrier, no monad, no `Id`, no
+`e03aa15c`; D36's step-by-step build record, before the 2026-10-19 compaction, at `671d2b57`; the records before the
+2026-10-18 compaction at `14b61527`). **There is no carrier, no monad, no `Id`, no
 evidence, no specialisation pass and nothing to infer** — if you are reading code or a comment that mentions one, it is
 history. Handles are **erased** at the `WovenValue` seam (`monomorphize/channel/HandleErasure`, D36 step 4): a
 handle with no surviving field is no parameter, argument or class, one with one field is that field, one with more
@@ -638,7 +639,7 @@ the scope check's **by-name** half ("performs the effect 'X' but does not declar
 it") and the second-class check. `check/HandleHoleResolver` fills each hole with the nearest candidate whose entry is
 **definitionally equal after evaluation**: none is *"No handle in scope here answers 'X'. In scope: …"*; two at one
 distance is an error whose fix is a distinct type, never a name (no `@Named`, no slot naming its implementation — D36
-decision 3); a candidate holding an unsolved meta answers only if every hole it could answer agrees, else *"Which handle
+points 4 and 10); a candidate holding an unsolved meta answers only if every hole it could answer agrees, else *"Which handle
 answers 'X' depends on type arguments nothing here decides"*. **A block's handle types are what its callee's body hands
 it** (`check/HandedBinders`): solved by equality at the callee's runs, recorded on `MonomorphicValue.handed`, read by the
 caller at the callee's key — every run must hand the same (*"This run of the code is handed another implementation than
