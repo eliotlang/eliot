@@ -47,13 +47,7 @@ case class FunctionDefinition(
     // this signature, position-attributed, captured by `EffectSugarDesugarer.desugar` before the carrier rewrite erases
     // them. Unlike the fields above it is *not* dropped at the core boundary — it forwards down the value fact chain to
     // the monomorphize phase (see [[EffectRow]]). Dark/inert in Phase 1 and never part of `signatureEquality`.
-    effectRow: EffectRow[UnresolvedAbilityConstraint[Sourced[Expression]]] = EffectRow.empty,
-    // The entries of an `implement` clause's row it only **carries** for its siblings (`ImplementationRows.carrying`),
-    // by `UnresolvedAbilityConstraint.key`. Each still gets its binder, so every clause takes the marker's type arguments
-    // positionally, but no constraint: the constraint on a binding binder is what says the definition receives that
-    // entry's environment (effects D20c option 5), and a clause receives none for an effect it does not perform.
-    // Dropped at the core boundary with the row itself; never part of `signatureEquality`.
-    carriedEffects: Set[String] = Set.empty
+    effectRow: EffectRow[UnresolvedAbilityConstraint[Sourced[Expression]]] = EffectRow.empty
 )
 
 object FunctionDefinition {

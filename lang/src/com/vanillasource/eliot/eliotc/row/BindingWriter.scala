@@ -209,9 +209,7 @@ object BindingWriter {
     *
     * Only the declared row is checked, never a `~` constraint's binder, which binds an ability the body may well reach
     * only through a callee's own constraint. A body-less value has nothing to check — its row is a contract, stated
-    * where a later layer supplies the body. An `implement` clause is held only to the entries it
-    * [[wrote]]: it declares the union of its block's clause rows, and an entry a sibling wrote is the sibling's to
-    * perform.
+    * where a later layer supplies the body.
     */
   private def overDeclared(orv: OperatorResolvedValue, consumed: Set[Int]): Seq[Violation] = {
     val binders = SignatureView.of(orv.signature).binders
@@ -219,7 +217,6 @@ object BindingWriter {
     phantoms(orv)
       .filter { case (index, ability) => effects.contains(ability) && !consumed.contains(index) }
       .map { case (index, ability) => ability -> markPosition(binders(index)) }
-      .filter { case (_, entry) => wrote(orv, entry) }
       .map { case (ability, entry) =>
         Violation(
           entry.as(s"This value declares the effect '${ability.abilityName}' but does not perform it."),
@@ -230,19 +227,6 @@ object BindingWriter {
 
   /** Where a handle binder's row entry was written: the desugar sources the binder's name at the entry. */
   private def markPosition(binder: SignatureView.Binder): Sourced[?] = binder.name
-
-  /** Whether this value's own declaration wrote the row entry at `entry`. Always, except for an `implement` clause,
-    * whose row is its block's union ([[com.vanillasource.eliot.eliotc.ast.fact.ImplementationRows]]): there an entry
-    * keeps the source of the clause that wrote it, and a clause's signature runs from its name to its return type, so
-    * an entry inside that stretch is its own and one outside it is a sibling's.
-    */
-  private def wrote(orv: OperatorResolvedValue, entry: Sourced[?]): Boolean =
-    orv.vfqn.name.qualifier match {
-      case _: Qualifier.AbilityImplementation =>
-        val end = SignatureView.of(orv.signature).returnType.range.to
-        entry.uri == orv.name.uri && orv.name.range.from <= entry.range.from && entry.range.to <= end
-      case _                                  => true
-    }
 
   /** Whether this value's **body** is written: everything with a runtime body except a type constructor, and only on
     * the runtime role — a `@Signature` twin's "body" is its own arrow chain, which the signature write covers.

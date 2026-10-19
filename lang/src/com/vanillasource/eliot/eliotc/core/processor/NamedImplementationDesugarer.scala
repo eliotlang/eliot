@@ -10,7 +10,6 @@ import com.vanillasource.eliot.eliotc.ast.fact.{
   Expression,
   FunctionDefinition,
   Handles,
-  ImplementationRows,
   LambdaParameterDefinition,
   NamedImplementation,
   Visibility
@@ -74,12 +73,15 @@ object NamedImplementationDesugarer {
     val abilityName = implementation.ability.value
     val implName    = implementation.name.value
     val anchor      = implementation.name
-    val clauses     = implementation.functions.map(ImplementationRows.own)
+    val clauses     = implementation.functions
     // Every entry a clause writes may be captured where the implementation is bound (`docs/effects.md` D36 point 2):
     // which ones are — those no member declares — is the `row` phase's to read, since the members are declared in
     // another file. The handle has a field for each, of a type of its own, and a `with` fills the ones not captured
     // with `unit`.
-    val written     = ImplementationRows.union(clauses.filter(_.name.value.qualifier != Qualifier.Type))
+    val written     = clauses
+      .filter(_.name.value.qualifier != Qualifier.Type)
+      .flatMap(clause => entriesOf(clause.typeDefinition))
+      .distinctBy(UnresolvedAbilityConstraint.key)
     val captures    = written.indices.map(j =>
       GenericParameter(anchor.as(Handles.capture(j)), anchor.as(typeExpr(anchor.as("Type"))), Seq.empty)
     )
@@ -167,12 +169,13 @@ object NamedImplementationDesugarer {
     // `standardFileSystem` whose clauses carry no body, only declare the name a `with` resolves to.
     val bodied      = implementation.functions.exists(f => f.name.value.qualifier != Qualifier.Type && f.body.isDefined)
     val declaration = Seq(namedMarker, nameMarker).map(_ -> RoleHint.NoHint)
+    val unit        = anchor.as(Expression.FunctionApplication(None, anchor.as("Unit"), None, Seq.empty))
     def recording(name: QualifiedName, genericParameters: Seq[GenericParameter], row: Seq[UnresolvedAbilityConstraint[Sourced[Expression]]]) =
       FunctionDefinition(
         anchor.as(name),
         genericParameters,
         Seq.empty,
-        ImplementationRows.rowed(row, anchor.as(Expression.FunctionApplication(None, anchor.as("Unit"), None, Seq.empty))),
+        if (row.isEmpty) unit else anchor.as(Expression.EffectfulType(row, unit)),
         None
       )
     val recorded    =
@@ -183,7 +186,7 @@ object NamedImplementationDesugarer {
         recording(
           QualifiedName(Handles.clause(f.name.value.name), named),
           implementation.genericParameters ++ f.genericParameters,
-          ImplementationRows.entriesOf(f.typeDefinition)
+          entriesOf(f.typeDefinition)
         )
       )
     if (bodied)
@@ -255,6 +258,13 @@ object NamedImplementationDesugarer {
         effects.exists(_.typeArgs.exists(mentions(_, name))) || mentions(result, name)
       case Expression.IntegerLiteral(_) | Expression.StringLiteral(_)            => false
       case _                                                                     => true
+    }
+
+  /** The entries of a definition's declared (return) row. */
+  private def entriesOf(expr: Sourced[Expression]): Seq[UnresolvedAbilityConstraint[Sourced[Expression]]] =
+    expr.value match {
+      case Expression.EffectfulType(effects, _) => effects
+      case _                                    => Seq.empty
     }
 
   private def typeExpr(name: Sourced[String]): Expression =

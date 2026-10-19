@@ -910,7 +910,7 @@ both:
   `Console`, while its twin over `v uses *: A` lists nothing, consumes nothing and is the error. An entry that arrives
   through a row alias is held to the same (D36's measurement, decided 2026-10-18). Exempt: a body-less value (its
   clause is a contract a later layer bodies) and a signature's own references. An `implement` clause declares the
-  union of its block's clause entries (`ImplementationRows`), so it is held only to the entries it wrote. The by-name
+  entries it wrote, and is held to those like any definition. The by-name
   error waits for the definition's callees: a callee performing the effect *undeclared* is its usual cause, and that
   callee's error is reported instead (`RowElaborationProcessor.calleesWritten`).
 
@@ -1056,9 +1056,11 @@ higher-kinded-meta arms and `UnifiedModuleValueProcessor.mergeEffectRows` — de
 over `__.test`, the 46 examples, eliot-test's and eliot-build's suites and eliot-build's launcher, every example jar
 byte-identical; the stale text it named rewritten. Two things the pass found and left, each its own change:
 
-- `ast/fact/ImplementationRows` still describes the v6 phantom-binder design, and whether the clause-row union it
-  builds is still needed now that a named implementation's extra entries are captured at its `with` (`row/Captures`)
-  is a question for the code, not the text.
+- *Done 2026-10-19*: `ast/fact/ImplementationRows` gave every `implement` clause its block's union row (v6's single
+  prefix of phantom binders) and the core phase took it off again (`own`, `anonymousOnHandles`), with
+  `FunctionDefinition.carriedEffects` and `BindingWriter.wrote` telling the two kinds of entry apart. All four are
+  deleted: a clause keeps the row it wrote, and the one union left — the entries a named implementation's handle may
+  capture (`row/Captures`) — is taken in `NamedImplementationDesugarer`.
 - "carrier" survives as vocabulary in about thirty files beyond the review's list, much of it the kind checker's
   legitimate `[F[_]]` sense and the guard channel's own name (`isGuardCarrier`); a sweep has to tell those from history.
 

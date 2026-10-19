@@ -4,7 +4,6 @@ import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.ast.fact.{
   Expression as SourceExpression,
   FunctionDefinition,
-  ImplementationRows,
   SourceAST
 }
 import com.vanillasource.eliot.eliotc.core.fact.{AST as CoreASTData, Expression as CoreExpression, *}
@@ -57,9 +56,7 @@ class CoreProcessor
     val desugaredEffects: Seq[(FunctionDefinition, RoleHint)] =
       sourceAstData.effectDefinitions.flatMap(EffectDefinitionDesugarer.desugar).map(_ -> RoleHint.NoHint)
     val allFunctions  =
-      sourceAstData.functionDefinitions
-        .map(ImplementationRows.anonymousOnHandles)
-        .map(_ -> RoleHint.NoHint) ++
+      sourceAstData.functionDefinitions.map(_ -> RoleHint.NoHint) ++
         desugaredFromData ++ desugaredMetaConstructors ++ desugaredMetaTransfers ++ desugaredWhereCompanions ++
         desugaredNamedImplementations ++ desugaredEffects
     val coreAstData   = CoreASTData(
