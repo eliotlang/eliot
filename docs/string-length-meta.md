@@ -716,8 +716,8 @@ Each stage compiles and passes the example sweep on its own.
   brace could not be stated on a def with an **untracked parameter** at all. The `^Meta` companion retypes each
   parameter `T` to `T$Meta`, which exists only for a slotted type, and every brace written until S5 happened to
   have only `Int`/`String` parameters — so `outcomeExitCode(outcome: ProcessOutcome)` failed with "Name not
-  defined." at its own parameter. A parameter the brace never mentions now keeps its own type
-  (`core/processor/MetaCompanionReferences`); `where` predicates had the identical defect and take the same rule.
+  defined." at its own parameter. A parameter the brace never mentions then kept its own type; since
+  `docs/total-meta-transfers.md` §8.8 no companion names a meta type at all, so the question no longer arises.
 
 `List`/`Array` size (structural meta) and the meta interpretation (P4) stay out; S1–S4 is a complete, useful feature
 without either.

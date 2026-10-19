@@ -216,7 +216,9 @@ class WhereOnDefIntegrationTest extends FullIntegrationTest {
     ).asserting(_ should include("Cannot evaluate the `where` precondition of 'Test::pick'"))
   }
 
-  // The companion takes the callee's binders as the effect desugar leaves them, handles and handed binders included.
+  // The companion takes the callee's binders as the effect desugar leaves them, handles and handed binders included. A
+  // code parameter is read as the value its code yields, whose meta an argument never carries, so the one here yields a
+  // type that carries none.
   "a where precondition on a definition taking handles" should "accept a call whose argument range fits" in {
     compileAndRun(
       "import eliot.effect.Console\n" +
@@ -228,16 +230,16 @@ class WhereOnDefIntegrationTest extends FullIntegrationTest {
   "a where precondition on a definition handing its code a handle" should "accept a call whose argument range fits" in {
     compileAndRun(
       "import eliot.effect.Console\n" +
-        "def guarded(x: Int, body uses *, Abort: Int) uses *: Int where rangeWithin[0, 255](range(x)) = body else 0\n" +
-        "def main uses Console: Unit = printLine(show(guarded(7, 3)))"
-    ).asserting(_ shouldBe "3")
+        "def guarded(x: Int, body uses *, Abort: Unit) uses *: Unit where rangeWithin[0, 255](range(x)) = body else unit\n" +
+        "def main uses Console: Unit = guarded(7, printLine(\"ran\"))"
+    ).asserting(_ shouldBe "ran")
   }
 
   it should "reject a call whose argument range exceeds the bound" in {
     compileForErrors(
       "import eliot.effect.Console\n" +
-        "def guarded(x: Int, body uses *, Abort: Int) uses *: Int where rangeWithin[0, 255](range(x)) = body else 0\n" +
-        "def main uses Console: Unit = printLine(show(guarded(300, 3)))"
+        "def guarded(x: Int, body uses *, Abort: Unit) uses *: Unit where rangeWithin[0, 255](range(x)) = body else unit\n" +
+        "def main uses Console: Unit = guarded(300, printLine(\"ran\"))"
     ).asserting(_ should include("precondition of 'Test::guarded' is not satisfied"))
   }
 }

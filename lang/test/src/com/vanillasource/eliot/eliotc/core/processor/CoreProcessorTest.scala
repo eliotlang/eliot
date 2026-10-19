@@ -512,14 +512,47 @@ class CoreProcessorTest extends ProcessorTest(Tokenizer(), ASTParser(), CoreProc
     }
   }
 
-  it should "type the transfer companion over the meta types (T$Meta suffix), with no lookup" in {
-    namedValue("type Foo {bar: D}\ndef f(a: Foo): Foo {a.bar}", QualifiedName("f", M)).asserting { nv =>
-      nv.signature.value.structure shouldBe App(
-        App(Ref("Function", T), Ref("Foo$Meta", T)),
-        Ref("Foo$Meta", T)
+  it should "type each parameter and the result by a meta binder of its own, after the definition's binders" in {
+    namedValue("type Foo {bar: D}\ndef f[A](h: A, a: Foo): Foo {a.bar}", QualifiedName("f", M)).asserting { nv =>
+      nv.signature.value.structure shouldBe Lambda(
+        "A",
+        Ref("Type", T),
+        Lambda(
+          "Meta$h",
+          Ref("Type", T),
+          Lambda(
+            "Meta$a",
+            Ref("Type", T),
+            Lambda(
+              "Meta$",
+              Ref("Type", T),
+              App(
+                App(Ref("Function", T), Ref("Meta$h", T)),
+                App(App(Ref("Function", T), Ref("Meta$a", T)), Ref("Meta$", T))
+              )
+            )
+          )
+        )
       )
     }
   }
+
+  it should "describe the parameter and result types it is instantiated by in its payload signature" in {
+    namedValue("type Foo {bar: D}\ndef f[A](h: A, a: Foo): Foo {a.bar}", QualifiedName("f$Payload", M)).asserting {
+      nv =>
+        nv.runtimeStructure shouldBe Some(arrow(Ref("A", T), arrow(Ref("Foo", T), Ref("Foo", T))))
+    }
+  }
+
+  it should "read a code parameter in its payload signature as the value its code yields" in {
+    namedValue("def f[A](c: Bool, w uses *: A) uses *: A {w}", QualifiedName("f$Payload", M)).asserting { nv =>
+      nv.runtimeStructure shouldBe Some(arrow(Ref("Bool", T), arrow(Ref("A", T), Ref("A", T))))
+    }
+  }
+
+  /** A payload signature's `Function[domain, codomain]`, written module-qualified. */
+  private def arrow(domain: ExprStructure, codomain: ExprStructure): ExprStructure =
+    App(App(QualRef("Function", "eliot.lang.Function"), domain), codomain)
 
   it should "build the result via the meta value constructor" in {
     namedValue("type Foo {bar: D}\ndef f(a: Foo): Foo {a}", QualifiedName("f", M)).asserting { nv =>
@@ -545,22 +578,6 @@ class CoreProcessorTest extends ProcessorTest(Tokenizer(), ASTParser(), CoreProc
     namedValues("implement Num[Foo] { def add(a: Foo, b: Foo): Foo {a} }\ndef add(a: Foo, b: Foo): Foo = a")
       .asserting { nvs =>
         nvs.map(_.qualifiedName.value) should not contain QualifiedName("add", M)
-      }
-  }
-
-  it should "keep a parameter the brace never mentions at its own type (a slotless type has no T$Meta)" in {
-    namedValue("type Foo {bar: D}\ndef f(h: Handle): Foo {g(0)}", QualifiedName("f", M)).asserting { nv =>
-      nv.signature.value.structure shouldBe App(App(Ref("Function", T), Ref("Handle", T)), Ref("Foo$Meta", T))
-    }
-  }
-
-  it should "still retype a parameter the brace does mention" in {
-    namedValue("type Foo {bar: D}\ndef f(h: Handle, a: Foo): Foo {a.bar}", QualifiedName("f", M))
-      .asserting { nv =>
-        nv.signature.value.structure shouldBe App(
-          App(Ref("Function", T), Ref("Handle", T)),
-          App(App(Ref("Function", T), Ref("Foo$Meta", T)), Ref("Foo$Meta", T))
-        )
       }
   }
 

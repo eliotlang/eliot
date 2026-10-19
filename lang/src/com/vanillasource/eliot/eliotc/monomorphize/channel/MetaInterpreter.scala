@@ -1,12 +1,14 @@
 package com.vanillasource.eliot.eliotc.monomorphize.channel
 
 import cats.syntax.all.*
-import com.vanillasource.eliot.eliotc.core.processor.MetaConstructorDesugarer
+import com.vanillasource.eliot.eliotc.core.fact.Expression
+import com.vanillasource.eliot.eliotc.core.processor.{MetaCompanionLayout, MetaConstructorDesugarer}
 import com.vanillasource.eliot.eliotc.module.fact.{
   ModuleName,
   QualifiedName,
   Qualifier,
   UnifiedModuleNames,
+  UnifiedModuleValue,
   ValueFQN,
   WellKnownTypes
 }
@@ -17,6 +19,8 @@ import com.vanillasource.eliot.eliotc.monomorphize.processor.EscalatingReducer
 import com.vanillasource.eliot.eliotc.platform.Platform
 import com.vanillasource.eliot.eliotc.processor.CompilerIO.*
 import com.vanillasource.eliot.eliotc.source.content.Sourced
+
+import scala.annotation.tailrec
 
 /** **The meta interpretation** (`docs/total-meta-transfers.md` §6.2 / P4) — the answer to the one question *"what is
   * this value's meta-information?"*, and the place the closure invariant of §2 is actually executed:
@@ -264,32 +268,88 @@ object MetaInterpreter {
       .map(_.names.contains(RefinementChannelProcessor.metaCompanionName(callee)))
 
   /** Reduce a **stated** transfer — a `^Meta` companion — on the argument metas, and read back the domain structure it
-    * produced. The companion is reduced at the **meta** type arguments (the call's own, mapped through [[metaTypeOf]]),
-    * so a generic companion's bare type-parameter parameters bind to the meta type and its `join`/arithmetic always
-    * lands on a real `Meta` instance rather than a stuck non-existent `T$Meta`.
+    * produced. The companion is reduced at [[companionTypeArguments]] — the callee's own type arguments, then the meta
+    * types of its parameters and result — so a generic companion's `join`/arithmetic always lands on a real `Meta`
+    * instance rather than a stuck non-existent `T$Meta`.
     *
     * `None` (⊤) when an input is unknown in a way the companion's body actually projects: an unknown argument is a
     * `SemValue.VType` placeholder the reduction ignores unless it feeds a slot projection, in which case the projection
-    * stalls and the result does not quote to a structure. Reduction runs through the post-monomorphize linker-executor
-    * ([[EscalatingReducer]]), so a transfer routed through an ability instance resolves through that instance's own
-    * monomorphization instead of sticking on the abstract ability method.
+    * stalls and the result does not quote to a structure. `None` too for a call that does not apply exactly the
+    * companion's parameters — a partial application is a function value, whose type carries no meta. Reduction runs
+    * through the post-monomorphize linker-executor ([[EscalatingReducer]]), so a transfer routed through an ability
+    * instance resolves through that instance's own monomorphization instead of sticking on the abstract ability method.
     */
   private def reduceTransfer(
       callee: ValueFQN,
       calleeTypeArgs: Seq[GroundValue],
       argMetas: Seq[Option[GroundValue]]
-  ): CompilerIO[Option[GroundValue]] =
-    for {
-      metaTypeArgs <- calleeTypeArgs.traverse(metaTypeOf)
-      result       <- EscalatingReducer.reduceApplied(
-                        RefinementChannelProcessor.metaCompanionFqn(callee),
-                        metaTypeArgs,
-                        argMetas.map {
-                          case Some(gv) => Evaluator.groundToSem(gv) // the argument's own meta value, passed opaquely
-                          case None     => SemValue.VType            // ⊤ placeholder: an unknown/untracked argument
-                        }
-                      )
-    } yield result.collect { case s: GroundValue.Structure => s }
+  ): CompilerIO[Option[GroundValue]] = {
+    val companion = RefinementChannelProcessor.metaCompanionFqn(callee)
+    companionTypeArguments(callee, companion, calleeTypeArgs, argMetas.size, withResult = true).flatMap {
+      case Some(metaTypes) =>
+        EscalatingReducer
+          .reduceApplied(
+            companion,
+            calleeTypeArgs ++ metaTypes,
+            argMetas.map {
+              case Some(gv) => Evaluator.groundToSem(gv) // the argument's own meta value, passed opaquely
+              case None     => SemValue.VType            // ⊤ placeholder: an unknown/untracked argument
+            }
+          )
+          .map(_.collect { case s: GroundValue.Structure => s })
+      case None            => none[GroundValue].pure[CompilerIO]
+    }
+  }
+
+  /** The meta types a companion of `callee` is instantiated at after the callee's own type arguments — one per parameter
+    * and, `withResult`, one for the result ([[com.vanillasource.eliot.eliotc.core.processor.MetaCompanionLayout]]) — or
+    * `None` when the call does not apply exactly the `companion`'s parameters.
+    *
+    * The types are read from the callee's **payload signature**, evaluated at its type arguments by the one evaluator: so
+    * an alias, a computed type or a type parameter has the meta type of what it denotes, and a code parameter that of the
+    * value its code yields. As many arrows are peeled as the companion takes parameters, so a function-typed result stays
+    * whole.
+    */
+  private[channel] def companionTypeArguments(
+      callee: ValueFQN,
+      companion: ValueFQN,
+      calleeTypeArgs: Seq[GroundValue],
+      appliedArgs: Int,
+      withResult: Boolean
+  ): CompilerIO[Option[Seq[GroundValue]]] =
+    companionArity(companion).flatMap {
+      case arity if arity === appliedArgs =>
+        EscalatingReducer
+          .reduceApplied(ValueFQN(callee.moduleName, MetaCompanionLayout.payloadName(callee.name)), calleeTypeArgs, Seq.empty)
+          .flatMap {
+            case Some(payload) =>
+              peel(payload, arity) match {
+                case Some((parameters, result)) =>
+                  (if (withResult) parameters :+ result else parameters).traverse(metaTypeOf).map(_.some)
+                case None                       => none[Seq[GroundValue]].pure[CompilerIO]
+              }
+            case None          => none[Seq[GroundValue]].pure[CompilerIO]
+          }
+      case _                              => none[Seq[GroundValue]].pure[CompilerIO]
+    }
+
+  /** How many parameters `companion` takes: its body's leading lambdas, one per parameter as the desugarer writes them.
+    * The arrow chain of a signature cannot say, since a function-typed result is an arrow too.
+    */
+  private[channel] def companionArity(companion: ValueFQN): CompilerIO[Int] =
+    getFactOrAbort(UnifiedModuleValue.Key(companion, Platform.Compiler))
+      .map(_.namedValue.runtime.fold(0)(body => leadingLambdas(body.value)))
+
+  @tailrec
+  private def leadingLambdas(expression: Expression, count: Int = 0): Int = expression match {
+    case Expression.FunctionLiteral(_, _, body) => leadingLambdas(body.value, count + 1)
+    case _                                      => count
+  }
+
+  /** The first `count` parameter types of a function type and what remains, or `None` if it has fewer arrows. */
+  private def peel(functionType: GroundValue, count: Int): Option[(Seq[GroundValue], GroundValue)] =
+    if (count === 0) Some((Seq.empty, functionType))
+    else functionType.asFunctionType.flatMap((parameter, rest) => peel(rest, count - 1).map((ps, r) => (parameter +: ps, r)))
 
   /** The **meta type** of a base type — its `$Meta` meta structure if the type declares one (a slotted type like `Int`
     * ⤳ `Int$Meta`), else the trivial [[unitType]] (an untracked type carries no refinement, so its meta is `Unit`).

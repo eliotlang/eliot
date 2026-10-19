@@ -411,9 +411,13 @@ contain `data` (a chosen representation), a native leaf, or any representation-d
   it settled: a transfer lives in the layer that owns the **fact it states** (an operation's own bound in the base, a
   representation's in the platform layer), and a leaf's statement is **axiomatic** — nothing rechecks it — so a bound
   that is merely usually true (POSIX's `[0, 255]` for an exit code, which Windows breaks) is a bug, and the honest
-  wide statement wins. A brace also could not be written on a def with an **untracked parameter** until S5 fixed the
-  companion desugarer: the `^Meta`/`^Where` name transform `T` ⤳ `T$Meta` only exists for slotted types, so a
-  parameter the brace never mentions now keeps its own type (`core/processor/MetaCompanionReferences`).
+  wide statement wins. **A companion never names a meta type** (`core/processor/MetaCompanionLayout`,
+  `docs/total-meta-transfers.md` §8.8): naming one by spelling (`T` ⤳ `T$Meta`) failed for an alias, a computed type,
+  a type parameter and every slotless type. A `^Meta`/`^Where` companion takes the def's binders (as its effect desugar
+  leaves them, so they line up with the callee's key), one binder per parameter and, for a transfer, one for the result;
+  the channel instantiates them with `MetaInterpreter.metaTypeOf` of the def's **payload signature** `<name>$Payload`,
+  a generated type the one evaluator reduces at the callee's type arguments (a code parameter reads as what its code
+  yields). What is still named from spelling is a slot-producing brace's meta *constructor* (`Int$Meta(…)`).
 - `def foldLeft[A, B](initial: B, combine: ..., list: List[A]): B` — an abstract function, signature only.
 - A `type X = ...` alias and a body-less `type X` differ only by having a body; `data X(...)` is the *concrete*
   form that additionally introduces a value constructor.

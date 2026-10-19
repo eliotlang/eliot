@@ -594,9 +594,9 @@ per-parameter: a parameter the brace never mentions is dead in the companion, so
 (`core/processor/MetaCompanionReferences`). A parameter the brace *does* mention is retyped as before, so projecting
 an untracked parameter still fails loudly. `MetaWhereDesugarer` had the identical defect for `where` predicates — a
 `where` over an `Int` parameter failed if any *other* parameter of the def was untracked — and took the same rule,
-until §8.8 replaced the name transform for `where` altogether.
+until §8.8 replaced the name transform, and this rule with it.
 
-**8.8 A companion's parameter meta types are read from evaluated types, not named — LANDED for `where` (2026-10-19).**
+**8.8 A companion's parameter meta types are read from evaluated types, not named — LANDED (2026-10-19).**
 §8.7 fixed the symptom, not the cause: `T` ⤳ `T$Meta` reads the *spelling* of a type, and a type is an expression.
 Three shapes failed for a `where`: a parameter typed by an alias (`type Byte = Int`, "Name not defined." at
 `Byte$Meta`), or by any other type that is not a bare slotted name (an alias of an alias, a computed type, a type
@@ -623,9 +623,36 @@ pure function and cannot ask whether a type declares a meta, and a per-type gene
 
 A parameter whose meta type is `Unit` counts as **known** (there is nothing to know) and is passed as an opaque
 placeholder; a predicate that reads it anyway fails to check in the companion and is reported. A *tracked* argument
-whose meta is ⊤ still cannot discharge a demand. The `^Meta` transfer companion still uses the name transform and
-§8.7's rule; moving it to the same shape is the next step, and its slot-producing body's meta *constructor*
-(`Int$Meta(…)`, named from the spelled return type) is a separate, open question.
+whose meta is ⊤ still cannot discharge a demand.
+
+*The transfer companion takes the same shape*, plus one binder for the result, so `fold^Meta[A, Meta$condition,
+Meta$whenTrue, Meta$whenFalse, Meta$]` binds `A` to what it is (the old reduction at the *meta* type arguments bound
+`A` to `Int$Meta`, a pun `integerLiteral`'s `V` survived only because `metaTypeOf` passed non-types through). That
+deleted `MetaCompanionReferences` and §8.7's rule with it. Both companions are now built by `MetaCompanionLayout`.
+
+*Where the types come from: the payload signature.* The callee's monomorphic signature was the first source, and it is
+wrong for a **code parameter**: the callee receives `whenTrue` as a thunk `Unit => A`, while a companion reads it as
+the value its code yields (`A` — the payload rule `EffectSugarDesugarer` already applies in the meta namespace), so
+`fold`'s `join(whenTrue, whenFalse)` failed to check over `Unit`. Peeling the thunk in the channel would have meant
+reading the declaration's effect row and re-deriving how the effect desugar shifted parameter indices. Instead each def
+with a companion gets one more generated value, `<name>$Payload[<its binders>]: Type = Function[P1, Function[…, R]]`,
+the parameter and result types *as a companion reads them*; the channel reduces it at the callee's type arguments
+(the one evaluator, so an alias is what it denotes) and peels as many arrows as the companion takes parameters — that
+count is the companion's own leading lambdas, because a signature's arrow chain cannot tell a parameter from a
+function-typed result. Counting the companion rather than the callee's body also closes a fail-open: `naturalArity`
+is `None` for a body-less callee, so a `where` on a native leaf would never have been demanded (none exists in the
+tree).
+
+*One consequence for `where`.* A code parameter is now read at its payload's meta type, and a code argument reaches
+the channel as a thunk, whose meta is never known — so a `where` on a def with a code parameter yielding a tracked
+type (`body uses *: Int`) cannot be proven under "every argument's meta must be known", even when the predicate never
+reads it. (Before this change it could not be either; the brief interim that typed code parameters as function values
+admitted it by accident.) Demanding only what the predicate reads is the obvious refinement — a well-typed predicate
+can observe a meta only through its type's eliminators, which stall on the placeholder — but it narrows a decided
+fail-safe and is left for a decision.
+
+Still open: a slot-producing brace's meta *constructor* (`Int$Meta(…)`) is named from the spelled result type, so a
+leaf whose result type is an alias fails to resolve it, loudly; parameter braces need the same thing.
 
 ---
 

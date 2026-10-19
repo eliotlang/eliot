@@ -18,16 +18,15 @@ notes.
   written `Bounded(0)` / `Bounded(0 - 1)`. What remains is the general case: an *ordinary def body* is
   runtime-track, so a helper called from a brace still cannot name a `BigInteger` constant in value position —
   which is why `rangeWithin[Lo, Hi]` takes its bounds as type parameters.
-- **The `^Meta` transfer companion reads a type's *head name*; it must take its parameters' meta types from evaluated
-  types instead.** Done for the `$Where` companion (`docs/total-meta-transfers.md` §8.8): it takes one binder per
-  parameter, and the channel monomorphizes it at `metaTypeOf` of each parameter's *evaluated* type, so an alias, a
-  computed type or a type parameter works, and a predicate may name the def's own type parameters. The transfer
-  companion (`MetaTransferDesugarer`) still types each mentioned parameter by the name transform `Int` ⤳ `Int$Meta`
-  (with `MetaCompanionReferences` keeping unmentioned ones at their own type) and binds a generic def's own type
-  parameters to their *meta* types; it should move to the same shape — the def's binders at their real arguments, one
-  meta binder per parameter and one for the return — which deletes `MetaCompanionReferences`. Separate and open: a
-  slot-producing brace's body builds its result with the meta *constructor* named from the spelled return type
-  (`Int$Meta(…)`), so a leaf whose return is an alias still fails (loudly); parameter braces below need the same thing.
+- **A slot-producing transfer brace names its meta *constructor* from the spelled result type.** Companions no longer
+  name meta *types* (`docs/total-meta-transfers.md` §8.8), but a brace like `{closed(0, 255)}` on a leaf builds its
+  result as `Int$Meta(…)`, the constructor named by suffixing the result type as written, so a leaf whose result type
+  is an alias fails to resolve it (loudly). Parameter braces below need the same thing. The likely shape: the channel
+  applies the meta value constructor beside the meta type `metaTypeOf` already finds, and the companion returns slots.
+- **A `where` demands every argument's meta, even one its predicate never reads.** A code argument reaches the channel
+  as a thunk, whose meta is never known, so a `where` on a def with a code parameter yielding a tracked type
+  (`body uses *: Int`) can never be proven (§8.8). Demanding only what the predicate reads would fix it, but narrows the
+  decided "⊤ cannot discharge a demand" fail-safe — needs a decision.
 - **Meta braces in parameter position: `def writeByte(b: Int {byte}): Unit`.** Decided in principle
   2026-09-15, not built. The problem it answers is a reusable "Byte": today a bound can only be *demanded* by a
   `where` (`where within(byte, range(b))`, with `def byte: Interval[BigInteger] = closed(0, 255)` as the
@@ -55,8 +54,8 @@ notes.
   constructor call and its generated accessor may state it as a leaf would (construction is the only supplier).
   Grammar is the adjacency rule already in use: a brace *before* a type is an effect row, a brace *adjacent after*
   a type atom is its meta. This is Option B's deferred "contract annotation in value position" minus the splice it
-  feared; the *refined alias* half of that deferral is closed for the reason above. Depends on the companion fix
-  above for the meta constructor of a parameter not typed by a bare slotted name.
+  feared; the *refined alias* half of that deferral is closed for the reason above. Depends on the meta-constructor
+  item above for a parameter not typed by a bare slotted name.
 - **Flow grades: quantitative computation tracking (cycles/WCET, stack, peak memory) on the
   effect row.** Design sketched 2026-07-10 in the bounds-as-refinements discussion. The dependency
   ladder is ranges → sizes → grades (fold cost needs sizes, frame sizes need ranges): the

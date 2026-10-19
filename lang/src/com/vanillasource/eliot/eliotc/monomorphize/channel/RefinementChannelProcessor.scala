@@ -213,11 +213,11 @@ class RefinementChannelProcessor
     * `def f(x: Int): T where withinByte(range(x))` desugars to a `^Where` companion `f$Where[Meta$x](x: Meta$x): Bool =
     * withinByte(range(x))` ([[MetaWhereDesugarer]]); at a *full* call to `f` that companion is reduced on the compiler
     * track over the arguments' metas ([[demandPrecondition]]). The companion takes every parameter the callee's
-    * signature has, its handles included, so a call is full when it applies the callee's natural arity. A partial
-    * application is a function value with an undemandable precondition and is rejected; a callee that declares no
-    * companion has no `where`. The presence of a companion is a cheap per-module [[UnifiedModuleNames]] membership test,
-    * so an ordinary call to a `where`-free callee costs one cached lookup and never demands a non-existent companion
-    * fact.
+    * signature has, its handles included, so a call is full when it applies that many arguments — a native callee's
+    * included, since the count is the companion's own. A partial application is a function value with an undemandable
+    * precondition and is rejected; a callee that declares no companion has no `where`. The presence of a companion is a
+    * cheap per-module [[UnifiedModuleNames]] membership test, so an ordinary call to a `where`-free callee costs one
+    * cached lookup and never demands a non-existent companion fact.
     */
   private def checkWhere(
       callNode: Sourced[MonomorphicExpression],
@@ -229,20 +229,15 @@ class RefinementChannelProcessor
     hasWhereCompanion(callee).flatMap {
       case false => ().pure[CompilerIO]
       case true  =>
-        getFactIfProduced(MonomorphicValue.Key(callee, calleeTypeArgs)).flatMap {
-          case Some(mv) =>
-            mv.naturalArity match {
-              case Some(arity) if arity > 0 && appliedArgs >= arity =>
-                val parameterTypes = mv.signature.extractParamAndReturnTypes._1.take(arity)
-                demandPrecondition(callNode, callee, calleeTypeArgs, parameterTypes, argMetas.take(arity))
-              case Some(arity) if arity > 0                         =>
-                // A *partial* application of a `where`-bearing def is a function value with an undemandable precondition
-                // — the same escape as a bare reference (§2.1). Reject it loudly rather than let the partial value flow
-                // to a call the channel cannot see.
-                rejectWhereAsValue(callNode, callee)
-              case _                                                => ().pure[CompilerIO]
-            }
-          case None     => ().pure[CompilerIO]
+        MetaInterpreter.companionArity(whereCompanionFqn(callee)).flatMap {
+          case arity if arity > 0 && appliedArgs >= arity =>
+            demandPrecondition(callNode, callee, calleeTypeArgs, argMetas.take(arity))
+          case arity if arity > 0                         =>
+            // A *partial* application of a `where`-bearing def is a function value with an undemandable precondition
+            // — the same escape as a bare reference (§2.1). Reject it loudly rather than let the partial value flow to a
+            // call the channel cannot see.
+            rejectWhereAsValue(callNode, callee)
+          case _                                          => ().pure[CompilerIO]
         }
     }
 
@@ -269,8 +264,8 @@ class RefinementChannelProcessor
 
   /** Evaluate a callee's `^Where` companion over the call's argument metas and turn the verdict into a use-site error or
     * a pass. The companion is monomorphized at the callee's own type arguments followed by the **meta type** of each
-    * parameter's type ([[MetaInterpreter.metaTypeOf]]) — read from the callee's monomorphic signature, so the type is the
-    * evaluated one and an alias or a computed type has the meta type of what it denotes.
+    * parameter's type ([[MetaInterpreter.companionTypeArguments]]) — evaluated, so an alias or a computed type has the
+    * meta type of what it denotes.
     *
     * Every argument's meta must be known: ⊤ cannot discharge a demand (the fail-safe of §4.3). A parameter whose type
     * carries no meta has meta type `Unit`, which *is* known — there is nothing to know — and is passed as an opaque
@@ -286,36 +281,45 @@ class RefinementChannelProcessor
       callNode: Sourced[MonomorphicExpression],
       callee: ValueFQN,
       calleeTypeArgs: Seq[GroundValue],
-      parameterTypes: Seq[GroundValue],
       argMetas: Seq[Option[GroundValue]]
   ): CompilerIO[Unit] =
-    parameterTypes.traverse(MetaInterpreter.metaTypeOf).flatMap { metaTypes =>
-      metaTypes.zip(argMetas).traverse {
-        case (_, Some(meta))                                          => Some(Evaluator.groundToSem(meta))
-        case (metaType, None) if metaType == MetaInterpreter.unitType => Some(SemValue.VType)
-        case _                                                        => None
-      } match {
-        case None            =>
-          Sourced.compilerError(
-            callNode.as(
-              s"Cannot prove the precondition of '${callee.show}': an argument's meta-information is not known here."
-            ),
-            Seq(
-              "A `where` precondition demands provable meta-information — pass a value the compiler can pin, such as a literal."
-            )
-          )
-        case Some(arguments) =>
-          EscalatingReducer.reduceApplied(whereCompanionFqn(callee), calleeTypeArgs ++ metaTypes, arguments).flatMap {
-            case Some(gv) if isBoolTrue(gv)  => ().pure[CompilerIO]
-            case Some(gv) if isBoolFalse(gv) =>
+    MetaInterpreter
+      .companionTypeArguments(callee, whereCompanionFqn(callee), calleeTypeArgs, argMetas.size, withResult = false)
+      .flatMap {
+        case None            => cannotEvaluate(callNode, callee)
+        case Some(metaTypes) =>
+          metaTypes.zip(argMetas).traverse {
+            case (_, Some(meta))                                          => Some(Evaluator.groundToSem(meta))
+            case (metaType, None) if metaType == MetaInterpreter.unitType => Some(SemValue.VType)
+            case _                                                        => None
+          } match {
+            case None            =>
               Sourced.compilerError(
-                callNode.as(s"The precondition of '${callee.show}' is not satisfied by the argument's meta-information.")
+                callNode.as(
+                  s"Cannot prove the precondition of '${callee.show}': an argument's meta-information is not known here."
+                ),
+                Seq(
+                  "A `where` precondition demands provable meta-information — pass a value the compiler can pin, such as a literal."
+                )
               )
-            case _                           =>
-              Sourced.compilerError(callNode.as(s"Cannot evaluate the `where` precondition of '${callee.show}'."))
+            case Some(arguments) =>
+              EscalatingReducer
+                .reduceApplied(whereCompanionFqn(callee), calleeTypeArgs ++ metaTypes, arguments)
+                .flatMap {
+                  case Some(gv) if isBoolTrue(gv)  => ().pure[CompilerIO]
+                  case Some(gv) if isBoolFalse(gv) =>
+                    Sourced.compilerError(
+                      callNode.as(
+                        s"The precondition of '${callee.show}' is not satisfied by the argument's meta-information."
+                      )
+                    )
+                  case _                           => cannotEvaluate(callNode, callee)
+                }
           }
       }
-    }
+
+  private def cannotEvaluate(callNode: Sourced[MonomorphicExpression], callee: ValueFQN): CompilerIO[Unit] =
+    Sourced.compilerError(callNode.as(s"Cannot evaluate the `where` precondition of '${callee.show}'."))
 
   private def isBoolTrue(gv: GroundValue): Boolean = gv match {
     case GroundValue.Direct(Literal.BooleanValue(true), _) => true
