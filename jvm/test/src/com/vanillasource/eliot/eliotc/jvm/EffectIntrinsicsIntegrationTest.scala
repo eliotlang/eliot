@@ -11,17 +11,11 @@ import java.io.{ByteArrayOutputStream, PrintStream}
 import java.net.URLClassLoader
 import java.nio.file.{Files, Path}
 
-/** End-to-end proof of the compile track's escape and cell intrinsics (`EffectIntrinsics`, `docs/effects.md` §3.4)
-  * through the real evaluator paths: an ability guard is decided by a pure def that discharges a control effect or
-  * threads a cell, reduced on the compiler track, so each `handler[..]` site is bound to one implementation in the
-  * emitted bytecode.
-  *
-  * The escape is the real one: the compile-track overlay's `runThrow`/`else` over its `escapeIntrinsic`, with each
-  * frame handed along the declared chain. The cell has no compile-track effect written over it, so the program
-  * declares the primitives itself as body-less defs in the module the intrinsics are keyed on (`eliot.compiler.Cell`):
-  * the native category answers for those FQNs regardless of which root declares them. The cell holds a `Bool`: a
-  * body-less leaf whose bare generic result is instantiated at a meta-carrying type (`read[S]` at `String`) must
-  * state a transfer (R2).
+/** End-to-end proof of the compile track's escape intrinsic (`EffectIntrinsics`, `docs/effects.md` §3.4) through the
+  * real evaluator paths: an ability guard is decided by a pure def that discharges a control effect, reduced on the
+  * compiler track, so each `handler[..]` site is bound to one implementation in the emitted bytecode. The escape is the
+  * real one: the compile-track overlay's `runThrow`/`else` over its `escapeIntrinsic`, with each frame handed along
+  * the declared chain.
   *
   * As in `ListGuardReductionIntegrationTest`, a pair of guarded implementations selected from one program is the
   * point: a guard that could not reduce would fail to select, not select wrongly.
@@ -29,32 +23,12 @@ import java.nio.file.{Files, Path}
 class EffectIntrinsicsIntegrationTest extends AsyncFlatSpec with AsyncIOSpec with Matchers {
   import EffectIntrinsicsIntegrationTest.*
 
-  private val primitives = Map(
-    "eliot/compiler/Cell" ->
-      """def withCell[S, A](key: Type, initial: S, body uses *: A) uses *: Pair[A, S]
-        |def read[S](key: Type): S
-        |def write[S](key: Type, s: S): Unit
-        |""".stripMargin
-  )
-
-  /** A conditional arm as data, so `fold` selects between plain values and the chosen thunk is applied afterwards: a
-    * native fires the moment it is applied, so `exit` may only sit in the arm that is *run*, never in one merely
-    * *passed*. (A function-typed `Id` payload — `val f = fold(c, thunk1, thunk2)` — trips a compile-track mismatch of
-    * its own, `Unit -> Bool` against `Function[Unit, Bool]` at the overlay `Id`'s accessor; unrelated to the primitives.)
-    */
   private val prelude =
     """import eliot.effect.Console
-      |import eliot.compiler.Cell
       |ability Route[S: String] { def handler: String }
-      |data Arm(run: Function[Unit, Bool])
-      |def pick(c: Bool, whenTrue: Arm, whenFalse: Arm): Bool = {
-      |   val arm = fold(c, whenTrue, whenFalse)
-      |   run(arm)(unit)
-      |}
-      |def keep[A, B](a: A, b: B): B = b
       |""".stripMargin
 
-  private def program(body: String): Map[String, String] = primitives + ("Test" -> (prelude + body))
+  private def program(body: String): Map[String, String] = Map("Test" -> (prelude + body))
 
   "an ability guard that escapes" should "select by whether the body exited" in {
     runProject(
@@ -81,19 +55,6 @@ class EffectIntrinsicsIntegrationTest extends AsyncFlatSpec with AsyncIOSpec wit
           |""".stripMargin
       )
     ).asserting(_ shouldBe "outer/inner")
-  }
-
-  "an ability guard over a cell" should "thread a written content to a read and out of the frame" in {
-    runProject(
-      program(
-        """def accepted(s: String): Bool =
-          |   foldPair(a -> b -> a && b, withCell(Bool[], false, keep(write(Bool[], s == "/api"), read(Bool[]))))
-          |implement[S: String] Route[S] where accepted(S) { def handler: String = "hit" }
-          |implement[S: String] Route[S] where !accepted(S) { def handler: String = "miss" }
-          |def main uses Console: Unit = printLine(handler["/api"] ++ "/" ++ handler["/x"])
-          |""".stripMargin
-      )
-    ).asserting(_ shouldBe "hit/miss")
   }
 }
 

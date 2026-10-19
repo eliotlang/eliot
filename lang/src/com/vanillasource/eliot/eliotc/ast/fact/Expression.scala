@@ -45,8 +45,9 @@ object Expression {
 
   /** An effect row on a type, `{ E1, E2, … } A`: the unordered set of `effects` a computation *performs*, on
     * implementations its caller binds. Pure, type-information-free — it never survives past the core processor, where
-    * [[core.processor.EffectSugarDesugarer]] turns each entry into one **binding binder** marked
-    * `Implementation[Console]` and erases the row from the type (`docs/effects.md` §3.1).
+    * [[core.processor.EffectSugarDesugarer]] turns each entry into a **handle** — a binder of kind `Type` and a value
+    * parameter of that type, recorded in `EffectRow.handles` — and erases the row from the type (`docs/effects.md`
+    * §3.1).
     *
     * **A user writes it in one place only**, the body of a row alias (`type Git[A] = {Process, FileSystem} A`, see
     * [[rowAliasBodyParser]]); everywhere else the spelling is a `uses` clause (`docs/effects.md` D21), which the parser
@@ -59,11 +60,11 @@ object Expression {
       resultType: Sourced[Expression]
   ) extends Expression
 
-  /** `subject with implementation` — effects v6's binding of a named implementation to its subject
-    * (`docs/effects.md` §9.3). Infix, subject-first, at the loosest precedence and left-associative: `c with a with b`
+  /** `subject with implementation` — the binding of a named implementation to its subject (`docs/effects.md` §2, D23):
+    * its handle is in scope for `subject`, where the checker's hole rule may give it to any use. Infix, subject-first, at the loosest precedence and left-associative: `c with a with b`
     * is `(c with a) with b`, and `xs.sort.render with reverseOrd` applies to the whole chain. It is an expression
     * only (`greeting("Bob") with recordingConsole`): on a parameter or a field it is refused, naming the `with` around
-    * the run (`docs/effects.md` D35), and on a def's own return type or inside a row it is a parse error by
+    * the run, and on a def's own return type or inside a row it is a parse error by
     * construction. `implementation` is a bare, optionally module-qualified name.
     */
   case class WithBinding(subject: Sourced[Expression], implementation: Sourced[Expression]) extends Expression

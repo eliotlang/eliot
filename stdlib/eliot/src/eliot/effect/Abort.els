@@ -22,8 +22,8 @@
  * }
  * ```
  *
- * A **control effect**: one implementation per platform over that platform's private exit primitive, so there
- * is no interpretation to choose and nothing to bind with `with`.
+ * A **control effect**: one implementation per platform over that platform's private exit primitive, bound by its
+ * discharger, so there is no interpretation to choose and nothing for a user to bind with `with`.
  */
 effect Abort {
    /**

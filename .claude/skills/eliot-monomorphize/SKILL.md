@@ -343,9 +343,8 @@ shape that recovered there was a pure term meeting a carrier-headed expectation 
 bind arm either — a slot that must sequence never needed one, the `row/` phase having already written every binding
 from the declaration (§1 rule 4).
 
-A slot may still be **deferred** and decided after the spine by `resolveDeferredSlot`. **This is the compile track's
-mid-spine decision**, exercised by the `Either` guard discharge; the runtime track produces no deferral at all.
-Non-equality concerns live in collaborator modules, each
+No slot is deferred past its spine on either track: the compile track's deferred slots and `resolveDeferredSlot` were
+deleted (4bb25c00). Non-equality concerns live in collaborator modules, each
 constructed at the top of `Checker` with **exactly the checker primitives it needs** (that narrow surface is the module
 boundary), and invoked from named hook points:
 
@@ -458,10 +457,7 @@ Pattern unification on `SemValue`s with a `postponed` queue (`drain()` retries u
 `unify` is **pure definitional equality**: no assignability, no widening, no `refinements` map, and **no carrier
 decomposition rule** (`Int` is nullary; value ranges ride the `channel/` post-pass, strictly downstream of typing).
 Teaching it carrier decomposition was considered and rejected — with the carrier written, the flex-flex
-`?F[X] ~ ?G[Y]` shape it would solve does not arise on the runtime track. The one deliberate side-door is the
-compile track's pass-through *adoption*
-(`Checker.resolveDeferredSlot`): solving a bare domain meta to the carrier-headed argument type via ordinary `doUnify`,
-so the effect rides up and the enclosing slot decides.
+`?F[X] ~ ?G[Y]` shape it would solve does not arise on either track.
 
 `flushPostponed` runs after the finalizer: still-postponed constraints become hard mismatch errors (fail-safe — see the
 post-drain sequence above). Pinned by `unify/PostponedFlushTest`.

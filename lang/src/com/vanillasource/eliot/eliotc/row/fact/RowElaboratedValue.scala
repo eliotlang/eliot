@@ -19,8 +19,8 @@ import com.vanillasource.eliot.eliotc.processor.{CompilerFact, CompilerFactKey}
   * callee's fixity or effect row keep reading the [[OperatorResolvedValue]] directly.
   *
   * @param value
-  *   The operator-resolved value with its elaborated runtime body (a body-less or non-elaborable value is carried
-  *   through unchanged).
+  *   The operator-resolved value with its signature and runtime body written (a `@Signature` twin's or a type
+  *   constructor's body is carried through unchanged).
   */
 case class RowElaboratedValue(value: OperatorResolvedValue) extends CompilerFact {
   override def key(): CompilerFactKey[RowElaboratedValue] = RowElaboratedValue.Key(value.vfqn, value.platform)

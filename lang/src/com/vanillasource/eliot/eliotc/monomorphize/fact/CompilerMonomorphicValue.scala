@@ -51,9 +51,6 @@ case class CompilerMonomorphicValue(
 ) extends CompilerFact {
   override def key(): CompilerFactKey[CompilerMonomorphicValue] =
     CompilerMonomorphicValue.Key(vfqn, typeArguments)
-
-  /** The number of leading lambdas of the reduced body, as [[MonomorphicValue.naturalArity]]. */
-  def naturalArity: Option[Int] = reduced.map(body => MonomorphicValue.countLeadingLambdas(body.value, 0))
 }
 
 object CompilerMonomorphicValue {

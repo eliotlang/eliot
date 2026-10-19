@@ -8,18 +8,18 @@ import com.vanillasource.eliot.eliotc.ast.parser.{Parser, ParserError}
 import com.vanillasource.eliot.eliotc.source.content.Sourced
 import com.vanillasource.eliot.eliotc.token.Token
 
-/** A **named** `implement` — effects v6's addressable implementation (`docs/effects.md` §9.3):
+/** A **named** `implement` — an effect's implementation (`docs/effects.md` §2, §3.1):
   *
   * {{{
   * implement recordingConsole: Console {
-  *    def printLine(s: String): {Writer[String]} Unit = tell(s ++ ";")
+  *    def printLine(s: String) uses Writer[String]: Unit = tell(s ++ ";")
   *    def readLine: Option[String] = None
   * }
   * }}}
   *
   * It is never a default: it may live anywhere, is never searched, and is bound to a subject only by `with`
-  * ([[Expression.WithBinding]]). The anonymous form stays [[ImplementBlock]]. Landed dark (§10.1 step 4): parsed into
-  * this node, carried on the [[AST]], and rejected at core as not supported yet.
+  * ([[Expression.WithBinding]]). It lowers to a `data` — its handle, its parameters as fields — and its effect's
+  * instance at the handle's type. The anonymous form, an ability's default, is [[ImplementBlock]].
   *
   * @param name
   *   The implementation's own (lower-case) name, the one `with` refers to.
@@ -74,8 +74,8 @@ object NamedImplementation {
               .between(symbol("{"), symbol("}"))
               .optional()
               .map(_.getOrElse(Seq.empty, Seq.empty))
-          // What the implementation itself performs, on every clause: `with recordingConsole` writes not only the
-          // marker but the implementations its clauses' `{Writer[String]}` runs on (effects v6 §9.4 step 3).
+          // What the implementation itself performs, on every clause ([[ImplementationRows]]): a clause's
+          // `uses Writer[String]` beyond its member's is captured where `with recordingConsole` binds it.
           clauseRow                  = ImplementationRows.union(members.collect { case (f, true) => f })
           functions                  = members.map { case (f, isClause) =>
                                          if (isClause) ImplementationRows.carrying(clauseRow, f) else f

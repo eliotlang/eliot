@@ -121,8 +121,8 @@ effect FileSystem {
  * declares `uses FileSystem`. Declared here and bodied by each platform, so code can be run on the real implementation
  * portably, with `with standardFileSystem`.
  *
- * Its clauses are declared here, without bodies, because some perform `Throw[IoError]`: a `with standardFileSystem`
- * binds that too, so what the implementation performs is part of its declaration, not of a platform's body.
+ * Its clauses repeat its members': a `Throw[IoError]` a member declares is the call's, handed by whoever calls the
+ * operation, and nothing a `with standardFileSystem` binds.
  */
 implement standardFileSystem: FileSystem {
    def readFile(path: Path) uses Throw[IoError]: String

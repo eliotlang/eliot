@@ -370,11 +370,11 @@ Two properties hand over, for free, the guards CTFE needs elsewhere:
      compile track's `Abort` and `Throw` (`stdlib/eliot/compiler/eliot/effect/`) are written over the escape
      intrinsic (`monomorphize/processor/EffectIntrinsics`), with their frames threaded along the declared chain
      (`docs/effects.md` §3.4). That is the same reduction that makes a guarded return type reduce during checking.
-   - **`State` and `Writer` do not reduce today.** Nothing implements them over the cell intrinsic that
-     `eliot/compiler/Cell.els` declares. So `runStateToPair(…)` and
+   - **`State` and `Writer` do not reduce today.** The compile track has no cell primitive and no implementation of
+     either. So `runStateToPair(…)` and
      `runWriterToLog(greeting("Bob") with recordingConsole)` are stuck and stay in the code — safe, merely
-     unoptimized. Each starts folding once its effect gets a compile-track implementation, the same overlay work
-     `Abort` and `Throw` got; the mocked `greeting` would then fold to `"Hello, Bob!;"`, since a named double is pure
+     unoptimized. Each starts folding once its effect gets a compile-track implementation — a cell intrinsic beside the
+     escape and an overlay written over it, the same work `Abort` and `Throw` got; the mocked `greeting` would then fold to `"Hello, Bob!;"`, since a named double is pure
      Eliot. The gate needs no change for that — only the compile track's coverage grows.
    - An undischarged `raise` or `abort` has no frame and is stuck; `printLine` under `main`'s binding reaches the
      platform's native and is stuck. Both stay in the code.

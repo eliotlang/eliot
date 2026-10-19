@@ -139,7 +139,7 @@ class ListIntegrationTest extends FullIntegrationTest {
   }
 
   // The interleaving is the assertion: `map`'s effects run once per element, front to back, as the list is built —
-  // not all at the end, and not once. This is the row-polymorphic callback shape (`RowChecker.parameterEnvironment`).
+  // not all at the end, and not once. This is the `f uses *: A => B` callback shape (`docs/effects.md` §2.1).
   "map" should "run an effectful function once per element, front to back, propagating its effects" in {
     compileAndRun(
       """

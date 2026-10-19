@@ -45,8 +45,8 @@ object AbilityMatcher {
     } yield attemptMatch(peeled, queryArgs, markerSignature)
 
   /** The type parameters an impl marker's **pattern** mentions — the ones [[matchImpl]] recovers from the query. A
-    * leading binder the pattern does not mention is a binding binder (a clause's, or a `~` constraint's): it occurs in
-    * no pattern argument, so the match has nothing to trace it from.
+    * leading binder the pattern does not mention occurs in no pattern argument, so the match has nothing to trace it
+    * from; a named implementation may not declare one (`docs/effects.md` D29).
     */
   def patternParameters(markerSignature: Sourced[OperatorResolvedExpression]): Set[String] =
     OperatorResolvedExpression.SignatureView.of(markerSignature).parameters.flatMap(p => mentioned(p.value)).toSet

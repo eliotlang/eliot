@@ -24,15 +24,15 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced.compilerError
 
 import scala.collection.mutable
 
-/** Effects v6's **write** phase (`docs/effects.md` §9.4 step 3): every reference in a demanded value's runtime body is
-  * given the implementation each of its callee's phantom binders stands for, every row-typed slot is thunked, and
-  * every `with` is consumed. See [[BindingWriter]] for the rules; this processor only supplies the declared world it
-  * needs and reports what it could not answer.
+/** The `row` phase (`docs/effects.md` §3.2): every handle position in a demanded value's signature and body is written
+  * a hole carrying its lexical candidates, every code parameter's actual a block or a thunk, and every `with` a `let`
+  * of its handle around its subject. See [[BindingWriter]] for the rules; this processor only supplies the declared
+  * world it needs and reports what it could not answer.
   *
   * Placed after [[RecursionCheckedValue]] (the recursion gate walks the *user's* reference graph) and before
   * `SaturatedValueProcessor`, so everything from saturation onwards sees written bodies and signatures with no
-  * `with` left in them. A value that is not [[RowChecker.checkable]] — body-less, a `@Signature` twin, a type constructor or
-  * a meta companion — is carried through unchanged.
+  * `with` left in them. Every signature is written; a body only on the runtime role and not a type constructor's, so a
+  * `@Signature` twin's or a type constructor's is carried through unchanged (`BindingWriter.writableBody`).
   *
   * **The universe is built by demand, not guessed.** The write is decision-free but not context-free: it consults the
   * declared signature, declared row and slot rows of every callee it meets, and the resolved qualifier of every
@@ -41,8 +41,9 @@ import scala.collection.mutable
   * misses nothing new; the last round's universe is complete for this value by construction.
   *
   * Every name is read as its [[OperatorResolvedValue]], its declaration. The fetch is [[getFactIfProduced]] by
-  * design: a referenced name legitimately has none when its own definition aborted upstream, and a reference the write cannot read is simply left alone — the
-  * fail-safe direction, since an unwritten binder is caught by the checker rather than silently defaulted.
+  * design: a referenced name legitimately has none when its own definition aborted upstream, and a reference the write
+  * cannot read is simply left alone — the fail-safe direction, since a handle no hole fills is caught by the checker
+  * rather than silently defaulted.
   */
 class RowElaborationProcessor
     extends TransformationProcessor[RecursionCheckedValue.Key, RowElaboratedValue.Key](key =>
@@ -61,8 +62,8 @@ class RowElaborationProcessor
     } yield RowElaboratedValue(written.value)
   }
 
-  /** The two definition-site rules of an implementation's marker, both of which keep effects and abilities apart
-    * (`docs/effects.md` D26, D29):
+  /** The definition-site rules of an implementation's marker, which keep effects and abilities apart (`docs/effects.md`
+    * D26, D29):
     *
     *   - an **anonymous** `implement` of an **effect** is an error: an anonymous implementation is its ability's
     *     default, found by the two-site search, and an effect has none — every binding of one is passed explicitly, so a
@@ -74,7 +75,8 @@ class RowElaborationProcessor
     *   - a clause of an **anonymous** implementation may perform only what its member declares: anything else would be
     *     held in the implementation's environment, from where it is bound, and an anonymous implementation is found by
     *     its type, never bound, so nothing could give it one (`docs/effects.md` §8 item 50). A named one's clauses may,
-    *     since its `with` binds what they perform beyond their members ([[DeclaredEntries.environment]]).
+    *     since what they perform beyond their members is captured where its `with` binds it
+    *     ([[com.vanillasource.eliot.eliotc.row.Captures]]).
     *
     * Effect-ness is read where it is recorded ([[AbilityKind]]).
     */
@@ -263,7 +265,7 @@ class RowElaborationProcessor
 
   /** Whether every value this one's body calls was itself written without error. Asked only when an effect is
     * over-declared, because that is the error a broken callee most often causes: a callee that performs `Console`
-    * without declaring it leaves its caller's `{Console}` unconsumed. Aborting here would stop the pipeline before the
+    * without declaring it leaves its caller's `Console` handle unused. Aborting here would stop the pipeline before the
     * callee's own write is ever demanded, so its error — the real one — would never be reported. So the callees are
     * demanded first, and a failed one withholds the caller's over-declaration: the callee's error explains it, and the
     * build fails on it either way.

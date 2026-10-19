@@ -171,11 +171,10 @@ class AbilityImplementationProcessor extends SingleKeyTypeProcessor[AbilityImple
 
   /** Does every type-parameter constraint of a structurally-matched candidate have an implementation at the bindings
     * the match produced? A candidate whose `~` constraints cannot be met at these arguments cannot apply, so it
-    * **declines** rather than being kept and colliding with the candidate that does apply
-    * (docs/testing-effects.md L1). This makes `~` mean at *selection* time what it already meant at checking time:
-    * `implement[F[_] ~ Suspend] Console[F]` matches every carrier structurally, but only carries `Console` for a
-    * carrier that can actually suspend — so a pure test carrier's own `Console` instance becomes the unique survivor
-    * instead of an ambiguity, and in production nothing changes because a real carrier does have `Suspend`.
+    * **declines** rather than being kept and colliding with the candidate that does apply. This makes `~` mean at
+    * *selection* time what it already meant at checking time: `implement[A ~ Show] Show[List[A]]` matches every list
+    * structurally, but applies only to a list of something showable, and at a list of anything else it is no
+    * candidate at all.
     *
     * Every step is **fail-safe towards keeping**: the constraint is only allowed to decline a candidate when its
     * ability arguments are known exactly. An untraced match (a `metaToGround`-collapsed binding, the same operand
@@ -311,17 +310,12 @@ class AbilityImplementationProcessor extends SingleKeyTypeProcessor[AbilityImple
     * Fail-safe: a real guard is discharged only over faithfully-traced bindings — a `metaToGround`-collapsed binding
     * could compare equal wrongly (§3.1), so an untraced match is an internal error rather than a silent wrong verdict.
     *
-    * Second fail-safe — the guard-on-junk defusal (docs/effects-as-channel.md, finding 13, the amplifier): a match
-    * may trace a guard operand faithfully to the **defaulted universe** `GroundValue.Type` — the read-back of a
-    * type-argument slot unification never solved (e.g. an effect-carrier error slot `?E` that junk-grounded before the
-    * `Throw` self-lift's `where E1 != E2` guard is reduced). Reducing the guard over that junk silently *selects* an
-    * instance on a nonsense comparison (`Type != String` ⤳ the lift), which surfaces three steps later as a cryptic
-    * unresolved carrier. So a guarded candidate whose operands include the defaulted universe is **declined** rather
-    * than discharged — resolution falls through to `NoImplementation`, which the demanding use site reports *located*
-    * (never a silent wrong instance choice). No legitimate guard compares the universe (the `Throw`/`Dep` self-lifts
-    * compare error/key types; `Coerce`/`InRange` compare numbers), so this only ever fires on genuine junk. This is the
-    * §7-independent mitigation the join-solver rewire (step 4) leans on: if that rewire ever junk-grounds a carrier
-    * slot again, the guard fails loud here instead of miscompiling.
+    * Second fail-safe — the guard-on-junk defusal: a match may trace a guard operand faithfully to the **defaulted
+    * universe** `GroundValue.Type` — the read-back of a type-argument slot unification never solved. Reducing the guard
+    * over that junk silently *selects* an instance on a nonsense comparison (`Type != String`). So a guarded candidate
+    * whose operands include the defaulted universe is **declined** rather than discharged — resolution falls through
+    * to `NoImplementation`, which the demanding use site reports *located* (never a silent wrong instance choice). No
+    * legitimate guard compares the universe, so this only ever fires on genuine junk.
     */
   private def dischargeGuard(
       vfqn: ValueFQN,
@@ -354,7 +348,7 @@ class AbilityImplementationProcessor extends SingleKeyTypeProcessor[AbilityImple
   /** Read the marker's guard verdict from its **signature twin's** compile-time monomorphization (signature-unification
     * Phase D): `CompilerMonomorphicValue(marker@Signature, groundArgs).signature.deepReturnType`. A signature twin is
     * compiler-track by construction and the compiler pool borrows the entire runtime track, so a runtime-layer guarded
-    * instance's marker twin (the `Throw` self-lift, `where E1 != E2`) resolves there too — the former platform switch
+    * instance's marker twin resolves there too — the former platform switch
     * (Runtime-role `MonomorphicValue` vs Compiler-role `CompilerMonomorphicValue`) collapses to this one read. The guard
     * is a compile-time `Bool` computation; the twin's ordinary body mono reduces it to the verdict, which is that
     * signature's deep return type.

@@ -127,13 +127,13 @@ object EffectCorpus {
     * runs where it is written. It did not: a row-polymorphic callback declares the row variable ρ, and a row is a set
     * of concrete abilities, so deriving `f(e)`'s row yielded the empty set and read the call as pure. The computation
     * was then passed inline to `append`'s payload slot and rejected as a rule-4 violation — a hard error, so the whole
-    * shape (`map`, `filter`, `groupBy`, any combinator taking a user function) was unwritable. See
-    * `RowChecker.rowDeclaringParameters`.
+    * shape (`map`, `filter`, `groupBy`, any combinator taking a user function) was unwritable. Today the callback is
+    * `f uses *: A => B`, code on the caller's handles (`docs/effects.md` §2.1).
     *
     * Both kinds of callback are exercised, and they check opposite halves: `announce` performs `{Console}`, where the
     * "visiting" lines must appear once per element and *before* the mapped results (the callback runs inside
     * `eachInto`'s traversal, not at the caller's later `foreach`); the pure lambda performs nothing, and must run
-    * identically — the slot's `{}` says the callback's effects are the caller's, whatever they turn out to be.
+    * identically — the slot's `uses *` says the callback's effects are the caller's, whatever they turn out to be.
     */
   val rowPolymorphicCallbackProgram: String =
     """import eliot.collection.List

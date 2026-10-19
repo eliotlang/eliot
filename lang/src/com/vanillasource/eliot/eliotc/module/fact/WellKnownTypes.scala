@@ -100,18 +100,6 @@ object WellKnownTypes {
   val boolTrueFQN: ValueFQN  = ValueFQN(boolModule, QualifiedName("true", Qualifier.Default))
   val boolFalseFQN: ValueFQN = ValueFQN(boolModule, QualifiedName("false", Qualifier.Default))
 
-  /** `fold[A](condition: Bool, whenTrue: A, whenFalse: A): A` — the two-armed `Bool` eliminator, and the one *lazy*
-    * value-level primitive: only the selected arm is ever run. The effects-as-channel weaver recognises it (and
-    * [[boolIfFQN]]) by FQN so it does **not** eagerly sequence both arms the way it sequences a strict function's
-    * effectful arguments.
-    */
-  val boolFoldFQN: ValueFQN = ValueFQN(boolModule, QualifiedName("fold", Qualifier.Default))
-
-  /** `if[T](condition: Bool, value: {Abort} T): {Abort} T` — `fold(condition, value, abort)`; likewise lazy in its arm.
-    * Recognised by the effects-as-channel weaver alongside [[boolFoldFQN]] to keep conditional arms unsequenced.
-    */
-  val boolIfFQN: ValueFQN = ValueFQN(boolModule, QualifiedName("if", Qualifier.Default))
-
   private val eitherModule: ModuleName = ModuleName(defaultSystemPackage, "Either")
 
   /** The `Either[E, A]` type constructor — the discharge carrier of the `Throw[E]` effect (`runThrow` reflects a
@@ -133,23 +121,14 @@ object WellKnownTypes {
     */
   val rightFQN: ValueFQN = ValueFQN(eitherModule, QualifiedName("Right", Qualifier.Default))
 
-  private val pairModule: ModuleName = ModuleName(defaultSystemPackage, "Pair")
-
-  /** The value constructor of the concrete `Pair` — `data Pair[A, B](first: A, second: B)`, the representation both the
-    * jvm layer and the compile-track overlay (`stdlib/eliot/compiler/eliot/lang/Pair.els`) give the base's abstract
-    * `Pair`. What the cell intrinsic answers, so the overlay's `foldPair` takes it apart like any `match`; the
-    * `Left`/`Right` of [[eitherFQN]] play the same role for the escape intrinsic.
-    */
-  val pairConstructorFQN: ValueFQN = ValueFQN(pairModule, QualifiedName("Pair", Qualifier.Default))
-
   /** The compile track's non-local exit, one pair per control effect (`docs/effects.md` §3.4): each control effect's
     * compile-track overlay module (`stdlib/eliot/compiler/eliot/effect/`) declares its own private, body-less
     * `escapeIntrinsic` and `exitIntrinsic`, exactly as each jvm module declares its own
     * `escapeInternal`/`exitInternal`, and [[com.vanillasource.eliot.eliotc.monomorphize.processor.EffectIntrinsics]]
     * answers them by these FQNs.
     *
-    * A frame is a value with identity, made fresh by the escape and handed to the body it runs; the threading passes it
-    * along the declared chain to the operation that exits through it. The names differ from the jvm leaves' on purpose:
+    * A frame is a value with identity, made fresh by the escape and handed to the body it runs, which binds it in a
+    * handle with `with`; the operation that exits through it is passed that handle (`docs/effects.md` §3.4). The names differ from the jvm leaves' on purpose:
     * an intrinsic serves both tracks' evaluators, and the runtime track's must keep finding no binding for a jvm leaf.
     */
   private val controlEffectModules: Seq[ModuleName] = Seq("Abort", "Throw").map(ModuleName(effectPackage, _))
@@ -175,9 +154,9 @@ object WellKnownTypes {
   val throwRaiseFQN: ValueFQN =
     ValueFQN(ModuleName(effectPackage, "Throw"), QualifiedName("raise", Qualifier.Ability("Throw")))
 
-  /** `escapeIntrinsic[K, A, R](body uses *, E: A, onExit uses *: K => R, onValue uses *: A => R) uses *: R` in each
-    * control effect's overlay module: runs `body` with a fresh frame and answers `onValue` of its result, or `onExit`
-    * of what an `exitIntrinsic` through that frame carried.
+  /** `escapeIntrinsic[K, A, R](body uses *: ThrowFrame[K] => A, onExit uses *: K => R, onValue uses *: A => R) uses *:
+    * R` in each control effect's overlay module (its own frame type): runs `body` with a fresh frame and answers
+    * `onValue` of its result, or `onExit` of what an `exitIntrinsic` through that frame carried.
     */
   val escapeIntrinsicFQNs: Seq[ValueFQN] =
     controlEffectModules.map(ValueFQN(_, QualifiedName("escapeIntrinsic", Qualifier.Default)))
@@ -191,22 +170,6 @@ object WellKnownTypes {
     */
   val escapeFrameFQN: ValueFQN =
     ValueFQN(ModuleName(compilerPackage, "Escape"), QualifiedName("$frame", Qualifier.Default))
-
-  private val cellModule: ModuleName = ModuleName(compilerPackage, "Cell")
-
-  /** `withCell[S, A](key: Type, initial: S, body: Unit => A): Pair[A, S]` — installs a cell keyed by `key` (the
-    * instantiation `S`) holding `initial`, runs the thunk, and answers the result paired with the cell's final content.
-    * Scoped to the one call: the cell is gone when the call returns or is exited through.
-    */
-  val withCellFQN: ValueFQN = ValueFQN(cellModule, QualifiedName("withCell", Qualifier.Default))
-
-  /** `read[S](key: Type): S` — the content of the nearest enclosing [[withCellFQN]] cell with an equal key. */
-  val cellReadFQN: ValueFQN = ValueFQN(cellModule, QualifiedName("read", Qualifier.Default))
-
-  /** `write[S](key: Type, s: S): Unit` — replaces the content of the nearest enclosing [[withCellFQN]] cell with an
-    * equal key.
-    */
-  val cellWriteFQN: ValueFQN = ValueFQN(cellModule, QualifiedName("write", Qualifier.Default))
 
   /** `integerLiteral[V]: Int` — the platform-independent literal protocol. `CoreExpressionConverter` desugars a
     * value-position integer literal `n` into `integerLiteral[n]` so that the checker assigns it plain `Int` (post

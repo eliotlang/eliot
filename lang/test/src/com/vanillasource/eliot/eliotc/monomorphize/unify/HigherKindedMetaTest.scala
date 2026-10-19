@@ -10,8 +10,7 @@ import org.scalatest.matchers.should.Matchers
 import java.net.URI
 
 /** The per-meta *kind* bookkeeping ([[Unifier.higherKindedMetas]]): which instantiation metas were peeled from a
-  * higher-kinded (`[F[_]]`) binder, and to what kind. Post-drain kind verification reads the kind; the compiler
-  * track's two carrier readers key on the membership itself.
+  * higher-kinded (`[F[_]]`) binder, and to what kind, which post-drain kind verification reads.
   */
 class HigherKindedMetaTest extends AnyFlatSpec with Matchers {
   private val ctx: Sourced[String] = Sourced(URI.create("Test.els"), PositionRange.zero, "ctx")
@@ -26,23 +25,13 @@ class HigherKindedMetaTest extends AnyFlatSpec with Matchers {
   }
 
   "a fresh metavariable" should "be ordinary — no kind bookkeeping" in {
-    val (ids, u) = withMetas(1)
-    u.isHigherKindedMeta(ids.head.value) shouldBe false
+    val (_, u) = withMetas(1)
+    u.carrierMetas shouldBe empty
   }
 
   "recordHigherKindedMeta" should "expose the meta and its kind via carrierMetas" in {
     val (ids, u) = withMetas(1)
     val id       = ids.head
     u.recordHigherKindedMeta(id, VType, ctx).carrierMetas shouldBe List((id.value, (VType, ctx)))
-  }
-
-  it should "make the meta a higher-kinded one (what a carrier head is recognized by)" in {
-    val (ids, u) = withMetas(1)
-    u.recordHigherKindedMeta(ids.head, VType, ctx).isHigherKindedMeta(ids.head.value) shouldBe true
-  }
-
-  it should "list the recorded id (the compiler track's only handle on an inline guard's carrier)" in {
-    val (ids, u) = withMetas(2)
-    u.recordHigherKindedMeta(ids.head, VType, ctx).higherKindedMetaIds shouldBe List(ids.head.value)
   }
 }

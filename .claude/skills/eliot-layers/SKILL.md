@@ -16,7 +16,7 @@ Eliot package in the build system's standard layout (`src/`, `compiler/`), parke
 already owns `<layer>/src` for the Scala — which is what that module's `at` clause in `eliot.pkg` says. The same name
 in several layers/roots is **merged**. There is **no standalone `compiler` Mill module** — a layer's compile-time
 contribution is a sibling `compiler/` root next to its `src/` root (today only `stdlib` ships one:
-`Either`/`Option`/`Pair`/`Bound`/`Interval`, the type-keyed cell intrinsic's declarations `eliot.compiler.Cell`, and
+`Either`/`Option`/`Pair`/`Bound`/`Interval` and
 the compile-time `Abort` and `Throw`, spelled as the jvm layer's over their own private `escapeIntrinsic`/
 `exitIntrinsic`, which is what makes an `if..else` return guard reduce and a guard's `raise("…")` carry its message).
 

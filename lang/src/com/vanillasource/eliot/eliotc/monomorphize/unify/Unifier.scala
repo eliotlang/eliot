@@ -41,36 +41,10 @@ case class Unifier(
     higherKindedMetas: Map[Int, (SemValue, Sourced[String])] = Map.empty
 ) {
 
-  /** Whether `id` occurs in `value` (following solutions through the meta store) — the public probe the effect lift's
-    * Phase-B deferred-slot decision uses to tell a *transparent* callee (the domain meta flows into the call's result,
-    * so an adopted carrier rides up) from a *non-transparent* one (the domain meta is absent from the result, so an
-    * effectful argument must be sequenced there instead of stranded in the type parameter). See
-    * [[com.vanillasource.eliot.eliotc.monomorphize.check.Checker.resolveDeferredSlot]].
-    */
-  def occursInValue(id: MetaId, value: SemValue): Boolean = occursIn(id, value)
-
   /** Every higher-kinded instantiation meta with its recorded kind, as `(id, (expectedKind, context))`. Drives
     * post-drain carrier-kind verification.
     */
   def carrierMetas: List[(Int, (SemValue, Sourced[String]))] = higherKindedMetas.toList
-
-  /** Whether a metavariable was peeled from a *higher-kinded* (`[F[_]]`) binder. A higher-kinded meta is the only
-    * metavariable shape that can stand for a carrier, so this is what the two compiler-track carrier readers key on —
-    * the inline-guard kind acceptance
-    * ([[com.vanillasource.eliot.eliotc.monomorphize.check.GuardDischargeResolver.isGuardCarrier]]) and the effect
-    * lift's meta-headed split ([[com.vanillasource.eliot.eliotc.monomorphize.check.EffectLifter.effectCarrierSplit]]).
-    * It is deliberately unfiltered by ability constraints: a callee's own `G[_]` may carry an effectful result whether
-    * or not it declares `~ Effect`.
-    */
-  def isHigherKindedMeta(id: Int): Boolean = higherKindedMetas.contains(id)
-
-  /** Every higher-kinded instantiation meta id — a derived projection of [[higherKindedMetas]], never a separate
-    * side-table. Used by the compiler track to pin an *inline* guard's **inferred** return-row carrier:
-    * `if..else..raise` / a bare `raise` introduce their `{Throw[String]}`/`{Abort}` carrier through the instantiated
-    * combinators, with no declared `paramConstraints` binder to key off, so the still-unsolved higher-kinded metas are
-    * the only handle on that carrier (see `Track.Compiler.pinCarriers`).
-    */
-  def higherKindedMetaIds: List[Int] = higherKindedMetas.keys.toList
 
   /** Record a higher-kinded instantiation meta's expected kind (`[F[_]]`). */
   def recordHigherKindedMeta(id: MetaId, expectedKind: SemValue, context: Sourced[String]): Unifier =

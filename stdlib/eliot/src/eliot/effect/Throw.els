@@ -18,9 +18,9 @@
  * ```
  *
  * `Throw` is a **control effect**: it has exactly one implementation per platform, over that platform's
- * private non-local-exit primitive, and a discharger only installs the frame that implementation exits to. So
- * there is nothing to bind here — `with` is for the interpretation effects (`Console`, `FileSystem`, …) and
- * for abilities.
+ * private non-local-exit primitive, and its discharger binds it with a `with` around the frame it installs. So
+ * there is no interpretation to choose and nothing for a user to bind — a `with` in user code is for the
+ * interpretation effects (`Console`, `FileSystem`, …).
  */
 effect Throw[E] {
    /**

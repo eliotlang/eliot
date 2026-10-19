@@ -73,10 +73,9 @@ class PostDrainQuoter(
   private val semEvaluator: SemExpressionEvaluator = new SemExpressionEvaluator(lookupTopDef)
 
   /** Deep-renormalise `v` (descending under [[SemValue.VPi]] binders, re-firing post-drain-solved natives stuck in a
-    * `VPi` codomain like `Int[add(L,R), …]`) then quote it. The shared core of the four deep-quote entry points
-    * ([[quoteSem]]/[[quoteSemOption]] over a [[SemValue]],
-    * [[reduceSignatureToGround]]/[[reduceSignatureToGroundOption]] over a reduced signature), which differ only in how
-    * they treat a `Left`: [[orAbort]] vs. `.toOption`.
+    * `VPi` codomain like `Int[add(L,R), …]`) then quote it. The shared core of the three deep-quote entry points
+    * ([[quoteSem]]/[[quoteSemOption]] over a [[SemValue]], [[reduceSignatureToGroundOption]] over a reduced signature),
+    * which differ only in how they treat a `Left`: [[orAbort]] vs. `.toOption`.
     */
   private def quoteDeep(v: SemValue): Either[String, GroundValue] =
     Quoter.quote(0, Evaluator.renormalize(v, metaStore, lookupTopDef, deep = true), metaStore)
@@ -108,22 +107,12 @@ class PostDrainQuoter(
     quoteDeep(v).toOption
 
   /** Reduce a checked *signature* [[SemExpression]] (a signature twin's arrow chain — the signature-unification body
-    * model, §3.1) to its ground signature, or hard-error (never a silent `Type`). Runs the stuck-driven
-    * [[reduceWithEscalation]] loop, deep-renormalises the result (re-firing a dependent-bound native stuck in a `VPi`
-    * codomain, e.g. `Int[add(L,R), …]`, exactly as [[quoteSem]] does), then quotes. This is the one read-back a twin
-    * takes for every return shape — an ordinary type, a guard verdict (`Right(t)`/`Left(msg)`), or an under-applied W3
-    * hole (§3.5) — the shape falling out of the reduction rather than a per-shape branch.
-    */
-  def reduceSignatureToGround(
-      expr: SemExpression,
-      at: Sourced[?]
-  ): CompilerIO[GroundValue] =
-    reduceWithEscalation(monoEnv, expr, EscalatingReducer.typeLevelStuck)
-      .flatMap(reduced => orAbort(quoteDeep(reduced), at))
-
-  /** Non-aborting [[reduceSignatureToGround]]: the reduced ground signature, or [[None]] when it does not fully reduce
-    * (a guard stuck on a leftover `GroundValue.Param`). The signature twin uses this so it can fall back to publishing
-    * the guard's undischarged *carrier type* instead of aborting (signature-unification C2).
+    * model, §3.1) to its ground signature, or [[None]] when it does not fully reduce (a guard stuck on a leftover
+    * `GroundValue.Param`), so the twin can fall back to publishing the guard's undischarged type instead of aborting
+    * (signature-unification C2). Runs the stuck-driven [[reduceWithEscalation]] loop, deep-renormalises the result
+    * (re-firing a dependent-bound native stuck in a `VPi` codomain, e.g. `Int[add(L,R), …]`, exactly as [[quoteSem]]
+    * does), then quotes. It is the one read-back a twin takes for every return shape — an ordinary type or a guard
+    * verdict (`Right(t)`/`Left(msg)`) — the shape falling out of the reduction rather than a per-shape branch.
     */
   def reduceSignatureToGroundOption(expr: SemExpression): CompilerIO[Option[GroundValue]] =
     reduceWithEscalation(monoEnv, expr, EscalatingReducer.typeLevelStuck)
@@ -135,10 +124,11 @@ class PostDrainQuoter(
 
   /** Produce the **fully reduced** body of a compiler-platform value (CP-C step b — the compiler backend). A
     * compiler-track value is wholly compile-time, so — unlike the runtime track, whose body must stay structural for
-    * codegen — its body is normalised as far as it goes: an ability call resolved during the drain (`raise("boom")` ⤳
-    * the concrete `Either::raise("boom")`) has its concrete-impl *body* folded in by ordinary NbE evaluation
-    * (`Either::raise`'s `err -> Left(err)`), so `raise("boom")` reduces to `Left("boom")`, `pure(x)` to `Right(x)`.
-    * This is the reduced value the runtime track's type-level evaluation will plug in as a native.
+    * codegen — its body is normalised as far as it goes: an ability call resolved during the drain (`show(1)` ⤳ the
+    * concrete `Show[Int]`'s `show`) has its concrete-impl *body* folded in by ordinary NbE evaluation, and a `raise`
+    * resolved at its handle's type reaches the overlay's `escaping` and exits through its frame, so `runThrow(raise(
+    * "boom"))` reduces to `Left("boom")`. This is the reduced value the runtime track's type-level evaluation will plug
+    * in as a native.
     *
     *   - rewrite every drain-resolved ability reference to its concrete-impl reference (the [[SemExpression]] analogue
     *     of [[resolveIfAbility]]), so the impl body is reachable to the evaluator (its binding is supplied through

@@ -1,6 +1,6 @@
 package com.vanillasource.eliot.eliotc.row
 
-import com.vanillasource.eliot.eliotc.module.fact.{Qualifier, Role, ValueFQN}
+import com.vanillasource.eliot.eliotc.module.fact.ValueFQN
 import com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedExpression.*
 import com.vanillasource.eliot.eliotc.operator.fact.{OperatorResolvedExpression, OperatorResolvedValue}
 
@@ -48,20 +48,6 @@ object RowChecker {
       found
     }
   }
-
-  /** Whether a value carries a term-level body: a body (abstract signatures have nothing to write), a runtime-role
-    * value (never a `@Signature` twin), and not a type constructor / alias / meta companion, whose "bodies" are types.
-    *
-    * The write itself uses a *wider* predicate — a meta companion is written too — so this stays the narrow reading
-    * for consumers that mean "an ordinary definition's body".
-    */
-  def checkable(orv: OperatorResolvedValue): Boolean =
-    orv.runtime.isDefined &&
-      orv.vfqn.name.role == Role.Runtime &&
-      (orv.vfqn.name.qualifier match {
-        case Qualifier.Type | _: Qualifier.Meta => false
-        case _                                  => true
-      })
 
   /** Peel the leading binders of a runtime body, collecting their names in order — a definition's body is what its
     * lambdas wrap.

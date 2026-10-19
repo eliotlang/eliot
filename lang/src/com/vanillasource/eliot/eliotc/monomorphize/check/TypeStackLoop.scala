@@ -152,11 +152,11 @@ class TypeStackLoop(
     val bodyExpr           = resolvedValue.signature.as(view.copy(binders = Seq.empty).toExpression)
     for {
       _          <- bindTwinBinders(view.binders, typeArguments)
-      // Capture ρ now — holding only the erased type-stack binders (their ground values / carrier metas), *before* the
+      // Capture ρ now — holding only the erased type-stack binders (their ground values / neutrals), *before* the
       // check binds any value / pattern binder of the arrow chain. This is the same clean env the value mono captures
       // before its body check; the read-back reduces the checked chain under it, so a signature-position `match`'s
       // pattern binder (`case Box[a] -> a`) is extracted by the match reduction rather than shadowed by a stale
-      // post-check neutral. (Carrier metas the pin below solves live in the metastore, not ρ, so this stays authoritative.)
+      // post-check neutral.
       monoEnv    <- inspect(_.rho)
       checked    <- checker.check(bodyExpr, VType)
       abilityRefs = checker.abilityResolver.collectAbilityRefs(bodyExpr.as(checked))
@@ -165,11 +165,11 @@ class TypeStackLoop(
       choices    <- inspect(_.handleChoices)
       checked    <- pure(HandleHoleResolver.fill(checked, choices))
       // The signature's ground read-back. Reduce the **raw** evaluated arrow chain first (renormalising natives as it
-      // quotes): this settles an ordinary type, a bare `{Throw[String]}` carrier return, a type-level `match` (whose
+      // quotes): this settles an ordinary type, a type-level `match` (whose
       // pattern binder the match reduction binds — the check would freeze it to a neutral), a W3 under-applied hole,
       // and a *pure* guard (a marker's `where fold(…)`/`E1 != E2` Bool computation — the raw `fold` has no
       // instantiation type-argument to mis-fire the native on). It is *stuck*, never wrongly reduced, only for an
-      // **effectful** inline guard (`if..else..raise`), whose `else`/`runAbort` need the checker's effect-lift `pure`
+      // **effectful** inline guard (`if..else..raise`), whose operations need the handles the checker's holes pass,
       // absent from the raw signature — so fall back there to the **checked** arrow chain via the escalation loop, which
       // reduces it to its `Right(t)` / `Left(msg)` verdict. No `sawGuard`: the shape falls out of which reduction settles.
       // The raw evaluation dispatches no ability and threads no frame, so it is not read at all for a signature that
@@ -225,8 +225,8 @@ class TypeStackLoop(
     binders.zipWithIndex.traverse_ { case (binder, i) =>
       for {
         // Kind-check the binder's declared kind against `VType`, then evaluate it to the binder's *type* for Γ. The
-        // binder's declared kind is authoritative — a higher-kinded carrier binder `[F[_]]` yields `VPi(Type, _ =>
-        // Type)`, whereas the ground argument's own `valueType` is merely `Type` (`IO : Type`), which cannot type the
+        // binder's declared kind is authoritative — a higher-kinded binder `[F[_]]` yields `VPi(Type, _ => Type)`,
+        // whereas the ground argument's own `valueType` is merely `Type` (`List : Type`), which cannot type the
         // application `F[Unit]`. A value binder `[N: BigInteger]` yields `BigInteger`; an unannotated `[X]` yields `Type`.
         _       <- binder.parameterType.traverse_(kind => checker.check(kind, VType).void)
         kindSem <- binder.parameterType.traverse(kind => checker.evalExpr(kind.value)).map(_.getOrElse(VType))
@@ -234,10 +234,6 @@ class TypeStackLoop(
         //   - an explicit ground argument ⟹ its applicable head form;
         //   - a leftover binder (a generic type parameter) ⟹ a `SignatureBinder` neutral, so the arrow chain reads back
         //     **under its binder** as a `GroundValue.Param` (a parametric signature) instead of defaulting to `Type`.
-        //
-        // The third arm this had — a leftover *carrier* binder became a fresh meta, left open for `pinCarriers` to fix
-        // to the compile-time `Either[String]` — went with the pinning (effects v6, F3). With no pin behind it the
-        // meta would simply default to `Type`, where a `SignatureBinder` reads back honestly as parametric.
         value   <- typeArguments.lift(i) match {
                      case Some(arg) => pure(Evaluator.groundToSem(arg))
                      case None      =>
@@ -367,11 +363,6 @@ class TypeStackLoop(
     * abilities and handle holes ([[HandleHoleResolver]]: the certain ones each round, one by agreement when nothing else
     * progresses); loop while that progresses, and report the holes left open when it stops. Bounded: each ability and
     * each hole resolves at most once, so progress is monotone.
-    *
-    * This used to interleave the A.8.7 **mode resolution** and, on a decided hoist, splice a body rewrite and restart
-    * the whole mono. Since §1 rule 4 the row elaborator classifies every position from its declaration and writes both
-    * the placement and the carrier, so the runtime track produces no deferral to resolve: the obligations, the resolver
-    * and the splice-restart are gone (docs/effects-as-rows.md A.11.8 step 1) and this is a plain fixpoint again.
     */
   private def resolveAbilitiesToFixedPoint(
       abilityRefs: Seq[AbilityRef],

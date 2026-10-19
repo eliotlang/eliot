@@ -2,18 +2,14 @@ package com.vanillasource.eliot.eliotc.monomorphize.processor
 
 import com.vanillasource.eliot.eliotc.module.fact.{Qualifier, ValueFQN}
 import com.vanillasource.eliot.eliotc.module.fact.WellKnownTypes.{
-  cellReadFQN,
-  cellWriteFQN,
   escapeFrameFQN,
   escapeIntrinsicFQNs,
   exitIntrinsicFQNs,
-  pairConstructorFQN,
-  typeFQN,
-  withCellFQN
+  typeFQN
 }
 import com.vanillasource.eliot.eliotc.monomorphize.domain.{MetaStore, SemValue}
 import com.vanillasource.eliot.eliotc.monomorphize.domain.SemValue.*
-import com.vanillasource.eliot.eliotc.monomorphize.eval.{ConcreteNormalForm, Evaluator}
+import com.vanillasource.eliot.eliotc.monomorphize.eval.Evaluator
 import com.vanillasource.eliot.eliotc.monomorphize.fact.GroundValue
 import com.vanillasource.eliot.eliotc.monomorphize.fact.GroundValue.Literal
 
@@ -21,11 +17,10 @@ import java.util.concurrent.atomic.AtomicLong
 import scala.util.DynamicVariable
 import scala.util.control.ControlThrowable
 
-/** The compiler platform's two control-flow primitives — **escape** and **cell** — as evaluator intrinsics
-  * (`docs/effects.md` §3.4). A finishing clause is a non-local exit and a stateful implementation needs a value
-  * threaded through calls that never mention it; neither is expressible as a def in a strict pure core, so each
-  * platform has them as private leaves — an exception and a static field on the jvm, and here, on the compile track,
-  * natives the one NbE evaluator runs directly.
+/** The compiler platform's control-flow primitive — **escape** — as an evaluator intrinsic (`docs/effects.md` §3.4). A
+  * finishing clause is a non-local exit, which is not expressible as a def in a strict pure core, so each platform has
+  * it as a private leaf — an exception on the jvm, and here, on the compile track, a native the one NbE evaluator runs
+  * directly. The compile track has no **cell**, since no compile-track effect is written over one.
   *
   * '''Escape: a frame is a value with identity.''' Each control effect's compile-track overlay module declares its own
   * private `escapeIntrinsic`/`exitIntrinsic` pair, as each jvm module declares its `escapeInternal`/`exitInternal`. The
@@ -36,51 +31,28 @@ import scala.util.control.ControlThrowable
   * is not installed — its escape has returned, or what was passed is not a frame at all, as in an evaluation no handle
   * reached — stays **stuck** on its own name, loud at read-back, never a nearest-frame guess.
   *
-  * '''Cell''' is still the earlier, type-keyed form: `withCell(S, s0, body)`, `read(S)` and `write(S, s)` reach the
-  * nearest enclosing cell whose key is definitionally equal ([[ConcreteNormalForm]]). No compile-track effect is
-  * written over it.
-  *
   * '''Strictness at the frame.''' The evaluator applies a top-level definition lazily — the application only grows the
   * spine, and the body runs when the value is forced — so a thunk's *result* may still hold an application that would
-  * exit or write when forced. Every value that crosses a frame boundary is therefore **settled** inside the frame
+  * exit when forced. Every value that crosses a frame boundary is therefore **settled** inside the frame
   * (forced, and its constructor and stuck-native spines with it — [[Evaluator.renormalize]]'s traversal, which stops at
-  * a lambda since a lambda's calls run later): the body's result before the frame is left, an exit's payload before the
-  * exit is taken, a cell's initial and written content. Pending applications settle in that traversal's order (head,
-  * then arguments left to right), which is the one evaluation order the compile track has.
+  * a lambda since a lambda's calls run later): the body's result before the frame is left, and an exit's payload before
+  * the exit is taken. Pending applications settle in that traversal's order (head, then arguments left to right), which
+  * is the one evaluation order the compile track has.
   *
-  * '''What a caller must know.''' A nullary top-level definition's body is evaluated **once** per binding
-  * ([[SemValue.Lazy]]), so a nullary def that `read`s a cell would answer its first read forever; a def that reaches a
-  * cell must take an argument (a thunk does), or its binding must not be memoised.
-  *
-  * '''What the cell answers is the overlay's data.''' `withCell` answers `Pair`, the value constructor the
-  * compile-track overlay declares (`stdlib/eliot/compiler/eliot/lang/`), applied to exactly its fields, so the
-  * overlay's own `foldPair` takes it apart like any constructed value. The escape answers whatever its
-  * `onExit`/`onValue` make.
+  * The escape answers whatever its `onExit`/`onValue` make.
   */
 object EffectIntrinsics {
 
   /** The exact-FQN intrinsics, folded into [[SystemNativesProcessor]]'s system reductions. */
   val bindings: Map[ValueFQN, SemValue] =
     escapeIntrinsicFQNs.map(fqn => fqn -> escapeNative(fqn)).toMap ++
-      exitIntrinsicFQNs.map(fqn => fqn -> exitNative(fqn)).toMap ++
-      Map(
-        withCellFQN  -> withCellNative,
-        cellReadFQN  -> readNative,
-        cellWriteFQN -> writeNative
-      )
+      exitIntrinsicFQNs.map(fqn => fqn -> exitNative(fqn)).toMap
 
-  /** The declared type of every key parameter: the type `Type`, not [[VType]] itself — a native whose parameter is
-    * `VType` models *every* written type argument, and a key must arrive as a value, never be taken from a type
-    * argument the reference happens to write (a phantom binder, an explicit `[E]`).
+  /** The declared type of every escape argument: the type `Type`, not [[VType]] itself — a native whose parameter is
+    * `VType` models *every* written type argument, and an argument must arrive as a value, never be taken from a type
+    * argument the reference happens to write (an explicit `[E]`).
     */
-  private val keyType: SemValue = VTopDef(typeFQN, None, Spine.SNil)
-
-  /** The declared type of every escape argument, for the same reason as [[keyType]]: anything but [[VType]], so a
-    * written type argument is never taken for a value argument.
-    */
-  private val argumentType: SemValue = keyType
-
-  private final class CellFrame(val key: SemValue, var content: SemValue)
+  private val argumentType: SemValue = VTopDef(typeFQN, None, Spine.SNil)
 
   /** The non-local exit in flight: names the one escape frame that catches it, so every frame between rethrows by not
     * matching. A control throwable — no stack trace, and not a `NonFatal` that a generic handler would swallow.
@@ -93,13 +65,7 @@ object EffectIntrinsics {
     */
   private val escapes: DynamicVariable[List[Long]] = new DynamicVariable(Nil)
 
-  /** The installed cells, innermost first, dynamically scoped like [[escapes]]. */
-  private val cells: DynamicVariable[List[CellFrame]] = new DynamicVariable(Nil)
-
   private val frameIds: AtomicLong = new AtomicLong()
-
-  private def nearestCell(key: SemValue): Option[CellFrame] =
-    cells.value.find(frame => ConcreteNormalForm.equal(frame.key, key))
 
   /** Force a value that is about to cross a frame boundary, so every pending application inside it runs while the frame
     * is still installed — **natives included**, under the lookup the enclosing evaluation is running with
@@ -200,45 +166,4 @@ object EffectIntrinsics {
         Some(id.toLong)
       case _ => None
     }
-
-  // ----------------------------------------------------------------------------------------------------------------
-  // cell
-  // ----------------------------------------------------------------------------------------------------------------
-
-  /** `withCell(key, initial, body)` — run the thunk under a cell keyed by `key` holding `initial`; answers
-    * `pair(result, finalContent)`. Stuck while the key is not concrete. An exit through the call discards the cell.
-    */
-  private def withCellNative: SemValue =
-    VNative(keyType, key => VNative(VType, initial => VNative(VType, body => withCell(key, initial, body))))
-
-  private def withCell(key: SemValue, initial: SemValue, body: SemValue): SemValue =
-    if (!ConcreteNormalForm.isConcrete(key)) VStuckNative.of(withCellFQN, key, initial, body)
-    else {
-      val frame  = new CellFrame(key, settle(initial))
-      val result = cells.withValue(frame :: cells.value)(settle(Evaluator.applyValue(body, Evaluator.unitValue)))
-      pair(result, frame.content)
-    }
-
-  /** `read(key)` — the content of the nearest enclosing cell keyed by `key`; stuck when there is none. */
-  private def readNative: SemValue = VNative(keyType, key => read(key))
-
-  private def read(key: SemValue): SemValue =
-    nearestCell(key).map(_.content).getOrElse(VStuckNative.of(cellReadFQN, key))
-
-  /** `write(key, content)` — replace the content of the nearest enclosing cell keyed by `key`, settling it first;
-    * answers unit. Stuck when there is no such cell.
-    */
-  private def writeNative: SemValue =
-    VNative(keyType, key => VNative(VType, content => write(key, content)))
-
-  private def write(key: SemValue, content: SemValue): SemValue =
-    nearestCell(key) match {
-      case Some(frame) =>
-        frame.content = settle(content)
-        Evaluator.unitValue
-      case None        => VStuckNative.of(cellWriteFQN, key, content)
-    }
-
-  private def pair(first: SemValue, second: SemValue): SemValue =
-    VTopDef(pairConstructorFQN, None, Spine.SNil :+ first :+ second)
 }

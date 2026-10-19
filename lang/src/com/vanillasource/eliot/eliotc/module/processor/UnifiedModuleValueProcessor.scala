@@ -1,8 +1,7 @@
 package com.vanillasource.eliot.eliotc.module.processor
 
 import cats.syntax.all.*
-import com.vanillasource.eliot.eliotc.ast.fact.UnresolvedAbilityConstraint
-import com.vanillasource.eliot.eliotc.core.fact.{Expression, NamedValue}
+import com.vanillasource.eliot.eliotc.core.fact.NamedValue
 import com.vanillasource.eliot.eliotc.feedback.Logging
 import com.vanillasource.eliot.eliotc.module.fact.{ModuleNames, ModuleValue, UnifiedModuleValue, ValueFQN}
 import com.vanillasource.eliot.eliotc.platform.Platform
@@ -62,35 +61,12 @@ class UnifiedModuleValueProcessor extends SingleFactProcessor[UnifiedModuleValue
           UnifiedModuleValue(
             chosen.vfqn,
             chosen.dictionary,
-            chosen.namedValue.copy(effectRow = mergeEffectRows(values, chosen)),
+            chosen.namedValue,
             chosen.privateNames,
             platform
           ).pure[CompilerIO]
       }
     }
-
-  /** Merge the declared effect-row metadata across all co-located declarations, fieldwise: the chosen value's field
-    * wins when populated, else the first layer that recorded one supplies it. Signature equality is already verified
-    * (`hasSameSignatures`), so every layer's row describes the *same* signature — a layer that spells a position in
-    * effect vocabulary (the abstract `runThrow(obj: {Throw[E] | G} A)`) records row metadata that a layer spelling the
-    * structurally identical type directly (the jvm `data ThrowCarrier(runThrow: G[Either[E, A]])` accessor) cannot,
-    * and the merge must not lose it to body preference (effects-as-rows R3 finding, docs/effects-as-rows.md
-    * Appendix A.7).
-    */
-  private def mergeEffectRows(
-      values: Seq[ModuleValue],
-      chosen: ModuleValue
-  ): com.vanillasource.eliot.eliotc.ast.fact.EffectRow[UnresolvedAbilityConstraint[Expression]] = {
-    val rows   = chosen.namedValue.effectRow +: values.map(_.namedValue.effectRow)
-    val ownRow = rows.find(_.returnEffects.nonEmpty)
-    chosen.namedValue.effectRow.copy(
-      returnEffects = ownRow.map(_.returnEffects).getOrElse(Seq.empty),
-      returnArity = ownRow.fold(chosen.namedValue.effectRow.returnArity)(_.returnArity),
-      handles = ownRow.fold(chosen.namedValue.effectRow.handles)(_.handles),
-      parameterEffects = rows.map(_.parameterEffects).find(_.nonEmpty).getOrElse(Seq.empty),
-      callbackEffects = rows.map(_.callbackEffects).find(_.nonEmpty).getOrElse(Seq.empty)
-    )
-  }
 
   /** Trace an *actual* override — an overlay implementation superseding at least one platform implementation. */
   private def logOverride(

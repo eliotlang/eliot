@@ -11,17 +11,17 @@ import com.vanillasource.eliot.eliotc.processor.{CompilerFact, CompilerFactKey}
 
 /** The outcome of resolving the ability implementation for `abilityValueFQN` at `typeArguments`, scoped to a source
   * [[Platform]]: the implementation (and its supporting markers/values) is searched in that platform's source pool.
-  * [[Platform.Runtime]] is the default — every existing ability resolves under it — while the **compiler** pool carries
-  * the compile-time carrier's `Effect`/`Throw[Either[String]]` instances, reachable only by querying under
-  * [[Platform.Compiler]] (the ability-instance analogue of CP3's `CompilerNativesProcessor` for value bodies;
-  * effectful-signatures W2a).
+  * [[Platform.Runtime]] is the default; an instance only the compiler pool declares — a compile-track overlay's, such
+  * as the escape-backed `Throw` and `Abort` handles' — is reachable only by querying under [[Platform.Compiler]] (the
+  * ability-instance analogue of `CompilerNativesProcessor` for value bodies).
   *
   * The fact carries the [[AbilityImplementation.Resolution]] *outcome* rather than erroring in the producer: whether a
   * failed resolution is a compile error — and at what source position — is the *demander's* call, not the producer's.
   * The checker's saturation pass ([[com.vanillasource.eliot.eliotc.monomorphize.check.AbilityResolver]]) holds the
-  * use-site reference and reports a failed demand there; the checker-inserted probes (`Coerce`, `Combine`, the
-  * effect-lift arms) treat any non-[[AbilityImplementation.Resolution.Resolved]] outcome as a silent decline, since for
-  * them non-applicability is a normal answer. An *absent* fact means the resolution aborted on an upstream error
+  * use-site reference and reports a failed demand there; the constraint-aware declination probe
+  * ([[com.vanillasource.eliot.eliotc.ability.processor.AbilityImplementationProcessor]]) treats any
+  * non-[[AbilityImplementation.Resolution.Resolved]] outcome as a decline, since for it non-applicability is a normal
+  * answer. An *absent* fact means the resolution aborted on an upstream error
   * (already reported at its own definition) — demanders stay silent on absence.
   */
 case class AbilityImplementation(

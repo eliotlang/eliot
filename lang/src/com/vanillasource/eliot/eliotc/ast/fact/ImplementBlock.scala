@@ -23,10 +23,8 @@ object ImplementBlock {
           _                   <- keyword("implement")
           genericParameters   <- component[Seq[GenericParameter]]
           name                <- acceptIfAll(isIdentifier, isUpperCase)("ability name")
-          // The pattern is optional so a **nullary** ability implements with no brackets at all — `implement Console`,
-          // which is the shape every effects-v6 `effect` takes once its carrier binder is gone (`docs/effects.md` §9.3).
-          // No source in the tree writes a pattern-less `implement` today, so accepting one changes nothing until the
-          // flag day; the named form (`NamedImplementation`) has always read its pattern optionally.
+          // The pattern is optional so a **nullary** ability implements with no brackets at all, as the named form
+          // (`NamedImplementation`) reads its pattern optionally.
           pattern             <- optionalBracketedCommaSeparatedItems("[", sourced(Expression.typeRunParser), "]")
           // An implementation with parameters is always **named** (`docs/effects.md` D25): nothing that inserts a
           // default has arguments to give it, so a parameter list here is reported as itself, naming the named form.
@@ -58,7 +56,7 @@ object ImplementBlock {
           // surface form of its type-argument pattern plus its `where` guard. Two `implement` blocks are the same
           // instance iff this key matches (independent of file/position/order), which is what lets an instance be split
           // across layers and merged, while keeping distinct patterns (`Eq[Type]` vs `Eq[String]`) and a guarded
-          // instance (whose `where` clause, e.g. the `Coerce[Int, Int]` widening guard, is part of its identity) apart
+          // instance (whose `where` clause is part of its identity) apart
           // from an otherwise same-pattern sibling. `Show[Expression]` drops
           // source positions, so the key is stable across layers that spell the pattern identically (the same
           // character-exact discipline the layer merge already requires).

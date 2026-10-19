@@ -40,12 +40,11 @@ object ReducedBindingClosure {
     * [[EscalatingReducer]] fetches this for each value reference that blocks a signature/body read-back.
     *
     * It always reduces **deep** ([[collectBindings]] with `deep = true`): each dependency is itself taken reduced at
-    * its own instantiation, so a **stacked** carrier resolves through every layer — a reduced *function* body
-    * (`guardOr`, `else`) keeps its impl-dispatch dependencies structural (they close over its runtime value
-    * parameters), and applying it to concrete arguments must reach those dependencies already reduced (an
-    * `AbortCarrier` impl over the base `Either` resolving through every layer) rather than a still-abstract raw
-    * binding. It is driven by [[EscalatingReducer.escalatingLoop]]'s laziness (a *stuck* term escalates). Always the compiler track: a compile-time reduction never
-    * reaches a runtime target.
+    * its own instantiation — a reduced *function* body (`else`, `catch`) keeps its impl-dispatch dependencies
+    * structural (they close over its runtime value parameters), and applying it to concrete arguments must reach those
+    * dependencies already reduced rather than a still-abstract raw binding. It is driven by
+    * [[EscalatingReducer.escalatingLoop]]'s laziness (a *stuck* term escalates). Always the compiler track: a
+    * compile-time reduction never reaches a runtime target.
     */
   def reduceInstance(
       vfqn: ValueFQN,
@@ -111,11 +110,10 @@ object ReducedBindingClosure {
     * each dependency is its raw [[NativeBinding]] body (a one-hop closure), which is the same at every instantiation.
     *
     * When `deep` (the escalation fetch), a dependency is instead taken **reduced at its own instantiation**
-    * ([[reduceInstance]], recursively, against the reference's ground type arguments), so a **stacked** carrier
-    * resolves through every layer: when the reduced body of a *function* stays structural (its impl-dispatch
-    * dependencies close over its runtime value parameters, e.g. `else`/`guardOr`), each such dependency
-    * (`AbortCarrier`'s `Effect`/`Abort` impl over the base `Either`) still gets its own nested base ability resolved
-    * rather than closing over the raw, still-abstract binding. `MonomorphicEvaluator` drops a reference's type
+    * ([[reduceInstance]], recursively, against the reference's ground type arguments): when the reduced body of a
+    * *function* stays structural (its impl-dispatch dependencies close over its runtime value parameters, e.g. `else`),
+    * each such dependency still gets its own nested abilities resolved rather than closing over the raw, still-abstract
+    * binding. `MonomorphicEvaluator` drops a reference's type
     * arguments, so the already-instantiated reduced dependency is used directly with no re-application. A dependency
     * with no reduced form (a native leaf, a `data` constructor) falls back to its raw [[NativeBinding]] body.
     *

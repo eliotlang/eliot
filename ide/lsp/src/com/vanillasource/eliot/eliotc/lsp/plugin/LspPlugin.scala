@@ -146,9 +146,9 @@ class LspPlugin(vfs: VirtualFileSystem) extends CompilerPlugin with Logging {
   /** Drive whole-program monomorphization from a file's own `main`, so its reachable code is type-checked at concrete
     * types and the per-node ground types behind hover type hints exist.
     *
-    * The root is not the module's `main` itself — the idiomatic `main` declares an effect set and is therefore
-    * carrier-generic — but the module's synthesized `lspmain.*` wrapper ([[LspMainRootSourceProcessor]]), which binds
-    * the carrier to `eliot.jvm.IO` exactly as the jvm target's entry point does. [[UsedNames]] walks the reachable
+    * The root is not the module's `main` itself — the idiomatic `main` declares effects and so takes their handles —
+    * but the module's synthesized `lspmain.*` wrapper ([[LspMainRootSourceProcessor]]), which binds each with a `with`
+    * of its standard implementation exactly as the jvm target's entry point does (`row/EntryPoint`). [[UsedNames]] walks the reachable
     * monomorphic graph from that root, forcing a [[com.vanillasource.eliot.eliotc.monomorphize.fact.MonomorphicValue]]
     * (carrying per-node ground types) for every reachable instantiation — exactly the facts the type-hint index reads.
     * The trigger is **per file**: each `examples/` source is its own module with its own `main`, so every such file

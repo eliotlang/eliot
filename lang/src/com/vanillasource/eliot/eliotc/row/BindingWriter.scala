@@ -203,10 +203,9 @@ object BindingWriter {
     *
     * Consumption is read off the body walk alone, which runs first: a signature's effects are the guard channel's,
     * discharged by the guarded-return read and never performed. A received binding is consumed wherever the write
-    * hands it on — to an operation, to a declaring callee, or to a named implementation whose clauses perform it. An
-    * actual at a slot that does not supply the entry runs in the *caller's* scope, so running it consumes nothing
-    * here: `def run[A](v: {Console} A): {Console} A = v` declares `Console` for nothing, exactly as its `{}`-slot twin
-    * would.
+    * hands it on — to an operation, to a declaring callee, or to a named implementation whose clauses perform it. Code
+    * at a slot that does not list the entry runs on the *caller's* handles, so running it consumes nothing here:
+    * `def run[A](v uses *: A) uses *, Console: A = v` declares `Console` for nothing.
     *
     * Only the declared row is checked, never a `~` constraint's binder, which binds an ability the body may well reach
     * only through a callee's own constraint. A body-less value has nothing to check — its row is a contract, stated
@@ -259,11 +258,9 @@ object BindingWriter {
       case _              => true
     })
 
-  /** The bindings a definition receives from its caller — resolution-order step 2 — one per phantom binder of its own
-    * signature, naming that binder.
-    *
-    * An effect's binding is a **handle parameter** too, and every handle the definition receives is equally near
-    * ([[Binding.group]]).
+  /** The handles a definition receives from its caller, one per handle of its own signature (`EffectRow.handles`),
+    * each naming its binder. Every handle the definition receives is equally near ([[Binding.group]]), so two of them
+    * answering one hole is a tie (`docs/effects.md` §3.3).
     */
   private def receivedBindings(orv: OperatorResolvedValue): Seq[Binding] = {
     val entries = entryArguments(orv)
@@ -761,8 +758,8 @@ object BindingWriter {
         )
       )
 
-    /** One actual, at the callee's parameter `index`. A row-typed slot is a thunk, so the actual is wrapped — and the
-      * entries that slot *supplies* are bound inside it, which is resolution-order step 3.
+    /** One actual, at the callee's parameter `index`. A code parameter is a block or a thunk, so the actual is wrapped
+      * — a block taking one handle per entry the slot lists, which the callee hands it at each run (§3.2).
       */
     private def walkArgument(
         arg: Sourced[OperatorResolvedExpression],

@@ -139,9 +139,9 @@ class ValueResolver
     * resolved to — which is the same rule that propagates a callee's declared row to its caller, and the same rule
     * [[superConstraints]] applies to a `~` constraint.
     *
-    * **Return position only**, which is the one position that needs nothing of the slot: a parameter row is *supplied*
-    * rather than received and must additionally be thunked, which is a rewrite of the slot rather than of the type
-    * naming it. Every other position is [[reportNamedRowMisuses]], never a silent widening.
+    * **Return position only**, which is the one position that needs nothing of the slot: a parameter's row is handed
+    * to the code rather than received, and the slot becomes a block, which is a rewrite of the slot rather than of the
+    * type naming it. Every other position is [[reportNamedRowMisuses]], never a silent widening.
     */
   private def receivedNamedRow(signature: Sourced[Expression]): ScopedIO[Seq[AbilityConstraint[Expression]]] =
     applicationSpine(returnPosition(signature)) match {
@@ -556,22 +556,20 @@ class ValueResolver
     }
 
   /** The constraints a named ability itself declares on the parameter this use bound to `paramName` — the superability
-    * relation, and the one rule that lets a name stand for a set of effects.
+    * relation (`docs/effects.md` §2.5).
     *
-    * `ability Web[F[_] ~ Console & Log]` says a carrier that has `Web` has `Console` and `Log`, so `{Web}` — which
-    * desugars to the constraint `Web[F]` — declares all three, and `derived ⊆ declared` sees the set the user named
-    * (docs/effects-v5-one-carrier.md §7). The same rule states a relation the tree could not express before: `ability
-    * Console[F[_] ~ Suspend]` puts "Console rides Suspend" in the ability instead of repeating it on every instance.
+    * `ability Ord[A ~ Eq]` says a type that has `Ord` has `Eq`, so `[T ~ Ord]` constrains `T` by both and a body may
+    * use `==` on a `T` without writing `~ Ord & Eq`.
     *
     * Nothing here is read off a shape. **Which** of the ability's parameters to inherit from is decided by the use: the
-    * one whose argument *is* this binder (`Web[F]` binds `Web`'s `F`, `Fallible[String, F]` binds `Fallible`'s second),
-    * so a constraint the ability declares on an unrelated parameter (`E ~ Show`) stays there and never lands on the
-    * carrier. The ability's own constraints are resolved **in the ability's own scope**, then its parameters are
+    * one whose argument *is* this binder (`Ord[T]` binds `Ord`'s `A`, `Convert[String, T]` binds `Convert`'s second),
+    * so a constraint the ability declares on an unrelated parameter (`E ~ Show`) stays there and never lands on this
+    * binder. The ability's own constraints are resolved **in the ability's own scope**, then its parameters are
     * substituted by the arguments this use wrote — the ordinary reading of a declaration.
     *
     * Closure is transitive and `expanding` makes it idempotent: an ability already inherited from contributes nothing a
     * second time, so mutually-requiring abilities close instead of looping. Only an ability found *in scope* is looked
-    * up — the fixed-FQN machinery (`Effect`, `PatternMatch`, `TypeMatch`) is compiler-written and requires nothing.
+    * up — the fixed-FQN machinery (`PatternMatch`, `TypeMatch`) is compiler-written and requires nothing.
     */
   private def superConstraints(
       use: AbilityConstraint[Expression],
@@ -864,12 +862,9 @@ object ValueResolver {
     * writes the reference:
     *
     *   - `PatternMatch`/`TypeMatch` (in `eliot.compiler.internal`), named by compiler-generated `implement` markers and
-    *     by the `match` desugaring;
-    *   - `Effect` (in the import-required `eliot.carrier`), synthesized by the **empty row** `{}`
-    *     ([[com.vanillasource.eliot.eliotc.core.processor.EffectSugarDesugarer]]) — a definition writing `{}` names
-    *     nothing, so it must not need `import eliot.carrier.Effect` to say "on my own ambient carrier".
+    *     by the `match` desugaring.
     *
-    * None of these is auto-imported. An explicit import (or a local declaration) of the same name still wins: this map
+    * Neither is auto-imported. An explicit import (or a local declaration) of the same name still wins: this map
     * is only reached when the name is not in scope at all. */
   private val fixedFqnAbilities: Map[String, AbilityFQN] =
     Seq(patternMatchAbilityName, typeMatchAbilityName)

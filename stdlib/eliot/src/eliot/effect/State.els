@@ -10,8 +10,8 @@
  * def tick uses State[Int]: Unit = putState(state + 1)
  * ```
  *
- * A **control effect**: one implementation per platform over that platform's private cell primitive, so there is
- * no interpretation to choose and nothing to bind with `with`. What *is* the user's to choose is the order the
+ * A **control effect**: one implementation per platform over that platform's private cell primitive, bound by its
+ * discharger, so there is no interpretation to choose and nothing for a user to bind with `with`. What *is* the user's to choose is the order the
  * frames are installed — `runStateToPair(s, runThrow(c))` and `runThrow(runStateToPair(s, c))` differ, and the
  * difference is written where the dischargers nest.
  */

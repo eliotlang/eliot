@@ -8,10 +8,8 @@ import com.vanillasource.eliot.eliotc.monomorphize.domain.SemValue.*
 import com.vanillasource.eliot.eliotc.monomorphize.eval.Evaluator
 import com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedExpression
 import com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedExpression.{SignatureView, asArrow}
-import com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedValue
 import com.vanillasource.eliot.eliotc.platform.Platform
 import com.vanillasource.eliot.eliotc.processor.CompilerIO.*
-import com.vanillasource.eliot.eliotc.resolve.fact.AbilityConstraint
 import com.vanillasource.eliot.eliotc.saturate.fact.SaturatedValue
 import com.vanillasource.eliot.eliotc.source.content.Sourced
 
@@ -53,12 +51,7 @@ class CarrierKindChecker(
     * signature ([[SignatureView]]); the metas align with the binders *after* the explicit type arguments already
     * applied. An ordinary `[A]` binder (kind `Type`) is left untagged — solving it to a proper type is correct.
     *
-    * The record is deliberately unfiltered by ability constraints, which is why the two compiler-track carrier readers
-    * ([[com.vanillasource.eliot.eliotc.monomorphize.unify.Unifier.isHigherKindedMeta]]) can key on it: an effectful
-    * result rides *any* of the callee's own HKT binders — including a deliberately unconstrained one like
-    * `runStateToPair`'s `G[_]` (the effect-transparent discharge combinators return `G[...]` with no ability
-    * constraint). The `carrierBinders ∩ paramConstraints` filter applies only to a value's *own* ambient carriers
-    * ([[CheckState.ambientCarriers]]), never to callee results.
+    * The record is unfiltered by ability constraints: every higher-kinded binder is kind-checked, constrained or not.
     */
   def recordCarrierMetas(expr: SemExpression, implicitMetas: Seq[SemValue]): CheckIO[Unit] =
     expr.expression match {
@@ -68,49 +61,15 @@ class CarrierKindChecker(
           _     <- svOpt match {
                      case None     => pure(())
                      case Some(sv) =>
-                       val orv        = sv.value
-                       val allBinders = SignatureView.of(orv.signature).binders
-                       val binders    = allBinders.drop(explicitArgs.size)
-                       // The callee's binder → instantiation-value substitution (explicit args first, then the peeled
-                       // metas), so a carrier binder's ability constraint (`F ~ Throw[E]`, whose `E`/`F` are the
-                       // callee's *own* binder names) evaluates to the metas this call actually instantiated.
-                       val substEnv   = allBinders.zip(explicitArgs ++ implicitMetas).foldLeft(Env.empty) {
-                         case (env, (b, v)) => env.bind(b.name.value, v)
-                       }
+                       val binders = SignatureView.of(sv.value.signature).binders.drop(explicitArgs.size)
                        implicitMetas.zip(binders).traverse_ {
-                         case (VMeta(id, _), binder) =>
-                           recordIfHigherKinded(id, binder, fqn) >>
-                             recordMetaConstraints(id, binder, orv.paramConstraints, substEnv)
+                         case (VMeta(id, _), binder) => recordIfHigherKinded(id, binder, fqn)
                          case _                      => pure(())
                        }
                    }
         } yield ()
       case _                                                                         => pure(())
     }
-
-  /** Record the ability constraints a *higher-kinded* (carrier) binder declares onto its instantiation meta
-    * ([[CheckState.metaConstraints]]) — the table the row-argument type-pinning rule (docs/effects-as-channel.md §10
-    * U4-f) reads when a constrained carrier meta is captured whole into a pinned-row parameter. Each constraint's type
-    * arguments are evaluated against `substEnv` (the callee's binder → instantiation-meta substitution), so `Throw[E]`
-    * on `parseBad`'s carrier resolves `E` to the concrete `String` this call carries and its trailing carrier argument
-    * to the meta itself. Only carrier (higher-kinded) binders are recorded; an ordinary `[A]` binder cannot be a
-    * captured carrier.
-    */
-  private def recordMetaConstraints(
-      id: SemValue.MetaId,
-      binder: SignatureView.Binder,
-      paramConstraints: Map[String, Seq[AbilityConstraint[OperatorResolvedExpression]]],
-      substEnv: Env
-  ): CheckIO[Unit] =
-    if (!CarrierKindChecker.isHktBinder(binder)) pure(())
-    else
-      paramConstraints
-        .getOrElse(binder.name.value, Seq.empty)
-        .toList
-        .traverse { c =>
-          c.typeArgs.toList.traverse(a => evalExpr(a, Some(substEnv))).map(CheckState.MetaConstraint(c.abilityFQN, _))
-        }
-        .flatMap(constraints => modify(_.recordMetaConstraints(id, constraints)))
 
   /** Evaluate a binder's kind annotation; if it forces to a `VPi` (a higher kind such as `Type -> Type`), record the
     * meta as higher-kinded with that kind (see [[recordCarrierMetas]]). A `Type`-kinded (ordinary) binder, or one with

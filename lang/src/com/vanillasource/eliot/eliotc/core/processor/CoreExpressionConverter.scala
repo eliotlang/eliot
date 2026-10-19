@@ -135,9 +135,9 @@ object CoreExpressionConverter {
           )
         )
       case _: SourceExpression.EffectfulType                                           =>
-        // EffectSugarDesugarer rewrites every `{…} A` to `F[A]` across the whole function before conversion, so an
-        // EffectfulType reaching here means it was written somewhere the desugarer does not reach (only signature and
-        // body positions are handled). Fail loudly rather than mis-convert it.
+        // EffectSugarDesugarer lowers every clause to handles, blocks and thunks across the whole function before
+        // conversion, so an EffectfulType reaching here means it was written somewhere the desugarer does not reach
+        // (only signature and body positions are handled). Fail loudly rather than mis-convert it.
         throw IllegalStateException(
           s"Effect braces `{…}` are only supported in function signature positions: ${expr.value.render}"
         )

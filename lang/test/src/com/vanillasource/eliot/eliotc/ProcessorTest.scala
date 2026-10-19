@@ -47,9 +47,6 @@ abstract class ProcessorTest(val processors: CompilerProcessor*) extends AsyncFl
     SystemImport("BigInteger", "type BigInteger"),
     SystemImport("Unit", "type Unit"),
     SystemImport("String", "type String"),
-    // `IO` carries the jvm layer's run boundary `runMain`, so a suite that registers it (see
-    // `LangProcessors(runBoundaryFunctions = …)`) finds the value declaring the platform carrier head.
-    SystemImport("IO", "type IO\ndef runMain[A](io: IO[A]): A", Seq("eliot", "jvm")),
     SystemImport("PatternMatch", "", ModuleName.compilerInternalPackage),
     SystemImport("TypeMatch", "", ModuleName.compilerInternalPackage),
     SystemImport("Int", ProcessorTest.intStubContent),
@@ -326,9 +323,8 @@ object ProcessorTest {
     * `Int`/`Runtime`. Production auto-imports the *whole* `eliot.lang` prelude (see `ModuleName.defaultSystemModules`),
     * but these bespoke tests build the rest of their type world (`Bool`/`Option`/`Either`/`Numeric`/`Compare`/…) inline
     * or via explicit stubs that would otherwise double-import (shadow) against the full prelude. They therefore pin
-    * this smaller set so their hand-built environments stand unchanged. (`IO` is not ambient anywhere anymore — the
-    * carrier is the platform-owned `eliot.jvm.IO`, import-required.) The expanded auto-import is exercised end-to-end
-    * by the examples + the jvm `ExamplesIntegrationTest`s.
+    * this smaller set so their hand-built environments stand unchanged. The expanded auto-import is exercised
+    * end-to-end by the examples + the jvm `ExamplesIntegrationTest`s.
     */
   val coreAmbientModules: Seq[ModuleName] =
     Seq("Function", "Unit", "String", "BigInteger", "Int", "Runtime")

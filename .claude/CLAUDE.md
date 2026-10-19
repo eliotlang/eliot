@@ -235,7 +235,7 @@ subset of its data.
    private in *every* name it mints.
 5. **module** — from modules to individual values; unifies same-named modules from different paths
 6. **resolve** — resolve identifiers to fully qualified names or parameters; also where a `~` constraint is closed
-   under what the named ability itself requires (`~ Web` ⤳ `Web, Console, Log`), and where a **row alias** named as a
+   under what the named ability itself requires (`~ Ord` ⤳ `Ord, Eq` for an `ability Ord[A ~ Eq]`), and where a **row alias** named as a
    definition's return type hands it that alias's declared row: the same reading, of the declaration a resolved name
    resolved to, so an alias crosses files and is shadowed like any other name (`docs/effects.md` §2.4)
 7. **matchdesugar** — pattern matches into function applications; exhaustiveness, nested/constructor/wildcard patterns
@@ -286,8 +286,6 @@ subset of its data.
       and with it off that program silently compiles. It is a *kind* system living next door.
     - **verification is the scope check, in two halves**: by name in phase 11, by entry in the hole rule — one
       verifier (D7); a post-mono re-derivation retired on the measurement that it could only ever see a strict subset.
-    - the **compile track** keeps its mid-spine default ladder and deferred slots *by design* (`Track.Compiler`,
-      `Checker.resolveDeferredSlot`) — the sole live reader of the `Unifier`'s higher-kinded-meta record.
     - other non-equality collaborators, each hooked from `TypeStackLoop.runPostDrainResolution`:
       `check/CarrierKindChecker`, `check/GuardDischargeResolver` (W2b effectful-signature guard discharge —
       formerly `CalculatedReturnResolver`, whose calculated-return half was removed with the `auto`/implicit-generics
@@ -333,7 +331,7 @@ termination handled separately rather than by a universe hierarchy.
 
 **Sanctioned sugar vs. required discipline.** Familiar surface distinctions are *intentional sugar*, not
 violations: the `Qualifier.Type`/`Qualifier.Default` namespaces, `[]` vs `()` call/pattern syntax, and the
-restricted `Expression.typeParser` all collapse to "the same `FunctionDefinition` with a different qualifier tag."
+restricted `Expression.typeRunParser` all collapse to "the same `FunctionDefinition` with a different qualifier tag."
 What the cornerstone *requires* of every task: exactly **one evaluator and one value domain** (never a second,
 weaker "compile-time" interpreter); type equality is **definitional** (force/normalise via that evaluator, then
 compare), never a parallel bespoke mechanism; and kind/arity metadata stays out of semantic phases.
@@ -483,8 +481,7 @@ must be **self-sufficient** from the base plus its own `compiler/`. Roots reach 
 repeatable **`--path <module>/eliot/src`** (no separate compiler/runtime path flags, no `compiler` Mill module);
 `LangPlugin.eliotCompilerOverlay` derives each root's sibling. **One** root ships an overlay today,
 `stdlib/eliot/compiler/`: the self-sufficient compile-time `Either`, `Option`, `Pair` and `Bound`/`Interval` (the
-data the evaluator's intrinsics answer, `monomorphize/processor/EffectIntrinsics`), the type-keyed cell's declarations
-(`eliot/compiler/Cell.els`, which no compile-track effect is written over), and the compile-time **`Abort` and
+data the evaluator's intrinsics answer, `monomorphize/processor/EffectIntrinsics`) and the compile-time **`Abort` and
 `Throw`**, spelled exactly as the jvm layer's (`implement aborting(frame: AbortFrame[Unit]): Abort`, so the overlay's
 supersedes on the compile track) over each module's private `escapeIntrinsic`/`exitIntrinsic`, which `EffectIntrinsics` answers by
 FQN: a fresh frame with identity, threaded along the declared chain as on the runtime track (`docs/effects.md` §3.4).
@@ -728,7 +725,7 @@ idempotent).
 decision D3, blocked). The combinator is `infix left type &[A, B]` in `eliot.lang.Ability` (prelude, so ambient): the
 parser accepts *any* operator between two `~` constraints and `ValueResolver.resolveCombinator` looks the name up in
 the ordinary dictionary, requiring `WellKnownTypes.abilityCombinatorFQN` — so a module declaring its own `&` takes the
-name back and gets a diagnostic. It rides ast→core on `AbilityConstraint.combinedBy` purely to reach that check and
+name back and gets a diagnostic. It rides ast→core on `UnresolvedAbilityConstraint.combinedBy` purely to reach that check and
 is dropped there. `~` stays reserved — it is a binder marker like `:`, not a name. Alongside it,
 `ValueResolverScope.getAbility` is a keyed lookup of the ability's **marker** (`QualifiedName(n, Ability(n))`), not a
 scan of `dictionary.values` — **do not reintroduce the scan**, and do not add a second lookup path for ability names.

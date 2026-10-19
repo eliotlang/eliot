@@ -714,7 +714,7 @@ so they are three **platform-private leaves**, one per target, and nothing else:
 | primitive | shape | jvm | microcontroller (hypothetical) | compile track |
 | --- | --- | --- | --- | --- |
 | escape | `escapeInternal[K, A, R](body uses *: ThrowFrame[K] => A, onExit uses *: K => R, onValue uses *: A => R): R` — abortive, never re-entered | a fresh frame object handed to `body`; `exitInternal(frame, err)` leaves through it by identity, and any other frame's exit passes through | a jump buffer (`setjmp`/`longjmp`), or a status flag and a jump (§13's A2) | an evaluator intrinsic, `escapeIntrinsic`/`exitIntrinsic`, the same shape: a fresh frame handed to `body`, exited by identity |
-| cell | `withCellInternal[S, A, R](initial: S, body uses *: StateCell[S] => A, combine uses *: A => S => R): R` — scoped to one call | a one-slot array made per call and handed to `body` | a slot in the primitive's own stack frame | an evaluator intrinsic still keyed by type (`eliot.compiler.Cell`); no compile-track effect is written over it |
+| cell | `withCellInternal[S, A, R](initial: S, body uses *: StateCell[S] => A, combine uses *: A => S => R): R` — scoped to one call | a one-slot array made per call and handed to `body` | a slot in the primitive's own stack frame | none: no compile-track effect is stateful (a `State` or `Writer` discharge is stuck there) |
 | loop | `foreverInternal` | `while(true)` | the super-loop | never runs (`Inf` is stuck) |
 
 **A frame is a handle's field.** The control effects' single implementations are named, written over the primitives,
@@ -860,10 +860,8 @@ callee hands a handle reads as the value it computes.
 effect does in the checker is an ordinary ability method on an ordinary type parameter. There is no lift, no `pure`,
 no `Id`, no binding to solve and no other effect diagnostic.
 
-Two things beside it are **not** effect machinery and must not be deleted as such (measured — see §12):
-`check/CarrierKindChecker` (§3.6) and the compile track's mid-spine default ladder with its deferred slots
-(`Track.Compiler`, `Unifier.resolveDeferredSlot`) — the sole live reader of the `Unifier`'s higher-kinded-meta
-record.
+One thing beside it is **not** effect machinery and must not be deleted as such (measured — see §12):
+`check/CarrierKindChecker` (§3.6), the sole reader of the `Unifier`'s higher-kinded-meta record.
 
 ## 4. The scope check, as a spec
 
@@ -1052,29 +1050,17 @@ Each item is a defect to close or a decision to make, never a doc fix. Numbers a
 
 **Open.** None: D36's "It deletes" list is done (items 63–65, closed below).
 
-**Cleanup** (found by the same review; not defects). Most of it is in code D36 deletes and goes with it; the rest is to
-do with the next change that touches the file:
+**Cleanup.** The review's list was done on 2026-10-19: its unused code deleted (with the compile track's type-keyed
+cell, which no compile-track effect was written over), and its two "possibly dead" pieces — `GuardDischargeResolver`'s
+higher-kinded-meta arms and `UnifiedModuleValueProcessor.mergeEffectRows` — deleted after a probe on each never fired
+over `__.test`, the 46 examples, eliot-test's and eliot-build's suites and eliot-build's launcher, every example jar
+byte-identical; the stale text it named rewritten. Two things the pass found and left, each its own change:
 
-- *Unused code:* `RowChecker.checkable`; `PostDrainQuoter.reduceSignatureToGround`; `CheckState.metaConstraints`/
-  `recordMetaConstraints`/`MetaConstraint` and `CarrierKindChecker.recordMetaConstraints`; `WellKnownTypes.boolFoldFQN`/
-  `boolIfFQN`; `Unifier.occursInValue`; `CompilerMonomorphicValue.naturalArity`;
-  unused imports in `AbilityImplementationCheckProcessor`; the `IO`/`runMain` stub in `ProcessorTest.scala:50-52`; the
-  compile-track type-keyed cell (`compiler/Cell.els`, `EffectIntrinsics`' cell operations, their `WellKnownTypes`
-  FQNs), read only by tests.
-- *Possibly dead, to prove before deleting:* `GuardDischargeResolver`'s `VMeta` arms; `UnifiedModuleValueProcessor
-  .mergeEffectRows`.
-- *Text that names deleted code or says the opposite of the code:* §3.8 and `CLAUDE.md` on the compile track's
-  "deferred slots" (deleted in 4bb25c00; `Unifier.scala:48` links it); base `.els` docs (`File.els:123`,
-  `Process.els:127` on `with standardFileSystem`; `Throw.els`,
-  `Abort.els`, `State.els` saying there is "nothing to bind with `with`"; `compiler/Cell.els:6, 8`); Scaladoc in
-  `RowElaboratedValue`, `RowElaborationProcessor`, `EffectIntrinsics`,
-  `SuppliedRowArgumentsProcessor`, `NamedImplementationArguments`, `AbilityMatcher.patternParameters`, `LspPlugin`,
-  `WellKnownTypes`; carrier-era and brace-row examples in `EffectRow`, `NamedImplementation`, `ImplementBlock`,
-  `WithBinding`, `BindingWriter`, `ValueResolver`, `CoreExpressionConverter`, `AbilityImplementation(Processor)`,
-  `AbilityResolver`, `TypeStackLoop`, `ReducedBindingClosure`, `PostDrainQuoter`, `ArgumentDefinition` and three tests;
-  `CLAUDE.md`'s `people.sorted[Person]`, `Expression.typeParser` (is `typeRunParser`), `AbilityConstraint.combinedBy` (is on the ast's
-  `UnresolvedAbilityConstraint`) and its inexpressible `~ Web` example. Line-level references are in the review record,
-  `git show 14b61527:docs/effects.md` §8.
+- `ast/fact/ImplementationRows` still describes the v6 phantom-binder design, and whether the clause-row union it
+  builds is still needed now that a named implementation's extra entries are captured at its `with` (`row/Captures`)
+  is a question for the code, not the text.
+- "carrier" survives as vocabulary in about thirty files beyond the review's list, much of it the kind checker's
+  legitimate `[F[_]]` sense and the guard channel's own name (`isGuardCarrier`); a sweep has to tell those from history.
 
 **Closed.** One line each; the full record is at `14b61527` (§13).
 

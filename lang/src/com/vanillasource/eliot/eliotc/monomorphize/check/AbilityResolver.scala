@@ -15,7 +15,8 @@ import com.vanillasource.eliot.eliotc.resolve.fact.AbilityFQN
 import com.vanillasource.eliot.eliotc.source.content.Sourced
 import com.vanillasource.eliot.eliotc.source.content.Sourced.{compilerAbort, compilerError}
 
-/** The ability-resolution *saturation* concern (a checker collaborator, symmetrical with `carriers` / `guards`):
+/** The ability-resolution *saturation* concern (a checker collaborator beside [[GuardDischargeResolver]] and
+  * [[HandleHoleResolver]]):
   * discovering every ability-qualified value reference and resolving each to its concrete impl, factored out of the
   * [[TypeStackLoop]]'s post-drain fold. None of this is definitional equality: it re-enters `getFact` to read an
   * ability marker's arity, and it drives the `resolve-abilities` fixed-point pass.

@@ -44,13 +44,9 @@ class PlatformScopedAbilityResolutionTest
     lang("BigInteger")   -> "type BigInteger",
     lang("Unit")         -> "type Unit",
     lang("String")       -> "type String",
-    lang("IO")           -> "type IO",
     // Every synthesized `implement`/`data` marker's default `true` guard resolves to `eliot.lang.Bool::true`, so Bool
     // is on both pools just like the real base layer (ability-guards §2.3).
     lang("Bool")         -> ProcessorTest.boolImportContent,
-    // Every `ability` block declares a binding binder, whose `Implementation[A]` mark and `Default` sentinel the
-    // compiler writes module-qualified — so this module is on both pools, as it is in every layer.
-    lang("Implementation") -> ProcessorTest.implementationStubContent,
     internal("PatternMatch") -> "",
     internal("TypeMatch")    -> ""
   )

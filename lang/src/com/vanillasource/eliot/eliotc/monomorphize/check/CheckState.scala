@@ -6,8 +6,6 @@ import com.vanillasource.eliot.eliotc.monomorphize.domain.SemValue.*
 import com.vanillasource.eliot.eliotc.monomorphize.eval.Evaluator
 import com.vanillasource.eliot.eliotc.monomorphize.fact.GroundValue
 import com.vanillasource.eliot.eliotc.monomorphize.unify.Unifier
-import com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedValue
-import com.vanillasource.eliot.eliotc.resolve.fact.AbilityFQN
 import com.vanillasource.eliot.eliotc.source.content.Sourced
 
 /** Immutable state for the bidirectional type checker.
@@ -55,11 +53,6 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
   *   ability rather than the method). Recorded by [[AbilityResolver]], which fetches it anyway to slice the impl query;
   *   read back by the post-drain quoter, which must slice a reference's type arguments the same way to rebuild the
   *   [[abilityResolutions]] key and has no `getFact` of its own.
-  * @param metaConstraints
-  *   The ability constraints a callee reference declared on each of its freshly-peeled instantiation metas — keyed by
-  *   the meta's raw id (docs/effects-as-channel.md §10 U4-f). Recorded at instantiation ([[recordMetaConstraints]],
-  *   from [[CarrierKindChecker.recordCarrierMetas]]); read by the row-argument type-pinning rule when a constrained
-  *   carrier meta needs its declared abilities looked up. Built once here.
   * @param sharedHoles
   *   The metavariable each **keyed** hole stands for — `Inferred[k]`, which the `row` phase writes at every place that
   *   must agree on one type the checker reads off the call (`docs/effects.md` §8 item 36): `pick`'s `A` in
@@ -81,7 +74,6 @@ case class CheckState(
     unifier: Unifier,
     bindingCache: Map[ValueFQN, Option[SemValue]],
     abilityResolutions: Map[CheckState.AbilityResolutionKey, (ValueFQN, Seq[GroundValue])],
-    metaConstraints: Map[Int, Seq[CheckState.MetaConstraint]] = Map.empty,
     abilityArities: Map[ValueFQN, Int] = Map.empty,
     sharedHoles: Map[BigInt, VMeta] = Map.empty,
     handleHoles: Seq[HandleHoleResolver.Hole] = Seq.empty,
@@ -93,13 +85,6 @@ case class CheckState(
   /** Record a higher-kinded type-parameter instantiation meta with its expected kind, for post-drain verification. */
   def recordHigherKindedMeta(id: MetaId, expectedKind: SemValue, context: Sourced[String]): CheckState =
     withUnifier(unifier.recordHigherKindedMeta(id, expectedKind, context))
-
-  /** Record the ability constraints a callee reference declared on one of its instantiation metas. See
-    * [[metaConstraints]].
-    */
-  def recordMetaConstraints(id: MetaId, constraints: Seq[CheckState.MetaConstraint]): CheckState =
-    if (constraints.isEmpty) this
-    else copy(metaConstraints = metaConstraints.updated(id.value, constraints))
 
   /** The neutral a runtime value parameter binds to in ρ: a fresh rigid variable at the current ρ level, standing for
     * the parameter's not-yet-known runtime value. Read *before* [[bindValueParam]] so the checker can substitute it into
@@ -185,12 +170,4 @@ object CheckState {
         val atRef = resolutions.collect { case ((r, _), impl) if r == ref => impl }.toSeq.distinct
         Option.when(atRef.sizeIs == 1)(atRef.head)
       }
-
-  /** One ability constraint a callee reference declared on an instantiation meta, its type arguments already evaluated
-    * against the callee's binder→instantiation-meta substitution ([[metaConstraints]]). The carrier binder itself is
-    * the constraint's *last* argument (as [[com.vanillasource.eliot.eliotc.core.processor.EffectSugarDesugarer]]
-    * appends it); the non-carrier ability arguments — the ones the row-pinning rule pins into the carrier's leading
-    * slots — are `args.dropRight(1)`.
-    */
-  case class MetaConstraint(abilityFQN: AbilityFQN, args: Seq[SemValue])
 }

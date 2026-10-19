@@ -3,42 +3,32 @@ package com.vanillasource.eliot.eliotc.ast.fact
 import cats.Applicative
 import cats.syntax.all.*
 
-/** The structured **effect-row metadata** of a value's signature — the effects-as-channel "declared row + row
-  * positions" (docs/effects-as-channel.md §4, Phase 1). Captured at [[core.processor.EffectSugarDesugarer]] from the
-  * *open* effect rows (`{Console} A`, no `| base` tail) of a signature **before** they are rewritten onto the carrier
-  * generic, and forwarded down the value fact chain (FunctionDefinition → NamedValue → ResolvedValue →
-  * BlockDesugaredValue → MatchDesugaredValue → OperatorResolvedValue) alongside `paramConstraints`, converting the
-  * entry representation at each hop exactly as `paramConstraints` is converted.
+/** The structured **effect-row metadata** of a value's declaration (`docs/effects.md` §3.1): what its `uses` clauses
+  * say, captured at [[core.processor.EffectSugarDesugarer]] before the clauses are lowered to handle binders, handle
+  * parameters, blocks and thunks, and forwarded down the value fact chain (FunctionDefinition → NamedValue →
+  * ResolvedValue → BlockDesugaredValue → MatchDesugaredValue → OperatorResolvedValue) alongside `paramConstraints`,
+  * converting the entry representation at each hop exactly as `paramConstraints` is converted.
   *
-  * **Rendering metadata** (U4-c-0b): the row is not what anything verifies against — the scope check reads a
-  * definition's minted binders — it is the declaration the desugar consumes and the LSP's declared-row vocabulary. The carrier desugar still
-  * runs, so the same row information is *also* present in the desugared signature (as `F ~ E` constraints); this field
-  * is the explicit, position-attributed copy, and is deliberately **not** part of any `signatureEquality` (the
-  * desugared signature already carries the character-exact merge check).
-  *
-  * A **pinned** row (`{Throw[E] | Id} A`) named a carrier stack and has no v6 meaning; it is rejected at the desugar
-  * rather than recorded, so the three fields that carried its positions and entries are gone with it. Body rows are
-  * excluded (the body is the runtime, not the declared signature); so are generic-parameter-bound rows (they are
-  * neither the value's ambient nor a value parameter).
+  * It is declaration metadata, never a type (§3.6): `unify` sees the lowered signature, and this record is what the
+  * `row` phase, the hole rule and the LSP read for what a declaration performs and where. It is deliberately **not**
+  * part of any `signatureEquality` — the lowered signature already carries the character-exact merge check. A body's
+  * clauses are not recorded (the body is the runtime, not the declaration), nor are a generic parameter's.
   *
   * @param returnEffects
-  *   Open-row entries at the **return** position — the value's own declared ambient row (what §5.1's `derived ⊆
-  *   declared` check verifies the body against). Empty when the return carries no open row.
+  *   The entries of the definition's own `uses` clause — what it performs, each one handle it receives. Empty for a
+  *   pure definition.
   * @param parameterEffects
-  *   One entry per value parameter that itself carried an open row — an arrow-codomain callback row like `action: A =>
-  *   {} Unit` — holding that parameter's index (into the definition's value args) and its open-row entries.
-  *   Effect-transparent under §5. Empty for a first-order signature. An **empty** row `{}` carries the single
-  *   machinery entry `Effect` here (see [[core.processor.EffectSugarDesugarer.rowEntries]]), so the position is tagged
-  *   exactly as the older `{Effect}` spelling tagged it — the tag is what tells a row position from a carrier-typed
-  *   one, and an entry-less tag would silently turn every migrated slot into the latter.
+  *   One entry per **code** parameter whose clause is on the parameter itself — `body uses *: A`, `body uses *,
+  *   Throw[E]: A` — holding that parameter's index (into the definition's value args), the entries its clause lists and
+  *   whether it is closed. A clause listing nothing is recorded too, with no entries: the record's presence is what
+  *   makes the position code (a thunk), so it is never dropped for being empty. Empty for a first-order signature.
   * @param callbackEffects
-  *   One entry per value parameter whose type is a **function with a row in its codomain** — `action: A => {} Unit`,
-  *   `combine: A => B => {} B` — holding the parameter's index, how many arguments the callee calls it with, and that
-  *   row's entries. Such a parameter is **code**:
-  *   the callee calls it, so a lambda written at it is the caller's text and sees the caller's bindings, while a
-  *   function parameter with no row is a **value**, and a value is pure (`docs/effects.md` D21, rules 2 and 3 — the
-  *   later `f uses *: A => B`). Unlike [[parameterEffects]] the type is not thunked: the codomain row lowers to its
-  *   payload, so nothing but this record tells the two spellings apart.
+  *   One entry per value parameter whose type is a **function with a clause on its codomain** — `action uses *: A =>
+  *   Unit`, `combine uses *: A => B => B` — holding the parameter's index, how many arguments the callee calls it with,
+  *   and the clause's entries. Such a parameter is **code**: the callee calls it, so a lambda written at it is the
+  *   caller's text and sees the caller's handles, while a function parameter with no clause is a **value**, and a value
+  *   is pure (`docs/effects.md` §1 rules 2 and 3). Unlike [[parameterEffects]] the type is not thunked: the codomain's
+  *   clause lowers to its payload, so nothing but this record tells the two apart.
   * @param returnArity
   *   How many value parameters the definition declares before its return position — where [[returnEffects]] are
   *   performed. A function-typed return is a value, so `def printer uses Console: String => Unit` performs `Console`
@@ -89,13 +79,13 @@ case class EffectRow[C](
 
 object EffectRow {
 
-  /** A single value parameter's open-row entries, tagged with the parameter's positional index into the definition's
-    * value args (stable through the fact chain — no phase reorders value parameters).
+  /** A single code parameter's clause entries, tagged with the parameter's positional index into the definition's value
+    * args (stable through the fact chain — no phase reorders value parameters).
     *
     * @param closed
     *   Whether the row is **closed** — written `body uses Throw[E]: A`, with no `*` (`docs/effects.md` D21 rule 4): the
-    *   argument may use what the slot supplies and must discharge everything else itself, reaching nothing from the
-    *   scope it is written in.
+    *   argument may use what the slot lists and must discharge everything else itself, reaching nothing from the scope
+    *   it is written in.
     */
   case class ParameterEffects[C](parameterIndex: Int, effects: Seq[C], closed: Boolean = false) {
     def map[D](f: C => D): ParameterEffects[D] = ParameterEffects(parameterIndex, effects.map(f), closed)
@@ -104,8 +94,8 @@ object EffectRow {
       effects.traverse(f).map(ParameterEffects(parameterIndex, _, closed))
   }
 
-  /** A **code** parameter of function type — the callback `combine: A => B => {} B` — tagged with its positional index
-    * and its **arity**, the number of arrows before the row: that many nested lambdas written at the slot are the
+  /** A **code** parameter of function type — the callback `combine uses *: A => B => B` — tagged with its positional
+    * index and its **arity**, the number of arrows before the clause: that many nested lambdas written at the slot are the
     * caller's code, and a lambda past them is the value the code hands back. [[closed]] is as for
     * [[ParameterEffects.closed]]: the code may reach nothing from where it is written.
     */

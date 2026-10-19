@@ -60,7 +60,7 @@ object MonomorphicValue {
   }
 
   @tailrec
-  private[monomorphize] def countLeadingLambdas(expression: MonomorphicExpression.Expression, count: Int): Int =
+  private def countLeadingLambdas(expression: MonomorphicExpression.Expression, count: Int): Int =
     expression match {
       case MonomorphicExpression.FunctionLiteral(_, _, body) => countLeadingLambdas(body.value.expression, count + 1)
       case _                                                 => count

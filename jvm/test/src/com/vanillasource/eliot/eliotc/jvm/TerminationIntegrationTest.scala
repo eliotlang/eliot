@@ -124,8 +124,8 @@ class TerminationIntegrationTest extends FullIntegrationTest {
     ).asserting(_ should include("performs the effect 'Inf'"))
   }
 
-  // Run, don't discharge: an `{Inf}` program reaches `main` undischarged and is bound to the platform's `Inf`
-  // implementation at the run boundary, whose `forever` loops the step's thunk endlessly — the loop never returns, so
+  // Run, don't discharge: a `uses Inf` program reaches `main` undischarged and the entry point binds the platform's
+  // `standardInf`, whose `forever` loops the step's thunk endlessly — the loop never returns, so
   // the test bounds it and confirms the step ran many times (not just once).
   "a main built from forever over a terminating step" should "run the step endlessly" in {
     compileAndRunBounded(
@@ -137,8 +137,8 @@ class TerminationIntegrationTest extends FullIntegrationTest {
     ).asserting(_.linesIterator.count(_ == "tick") should be > 5)
   }
 
-  // The same loop reached through an `{Inf, Console}` value: `main` receives both effects, binds each to the
-  // platform's default implementation at the run boundary, and runs end-to-end. `Inf` is the one effect that may
+  // The same loop reached through a `uses Inf, Console` value: the entry point binds both effects' standard
+  // implementations, and the program runs end-to-end. `Inf` is the one effect that may
   // legitimately reach `main` undischarged — it denotes a deliberately non-terminating program.
   "an {Inf, Console} super-loop reached from main" should "run endlessly" in {
     compileAndRunBounded(
