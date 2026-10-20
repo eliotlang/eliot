@@ -14,9 +14,11 @@ package com.vanillasource.eliot.eliotc.jvm
   * representation from it, so a bound that is too tight truncates the printed value rather than being caught
   * (`docs/string-length-meta.md` §8).
   *
-  * The last two cases pin the boundaries this stage deliberately keeps: a **higher-order** call is still ⊤ (a lambda
-  * carries no meta of its own — §5's table, which additionally waits on the `List` size domain), and a callee's own
-  * `where` is demanded at what each use site supplies (§P5), never over ⊤ parameters.
+  * A function value is a **closure** over the metas in scope where it was written, interpreted when something applies
+  * it, and a stated transfer over code parameters reads each code argument as what it yields (§6.2). What stays ⊤ is
+  * a native applying a function argument by itself — a `match` (`handleCases`) — and a demand inside a lambda body,
+  * whose binder only the callee applying it knows. A callee's own `where` is demanded at what each use site supplies
+  * (§P5), never over ⊤ parameters.
   */
 class DerivedMetaTransferIntegrationTest extends FullIntegrationTest {
   // `withinByte`/`useByte` are test-local, exactly as in [[TransferBraceReductionIntegrationTest]]: the precondition is
@@ -108,13 +110,55 @@ class DerivedMetaTransferIntegrationTest extends FullIntegrationTest {
     ).asserting(_ should include("precondition of 'Test::display' is not satisfied"))
   }
 
-  // The first-order limit, stated as a test so that closing it later is a visible change: a lambda is a function value
-  // and carries no meta, so a callee applying one of its own parameters derives nothing. "Cannot prove" — an absent
-  // bound — is the right diagnostic, and it is *not* "not satisfied": the interpretation declined, it did not widen.
-  "a higher-order call" should "stay ⊤ rather than derive through a lambda argument" in {
+  // A lambda argument is a closure, interpreted where the callee applies it.
+  private val applyTo = "def applyTo(f: Function[Int, Int], x: Int): Int = f(x)\n"
+
+  "a higher-order call" should "derive through a lambda argument the callee applies" in {
+    accepts(applyTo, "applyTo(y -> add(y, 1), 10)", "11")
+  }
+
+  it should "reject a derived range the lambda makes too large" in {
+    rejects(applyTo, "applyTo(y -> add(y, 100), 100)")
+  }
+
+  it should "read what a lambda captures from where it was written" in {
+    accepts(applyTo + "def shift(k: Int): Int = applyTo(y -> add(y, k), 10)\n", "shift(5)", "15")
+  }
+
+  it should "derive through a def passed as a value" in {
+    accepts(applyTo + double, "applyTo(double, 10)", "20")
+  }
+
+  it should "derive through a lambda a callee returns and its caller applies" in {
+    accepts(
+      "def compose(f: Function[Int, Int], g: Function[Int, Int]): Function[Int, Int] = a -> f(g(a))\n",
+      "compose(y -> add(y, 1), z -> add(z, 2))(10)",
+      "13"
+    )
+  }
+
+  // `fold` states `{join(whenTrue, whenFalse)}` over its code parameters, so each arm reaches the transfer as what its
+  // thunk yields; the run pins that the backend re-encodes each arm to the merged width.
+  "a stated transfer over code parameters" should "read each code argument as what it yields" in {
+    accepts("", "fold(false, 10, 20)", "20")
+  }
+
+  it should "reject when one arm's yield is too large" in {
+    rejects("", "fold(true, 10, 200)")
+  }
+
+  // The gaps this stage keeps, stated as tests so that closing one is a visible change. "Cannot prove" — an absent
+  // bound — is the right diagnostic for each, and it is *not* "not satisfied": the interpretation declined.
+  "a match" should "stay ⊤, since the native applying its cases states no transfer" in {
     compileForErrors(
-      useByte + "def applyTo(f: Function[Int, Int], x: Int): Int = f(x)\n" +
-        "def main uses Console: Unit = printLine(show(useByte(applyTo(y -> add(y, 1), 10))))"
+      useByte + "data AB = A | B\ndef pick(x: AB): Int = x match { case A -> 10 case B -> 20 }\n" +
+        "def main uses Console: Unit = printLine(show(useByte(pick(A))))"
+    ).asserting(_ should include("Cannot prove the precondition of 'Test::useByte'"))
+  }
+
+  "a demand inside a lambda body" should "stay unknown, since only the callee applying it binds its binder" in {
+    compileForErrors(
+      useByte + applyTo + "def main uses Console: Unit = printLine(show(applyTo(y -> useByte(y), 10)))"
     ).asserting(_ should include("Cannot prove the precondition of 'Test::useByte'"))
   }
 

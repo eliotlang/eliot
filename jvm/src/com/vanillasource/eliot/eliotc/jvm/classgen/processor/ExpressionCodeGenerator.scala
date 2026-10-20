@@ -645,12 +645,12 @@ object ExpressionCodeGenerator {
       val elseLabel = new Label()
       val endLabel  = new Label()
       // `fold` selects one arm at runtime, so both branch frames must leave the *same* representation: the merged width
-      // the channel pinned on the `fold` node (`expectedResultMeta`). Each integer arm is re-encoded to it here, derived
-      // from the arm's own rep and the merge rep — a non-op for a non-integer arm (both leave their shared type). The
-      // channel provides no explicit arm edges; the backend owns the merge because it already emits `fold` inline.
+      // the channel pinned on the `fold` node (`expectedResultMeta`). An arm is a thunk, and a function value hands its
+      // result back at the ⊤ boundary width whatever its body knew, so each integer arm is re-encoded from that width to
+      // the merge's — a non-op for a non-integer arm. The channel provides no explicit arm edges; the backend owns the
+      // merge because it already emits `fold` inline.
       val mergeRep  = repInternalNameOf(expectedResultType, expectedResultMeta)
-      val trueRep   = unconvertedRepOf(arguments(1))
-      val falseRep  = unconvertedRepOf(arguments(2))
+      val armRep    = repInternalNameOf(expectedResultType, None)
       for {
         condClasses  <- createExpressionCode(moduleName, outerClassGenerator, methodGenerator, arguments(0))
         _            <- methodGenerator.runNative[CompilationTypesIO] { mv =>
@@ -660,18 +660,25 @@ object ExpressionCodeGenerator {
         trueClasses  <- createExpressionCodeUnconverted(moduleName, outerClassGenerator, methodGenerator, arguments(1))
         _            <- methodGenerator.runNative[CompilationTypesIO] { mv =>
                           runThunk(mv)
-                          if (isIntegerRep(trueRep) && isIntegerRep(mergeRep)) convertRepresentation(trueRep, mergeRep)(mv)
+                          convertArm(armRep, mergeRep)(mv)
                           mv.visitJumpInsn(Opcodes.GOTO, endLabel)
                           mv.visitLabel(elseLabel)
                         }
         falseClasses <- createExpressionCodeUnconverted(moduleName, outerClassGenerator, methodGenerator, arguments(2))
         _            <- methodGenerator.runNative[CompilationTypesIO] { mv =>
                           runThunk(mv)
-                          if (isIntegerRep(falseRep) && isIntegerRep(mergeRep)) convertRepresentation(falseRep, mergeRep)(mv)
+                          convertArm(armRep, mergeRep)(mv)
                           mv.visitLabel(endLabel)
                         }
         _            <- methodGenerator.addCastTo[CompilationTypesIO](castTargetFqn(expectedResultType, expectedResultMeta))
       } yield condClasses ++ trueClasses ++ falseClasses
+    }
+
+  /** Re-encode the result of a `fold` arm's thunk, an `Object` at `armRep`, to the merge's `mergeRep`. */
+  private def convertArm(armRep: String, mergeRep: String)(mv: MethodVisitor): Unit =
+    if (isIntegerRep(armRep) && isIntegerRep(mergeRep) && armRep =!= mergeRep) {
+      mv.visitTypeInsn(Opcodes.CHECKCAST, armRep)
+      convertRepresentation(armRep, mergeRep)(mv)
     }
 
   /** Run the arm a `fold` selected. A code parameter listing no effects is a thunk (`whenTrue uses *: A` is

@@ -146,7 +146,7 @@ class RefinementChannelProcessor
                               vfqn.value,
                               typeArgs,
                               node.value.expressionType,
-                              argResults.map(_.own)
+                              args.zip(argResults).map((arg, result) => MetaInterpreter.argument(arg, result.own, Map.empty))
                             )
             } yield Flow(meta, argResults.flatMap(_.records) ++ recordAt(node, meta))
           case _ =>

@@ -294,8 +294,8 @@ needed for `foldLeft`. **Both withdrawn.** Walking the leaves that seemed to nee
 | `String::length` | ~~`0 .. platform max`~~ — the parenthesised "better" answer is the one that shipped: **`{size(s)}`**, the string's own size meta, which now exists | nothing |
 | `Process::exitCode` | `0 .. 255` | nothing |
 | `String::parseIntInternal` | ~~the platform int range~~ — **`Unbounded`**, spelled `whole` and **stated** (S4) | the domain top (above) |
-| `Function::apply` | the function argument's transfer, applied | **higher-order** |
-| `PatternMatch::handleCases` | join over the cases' transfers | **higher-order** |
+| ~~`Function::apply`~~ | **derived (S10)**: not a leaf — the `lang` layer bodies it `f(a)`, so a lambda argument is a closure the interpretation applies | nothing |
+| `PatternMatch::handleCases` | join over the cases' transfers | **higher-order** — still ⊤ after S10, see §9 |
 | `List::foldLeft` | `combine`'s transfer iterated over `list`'s size meta | **higher-order + §5.2** |
 
 The structural reason there is no gap: **on a real target every meta-carrying type has a representation,
@@ -899,8 +899,8 @@ interpreted too, since it lowers to an applied lambda and its bindings are ordin
 
 Four decisions this stage made:
 
-- **First-order.** A lambda is a function value and carries no meta of its own, so a callee that applies one of its own
-  parameters is ⊤ — §5's higher-order rows are untouched, and the fold additionally waits on `List` size (§8.3, still
+- **First-order** (**lifted by S10**: a function value is now a closure over metas). A lambda is a function value and
+  carries no meta of its own, so a callee that applies one of its own parameters is ⊤ — §5's higher-order rows are untouched, and the fold additionally waits on `List` size (§8.3, still
   exactly as written). What §6.2 called the payoff of B — *reaching a lambda argument's transfer* — is therefore
   still owed; what B bought here is that the walk is over the real body, so paying it later is a closure over metas in
   a walk that already exists rather than a second program.
@@ -1060,7 +1060,7 @@ beside the stamping walk:
   (`applyTo(y -> useByte(y), 42)`). All 47 example jars are byte-identical and the sweep's time is unchanged.
 
 **What ⊤ is left meaning: gaps in the walk, not a design rule.** The interpretation still declines at a lambda (it is
-first-order, §P4), a `match`, a field read back out of a `data` value (structural meta, §2.3) and an exhausted budget.
+first-order, §P4 — **closed by S10**, below), a `match`, a field read back out of a `data` value (structural meta, §2.3) and an exhausted budget.
 Each must stay a loud failure at any demand that reaches it — a gap is fail-safe or it is a hole — and each is now a work item,
 not a semantics. The budget was left as it is: a context is walked as a fact per body, so its 256 steps per call node
 still bound only *computing a value*, and verifying the program from `main` is bounded by the call DAG and the memo.
@@ -1069,6 +1069,53 @@ A cheap stopgap stays available while those gaps are open: an unknown argument p
 that never reads it reduces anyway (a reduction to `true` with a free variable holds for every value of it). Its one
 obligation is that every compile-time native a predicate can reach stalls on a neutral argument rather than answering.
 It is a precision aid for the gaps, not part of the rule.
+
+**Gaps — closures over metas (S10).** The first of the four gaps above, and the one §6.2 named as the payoff of B: a
+function value is a **closure** — the function-typed node and the environment it was written in
+(`MetaInterpreter.Value.Closure`) — and is interpreted only when something applies it. A function-typed node is never
+interpreted where it stands, so a closure costs nothing until it is applied, and the derivation gate (a result that
+carries no meta is never derived) still keeps the interpretation off every other call node. What it reaches:
+
+```eliot
+def applyTo(f: Int => Int, x: Int): Int = f(x)
+def shift(k: Int): Int = applyTo(y -> add(y, k), 10)                 // shift(5) is [15, 15]: the lambda reads `k` where it was written
+def compose(f: Int => Int, g: Int => Int): Int => Int = a -> f(g(a))  // compose(…)(10) applies the closure the body returned
+applyTo(double, 10)                                                   // a def passed as a value is a closure too
+fold(c, 10, 20)                                                       // [10, 20]
+```
+
+Three things this stage settled:
+
+- **A stated transfer reads a code argument as what it yields.** A companion is Eliot over metas and cannot apply a
+  closure, so where the payload signature gives a code parameter the meta type of what its code yields, the closure is
+  applied to unknown arguments — the unit or handles its runs pass, which carry no meta — and its result is passed.
+  This was not new precision but a **repair**: `Bool::fold`'s `{join(whenTrue, whenFalse)}` had received only ⊤ since
+  D36 made every code argument a thunk, so the branch merge of `docs/generic-refinement-merges.md` was silently dead —
+  sound, since every demand on it failed loudly, but no test pinned it end to end. One does now.
+- **A narrowed `fold` needed its backend arms fixed, as §7 predicts.** The inline `fold` re-encoded each arm from the
+  rep of the *argument node* — a lambda, so never an integer rep — and then cast to the merged width: the first narrowed
+  `fold` would have been a `ClassCastException`. An arm is a thunk, and a function value hands its result back at the ⊤
+  boundary width whatever its body knew, so each arm is now converted from that width.
+- **The demands walk keeps what a closure captures.** A lambda argument's information there is that of the parameters
+  it reads (symbolic, and dependent on the context's positions, as they are), so a call whose result is unknown because
+  a closure captured a symbolic parameter is deferred to the contexts that know it rather than reported in the root.
+
+**What it leaves**, each pinned as a test that turns into a visible change when closed:
+
+- **A native applying a function argument itself** — `handleCases`, so every `match`. Its cases argument is a closure
+  taking a *selector*, so reading its yield cannot reach the arms, and the native states nothing. Closing it is a
+  decision, not a work item: the transfer language has no function metas, and the channel names no branch construct
+  (`docs/generic-refinement-merges.md`).
+- **`if … else`**, which is blocked twice over: `else` is `foldOption(fallback, a -> a, runAbort(computation))`, a
+  `match` whose value arm reads the result *inside an `Option`* — the structural gap of P6.
+- **A demand on a closure the walk cannot see applied.** A demand inside a lambda body (`applyTo(y -> useByte(y), 10)`)
+  is still checked with its binder unknown, and a demand in a callee on the result of applying a function parameter
+  (`def applyThenUse(f: Int => Int, x: Int): Int = useByte(f(x))`) is unknown in every context, since a context's
+  entries are metas, never closures. Both fail loudly. Closing them means a context that can carry a closure — a fact
+  key holding a body and an environment — which is worth doing only once a program needs it.
+
+Measured: all 47 example jars byte-identical (no example feeds a closure or a `fold` result to a demand), and the
+whole suite green.
 
 **P6 — precision follow-ons.** Structural meta types (§2.3), which `List` size, the fold and the higher-order rows of §5
 wait on.

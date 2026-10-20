@@ -158,8 +158,9 @@ class MetaDemandsProcessor
       case MonomorphicExpression.FunctionLiteral(name, _, body)            =>
         // A function value carries no meta; what a *code* argument yields is its innermost body's meta, which is what a
         // demand at a code parameter reads ([[Walked.yields]]). The binder is supplied by whoever applies the lambda,
-        // which the channel does not see, so it is unknown.
-        walk(scope, body, env - name.value).map(inner => inner.copy(info = Info.unknown))
+        // which the channel does not see, so it is unknown. A callee applying the lambda reads the parameters it
+        // captures, so its own info is theirs ([[captured]]).
+        walk(scope, body, env - name.value).map(inner => inner.copy(info = captured(node, env)))
       case MonomorphicExpression.MonomorphicValueReference(vfqn, typeArgs) =>
         // A bare reference: a saturated call of a nullary def, or a function value whose arguments the channel never
         // sees — its demands are rejected as a value, and its body's demands are checked with every argument unknown.
@@ -180,7 +181,9 @@ class MetaDemandsProcessor
                               vfqn.value,
                               typeArgs,
                               node.value.expressionType,
-                              walkedArgs.map(_.info.meta)
+                              args
+                                .zip(walkedArgs)
+                                .map((arg, walked) => MetaInterpreter.argument(arg, walked.info.meta, env.view.mapValues(_.meta).toMap))
                             )
             } yield {
               val info = Info.derived(meta, walkedArgs.map(_.info))
@@ -199,6 +202,23 @@ class MetaDemandsProcessor
               .map(walked => Walked.leaf(Info.unknown).andAll(walked))
         }
     }
+
+  /** What is known of a function value written in `env`: no meta of its own, but whatever a callee applying it may read
+    * — symbolic, and dependent on the context's positions, as the parameters it captures are.
+    */
+  private def captured(node: Sourced[MonomorphicExpression], env: Env): Info = {
+    val infos = freeParameters(node.value.expression).toSeq.flatMap(env.get)
+    Info(None, infos.exists(_.symbolic), infos.flatMap(_.dependsOn).toSet)
+  }
+
+  /** The parameters an expression reads that it does not bind itself. */
+  private def freeParameters(expression: MonomorphicExpression.Expression): Set[String] = expression match {
+    case MonomorphicExpression.ParameterReference(name)              => Set(name.value)
+    case MonomorphicExpression.FunctionApplication(target, argument) =>
+      freeParameters(target.value.expression) ++ freeParameters(argument.value.expression)
+    case MonomorphicExpression.FunctionLiteral(name, _, body)        => freeParameters(body.value.expression) - name.value
+    case _                                                           => Set.empty
+  }
 
   /** Walk the body under as many of the lambda's binders as there are arguments, each bound to its argument. An
     * over-application applies the result to further arguments, which is unknown.

@@ -61,20 +61,39 @@ import scala.annotation.tailrec
   * derivation of one call node, and exhausting it yields **absence**, which is sound ("I know nothing" is always true)
   * and never a wrong answer.
   *
-  * **First-order for now.** A lambda is a function value and carries no meta of its own here, so a callee that applies
-  * one of its own parameters (`foldLeft`'s `combine`, `Function::apply`) still yields ⊤ — the higher-order rows of §5,
-  * which additionally wait on the `List` size domain for anything to iterate over. An *applied* lambda is interpreted,
-  * since that is what a pure `val` block lowers to (`(x -> rest)(e)`) and its binding is ordinary parameter binding.
+  * **Higher-order through closures** (§6.2). A function value is a [[Value.Closure]] — the function-typed node and the
+  * environment it was written in — and is interpreted only when something applies it: a callee applying one of its own
+  * parameters (`def applyTo(f: Int => Int, x: Int): Int = f(x)`), an over-applied callee whose body returns a lambda,
+  * or a pure `val` block, which lowers to an applied lambda (`(x -> rest)(e)`). A **stated** transfer cannot apply a
+  * closure — a companion is Eliot over metas — so a code argument reaches it as what its code **yields**, the same
+  * reading its payload signature gives a code parameter's meta type: `fold(c, 10, 20)` joins `[10, 10]` and `[20, 20]`.
+  * What stays ⊤ is a native that applies a function argument by itself (`handleCases`, `foldLeft`), whose transfer
+  * would have to apply a closure.
   */
 object MetaInterpreter {
 
-  /** What the interpretation knows about the parameters in scope: a parameter bound to the caller's argument meta, or
-    * to ⊤ (`None`) when the caller could not pin one. Keyed by name because
-    * [[MonomorphicExpression.ParameterReference]] is, which makes *shadowing* this map's one obligation: a binder that
-    * is not being applied must not leave an outer binding of the same name readable in its body (see
-    * [[bindParameters]], the only place bindings are added).
+  /** What the interpretation knows of one value. */
+  enum Value {
+
+    /** Its meta, or ⊤ (`None`) — always ⊤ for a value whose type carries no meta. */
+    case Meta(meta: Option[GroundValue])
+
+    /** A function value, deferred until applied: a function-typed `node` (a lambda, a partial application, a reference
+      * to a def) and the `env` it was written in, which is what the parameters it captures read.
+      */
+    case Closure(node: Sourced[MonomorphicExpression], env: Env)
+  }
+
+  object Value {
+    val unknown: Value = Meta(None)
+  }
+
+  /** What the interpretation knows about the parameters in scope: each bound to the caller's argument, ⊤ when the caller
+    * could not pin one. Keyed by name because [[MonomorphicExpression.ParameterReference]] is, which makes *shadowing*
+    * this map's one obligation: a binder that is not being applied must not leave an outer binding of the same name
+    * readable in its body (see [[bindParameters]], the only place bindings are added).
     */
-  private type Env = Map[String, Option[GroundValue]]
+  type Env = Map[String, Value]
 
   /** The §8.4 cost fail-safe: the number of interpretation steps one call node's derivation may spend, across depth
     * *and* fan-out together (each node visited costs one, and the budget is threaded through siblings rather than
@@ -94,9 +113,19 @@ object MetaInterpreter {
       callee: ValueFQN,
       typeArguments: Seq[GroundValue],
       resultType: GroundValue,
-      argMetas: Seq[Option[GroundValue]]
+      arguments: Seq[Value]
   ): CompilerIO[Option[GroundValue]] =
-    metaOf(callee, typeArguments, resultType, argMetas, interpretationBudget).map(_._2)
+    metaOf(callee, typeArguments, resultType, arguments, interpretationBudget).map((_, value) => metaOfValue(value))
+
+  /** What a walk hands the interpretation for an argument it walked: a function-typed `node` is a closure over
+    * `captured`, what the walk knows of the parameters in scope; any other node is the `meta` the walk computed for it.
+    */
+  def argument(
+      node: Sourced[MonomorphicExpression],
+      meta: Option[GroundValue],
+      captured: Map[String, Option[GroundValue]]
+  ): Value =
+    if (isFunction(node)) Value.Closure(node, captured.view.mapValues(Value.Meta(_)).toMap) else Value.Meta(meta)
 
   /** The α seed of the `Int` domain: a literal `n`'s singleton range, built in Eliot by
     * `eliot.lang.Runtime::integerLiteral`'s `{closed(V, V)}` brace and reduced here through the *same* stated-transfer
@@ -216,95 +245,171 @@ object MetaInterpreter {
       callee: ValueFQN,
       typeArguments: Seq[GroundValue],
       resultType: GroundValue,
-      argMetas: Seq[Option[GroundValue]],
+      arguments: Seq[Value],
       budget: Int
-  ): CompilerIO[(Int, Option[GroundValue])] =
+  ): CompilerIO[(Int, Value)] =
     declaresTransfer(callee).ifM(
-      reduceTransfer(callee, typeArguments, argMetas).map((budget, _)),
-      derive(callee, typeArguments, resultType, argMetas, budget)
+      stated(callee, typeArguments, arguments, budget),
+      derive(callee, typeArguments, resultType, arguments, budget)
     )
 
-  /** Derive a bodied callee's meta by interpreting its body under the caller's argument metas. Three things make this
+  /** A stated transfer over the call's arguments. A companion is Eliot over metas and cannot apply a closure, so a
+    * function-typed argument is passed as what it **yields** ([[yieldOf]]) where the companion reads a meta for it — a
+    * code parameter, whose payload type is what its code yields — and as a placeholder where it reads none.
+    */
+  private def stated(
+      callee: ValueFQN,
+      typeArguments: Seq[GroundValue],
+      arguments: Seq[Value],
+      budget: Int
+  ): CompilerIO[(Int, Value)] =
+    companionTypeArguments(callee, RefinementChannelProcessor.metaCompanionFqn(callee), typeArguments, arguments.size, withResult = false)
+      .map(_.getOrElse(Seq.empty))
+      .flatMap { metaTypes =>
+        arguments.zipWithIndex.foldLeftM((budget, Seq.empty[Option[GroundValue]])) { case ((left, metas), (argument, index)) =>
+          argument match {
+            case Value.Meta(meta)                                                => (left, metas :+ meta).pure[CompilerIO]
+            case closure: Value.Closure if metaTypes.lift(index).exists(_ != unitType) =>
+              yieldOf(closure, left).map((remaining, meta) => (remaining, metas :+ meta))
+            case _: Value.Closure                                                => (left, metas :+ None).pure[CompilerIO]
+          }
+        }
+      }
+      .flatMap((left, metas) => reduceTransfer(callee, typeArguments, metas).map(meta => (left, Value.Meta(meta))))
+
+  /** What a function value yields: its result once applied to as many unknown arguments as its type takes — a code
+    * argument's thunk or handle block applied to the unit or handles it is run with, which carry no meta.
+    */
+  private def yieldOf(closure: Value.Closure, budget: Int): CompilerIO[(Int, Option[GroundValue])] = {
+    val functionType = closure.node.value.expressionType
+    applyValue(closure, Seq.fill(functionType.functionArity)(Value.unknown), functionType.deepReturnType, budget)
+      .map((left, value) => (left, metaOfValue(value)))
+  }
+
+  /** Derive a bodied callee's meta by interpreting its body under the caller's arguments. Three things make this
     * decline (soundly, to ⊤) rather than answer:
     *
-    *   - the **result carries no meta** — the cheap gate, taken before any fact is read;
+    *   - the **result carries no meta** — the cheap gate, taken before any fact is read. A function-typed result never
+    *     reaches here: a function value is deferred as a closure and only ever asked for applied;
     *   - the callee has **no body on this track** — a leaf that states nothing, which R2 has already made a compile
     *     error for a meta-carrying return, or a value whose monomorphization failed upstream;
-    *   - the call is **not saturated** — a partial application is a function value (whose type carries no meta anyway),
-    *     and an over-application applies the callee's *result* to further arguments, which is the higher-order case.
+    *   - the call is **not saturated** — a partial application is a function value, whose type carries no meta.
+    *
+    * An over-application applies the callee's *result* to the remaining arguments, which is a closure its body returned.
     */
   private def derive(
       callee: ValueFQN,
       typeArguments: Seq[GroundValue],
       resultType: GroundValue,
-      argMetas: Seq[Option[GroundValue]],
+      arguments: Seq[Value],
       budget: Int
-  ): CompilerIO[(Int, Option[GroundValue])] =
+  ): CompilerIO[(Int, Value)] =
     if (budget <= 0) unknown(0)
     else
       carriesMeta(resultType).ifM(
         getFactIfProduced(MonomorphicValue.Key(callee, typeArguments)).flatMap {
-          case Some(mv) if mv.naturalArity.contains(argMetas.size) =>
-            mv.runtime.flatMap(b =>
-              bindParameters(b.as(MonomorphicExpression(mv.signature, b.value)), argMetas)
-            ) match {
-              case Some((node, env)) => interpret(node, env, budget - 1)
-              case None              => unknown(budget)
+          case Some(mv) if mv.naturalArity.exists(_ <= arguments.size) =>
+            mv.runtime match {
+              case Some(body) =>
+                applyLambda(body.as(MonomorphicExpression(mv.signature, body.value)), Map.empty, arguments, resultType, budget - 1)
+              case None       => unknown(budget)
             }
-          case _                                                   => unknown(budget)
+          case _                                                       => unknown(budget)
         },
         unknown(budget)
       )
 
-  /** Interpret one node of a body: its meta, and the budget left after computing it. Bottom-up and pure — no record is
-    * kept and no diagnostic is raised, so this may be run over a *callee's* body without touching that callee's own
-    * table or repeating its checks.
+  /** Interpret one node of a body: what is known of its value, and the budget left after computing it. Bottom-up and
+    * pure — no record is kept and no diagnostic is raised, so this may be run over a *callee's* body without touching
+    * that callee's own table or repeating its checks. A function-typed node is not interpreted here but deferred as a
+    * closure, so only a function value that is applied costs anything.
     */
   private def interpret(
       node: Sourced[MonomorphicExpression],
       env: Env,
       budget: Int
-  ): CompilerIO[(Int, Option[GroundValue])] =
+  ): CompilerIO[(Int, Value)] =
     if (budget <= 0) unknown(0)
     else
       node.value.expression match {
-        case MonomorphicExpression.IntegerLiteral(value)               => integerSeed(value.value).map((budget - 1, _))
-        case MonomorphicExpression.StringLiteral(value)                => stringSeed(value.value).map((budget - 1, _))
         case MonomorphicExpression.ParameterReference(parameterName)   =>
-          // The one point the caller's knowledge enters: a bound parameter *is* the argument's meta. An unbound one
-          // (a lambda's own binder, an unsaturated interior) is ⊤.
-          (budget - 1, env.getOrElse(parameterName.value, None)).pure[CompilerIO]
-        case MonomorphicExpression.FunctionLiteral(_, _, _)            =>
-          // A function value carries no meta of its own — that is the first-order limit, and the higher-order case
-          // (§5's table) is where a lambda would instead become a *closure over metas*.
-          unknown(budget - 1)
+          // The one point the caller's knowledge enters: a bound parameter *is* the argument. An unbound one (a lambda's
+          // own binder that nothing applied) is ⊤.
+          (budget - 1, env.getOrElse(parameterName.value, Value.unknown)).pure[CompilerIO]
+        case _ if isFunction(node)                                     =>
+          (budget - 1, Value.Closure(node, env)).pure[CompilerIO]
+        case MonomorphicExpression.IntegerLiteral(value)               =>
+          integerSeed(value.value).map(meta => (budget - 1, Value.Meta(meta)))
+        case MonomorphicExpression.StringLiteral(value)                =>
+          stringSeed(value.value).map(meta => (budget - 1, Value.Meta(meta)))
         case MonomorphicExpression.MonomorphicValueReference(vfqn, ta) =>
           // A bare reference is a *saturated* call when the callee takes no arguments, so a nullary def derives here
           // exactly as an applied one does below.
           metaOf(vfqn.value, ta, node.value.expressionType, Seq.empty, budget - 1)
+        case MonomorphicExpression.FunctionLiteral(_, _, _)            =>
+          (budget - 1, Value.Closure(node, env)).pure[CompilerIO]
         case _: MonomorphicExpression.FunctionApplication              =>
           val (head, args) = flatten(node)
-          head.value.expression match {
-            case MonomorphicExpression.MonomorphicValueReference(vfqn, ta) =>
-              interpretAll(args, env, budget - 1).flatMap { case (left, argMetas) =>
-                metaOf(vfqn.value, ta, node.value.expressionType, argMetas, left)
-              }
-            case _: MonomorphicExpression.FunctionLiteral                  =>
-              // An applied lambda — what a pure `val` block lowers to (`val x = e ; rest` ⤳ `(x -> rest)(e)`,
-              // `BlockDesugaringProcessor`). Its binding is ordinary parameter binding, so a block's `val`s carry
-              // their metas into the rest of the block.
-              interpretAll(args, env, budget - 1).flatMap { case (left, argMetas) =>
-                bindParameters(head, argMetas) match {
-                  case Some((body, bound)) => interpret(body, env ++ bound, left)
-                  case None                => unknown(left)
-                }
-              }
-            case _                                                         =>
-              // An applied parameter (a callee calling one of its own function parameters) or an applied `match`
-              // result: the higher-order case, ⊤ here.
-              unknown(budget - 1)
-          }
+          interpretAll(args, env, budget - 1).flatMap((left, arguments) =>
+            applyHead(head, env, arguments, node.value.expressionType, left)
+          )
       }
+
+  /** Apply the head of an application, written in `env`, to `arguments`: a def is called, a lambda binds its binders, and
+    * a parameter is applied as whatever it is bound to. `resultType` is the type of the whole application.
+    */
+  private def applyHead(
+      head: Sourced[MonomorphicExpression],
+      env: Env,
+      arguments: Seq[Value],
+      resultType: GroundValue,
+      budget: Int
+  ): CompilerIO[(Int, Value)] =
+    head.value.expression match {
+      case MonomorphicExpression.MonomorphicValueReference(vfqn, ta) =>
+        metaOf(vfqn.value, ta, resultType, arguments, budget)
+      case MonomorphicExpression.FunctionLiteral(_, _, _)            =>
+        applyLambda(head, env, arguments, resultType, budget)
+      case MonomorphicExpression.ParameterReference(parameterName)   =>
+        applyValue(env.getOrElse(parameterName.value, Value.unknown), arguments, resultType, budget)
+      case _                                                         =>
+        unknown(budget)
+    }
+
+  /** Apply a body written in `env` to `arguments`: its leading lambdas bind as many of them as they can, what is under
+    * them is interpreted, and its value is applied to any arguments left over. A body taking no parameters is simply
+    * interpreted.
+    */
+  private def applyLambda(
+      node: Sourced[MonomorphicExpression],
+      env: Env,
+      arguments: Seq[Value],
+      resultType: GroundValue,
+      budget: Int
+  ): CompilerIO[(Int, Value)] = {
+    val (body, bound, rest) = bindParameters(node, arguments)
+    interpret(body, env ++ bound, budget).flatMap((left, value) =>
+      if (rest.isEmpty) (left, value).pure[CompilerIO] else applyValue(value, rest, resultType, left)
+    )
+  }
+
+  /** Apply a value to `arguments`: a closure is its node applied in its own environment, which also appends to a
+    * partial application's arguments; anything else is not known to be a function, so ⊤.
+    */
+  private def applyValue(
+      value: Value,
+      arguments: Seq[Value],
+      resultType: GroundValue,
+      budget: Int
+  ): CompilerIO[(Int, Value)] =
+    value match {
+      case Value.Closure(node, env) if budget > 0 =>
+        val (head, applied) = flatten(node)
+        interpretAll(applied, env, budget - 1).flatMap((left, values) =>
+          applyHead(head, env, values ++ arguments, resultType, left)
+        )
+      case _                                      => unknown(budget)
+    }
 
   /** Interpret every argument in the *caller's* scope, threading the budget through them, so a wide fan-out spends the
     * same budget a deep chain does. Arguments are all interpreted before any binder is added, which is what keeps a
@@ -314,29 +419,38 @@ object MetaInterpreter {
       nodes: Seq[Sourced[MonomorphicExpression]],
       env: Env,
       budget: Int
-  ): CompilerIO[(Int, Seq[Option[GroundValue]])] =
-    nodes.foldLeftM((budget, Seq.empty[Option[GroundValue]])) { case ((left, metas), node) =>
-      interpret(node, env, left).map { case (remaining, meta) => (remaining, metas :+ meta) }
+  ): CompilerIO[(Int, Seq[Value])] =
+    nodes.foldLeftM((budget, Seq.empty[Value])) { case ((left, values), node) =>
+      interpret(node, env, left).map((remaining, value) => (remaining, values :+ value))
     }
 
-  /** Peel one leading [[MonomorphicExpression.FunctionLiteral]] per argument meta, binding each binder's name to it,
-    * and return the node under the last one. `None` when the node runs out of binders before the arguments run out — an
-    * over-application, which this cannot interpret.
+  /** Peel one leading [[MonomorphicExpression.FunctionLiteral]] per argument, binding each binder's name to it, and
+    * return the node under the last one peeled with the arguments left over — an over-application, which applies that
+    * node's value to them.
     *
     * This is the only place [[Env]] grows, which is where shadowing is answered: a binder that *is* applied replaces
-    * any outer binding of its name (the `+`), and a binder that is not applied is never descended into at all.
+    * any outer binding of its name (the `++` at the caller), and a binder that is not applied is never descended into
+    * at all.
     */
+  @tailrec
   private def bindParameters(
       node: Sourced[MonomorphicExpression],
-      argMetas: Seq[Option[GroundValue]]
-  ): Option[(Sourced[MonomorphicExpression], Env)] =
-    argMetas.foldLeftM((node, Map.empty: Env)) { case ((current, bound), meta) =>
-      current.value.expression match {
-        case MonomorphicExpression.FunctionLiteral(parameterName, _, body) =>
-          (body, bound + (parameterName.value -> meta)).some
-        case _                                                             => none
-      }
+      arguments: Seq[Value],
+      bound: Env = Map.empty
+  ): (Sourced[MonomorphicExpression], Env, Seq[Value]) =
+    (node.value.expression, arguments) match {
+      case (MonomorphicExpression.FunctionLiteral(parameterName, _, body), argument +: rest) =>
+        bindParameters(body, rest, bound + (parameterName.value -> argument))
+      case _                                                                                 => (node, bound, arguments)
     }
+
+  private def isFunction(node: Sourced[MonomorphicExpression]): Boolean =
+    node.value.expressionType.asFunctionType.isDefined
+
+  private def metaOfValue(value: Value): Option[GroundValue] = value match {
+    case Value.Meta(meta)       => meta
+    case _: Value.Closure       => None
+  }
 
   /** Whether this callee **states** its transfer — a cached [[UnifiedModuleNames]] membership test for its `^Meta`
     * companion in the compiler pool. States ⤳ read the summary; does not ⤳ read the body.
@@ -491,8 +605,8 @@ object MetaInterpreter {
   private def metaStructureName(typeName: ValueFQN): QualifiedName =
     QualifiedName(typeName.name.name + MetaConstructorDesugarer.metaTypeSuffix, Qualifier.Type)
 
-  private def unknown(budget: Int): CompilerIO[(Int, Option[GroundValue])] =
-    (budget, none[GroundValue]).pure[CompilerIO]
+  private def unknown(budget: Int): CompilerIO[(Int, Value)] =
+    (budget, Value.unknown).pure[CompilerIO]
 
   /** The `BigInteger` type a literal's seed value carries — the only literal-domain constant the interpretation needs,
     * to wrap a raw `n` as a [[GroundValue.Direct]] when reducing a seed companion at it.
