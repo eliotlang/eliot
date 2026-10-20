@@ -716,9 +716,26 @@ is unified (`TODO.md`): an ordinary body is runtime-track, so `closed(0, 255)` t
 `def between[Lo: BigInteger, Hi: BigInteger]: Interval[BigInteger] = closed(Lo, Hi)` then
 `def byte: Interval[BigInteger] = between[0, 255]` and `x: Int {byte}` works.
 
-*Not built, by the decision's own split:* a brace on a **bodied return** — the body supplies it, so the derived meta
-would have to fit — reverses R3 and needs its own sign-off; and a **`data` field** `r: Int {byte}`, demanded at
-construction through the constructor call and stated by its generated accessor.
+*Not built:* a brace on a **`data` field** `r: Int {byte}`, demanded at construction through the constructor call and
+stated by its generated accessor.
+
+*Declined (2026-10-20): a brace on a **bodied return**.* It was listed as the decision's third occurrence, which it is
+only by symmetry — no use case asked for it. The decision's rule reads sharper as **a meta is stated exactly where the
+compiler cannot see the value's supplier**, and a bodied return is the one position where it can:
+
+| Position      | Supplier         | Visible to the compiler?                   | So                                  |
+|---------------|------------------|--------------------------------------------|-------------------------------------|
+| leaf return   | the native       | no                                         | stated, axiomatic (R2)              |
+| parameter     | every caller     | not from the body, where it is ⊤           | stated, each call proves it (§8.9)  |
+| `data` field  | the constructor  | not from the accessor (no structural meta) | stated, construction proves it      |
+| bodied return | the body         | **yes**                                    | **derived only (R3)**               |
+
+A checked brace there cannot buy precision. Where the derived meta is ⊤ (a lambda applied, the budget exhausted, a fold
+with no size) nothing can fit it, so it fails; trusting it unchecked instead would be unsound, which is why only a leaf's
+statement is axiomatic. Where the derived meta is precise, the brace can only *widen* it. The one remaining argument is
+abstraction — a library stating `atLeast(0)` so its callers' `where`s do not couple to what its body happens to derive
+today — and that is a modular certificate, which *Use-Site Verification* deliberately gives up. R3 stands unchanged;
+do not re-propose this without a use case the derivation cannot serve.
 
 ---
 

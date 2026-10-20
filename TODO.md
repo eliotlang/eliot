@@ -24,11 +24,11 @@ notes.
   decided "⊤ cannot discharge a demand" fail-safe — needs a decision.
 - **The rest of meta braces on occurrences.** Parameter braces (`def writeByte(b: Int {byte}): Unit`) are built
   (`docs/total-meta-transfers.md` §8.9): every full call proves its argument fits, and inside the body the parameter
-  carries the stated meta. Two occurrences of the same decision (2026-09-15: a brace states the meta of the value at
-  that position, and whoever supplies the value proves it) remain. A **bodied return** brace is supplied by the body, so
-  the derived meta would have to fit the stated one — R3 makes such a brace an error today, so this is a reversal to
-  sign off on separately. A **`data` field** `r: Int {byte}` would be demanded at construction through the ordinary
-  constructor call, and its generated accessor may state it as a leaf would (construction is the only supplier).
+  carries the stated meta. One occurrence of the same decision (2026-09-15: a brace states the meta of the value at
+  that position, and whoever supplies the value proves it) remains: a **`data` field** `r: Int {byte}` would be
+  demanded at construction through the ordinary constructor call, and its generated accessor may state it as a leaf
+  would (construction is the only supplier). A brace on a **bodied return** is declined (2026-10-20, §8.9): a body is a
+  supplier the compiler sees, so its meta is derived, never stated, and R3 stands.
   A reusable meta value (`def byte: Interval[BigInteger] = …`) still has to write its literals in type position
   (`between[0, 255]`) until the `Int` literal item above is solved.
 - **Flow grades: quantitative computation tracking (cycles/WCET, stack, peak memory) on the
