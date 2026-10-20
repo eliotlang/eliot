@@ -7,7 +7,7 @@ Status (2026-10-20): **two domains shipped, R2 and R3 armed, the interpretation 
 - a value that is never produced is ⊥;
 - a `data` value carries the metas of its fields.
 
-Nothing in Part II is built.
+Nothing in Part II is built. Where the work stopped, and how to continue it, is §18.1.
 
 This document replaces three: `total-meta-transfers.md` (the rules and the interpretation), `string-length-meta.md`
 (the `String` size domain) and `structural-meta.md` (the P6 design). Their full text is at `2a66009a`, and §21 maps
@@ -970,6 +970,32 @@ cache once kept a stale companion across a change and hid a brace that did not e
 - **Iterating a loop exactly** when its count is known (`[n, n]`), instead of widening (§11.2).
 - **An interval intersection**, which `substring`'s index ceiling waits on (§2.2).
 - **A meta-accessor namespace** (`Qualifier.Meta` for slot accessors), owed to `List` (§2.2).
+
+### 18.1 Where this was left (2026-10-20)
+
+Part II is a design, and no code for it exists. Part I matches the tree at `336992f4`. The work stopped on one
+question to Robert:
+
+> **Is ⊥ a special value?** Decision B gives the interpretation `Value.Never`. It means *this call does not return*:
+> a fact about control, which every join absorbs, and never a placeholder for a missing meta. `if … else` needs it,
+> because `fold(c, 5, abort)` should be `[5, 5]`, not unknown. The only other encoding is an empty type
+> (`exitInternal: K => Nothing`), which §20 declines because it changes every exit primitive's signature on both
+> tracks. Does ⊥ fit the rule that the process has no special values, or does it fall under it?
+
+To continue:
+
+1. **Answer B.** If ⊥ is out, §12, the traces in §15 that prune an arm or absorb an exit, and T2 need another way to
+   say that a call does not return. That way must not add a value to the process. Record the answer here, and as a
+   reversal wherever it overturns text.
+2. **Decide A, C–I.** Each is recommended. A records only the shape; the spelling of the frame and cell primitives
+   (`exited`, `stored`, `content`, `store`, §14) is still open, and so is how D's `widen` sits beside `join` on `Meta`.
+3. **Start T1** (§17), which is expected to be byte-identical. T5 waits on §16's measurement, and T6 on `List`
+   carrying its elements' meta.
+
+The probes behind §9 used a throwaway `ScratchProbeTest` in `jvm/test`, over `DerivedMetaTransferIntegrationTest`'s
+`useByte` harness, with `compileForErrors` printing each verdict. Its proofs were run with
+`./mill jvm.test.testOnly com.vanillasource.eliot.eliotc.jvm.ScratchProbeTest`. Recreate it to re-probe, and delete it
+afterwards.
 
 ---
 
