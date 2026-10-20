@@ -19,7 +19,7 @@ class BuildArtifactTest extends FullIntegrationTest {
   /** Fails only in the refinement channel, after type checking: `1000` does not fit `asByte`'s `where`. */
   private val unmetPrecondition =
     """def withinByte(i: Interval[BigInteger]): Bool = rangeWithin[0, 127](i)
-      |def asByte(x: Int): Int where withinByte(range(x)) = x
+      |def asByte(x: Int) where withinByte(range(x)): Int = x
       |def main uses Console: Unit = printLine(show(asByte(1000)))""".stripMargin
 
   "a failed compilation" should "leave no jar behind" in {

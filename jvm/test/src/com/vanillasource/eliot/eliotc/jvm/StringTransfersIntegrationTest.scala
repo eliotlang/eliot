@@ -22,7 +22,7 @@ class StringTransfersIntegrationTest extends FullIntegrationTest {
   private val banner =
     """|import eliot.effect.Console
        |def fitsDisplay(i: Interval[BigInteger]): Bool = rangeWithin[0, 8](i)
-       |def banner(text: String): String where fitsDisplay(size(text)) = text
+       |def banner(text: String) where fitsDisplay(size(text)): String = text
        |""".stripMargin
 
   private def accepts(expression: String, output: String) =
@@ -76,7 +76,7 @@ class StringTransfersIntegrationTest extends FullIntegrationTest {
     compileForErrors(
       """|import eliot.effect.Console
          |def fitsNarrow(i: Interval[BigInteger]): Bool = rangeWithin[0, 1](i)
-         |def initial(text: String): String where fitsNarrow(size(text)) = text
+         |def initial(text: String) where fitsNarrow(size(text)): String = text
          |def main uses Console: Unit = printLine(initial(toUpperCase("ß")))""".stripMargin
     ).asserting(_ should include("precondition of 'Test::initial' is not satisfied"))
   }
@@ -118,7 +118,7 @@ class StringTransfersIntegrationTest extends FullIntegrationTest {
     compileForErrors(
       """|import eliot.effect.Console
          |def withinDisplay(i: Interval[BigInteger]): Bool = rangeWithin[0, 8](i)
-         |def column(x: Int): Int where withinDisplay(range(x)) = x
+         |def column(x: Int) where withinDisplay(range(x)): Int = x
          |def main uses Console: Unit = printLine(show(column(parseInt("42") else 0)))""".stripMargin
     ).asserting(_ should include("Cannot prove the precondition of 'Test::column'"))
   }

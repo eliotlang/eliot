@@ -45,7 +45,7 @@ class CoreProcessor
       sourceAstData.functionDefinitions ++ desugaredFromData.map(_._1)
     val desugaredMetaTransfers: Seq[(FunctionDefinition, RoleHint)] =
       bracedDefinitions.flatMap(MetaTransferDesugarer.desugar)
-    // `where <predicate>` precondition on a def (`def useByte(x: Int): Int where withinByte(range(x))`) → the def's
+    // `where <predicate>` precondition on a def (`def useByte(x: Int) where withinByte(range(x)): Int`) → the def's
     // `^Where` companion (bounds-as-refinements §4.3), the `Bool` the refinement channel demands at each call site.
     val desugaredWhereCompanions: Seq[(FunctionDefinition, RoleHint)] =
       sourceAstData.functionDefinitions.flatMap(MetaWhereDesugarer.desugar)

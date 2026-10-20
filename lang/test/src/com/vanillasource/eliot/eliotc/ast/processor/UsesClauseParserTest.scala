@@ -42,7 +42,7 @@ class UsesClauseParserTest extends ProcessorTest(new Tokenizer(), new ASTParser(
 
   it should "be refused without a clause" in {
     errors("def when(condition: Bool, action uses *: Unit): Unit")
-      .asserting(_ shouldBe Seq(s"Expected $openClause, but encountered symbol ':'."))
+      .asserting(_ shouldBe Seq(s"Expected keyword 'where' or $openClause, but encountered symbol ':'."))
   }
 
   it should "be refused with a clause not starting with `*`" in {
@@ -57,7 +57,7 @@ class UsesClauseParserTest extends ProcessorTest(new Tokenizer(), new ASTParser(
 
   it should "count a function-typed code parameter" in {
     errors("def catch[E, A](computation uses Throw[E]: A, onError uses *: E => A): A")
-      .asserting(_ shouldBe Seq(s"Expected $openClause, but encountered symbol ':'."))
+      .asserting(_ shouldBe Seq(s"Expected keyword 'where' or $openClause, but encountered symbol ':'."))
   }
 
   it should "reject a `with`, as on a definition's own row" in {

@@ -114,7 +114,7 @@ class MetaTransferAccountingProcessorTest extends ProcessorTest(LangProcessors()
 
   "a bodied value carrying a where precondition" should "be accepted (a `where` is stated, never derived)" in {
     runGenerator(
-      prelude + "def bounded(l: Interval[BigInteger]): Bool\ndef echo(g: Gauge): Gauge where bounded(level(g)) = g",
+      prelude + "def bounded(l: Interval[BigInteger]): Bool\ndef echo(g: Gauge) where bounded(level(g)): Gauge = g",
       accountingKey("echo"),
       ambientStubsWith()
     ).map { case (errors, facts) =>

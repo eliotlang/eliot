@@ -30,7 +30,7 @@ class TransferBraceReductionIntegrationTest extends FullIntegrationTest {
   private val useByte =
     """|import eliot.effect.Console
        |def withinByte(i: Interval[BigInteger]): Bool = rangeWithin[0, 127](i)
-       |def useByte(x: Int): Int where withinByte(range(x)) = x
+       |def useByte(x: Int) where withinByte(range(x)): Int = x
        |""".stripMargin
 
   private def accepts(expression: String, output: String) =
@@ -90,7 +90,7 @@ class TransferBraceReductionIntegrationTest extends FullIntegrationTest {
     compileForErrors(
       """|import eliot.effect.Console
          |def fitsDisplay(i: Interval[BigInteger]): Bool = rangeWithin[0, 8](i)
-         |def banner(text: String): String where fitsDisplay(size(text)) = text
+         |def banner(text: String) where fitsDisplay(size(text)): String = text
          |def main uses Console: Unit = printLine(banner(show(5)))""".stripMargin
     ).asserting(_ should include("precondition of 'Test::banner' is not satisfied"))
   }
@@ -103,7 +103,7 @@ class TransferBraceReductionIntegrationTest extends FullIntegrationTest {
   private def doubled(argument: String) =
     """|import eliot.effect.Console
        |def withinByte(i: Interval[BigInteger]): Bool = rangeWithin[0, 127](i)
-       |def doubleFitsByte(x: Int): Int where withinByte(x.range + x.range) = x
+       |def doubleFitsByte(x: Int) where withinByte(x.range + x.range): Int = x
        |""".stripMargin + s"def main uses Console: Unit = printLine(show(doubleFitsByte($argument)))"
 
   "a dotted `x.range + x.range` meta expression" should "reduce via subject-last `.` binding tighter than `+`" in {

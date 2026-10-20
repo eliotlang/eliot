@@ -14,6 +14,6 @@ def withinByte(i: Interval[BigInteger]): Bool = rangeWithin[0, 127](i)
  * out-of-range or unknown-range caller before code generation. `asByte(100)` passes (`100` fits `[0, 127]`) and the
  * program prints `100`; a call like `asByte(1000)`, or one passing a value of unknown range, would be a compile error.
  */
-def asByte(x: Int): Int where withinByte(range(x)) = x
+def asByte(x: Int) where withinByte(range(x)): Int = x
 
 def main uses Console: Unit = printLine(show(asByte(100)))

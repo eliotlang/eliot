@@ -25,7 +25,7 @@ class StatedTransferResultEdgeIntegrationTest extends FullIntegrationTest with E
   private val crossDomain =
     """|import eliot.effect.Console
        |def withinFive(i: Interval[BigInteger]): Bool = rangeWithin[0, 5](i)
-       |def small(x: Int): Int where withinFive(range(x)) = x
+       |def small(x: Int) where withinFive(range(x)): Int = x
        |""".stripMargin
 
   "a call whose stated transfer narrows its result" should "run rather than fail class verification" in {

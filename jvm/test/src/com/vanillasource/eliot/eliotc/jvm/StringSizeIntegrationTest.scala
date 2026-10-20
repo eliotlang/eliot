@@ -20,7 +20,7 @@ class StringSizeIntegrationTest extends FullIntegrationTest {
   private val banner =
     """|import eliot.effect.Console
        |def fitsDisplay(i: Interval[BigInteger]): Bool = rangeWithin[0, 4](i)
-       |def banner(text: String): String where fitsDisplay(size(text)) = text
+       |def banner(text: String) where fitsDisplay(size(text)): String = text
        |""".stripMargin
 
   "a where precondition over a string's size" should "accept a literal that provably fits" in {
@@ -81,8 +81,8 @@ class StringSizeIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       """|import eliot.effect.Console
          |def fitsDisplay(i: Interval[BigInteger]): Bool = rangeWithin[0, 4](i)
-         |def banner(text: String): String where fitsDisplay(size(text)) = text
-         |def asDigit(x: Int): Int where fitsDisplay(range(x)) = x
+         |def banner(text: String) where fitsDisplay(size(text)): String = text
+         |def asDigit(x: Int) where fitsDisplay(range(x)): Int = x
          |def main uses Console: Unit = printLine(banner("ab") ++ show(asDigit(3)))""".stripMargin
     ).asserting(_ shouldBe "ab3")
   }

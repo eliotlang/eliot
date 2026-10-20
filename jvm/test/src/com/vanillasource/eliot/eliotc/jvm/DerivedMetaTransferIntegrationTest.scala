@@ -27,7 +27,7 @@ class DerivedMetaTransferIntegrationTest extends FullIntegrationTest {
   private val useByte =
     """|import eliot.effect.Console
        |def withinByte(i: Interval[BigInteger]): Bool = rangeWithin[0, 127](i)
-       |def useByte(x: Int): Int where withinByte(range(x)) = x
+       |def useByte(x: Int) where withinByte(range(x)): Int = x
        |""".stripMargin
 
   private def accepts(definitions: String, expression: String, output: String) =
@@ -92,7 +92,7 @@ class DerivedMetaTransferIntegrationTest extends FullIntegrationTest {
   // The `String` domain derives through exactly the same walk — nothing in the interpretation is `Int`-shaped.
   private val display =
     """|def fitsDisplay(i: Interval[BigInteger]): Bool = rangeWithin[0, 4](i)
-       |def display(text: String): String where fitsDisplay(size(text)) = text
+       |def display(text: String) where fitsDisplay(size(text)): String = text
        |def label(s: String): String = s
        |""".stripMargin
 

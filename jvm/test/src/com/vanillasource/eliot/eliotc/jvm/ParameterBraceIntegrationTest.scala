@@ -10,7 +10,7 @@ class ParameterBraceIntegrationTest extends FullIntegrationTest {
     "import eliot.effect.Console\ndef asByte(x: Int {closed(0, 255)}): Int = x\n"
 
   private val useByte =
-    "def useByte(x: Int): Int where rangeWithin[0, 255](range(x)) = x\n"
+    "def useByte(x: Int) where rangeWithin[0, 255](range(x)): Int = x\n"
 
   "a parameter brace" should "accept a call whose argument fits" in {
     compileAndRun(asByte + "def main uses Console: Unit = printLine(show(asByte(200)))").asserting(_ shouldBe "200")

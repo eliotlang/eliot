@@ -265,15 +265,15 @@ def canWrite[M]: Bool = M == Write || M == ReadWrite
 type File[M]
 
 /** Explicit narrowing, for storing a `ReadWrite` handle where a narrower mode is expected. */
-def asRead[M](f: File[M]): File[Read] where canRead[M]
-def asWrite[M](f: File[M]): File[Write] where canWrite[M]
+def asRead[M](f: File[M]) where canRead[M]: File[Read]
+def asWrite[M](f: File[M]) where canWrite[M]: File[Write]
 ```
 
 Operations then guard instead of doubling the API (the `in_channel`/`out_channel` tax) or
 wrapping (no coercions inserted, no runtime cost):
 
 ```eliot
-def readLine[M](file: File[M]): F[Option[String]] where canRead[M]      // ability method, see §7
+def readLine[M](file: File[M]) where canRead[M]: F[Option[String]]      // ability method, see §7
 ```
 
 A `File[ReadWrite]` passes both `readLine` and `writeText` directly; a `File[Write]` at
@@ -343,9 +343,9 @@ ability FileSystem[F[_] ~ Throw[IoError]] {
    def withWriteFile[A](use: File[Write] => F[A], path: Path): F[A]        // create-or-truncate
    def withAppendFile[A](use: File[Write] => F[A], path: Path): F[A]       // create-or-append
    def withReadWriteFile[A](use: File[ReadWrite] => F[A], path: Path): F[A]
-   def readLine[M](file: File[M]): F[Option[String]] where canRead[M]       // None = EOF
-   def readCodePoint[M](file: File[M]): F[Option[Int]] where canRead[M]     // None = EOF
-   def writeText[M](text: String, file: File[M]): F[Unit] where canWrite[M]
+   def readLine[M](file: File[M]) where canRead[M]: F[Option[String]]       // None = EOF
+   def readCodePoint[M](file: File[M]) where canRead[M]: F[Option[Int]]     // None = EOF
+   def writeText[M](text: String, file: File[M]) where canWrite[M]: F[Unit]
 }
 ```
 

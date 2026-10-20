@@ -49,7 +49,7 @@ class ArgumentSlotCompileTest extends AsyncFlatSpec with AsyncIOSpec with Matche
     """import eliot.effect.Console
       |
       |def withinByte(i: Interval[BigInteger]): Bool = rangeWithin[0, 127](i)
-      |def useByte(x: Int): Int where withinByte(range(x)) = x
+      |def useByte(x: Int) where withinByte(range(x)): Int = x
       |
       |def main uses Console: Unit = printLine(show(useByte(1000)))
       |""".stripMargin

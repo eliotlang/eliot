@@ -37,7 +37,7 @@ case class FunctionDefinition(
     // dropped (never part of `NamedValue`/`signatureEquality`).
     returnMeta: Seq[Sourced[Expression]] = Seq.empty,
     // The `where <predicate>` **refinement precondition** of a def (bounds-as-refinements §4.3), e.g.
-    // `def useByte(x: Int): Int where withinByte(range(x))` — a `Bool` predicate over the parameters' *meta* values
+    // `def useByte(x: Int) where withinByte(range(x)): Int` — a `Bool` predicate over the parameters' *meta* values
     // (each parameter `p: T` is seen as its meta `p: T$Meta`, so `range(p)` projects the tracked range). Populated only
     // when a def carries a `where`; empty otherwise. Consumed at the core boundary by `MetaWhereDesugarer`, which emits
     // the def's `^Where` companion (a `T$Meta… -> Bool` function in `Qualifier.Meta`) the refinement channel evaluates
@@ -132,6 +132,13 @@ object FunctionDefinition {
   private val strayStarExpected: String =
     "ability name, since only a definition with a `uses *` parameter writes `*` in its own clause"
 
+  /** What a `where` after the return type is refused with: a precondition is a demand on the parameters, so it is
+    * written after them, before the `uses` clause and the colon, which stay together as the result side.
+    */
+  private val misplacedWhereExpected: String =
+    "the body or the next definition, since a `where` precondition is written after the parameters, before any " +
+      "`uses` clause and the colon (`def asByte(x: Int) where withinByte(range(x)): Int = x`)"
+
   given ASTComponent[FunctionDefinition] = new ASTComponent[FunctionDefinition] {
     private val functionBody =
       (symbol("=") *> sourced(component[Expression])).optional()
@@ -174,6 +181,11 @@ object FunctionDefinition {
       name                <- functionName
       genericParameters   <- component[Seq[GenericParameter]]
       args                <- optionalArgumentListOf(ArgumentDefinition.parameter)
+      // The `where <predicate>` refinement precondition (bounds-as-refinements §4.3), a demand on the parameters' metas
+      // and so written right after them: `def asByte(x: Int) where withinByte(range(x)): Int`. `uses` and `:` both end
+      // the predicate's `typeRunParser` run (a hard keyword and a hard operator), leaving `uses X: T` together as the
+      // result side, spelled as on a parameter. Absent for an ordinary def.
+      whereClause         <- (keyword("where") *> sourced(Expression.typeRunParser)).optional()
       uses                <- usesClause(args.exists(_.openRow))
       _                   <- symbol(":")
       returnType          <- sourced(Expression.typeRunParser)
@@ -183,14 +195,11 @@ object FunctionDefinition {
         if (uses.isEmpty) returnType else returnType.as(Expression.EffectfulType(uses, returnType))
       // The return-position transfer brace `: T {expr, …}` (bounds-as-refinements §4.2). `typeRunParser`'s type-atom
       // run checks a `{` for the retired effect-row spelling but does not match a transfer brace (its entries are
-      // arbitrary expressions, not ability references, and no type atom follows the closing `}` — only `=`, `where`,
-      // or the next definition can), so the brace sits unconsumed here, between the return type and the optional
-      // `= body`. Absent for an ordinary def.
+      // arbitrary expressions, not ability references, and no type atom follows the closing `}` — only `=` or the next
+      // definition can), so the brace sits unconsumed here, between the return type and the optional `= body`. Absent
+      // for an ordinary def.
       returnMeta          <- optionalBracketedCommaSeparatedItems("{", sourced(component[Expression]), "}")
-      // The `where <predicate>` refinement precondition (bounds-as-refinements §4.3). `where` is a hard keyword, so the
-      // return-type run above stops cleanly at it (as it does at `infix`/`def`); the predicate is a `typeRunParser` run
-      // exactly like an `implement` guard, stopping at the `= body` (or the next definition). Absent for an ordinary def.
-      whereClause         <- (keyword("where") *> sourced(Expression.typeRunParser)).optional()
+      _                   <- keyword("where").refusedAs[Unit](misplacedWhereExpected).optional()
       functionBody        <- functionBody
     } yield FunctionDefinition(
       name.map(m => QualifiedName(m.content, Qualifier.Default)),

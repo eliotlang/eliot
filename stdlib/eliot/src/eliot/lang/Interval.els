@@ -63,7 +63,7 @@ def whole[T]: Interval[T]
  * ```eliot
  * def withinByte(i: Interval[BigInteger]): Bool = rangeWithin[0, 127](i)
  *
- * def asByte(x: Int): Int where withinByte(range(x)) = x
+ * def asByte(x: Int) where withinByte(range(x)): Int = x
  * ```
  *
  * The bounds are **type** parameters rather than value parameters because a predicate like `withinByte` above is an

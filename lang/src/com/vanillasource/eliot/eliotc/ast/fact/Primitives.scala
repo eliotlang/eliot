@@ -103,12 +103,12 @@ object Primitives {
     case _                         => false
   }
 
-  /** Where error recovery may restart after a failed top-level item: any keyword but `uses` and `with`, which only
-    * ever stand inside an item (`def f(body uses *: A) uses *, Console: A = body with fake`) and so are never where the
-    * next one begins.
+  /** Where error recovery may restart after a failed top-level item: any keyword but `uses`, `with` and `where`, which
+    * only ever stand inside an item (`def f(body uses *: A) where p uses *, Console: A = body with fake`) and so are
+    * never where the next one begins.
     */
   def isItemBoundary(st: Sourced[Token]): Boolean =
-    isKeyword(st) && !hasContent("uses")(st) && !hasContent("with")(st)
+    isKeyword(st) && !hasContent("uses")(st) && !hasContent("with")(st) && !hasContent("where")(st)
 
   def isUpperCase(st: Sourced[Token]) = st.value.content.charAt(0).isUpper
 

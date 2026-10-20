@@ -1,7 +1,7 @@
 package com.vanillasource.eliot.eliotc.jvm
 
 /** End-to-end proof of `where`-on-defs — a refinement precondition on an ordinary `def`, verified at each use site by
-  * the refinement channel (`docs/bounds-as-refinements.md` §4.3). `def useByte(x: Int): Int where withinByte(range(x))`
+  * the refinement channel (`docs/bounds-as-refinements.md` §4.3). `def useByte(x: Int) where withinByte(range(x)): Int`
   * demands that every call's argument have a value range provably within `[0, 127]`; the channel reduces the
   * generated `^Where` companion over the argument's computed interval and rejects a caller whose range is out of bounds
   * or unknown (⊤). This is the use-site verification that closes the Step-6 enforcement gap (out-of-range `Int` values
@@ -15,7 +15,7 @@ class WhereOnDefIntegrationTest extends FullIntegrationTest {
 
   private val useByte =
     "import eliot.effect.Console\n" + withinByte +
-      "def useByte(x: Int): Int where withinByte(range(x)) = x\n"
+      "def useByte(x: Int) where withinByte(range(x)): Int = x\n"
 
   "a where precondition" should "accept a call whose argument range provably fits" in {
     compileAndRun(useByte + "def main uses Console: Unit = printLine(show(useByte(42)))")
@@ -55,14 +55,14 @@ class WhereOnDefIntegrationTest extends FullIntegrationTest {
 
   it should "not demand the meta of an argument its context does not decide" in {
     compileAndRun(
-      useByte + "def pick(index: Int, fallback: Int): Int where withinByte(range(index)) = index\n" +
+      useByte + "def pick(index: Int, fallback: Int) where withinByte(range(index)): Int = index\n" +
         "def relay(y: Int): Int = pick(5, y)\ndef main uses Console: Unit = printLine(show(relay(1000)))"
     ).asserting(_ shouldBe "5")
   }
 
   it should "read a code argument as what its code yields" in {
     compileAndRun(
-      useByte + "def times(count: Int, body uses *: Int) uses *: Int where withinByte(range(count)) = body\n" +
+      useByte + "def times(count: Int, body uses *: Int) where withinByte(range(count)) uses *: Int = body\n" +
         "def main uses Console: Unit = printLine(show(times(3, 7)))"
     ).asserting(_ shouldBe "7")
   }
@@ -124,7 +124,7 @@ class WhereOnDefIntegrationTest extends FullIntegrationTest {
   it should "reject a partial application of a where-bearing def passed as a value" in {
     compileForErrors(
       "import eliot.effect.Console\n" + withinByte +
-        "def clampFirst(a: Int, b: Int): Int where withinByte(range(a)) = a\n" +
+        "def clampFirst(a: Int, b: Int) where withinByte(range(a)): Int = a\n" +
         "def apply1(g: Int => Int): Int = g(5)\n" +
         "def main uses Console: Unit = printLine(show(apply1(clampFirst(200))))"
     ).asserting(_ should include("cannot be passed as a value"))
@@ -133,11 +133,11 @@ class WhereOnDefIntegrationTest extends FullIntegrationTest {
   // A predicate written over a control effect, or naming `rangeWithin` itself, could not be evaluated at all before the
   // compile track threaded its frames: "Cannot evaluate the `where` precondition" (`docs/effects.md` §8 item 28).
   private val inlineByte =
-    "import eliot.effect.Console\ndef asByte(x: Int): Int where rangeWithin[0, 255](range(x)) = x\n"
+    "import eliot.effect.Console\ndef asByte(x: Int) where rangeWithin[0, 255](range(x)): Int = x\n"
 
   private val branchingByte =
     "import eliot.effect.Console\n" +
-      "def asByte(x: Int): Int where (if(rangeWithin[0, 255](range(x)), true) else false) = x\n"
+      "def asByte(x: Int) where (if(rangeWithin[0, 255](range(x)), true) else false): Int = x\n"
 
   "a where precondition naming rangeWithin inline" should "accept a call whose argument range fits" in {
     compileAndRun(inlineByte + "def main uses Console: Unit = printLine(show(asByte(200)))").asserting(_ shouldBe "200")
@@ -172,7 +172,7 @@ class WhereOnDefIntegrationTest extends FullIntegrationTest {
       |}
       |def pickOf[T ~ Pick[T]](t: T): Bool = picked(t)
       |""".stripMargin +
-      s"def checked(x: Int): Int where $predicate = x\n" +
+      s"def checked(x: Int) where $predicate: Int = x\n" +
       "def main uses Console: Unit = printLine(show(checked(42)))"
 
   "a threaded where precondition calling one function at two instantiations" should "accept what it proves" in {
@@ -188,7 +188,7 @@ class WhereOnDefIntegrationTest extends FullIntegrationTest {
   // `Byte$Meta`, `T$Meta` or `Box$Meta` exist for nothing, and naming them failed every shape below.
   private def byteOf(declarations: String, parameterType: String, argument: String) =
     "import eliot.effect.Console\n" + declarations +
-      s"def asByte(x: $parameterType): Int where rangeWithin[0, 255](range(x)) = x\n" +
+      s"def asByte(x: $parameterType) where rangeWithin[0, 255](range(x)): Int = x\n" +
       s"def main uses Console: Unit = printLine(show(asByte($argument)))"
 
   "a where precondition on a parameter typed by an alias" should "accept a call whose argument range fits" in {
@@ -213,7 +213,7 @@ class WhereOnDefIntegrationTest extends FullIntegrationTest {
   "a where precondition naming its definition's type parameters" should "accept a call whose argument range fits" in {
     compileAndRun(
       "import eliot.effect.Console\n" +
-        "def within[Lo: BigInteger, Hi: BigInteger](x: Int): Int where rangeWithin[Lo, Hi](range(x)) = x\n" +
+        "def within[Lo: BigInteger, Hi: BigInteger](x: Int) where rangeWithin[Lo, Hi](range(x)): Int = x\n" +
         "def main uses Console: Unit = printLine(show(within[0, 9](7)))"
     ).asserting(_ shouldBe "7")
   }
@@ -221,7 +221,7 @@ class WhereOnDefIntegrationTest extends FullIntegrationTest {
   it should "reject a call whose argument range exceeds the bound" in {
     compileForErrors(
       "import eliot.effect.Console\n" +
-        "def within[Lo: BigInteger, Hi: BigInteger](x: Int): Int where rangeWithin[Lo, Hi](range(x)) = x\n" +
+        "def within[Lo: BigInteger, Hi: BigInteger](x: Int) where rangeWithin[Lo, Hi](range(x)): Int = x\n" +
         "def main uses Console: Unit = printLine(show(within[0, 5](7)))"
     ).asserting(_ should include("precondition of 'Test::within' is not satisfied"))
   }
@@ -229,7 +229,7 @@ class WhereOnDefIntegrationTest extends FullIntegrationTest {
   "a where precondition on a parameter typed by a type parameter" should "accept a call whose argument range fits" in {
     compileAndRun(
       "import eliot.effect.Console\n" +
-        "def asByte[T](x: T): T where rangeWithin[0, 255](range(x)) = x\n" +
+        "def asByte[T](x: T) where rangeWithin[0, 255](range(x)): T = x\n" +
         "def main uses Console: Unit = printLine(show(asByte(7)))"
     ).asserting(_ shouldBe "7")
   }
@@ -239,7 +239,7 @@ class WhereOnDefIntegrationTest extends FullIntegrationTest {
   private val pickByte =
     "import eliot.effect.Console\n" +
       "data Box(label: String)\n" +
-      "def pick(x: Int, b: Box): Int where rangeWithin[0, 255](range(x)) = x\n"
+      "def pick(x: Int, b: Box) where rangeWithin[0, 255](range(x)): Int = x\n"
 
   "a where precondition beside a parameter whose type carries no meta" should "accept a call whose argument range fits" in {
     compileAndRun(pickByte + """def main uses Console: Unit = printLine(show(pick(7, Box("b"))))""").asserting(_ shouldBe "7")
@@ -254,7 +254,7 @@ class WhereOnDefIntegrationTest extends FullIntegrationTest {
     compileForErrors(
       "import eliot.effect.Console\n" +
         "data Box(label: String)\n" +
-        "def pick(x: Int, b: Box): Int where rangeWithin[0, 255](range(b)) = x\n" +
+        "def pick(x: Int, b: Box) where rangeWithin[0, 255](range(b)): Int = x\n" +
         """def main uses Console: Unit = printLine(show(pick(7, Box("b"))))"""
     ).asserting(_ should include("Cannot evaluate the `where` precondition of 'Test::pick'"))
   }
@@ -265,7 +265,7 @@ class WhereOnDefIntegrationTest extends FullIntegrationTest {
   "a where precondition on a definition taking handles" should "accept a call whose argument range fits" in {
     compileAndRun(
       "import eliot.effect.Console\n" +
-        "def loud(x: Int) uses Console: Int where rangeWithin[0, 255](range(x)) = {\n   printLine(\"loud\")\n   x\n}\n" +
+        "def loud(x: Int) where rangeWithin[0, 255](range(x)) uses Console: Int = {\n   printLine(\"loud\")\n   x\n}\n" +
         "def main uses Console: Unit = printLine(show(loud(7)))"
     ).asserting(_ shouldBe "loud\n7")
   }
@@ -273,7 +273,7 @@ class WhereOnDefIntegrationTest extends FullIntegrationTest {
   "a where precondition on a definition handing its code a handle" should "accept a call whose argument range fits" in {
     compileAndRun(
       "import eliot.effect.Console\n" +
-        "def guarded(x: Int, body uses *, Abort: Unit) uses *: Unit where rangeWithin[0, 255](range(x)) = body else unit\n" +
+        "def guarded(x: Int, body uses *, Abort: Unit) where rangeWithin[0, 255](range(x)) uses *: Unit = body else unit\n" +
         "def main uses Console: Unit = guarded(7, printLine(\"ran\"))"
     ).asserting(_ shouldBe "ran")
   }
@@ -281,7 +281,7 @@ class WhereOnDefIntegrationTest extends FullIntegrationTest {
   it should "reject a call whose argument range exceeds the bound" in {
     compileForErrors(
       "import eliot.effect.Console\n" +
-        "def guarded(x: Int, body uses *, Abort: Unit) uses *: Unit where rangeWithin[0, 255](range(x)) = body else unit\n" +
+        "def guarded(x: Int, body uses *, Abort: Unit) where rangeWithin[0, 255](range(x)) uses *: Unit = body else unit\n" +
         "def main uses Console: Unit = guarded(300, printLine(\"ran\"))"
     ).asserting(_ should include("precondition of 'Test::guarded' is not satisfied"))
   }

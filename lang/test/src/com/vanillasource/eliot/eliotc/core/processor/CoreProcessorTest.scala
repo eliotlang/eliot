@@ -659,13 +659,13 @@ class CoreProcessorTest extends ProcessorTest(Tokenizer(), ASTParser(), CoreProc
   }
 
   "where clause (bounds Step 4c)" should "keep an integer literal in the predicate a compile-time BigInteger" in {
-    namedValue("def f(a: Foo): Foo where g(0)", QualifiedName("f$Where", M)).asserting { nv =>
+    namedValue("def f(a: Foo) where g(0): Foo", QualifiedName("f$Where", M)).asserting { nv =>
       nv.runtimeStructure shouldBe Some(Lambda("a", Empty, App(Ref("g"), IntLit("0"))))
     }
   }
 
   it should "type each parameter by a meta binder of its own, after the definition's binders" in {
-    namedValue("def f[A](h: A, a: Foo): Foo where g(a)", QualifiedName("f$Where", M)).asserting { nv =>
+    namedValue("def f[A](h: A, a: Foo) where g(a): Foo", QualifiedName("f$Where", M)).asserting { nv =>
       nv.signature.value.structure shouldBe Lambda(
         "A",
         Ref("Type", T),

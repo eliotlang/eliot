@@ -611,7 +611,7 @@ desugar leaves them (handles and handed binders included, so they line up with t
 construction) and then one binder per parameter, typing that parameter —
 
 ```eliot
-def asByte(x: Byte): Byte where rangeWithin[0, 255](range(x)) = x
+def asByte(x: Byte) where rangeWithin[0, 255](range(x)): Byte = x
   ⟶  asByte$Where[Meta$x: Type](x: Meta$x): Bool = rangeWithin[0, 255](range(x))
 ```
 
@@ -997,7 +997,7 @@ site. So the rule is:
 > reached from `main`, with the argument metas of that context.**
 
 ```eliot
-def pick(index: Int, fallback: Int): Int where withinByte(range(index)) = index + fallback
+def pick(index: Int, fallback: Int) where withinByte(range(index)): Int = index + fallback
 def relay(y: Int): Int = pick(5, y)       // today: rejected, `y` is ⊤ — though the predicate never reads it
 def useIt(y: Int): Int = useByte(y)       // today: rejected at `useIt`, whatever its callers pass
 def main uses Console: Unit = {

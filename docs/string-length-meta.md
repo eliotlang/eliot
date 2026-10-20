@@ -62,7 +62,7 @@ minus its hardest sub-problem — and it is the domain that proves the machinery
 What it buys today:
 
 - `where` preconditions over strings — the fixed-width case that motivates the whole channel on a microcontroller
-  (`def banner(s: String): Unit where fitsDisplay(size(s))`).
+  (`def banner(s: String) where fitsDisplay(size(s)): Unit`).
 - **Cross-domain flow**: `length`'s stated transfer turns a string's size into an `Int`'s range, so a literal's
   length feeds `Int` arithmetic, `Int` `where`s, and (later) array bounds. *Verified* (§4.4).
 - **A bound on a parsed number**: `parseInt` on a string of `n` code points yields an `Int` in `[-(10ⁿ-1), 10ⁿ-1]`,
@@ -231,7 +231,7 @@ transfer language is not `Int`-shaped.
 
 ```eliot
 def fitsFive(i: Interval[BigInteger]): Bool = lessThanOrEqual(end(i), 5)
-def label(s: String): String where fitsFive(size(s)) = s
+def label(s: String) where fitsFive(size(s)): String = s
 
 def main: {Console} Unit = printLine(label("hello"))          // compiles, runs, prints `hello`
 ```
@@ -249,7 +249,7 @@ strings beyond the seed.
 
 ```eliot
 def withinFive(i: Interval[BigInteger]): Bool = lessThanOrEqual(end(i), 5)
-def small(x: Int): Int where withinFive(range(x)) = x
+def small(x: Int) where withinFive(range(x)): Int = x
 
 def main: {Console} Unit = printLine(show(small(length("hello"))))        // accepted
 //                                         small(length("hello world"))  // rejected at the call

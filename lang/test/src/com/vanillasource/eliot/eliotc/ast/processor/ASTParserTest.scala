@@ -502,8 +502,28 @@ class ASTParserTest extends ProcessorTest(new Tokenizer(), new ASTParser()) {
   it should "carry a def's where precondition as its where clause, stopping cleanly before the body" in {
     // `where` is a hard keyword, so the return-type run ends at it and the predicate run ends at `=`; both the
     // precondition and the body parse (bounds-as-refinements §4.3, `where`-on-defs).
-    runEngineForFunctionWhereClauses("def useByte(x: Int): Int where withinByte(range(x)) = x").asserting(
+    runEngineForFunctionWhereClauses("def useByte(x: Int) where withinByte(range(x)): Int = x").asserting(
       _ shouldBe Seq("useByte" -> Some("withinByte(range(x))"))
+    )
+  }
+
+  it should "stop a def's where precondition at its uses clause, which keeps the row on the return type" in {
+    runEngineForFunctionWhereClauses("def loud(x: Int) where withinByte(range(x)) uses Console: Int = x").asserting(
+      _ shouldBe Seq("loud" -> Some("withinByte(range(x))"))
+    )
+  }
+
+  it should "keep a def's return brace after the return type when it carries a where precondition" in {
+    runEngineForErrors("def leaf(x: Int) where withinByte(range(x)): Int {closed(0, 255)}").asserting(_ shouldBe Seq.empty)
+  }
+
+  it should "refuse a def's where precondition after the return type, naming where it goes" in {
+    runEngineForErrors("def useByte(x: Int): Int where withinByte(range(x)) = x").asserting(
+      _ shouldBe Seq(
+        "Expected the body or the next definition, since a `where` precondition is written after the parameters, " +
+          "before any `uses` clause and the colon (`def asByte(x: Int) where withinByte(range(x)): Int = x`), but " +
+          "encountered keyword 'where'."
+      )
     )
   }
 
