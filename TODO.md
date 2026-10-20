@@ -18,15 +18,10 @@ notes.
   written `Bounded(0)` / `Bounded(0 - 1)`. What remains is the general case: an *ordinary def body* is
   runtime-track, so a helper called from a brace still cannot name a `BigInteger` constant in value position —
   which is why `rangeWithin[Lo, Hi]` takes its bounds as type parameters.
-- **The rest of meta braces on occurrences.** Parameter braces (`def writeByte(b: Int {byte}): Unit`) are built
-  (`docs/total-meta-transfers.md` §8.9): every full call proves its argument fits, and a demand inside the body is
-  checked at what each call supplies (P5). One occurrence of the same decision (2026-09-15: a brace states the meta of the value at
-  that position, and whoever supplies the value proves it) remains: a **`data` field** `r: Int {byte}` would be
-  demanded at construction through the ordinary constructor call, and its generated accessor may state it as a leaf
-  would (construction is the only supplier). A brace on a **bodied return** is declined (2026-10-20, §8.9): a body is a
-  supplier the compiler sees, so its meta is derived, never stated, and R3 stands.
-  A reusable meta value (`def byte: Interval[BigInteger] = …`) still has to write its literals in type position
-  (`between[0, 255]`) until the `Int` literal item above is solved.
+- **A reusable meta value's literals.** Meta braces on occurrences are built — parameters and `data` fields
+  (`docs/total-meta-transfers.md` §8.9, §8.10); a brace on a bodied return is declined. A reusable meta value
+  (`def byte: Interval[BigInteger] = …`) still has to write its literals in type position (`between[0, 255]`) until
+  the `Int` literal item above is solved.
 - **Flow grades: quantitative computation tracking (cycles/WCET, stack, peak memory) on the
   effect row.** Design sketched 2026-07-10 in the bounds-as-refinements discussion. The dependency
   ladder is ranges → sizes → grades (fold cost needs sizes, frame sizes need ranges): the

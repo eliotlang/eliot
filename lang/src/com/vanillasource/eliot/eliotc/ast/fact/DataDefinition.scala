@@ -35,7 +35,7 @@ object DataDefinition {
       genericParameters    <- component[Seq[GenericParameter]]
       constructorsOrFields <-
         ((symbol("=") >> symbol("|").optional() >> component[DataConstructor].atLeastOnceSeparatedBy(symbol("|"))) xor
-          bracketedCommaSeparatedItems("(", component[ArgumentDefinition], ")")).optional()
+          bracketedCommaSeparatedItems("(", ArgumentDefinition.field, ")")).optional()
     } yield {
       val constructors = constructorsOrFields.map {
         case Left(ctors)   => ctors

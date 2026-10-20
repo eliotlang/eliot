@@ -206,7 +206,15 @@ object DataDefinitionDesugarer {
           returnMeta = Seq(handlers.map(handler => reference(handler.name)).reduceRight(joined))
         )
 
-        Seq(implMarker, handleCasesDef)
+        // A braced field is stated of what the eliminator hands the handler (§8.10): the constructor proved it.
+        val handed = ctors.zip(handlers).flatMap { (ctor, handler) =>
+          ctor.fields.zipWithIndex.collect {
+            case (field, index) if field.meta.nonEmpty =>
+              MetaParameterDesugarer.handedStatement(handleCasesDef, handler.name, index, field.meta)
+          }
+        }
+
+        Seq(implMarker, handleCasesDef) ++ handed
       }
 
   /** A `match` handler's parameter type — `case uses *: F1 => F2 => R`: the constructor's fields (a `Unit` for none)

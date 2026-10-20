@@ -427,7 +427,8 @@ contain `data` (a chosen representation), a native leaf, or any representation-d
   through `eliot.compiler.Meta::joined`), a demand in the body is checked at what each call supplies (P5), and a def
   with one cannot be passed as a value. Its statement companion
   (`MetaParameterDesugarer`, `<def>$Parameter$<p>`) reads no parameter: its parameters are placeholders that only count
-  and place. A brace on a `data` field is the same decision, not yet built;
+  and place. A brace on a `data` field is the same decision (§8.10): the constructor proves it, and the `match` eliminator
+  states it of what it hands a handler (a *handed* statement), which every accessor and arm reads it through;
   one on a bodied return is declined (§8.9) — a meta is stated only where the compiler cannot see the supplier.
 - `def foldLeft[A, B](initial: B, combine: ..., list: List[A]): B` — an abstract function, signature only.
 - A `type X = ...` alias and a body-less `type X` differ only by having a body; `data X(...)` is the *concrete*

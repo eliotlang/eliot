@@ -773,6 +773,15 @@ class ASTParserTest extends ProcessorTest(new Tokenizer(), new ASTParser()) {
     )
   }
 
+  it should "leave a data field's meta brace to that field" in {
+    runEngineForFieldMetas("data Pixel(r: Int {byte}, g: Int)").asserting(_ shouldBe Seq(("r", Seq("byte")), ("g", Seq.empty)))
+  }
+
+  it should "leave a meta brace to a field of a constructor of a type with several" in {
+    runEngineForFieldMetas("data Reading = Celsius(t: Int {closed(0, 9)}) | Missing")
+      .asserting(_ shouldBe Seq(("t", Seq("closed(0, 9)"))))
+  }
+
   private def runEngine(source: String): IO[Map[CompilerFactKey[?], CompilerFact]] =
     runGenerator(source, SourceAST.Key(file)).map(_._2)
 
@@ -882,6 +891,19 @@ class ASTParserTest extends ProcessorTest(new Tokenizer(), new ASTParser()) {
       results.values
         .collect { case SourceAST(_, Sourced(_, _, AST(_, functions, _, _, _))) =>
           functions.flatMap(_.args.map(arg => (arg.name.value, arg.meta.map(_.value.render))))
+        }
+        .toSeq
+        .flatten
+    }
+
+  private def runEngineForFieldMetas(source: String): IO[Seq[(String, Seq[String])]] =
+    for {
+      results <- runEngine(source)
+    } yield {
+      results.values
+        .collect { case SourceAST(_, Sourced(_, _, ast)) =>
+          ast.typeDefinitions.flatMap(_.constructors.toSeq.flatten.flatMap(_.fields))
+            .map(field => (field.name.value, field.meta.map(_.value.render)))
         }
         .toSeq
         .flatten

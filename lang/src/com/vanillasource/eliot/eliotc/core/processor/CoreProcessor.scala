@@ -50,9 +50,10 @@ class CoreProcessor
     val desugaredWhereCompanions: Seq[(FunctionDefinition, RoleHint)] =
       sourceAstData.functionDefinitions.flatMap(MetaWhereDesugarer.desugar)
     // A meta brace on a parameter (`def writeByte(b: Int {byte}): Unit`) → that parameter's statement companion, the
-    // meta the channel demands of the argument at each call and gives the parameter inside the body.
+    // meta the channel demands of the argument at each call. A braced `data` field is its constructor's parameter, so
+    // the data-desugared definitions are read as well.
     val desugaredParameterStatements: Seq[(FunctionDefinition, RoleHint)] =
-      sourceAstData.functionDefinitions.flatMap(MetaParameterDesugarer.desugar)
+      bracedDefinitions.flatMap(MetaParameterDesugarer.desugar)
     // The payload signature every companion is instantiated by: a def's parameter and result types as a companion
     // reads them, which the channel evaluates at each call (see MetaCompanionLayout).
     val desugaredPayloadSignatures: Seq[(FunctionDefinition, RoleHint)] =

@@ -19,6 +19,7 @@ class CoreProcessorTest extends ProcessorTest(Tokenizer(), ASTParser(), CoreProc
   // The meta namespace of the plain (Default) namespace — where a plain def's `^Meta`/`^Where` companion
   // lives. A companion keeps its callee's qualifier, so an ability implementation's is a different one.
   private val M = Qualifier.Meta(Qualifier.Default)
+  private val PatternMatchMeta = Qualifier.Meta(Qualifier.AbilityImplementation("PatternMatch", "Pixel", None))
 
   "core processor" should "transform a simple constant reference" in {
     namedValue("def a: A = b", QualifiedName("a", Qualifier.Default)).asserting { nv =>
@@ -656,6 +657,29 @@ class CoreProcessorTest extends ProcessorTest(Tokenizer(), ASTParser(), CoreProc
     namedValues("def f(a: Foo {g}, b: Foo): Foo").asserting { nvs =>
       nvs.map(_.qualifiedName.value) should not contain QualifiedName("f$Parameter$b", M)
     }
+  }
+
+  "data field brace" should "state the field on its constructor, as a parameter brace" in {
+    namedValue("data Pixel(r: Foo {g}, b: Foo)", QualifiedName("Pixel$Parameter$r", M)).asserting { nv =>
+      nv.runtimeStructure shouldBe Some(
+        Lambda("constructor$", Empty, Lambda("r$", Empty, Lambda("b$", Empty, App(Ref("constructor$"), Ref("g")))))
+      )
+    }
+  }
+
+  it should "state what the match eliminator hands the field's handler, reading no parameter" in {
+    namedValue("data Pixel(r: Foo {g}, b: Foo)", QualifiedName("handleCases$Handed$case0$0", PatternMatchMeta)).asserting {
+      nv =>
+        nv.runtimeStructure shouldBe Some(
+          Lambda("constructor$", Empty, Lambda("value$", Empty, Lambda("case0$", Empty, App(Ref("constructor$"), Ref("g")))))
+        )
+    }
+  }
+
+  it should "number a handed statement by the field's position in its own constructor" in {
+    namedValues("data Shape = Circle(r: Foo) | Square(a: Foo, b: Foo {g})").asserting(
+      _.map(_.qualifiedName.value.name).filter(_.startsWith("handleCases$Handed$")) shouldBe Seq("handleCases$Handed$case1$1")
+    )
   }
 
   "where clause (bounds Step 4c)" should "keep an integer literal in the predicate a compile-time BigInteger" in {

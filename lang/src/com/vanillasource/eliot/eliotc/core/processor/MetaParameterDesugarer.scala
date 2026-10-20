@@ -4,6 +4,7 @@ import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.ast.fact.{ArgumentDefinition, FunctionDefinition, Expression as SourceExpression}
 import com.vanillasource.eliot.eliotc.core.fact.RoleHint
 import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, Qualifier}
+import com.vanillasource.eliot.eliotc.source.content.Sourced
 
 /** Desugars a parameter's **meta brace** into its **statement companion** (`docs/total-meta-transfers.md` §8.9) — the
   * meta-information the value at that position is stated to have, which the refinement channel demands of the argument
@@ -40,6 +41,64 @@ object MetaParameterDesugarer {
     Option.when(name.qualifier == Qualifier.Meta(of.qualifier) && name.name.startsWith(of.name + parameterInfix))(
       name.name.drop(of.name.length + parameterInfix.length)
     )
+
+  /** Between a definition's name and its code parameter's in a **handed** statement's name, followed by the parameter,
+    * a `$` and the index of the argument the statement is about.
+    */
+  val handedInfix: String = "$Handed$"
+
+  /** The name of the handed statement about argument `argument` that the value named `of` hands its code parameter
+    * `parameter`, in the meta namespace of its own qualifier. The single source of truth the channel reads it through,
+    * with [[handedArgument]].
+    */
+  def handedName(of: QualifiedName, parameter: String, argument: Int): QualifiedName =
+    QualifiedName(s"${of.name}$handedInfix$parameter$$$argument", Qualifier.Meta(of.qualifier))
+
+  /** The code parameter and argument index `name` is the handed statement of, when it is one of the value named `of`. */
+  def handedArgument(of: QualifiedName, name: QualifiedName): Option[(String, Int)] =
+    Option
+      .when(name.qualifier == Qualifier.Meta(of.qualifier) && name.name.startsWith(of.name + handedInfix))(
+        name.name.drop(of.name.length + handedInfix.length)
+      )
+      .flatMap { rest =>
+        val separator = rest.lastIndexOf('$')
+        rest.drop(separator + 1).toIntOption.filter(_ => separator > 0).map(rest.take(separator) -> _)
+      }
+
+  /** A **handed** statement (`docs/total-meta-transfers.md` §8.10): the meta of the `argument`-th value the body-less
+    * `definition` hands its code parameter `parameter` when it runs it — a supplier the compiler cannot see, so stated.
+    * Its shape is a parameter statement's, with one more binder, typing what it states: the meta type of that argument,
+    * which the channel reads off the code argument's own function type.
+    *
+    * {{{
+    *   data Pixel(r: Int {byte}, g: Int)
+    *     ⟶  handleCases$Handed$case0$0[R, Meta$value, Meta$case0, Meta$, Constructor$](
+    *           constructor$: Constructor$, value$: Meta$value, case0$: Meta$case0): Meta$ = constructor$(byte)
+    * }}}
+    *
+    * Only [[DataDefinitionDesugarer]] writes one, for a braced field: the `match` eliminator hands each handler its
+    * constructor's fields, and the constructor proved each brace when the value was built.
+    */
+  def handedStatement(
+      definition: FunctionDefinition,
+      parameter: Sourced[String],
+      argument: Int,
+      brace: Seq[Sourced[SourceExpression]]
+  ): FunctionDefinition = {
+    val (metaBinders, placeholders) = MetaCompanionLayout.statementParameters(definition)
+    val constructor                 = parameter.as(MetaCompanionLayout.constructorParameterName)
+    val handedBinder                = MetaCompanionLayout.typeBinder(parameter.as(MetaCompanionLayout.resultBinderName))
+    val constructorBinder           =
+      MetaCompanionLayout.typeBinder(parameter.as(MetaCompanionLayout.constructorBinderName))
+    FunctionDefinition(
+      definition.name.map(handedName(_, parameter.value, argument)),
+      MetaCompanionLayout.ownBinders(definition) ++ metaBinders :+ handedBinder :+ constructorBinder,
+      ArgumentDefinition(constructor, MetaCompanionLayout.typeReference(constructorBinder.name)) +: placeholders,
+      MetaCompanionLayout.typeReference(handedBinder.name),
+      Some(parameter.as(SourceExpression.FunctionApplication(None, constructor, None, brace))),
+      visibility = definition.visibility
+    )
+  }
 
   /** One statement companion per parameter of `definition` carrying a meta brace, or empty (every ordinary def). */
   def desugar(definition: FunctionDefinition): Seq[(FunctionDefinition, RoleHint)] =

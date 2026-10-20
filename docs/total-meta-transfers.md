@@ -726,8 +726,9 @@ is unified (`TODO.md`): an ordinary body is runtime-track, so `closed(0, 255)` t
 `def between[Lo: BigInteger, Hi: BigInteger]: Interval[BigInteger] = closed(Lo, Hi)` then
 `def byte: Interval[BigInteger] = between[0, 255]` and `x: Int {byte}` works.
 
-*Not built:* a brace on a **`data` field** `r: Int {byte}`, demanded at construction through the constructor call and
-stated by its generated accessor.
+*Built since (§8.10):* a brace on a **`data` field** `r: Int {byte}`, demanded at construction through the constructor
+call — and stated, not by its generated accessor as first sketched here, but by the `match` eliminator every read goes
+through.
 
 *Declined (2026-10-20): a brace on a **bodied return**.* It was listed as the decision's third occurrence, which it is
 only by symmetry — no use case asked for it. The decision's rule reads sharper as **a meta is stated exactly where the
@@ -746,6 +747,51 @@ statement is axiomatic. Where the derived meta is precise, the brace can only *w
 abstraction — a library stating `atLeast(0)` so its callers' `where`s do not couple to what its body happens to derive
 today — and that is a modular certificate, which *Use-Site Verification* deliberately gives up. R3 stands unchanged;
 do not re-propose this without a use case the derivation cannot serve.
+
+**8.10 Field braces — LANDED (2026-10-20).** The third row of §8.9's table: a brace after a `data` field's type states
+the meta of the value the field holds, the constructor proves it, and every read relies on it.
+
+```eliot
+data Pixel(r: Int {closed(0, 255)}, g: Int)
+def red(p: Pixel): Int = useByte(p.r)                     // compiles, whatever `p` is: a read of `r` is [0, 255]
+def arm(p: Pixel): Int = p match { case Pixel(r, g) -> useByte(r) }
+Pixel(300, 0)                                              // error at the construction: 300 does not fit `r`
+```
+
+Neither half is a special case of anything, which is what made it small:
+
+- **Construction is a parameter brace.** A field *is* its constructor's parameter (both are an `ArgumentDefinition`), so
+  the field parser (`ArgumentDefinition.field`) reads the brace a parameter's does and `MetaParameterDesugarer` runs over
+  the data-desugared definitions too. Nothing else changed: every construction proves its argument by §8.9's demand, and
+  a constructor with a braced field cannot be passed as a value, as a braced def cannot.
+- **A read is an ordinary call to `handleCases`.** An accessor is a generated def whose body is a `match`, and a `match`
+  calls the type's eliminator, so both reach the field as a handler's parameter — unknown until now, because the
+  stated-transfer path applied every handler to unknown arguments (`yieldOf`). The eliminator is body-less, so the
+  value it hands a handler has a supplier the compiler cannot see, and the decided rule applies: **it is stated**. The
+  data desugarer emits a **handed statement** per braced field, `handleCases$Handed$case<i>$<j>` — what the eliminator
+  hands handler *i* as argument *j* — with the field's brace copied in
+  (`MetaParameterDesugarer.handedStatement`). It has a parameter statement's shape plus one binder, the meta type of the
+  handed argument, which the channel reads off the handler's own function type, so a field of a generic `data` is stated
+  at its instantiation (`data Capped[Hi: BigInteger](v: Int {closed(0, Hi)})`).
+
+The channel reads it in the two places a handler is applied, through one lookup (`MetaInterpreter.handedMetas`):
+deriving a value, where `yieldOf` applies the handler to the stated metas instead of unknowns, so `p.r` derives
+`[0, 255]` and a `match` joins its arms over them; and checking demands, where `MetaDemandsProcessor` walks a lambda
+argument with its binders bound to them, so a demand inside an arm sees the field's meta. A handed statement is
+**axiomatic**, as R2's are: nothing rechecks it, and it holds because the constructor is the only supplier and proved
+it — a promise the platform keeps by building its `data` values through the constructor.
+
+Three alternatives were declined. The generated **accessor stating** the meta, as §8.9 first sketched, needs an R3
+exception for a bodied value and reaches neither a `match` arm nor a type with several constructors, which has no
+accessors. The channel **linking handler *i* to constructor *i*** itself names the `PatternMatch` protocol, which S11
+declined. **Structural meta** (P6) is the general answer and is not this: a brace is a declared contract, so
+`Pixel(5, 0).r` reads `[0, 255]`, not `[5, 5]`, and an unbraced field stays unknown.
+
+What stays as it was: **layout** — a field is still stored at its boundary width, so the stated meta reaches checks
+only, and storing `r` in a byte is a representation decision (§7) — and the **diagnostic**, which names the field as
+"the parameter 'r' of 'Pixel'", accurately, since telling a constructor from a def would mean reading a `RoleHint` in a
+semantic phase. A handed statement has no user spelling: only the data desugarer writes one, though the channel's
+reading is general — any body-less callee stating what it hands a code parameter is read the same way.
 
 ---
 

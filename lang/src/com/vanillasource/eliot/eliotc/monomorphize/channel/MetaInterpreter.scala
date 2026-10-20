@@ -67,8 +67,9 @@ import scala.annotation.tailrec
   * or a pure `val` block, which lowers to an applied lambda (`(x -> rest)(e)`). A **stated** transfer cannot apply a
   * closure — a companion is Eliot over metas — so a code argument reaches it as what its code **yields**, the same
   * reading its payload signature gives a code parameter's meta type: `fold(c, 10, 20)` joins `[10, 10]` and `[20, 20]`.
-  * What stays ⊤ is a native that applies a function argument by itself (`handleCases`, `foldLeft`), whose transfer
-  * would have to apply a closure.
+  * A handler a native runs is applied to what the native **states** it hands it ([[handedMetas]]) — the `match`
+  * eliminator's braced fields — and to ⊤ elsewhere, so a native applying a function argument with nothing stated
+  * (`foldLeft`) reaches what it hands only as ⊤.
   */
 object MetaInterpreter {
 
@@ -217,6 +218,69 @@ object MetaInterpreter {
       case None                  => (Stated.Unknown: Stated).pure[CompilerIO]
     }
 
+  /** What a body-less `callee` hands the code argument at parameter `position` when it runs it: per argument of that
+    * code's `functionType`, the meta a **handed** statement states of it, or ⊤ where none does
+    * ([[MetaParameterDesugarer.handedStatement]], `docs/total-meta-transfers.md` §8.10). The supplier is the callee, which
+    * the compiler cannot see, so the statement is axiomatic — the `match` eliminator's, for a braced field, holds because
+    * the constructor proved it. Each is reduced as a parameter statement is, plus the meta type of the argument it states,
+    * read off `functionType`, so a generic field is stated at its instantiation.
+    */
+  def handedMetas(
+      callee: ValueFQN,
+      calleeTypeArgs: Seq[GroundValue],
+      position: Int,
+      functionType: GroundValue
+  ): CompilerIO[Seq[Option[GroundValue]]] = {
+    val domains = peel(functionType, functionType.functionArity).map(_._1).getOrElse(Seq.empty)
+    getFactOrAbort(UnifiedModuleNames.Key(callee.moduleName, Platform.Compiler)).flatMap { names =>
+      names.names.keys.toSeq
+        .flatMap(name => MetaParameterDesugarer.handedArgument(callee.name, name).map(ValueFQN(callee.moduleName, name) -> _))
+        .flatTraverse { case (companion, (parameter, argument)) =>
+          companionParameters(companion).map { names =>
+            val placeholders = names.filter(_ =!= MetaCompanionLayout.constructorParameterName)
+            Option
+              .when(placeholders.indexOf(MetaCompanionLayout.placeholderName(parameter)) === position)(
+                (companion, argument, placeholders.size)
+              )
+              .toSeq
+          }
+        }
+        .flatMap { handed =>
+          domains.indices.toList.traverse { argument =>
+            handed.find(_._2 === argument) match {
+              case Some((companion, _, arity)) => handedMeta(callee, calleeTypeArgs, companion, arity, domains(argument))
+              case None                        => none[GroundValue].pure[CompilerIO]
+            }
+          }.map(_.toSeq)
+        }
+    }
+  }
+
+  private def handedMeta(
+      callee: ValueFQN,
+      calleeTypeArgs: Seq[GroundValue],
+      companion: ValueFQN,
+      arity: Int,
+      argumentType: GroundValue
+  ): CompilerIO[Option[GroundValue]] =
+    payloadTypes(callee, calleeTypeArgs, arity).flatMap {
+      case Some((parameters, _)) =>
+        (parameters.traverse(metaTypeOf), metaTypeOf(argumentType)).flatMapN { (metaTypes, handedType) =>
+          metaConstructorOf(handedType).flatMap {
+            case Some(constructor) =>
+              EscalatingReducer
+                .reduceApplied(
+                  companion,
+                  calleeTypeArgs ++ metaTypes :+ handedType :+ constructor.valueType,
+                  Evaluator.groundToSem(constructor) +: Seq.fill(arity)(SemValue.VType)
+                )
+                .map(_.collect { case meta: GroundValue.Structure => meta })
+            case None              => none[GroundValue].pure[CompilerIO]
+          }
+        }
+      case None                  => none[GroundValue].pure[CompilerIO]
+    }
+
   /** Whether a value of meta `actual` fits where meta `stated` is stated: joining it into `stated` leaves `stated`, the
     * structural comparison the reconcile pass makes. The join is the meta type's own `Meta` instance, reached through
     * `eliot.compiler.Meta::joined` at that type by the one evaluator. Anything that does not reduce does not fit.
@@ -270,20 +334,27 @@ object MetaInterpreter {
           argument match {
             case Value.Meta(meta)                                                => (left, metas :+ meta).pure[CompilerIO]
             case closure: Value.Closure if metaTypes.lift(index).exists(_ != unitType) =>
-              yieldOf(closure, left).map((remaining, meta) => (remaining, metas :+ meta))
+              handedMetas(callee, typeArguments, index, closure.node.value.expressionType)
+                .flatMap(handed => yieldOf(closure, handed, left))
+                .map((remaining, meta) => (remaining, metas :+ meta))
             case _: Value.Closure                                                => (left, metas :+ None).pure[CompilerIO]
           }
         }
       }
       .flatMap((left, metas) => reduceTransfer(callee, typeArguments, metas).map(meta => (left, Value.Meta(meta))))
 
-  /** What a function value yields: its result once applied to as many unknown arguments as its type takes — a code
-    * argument's thunk or handle block applied to the unit or handles it is run with, which carry no meta.
+  /** What a function value yields: its result once applied to as many arguments as its type takes — a code argument's
+    * thunk or handle block applied to the unit or handles it is run with, which carry no meta, or a handler applied to
+    * what its callee states it hands it (`handed`, ⊤ where nothing is stated).
     */
-  private def yieldOf(closure: Value.Closure, budget: Int): CompilerIO[(Int, Option[GroundValue])] = {
+  private def yieldOf(
+      closure: Value.Closure,
+      handed: Seq[Option[GroundValue]],
+      budget: Int
+  ): CompilerIO[(Int, Option[GroundValue])] = {
     val functionType = closure.node.value.expressionType
-    applyValue(closure, Seq.fill(functionType.functionArity)(Value.unknown), functionType.deepReturnType, budget)
-      .map((left, value) => (left, metaOfValue(value)))
+    val arguments    = Seq.tabulate(functionType.functionArity)(index => Value.Meta(handed.lift(index).flatten))
+    applyValue(closure, arguments, functionType.deepReturnType, budget).map((left, value) => (left, metaOfValue(value)))
   }
 
   /** Derive a bodied callee's meta by interpreting its body under the caller's arguments. Three things make this

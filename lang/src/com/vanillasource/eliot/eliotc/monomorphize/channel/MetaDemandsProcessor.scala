@@ -174,7 +174,7 @@ class MetaDemandsProcessor
         head.value.expression match {
           case MonomorphicExpression.MonomorphicValueReference(vfqn, typeArgs) =>
             for {
-              walkedArgs <- args.traverse(walk(scope, _, env))
+              walkedArgs <- args.zipWithIndex.traverse((arg, position) => walkArgument(scope, vfqn.value, typeArgs, position, arg, env))
               own        <- ownDemands(scope, node, vfqn.value, typeArgs, walkedArgs)
               internal   <- internalDemands(scope, node, vfqn.value, typeArgs, walkedArgs.map(_.info))
               meta       <- MetaInterpreter.metaOfCall(
@@ -201,6 +201,40 @@ class MetaDemandsProcessor
             (walk(scope, head, env) +: args.map(walk(scope, _, env))).sequence
               .map(walked => Walked.leaf(Info.unknown).andAll(walked))
         }
+    }
+
+  /** Walk an argument of a call to `callee`. A lambda is walked under what the callee states it hands it
+    * ([[MetaInterpreter.handedMetas]], `docs/total-meta-transfers.md` §8.10) — a `match` arm's field binders, for a
+    * braced field — and every other argument as any node is.
+    */
+  private def walkArgument(
+      scope: Scope,
+      callee: ValueFQN,
+      calleeTypeArgs: Seq[GroundValue],
+      position: Int,
+      arg: Sourced[MonomorphicExpression],
+      env: Env
+  ): CompilerIO[Walked] =
+    arg.value.expression match {
+      case _: MonomorphicExpression.FunctionLiteral =>
+        MetaInterpreter.handedMetas(callee, calleeTypeArgs, position, arg.value.expressionType).flatMap { handed =>
+          if (handed.forall(_.isEmpty)) walk(scope, arg, env)
+          else walkHanded(scope, arg, handed, env).map(inner => inner.copy(info = captured(arg, env)))
+        }
+      case _                                        => walk(scope, arg, env)
+    }
+
+  /** Walk under a lambda's binders, each bound to the meta its applier states it hands it, or unknown. */
+  private def walkHanded(
+      scope: Scope,
+      node: Sourced[MonomorphicExpression],
+      handed: Seq[Option[GroundValue]],
+      env: Env
+  ): CompilerIO[Walked] =
+    (node.value.expression, handed) match {
+      case (MonomorphicExpression.FunctionLiteral(name, _, body), meta +: rest) =>
+        walkHanded(scope, body, rest, meta.fold(env - name.value)(known => env.updated(name.value, Info.of(Some(known)))))
+      case _                                                                    => walk(scope, node, env)
     }
 
   /** What is known of a function value written in `env`: no meta of its own, but whatever a callee applying it may read
