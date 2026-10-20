@@ -28,16 +28,16 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
   *     leaf (an `Int` `+`/`-`/`*`'s `add^Meta`/…; `fold`'s merge companion `join(whenTrue, whenFalse)`, mechanically
   *     identical to a transfer, so no branch construct is ever named) or **derived** by interpreting a bodied callee's
   *     own body under these argument metas. Which of the two applies is the callee's business, not this walk's — that
-  *     is the state-or-derive closure of `docs/total-meta-transfers.md` §2, and this walk names neither a native leaf
+  *     is the state-or-derive closure of `docs/meta.md` §1, and this walk names neither a native leaf
   *     nor a branch construct to tell them apart.
   *
   * Everything else is ⊤ (unknown, laid out as a bignum) — a parameter, the body of a lambda, a `match` (`handleCases`)
-  * result, a call whose callee neither states nor can be interpreted (a higher-order one, §5's table). A ⊤ node is
+  * result, a call whose callee neither states nor can be interpreted (`docs/meta.md` §8). A ⊤ node is
   * still *recorded*, as a `None` verdict — see [[recordAt]] for why omitting it is unsound at an aliased position.
   *
   * **What this walk decides, and what it does not.** It decides *what may be stamped*: a record is keyed by source
   * position **in the value being walked**, so it is representation policy for this body and this body only
-  * (`docs/total-meta-transfers.md` §7). *What the meta is* belongs to [[MetaInterpreter]], which computes metas
+  * (`docs/meta.md` §7). *What the meta is* belongs to [[MetaInterpreter]], which computes metas
   * through call boundaries but records nothing and reports nothing. A derived meta is therefore consumed at the **call
   * node in the caller**; the callee's own layout stays joined and conservative, computed from its own table at ⊤
   * parameters.
@@ -46,7 +46,7 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
   * reconciled to the callee's parameter representation at the call) and stops at a lambda: a narrow value returned
   * through a lambda's `apply` bridge would fail its `CHECKCAST` (see the class note on `LambdaGenerator`), so nothing
   * under one may be recorded. It checks no demand itself: every `where` and parameter brace is checked in context by
-  * [[MetaDemandsProcessor]] (`docs/total-meta-transfers.md` P5), whose root context this table waits on.
+  * [[MetaDemandsProcessor]] (`docs/meta.md` §6), whose root context this table waits on.
   *
   * Why a post-pass and not a rider inside the checker: refinements are, by the design's held invariant, strictly
   * *downstream* of type formation (they flow into checks and codegen, never back into a type), so the channel can run
@@ -82,7 +82,7 @@ class RefinementChannelProcessor
   ): CompilerIO[RefinementTable] = {
     for {
       // The body's meta demands, checked in its root context and through it in every context its calls reach
-      // (docs/total-meta-transfers.md P5). A table is produced only for a body whose demands hold; demanding them here
+      // (docs/meta.md §6). A table is produced only for a body whose demands hold; demanding them here
       // rather than at the `WovenValue` seam keeps a violation from withholding the woven value, whose absence would
       // stop the walk of the used graph and with it every later value's own diagnostics.
       _      <- MetaDemands.rootOf(mv).flatMap(getFactOrAbort)
@@ -124,7 +124,7 @@ class RefinementChannelProcessor
         MetaInterpreter.integerSeed(value.value).map(meta => Flow(meta, recordAt(node, meta)))
 
       case MonomorphicExpression.StringLiteral(value)   =>
-        // α for the `String` domain (`docs/string-length-meta.md` §3.1): a literal seeds the singleton size range of
+        // α for the `String` domain (`docs/meta.md` §2.2): a literal seeds the singleton size range of
         // its own length, through the same path as the integer seed. That count is the literal's **code points**,
         // which is what `String::length` counts on every platform (`type String`'s documented unit), so the measure is
         // platform-independent rather than a host-representation guess: the seed can never disagree with the function
@@ -138,7 +138,7 @@ class RefinementChannelProcessor
             // An ordinary call (or constructor). Descend into the arguments, so a literal/arithmetic argument narrows.
             // The call's own result is whatever the callee's meta is — **stated** by a leaf (`Numeric[Int]::add`'s
             // transfer, `fold`'s merge) or **derived** from a bodied callee's own body under these argument metas
-            // ([[MetaInterpreter.metaOfCall]], `docs/total-meta-transfers.md` §6.2). The channel names no leaf and no
+            // ([[MetaInterpreter.metaOfCall]], `docs/meta.md` §5). The channel names no leaf and no
             // branch construct: which of the two applies is the callee's business, not this walk's.
             for {
               argResults <- args.traverse(walkFlow)
@@ -196,7 +196,7 @@ object RefinementChannelProcessor {
     * desugarer that emits it ([[MetaTransferDesugarer.companionName]]). `fold` ⤳ `fold^Meta` (merge), the
     * `Numeric[Int]` `add` ⤳ `add^Meta(Numeric#Int…)` (transfer) — the ability-implementation callee keeps its
     * `(ability, pattern)` key, so its transfer is that instance's and not a same-named sibling's
-    * (`docs/total-meta-transfers.md` §8.1). The channel recognises a refinement operation *only* by the presence of
+    * (`docs/meta.md` §4.2). The channel recognises a refinement operation *only* by the presence of
     * this companion — no leaf or branch construct is named.
     */
   private[channel] def metaCompanionName(callee: ValueFQN): QualifiedName =

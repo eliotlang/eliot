@@ -1,6 +1,6 @@
 package com.vanillasource.eliot.eliotc.jvm
 
-/** End-to-end proof of the **meta interpretation** (`docs/total-meta-transfers.md` §6.2/P4): a value with a body does
+/** End-to-end proof of the **meta interpretation** (`docs/meta.md` §5): a value with a body does
   * not *state* what it does to meta-information — R3 forbids it — it **derives** it, by having its body interpreted
   * under the caller's argument metas. Before this, a call to a bodied callee was a ⊤ boundary, so precision was a
   * property of *where code sits relative to a native* rather than of what the code *is*: `def label(s: String): String
@@ -12,18 +12,18 @@ package com.vanillasource.eliot.eliotc.jvm
   * absent bound, "not satisfied" a violated one). The accepting half additionally asserts the program's **output**,
   * which is what pins that the derived bound is not merely believed but true: the backend narrows the call node's
   * representation from it, so a bound that is too tight truncates the printed value rather than being caught
-  * (`docs/string-length-meta.md` §8).
+  * (`docs/meta.md` §7).
   *
   * A function value is a **closure** over the metas in scope where it was written, interpreted when something applies
-  * it, and a stated transfer over code parameters reads each code argument as what it yields (§6.2) — `fold`'s, and a
+  * it, and a stated transfer over code parameters reads each code argument as what it yields (§5.2) — `fold`'s, and a
   * data type's `match` eliminator's, which states the join of its handlers. What stays ⊤ is a field read back out of a
   * data value (structural meta) and a demand inside a lambda body, whose binder only the callee applying it knows. A
-  * callee's own `where` is demanded at what each use site supplies (§P5), never over ⊤ parameters.
+  * callee's own `where` is demanded at what each use site supplies (§6), never over ⊤ parameters.
   */
 class DerivedMetaTransferIntegrationTest extends FullIntegrationTest {
   // `withinByte`/`useByte` are test-local, exactly as in [[TransferBraceReductionIntegrationTest]]: the precondition is
-  // the observable, and `add` is called directly because an infix spine reaches the channel through a position it
-  // drops to ⊤ (`docs/string-length-meta.md` §9).
+  // the observable. `add` is called directly to keep each case about one derivation, not because an infix spine loses
+  // anything: since closures over metas (S10) it derives too.
   private val useByte =
     """|import eliot.effect.Console
        |def withinByte(i: Interval[BigInteger]): Bool = rangeWithin[0, 127](i)
@@ -49,7 +49,7 @@ class DerivedMetaTransferIntegrationTest extends FullIntegrationTest {
   }
 
   // Derivation recurses: `quadruple`'s body calls `double`, whose own body is interpreted in turn. This is the
-  // induction of §2 — every call has a meta because its callee's body does — walked over a DAG the recursion gate
+  // induction of §1 — every call has a meta because its callee's body does — walked over a DAG the recursion gate
   // guarantees is acyclic.
   private val quadruple = double + "def quadruple(x: Int): Int = double(double(x))\n"
 
@@ -174,7 +174,7 @@ class DerivedMetaTransferIntegrationTest extends FullIntegrationTest {
     ).asserting(_ should include("Cannot prove the precondition of 'Test::useByte'"))
   }
 
-  // A `where` inside a bodied def is demanded at what each use site supplies (§P5), with the meta the interpretation
+  // A `where` inside a bodied def is demanded at what each use site supplies (§6), with the meta the interpretation
   // derives for it there: `relay(10)` fits, `relay(1000)` does not.
   "a where precondition inside a bodied def" should "be demanded at what the use site supplies" in {
     compileAndRun(

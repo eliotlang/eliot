@@ -11,7 +11,7 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
 
 import scala.annotation.tailrec
 
-/** The **meta demands** of one monomorphic instance's body in one **meta context** (`docs/total-meta-transfers.md` P5):
+/** The **meta demands** of one monomorphic instance's body in one **meta context** (`docs/meta.md` §6):
   * every `where` precondition and parameter brace its calls demand, checked with what the context says of the body's
   * parameters ([[MetaDemandsProcessor]]).
   *

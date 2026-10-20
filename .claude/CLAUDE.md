@@ -366,18 +366,24 @@ contain `data` (a chosen representation), a native leaf, or any representation-d
   `end` = no upper), and there is no signed infinity. That is what lets the base state the platform-independent half
   of a bound (`atLeast(0)` for a size) instead of inventing a platform maximum it may not assume; a platform narrows
   it to `closed(0, platformMax)`. It is also what supplies the domain's stated **top**: `whole` — open at both ends —
-  says *"nothing bounds this"*, so an absent meta means only "not computed yet" (`docs/total-meta-transfers.md` §5).
+  says *"nothing bounds this"*, so an absent meta means only "not computed yet" (`docs/meta.md` §2.1, the channel's
+  one document: Part I shipped, Part II the design that completes totality, Part III the record and citation map).
   The slot carried a **second, outer `Bound`** for that top until the endpoints could express it; collapsing it was
   the point of keeping one spelling, since `ReconcileProcessor.metaByPosition` compares verdicts *structurally* and
   two spellings of the same top read as disagreement. There is deliberately **no global top**: the generic
   `Meta[Bound[D]]` join is deleted, `Bound` is an interval endpoint and nothing else, and a future domain with no
   interval structure grows its own top rather than borrowing a wrapper (a wrapper is a second spelling, which is the
-  bug above). The only ⊤ left is the channel's untotality (`None` at a companion-free callee, a parameter, a lambda
-  interior), removed by arming R2 and by the §P4 interpretation — not by a value.
+  bug above). **Metas are total: every value has one** — a bodied value's is calculated, a native's is stated
+  (`docs/meta.md` §1). A *not computed* meta (`None`, ⊤ in older comments) is never a meta value: it is a gap the
+  interpretation has not closed or its step budget, fail-safe at every demand, and the remaining gaps are listed in
+  `docs/meta.md` §8. Part II closes them, decisions pending: R2's type-parameter exemption is **reversed** (decided
+  2026-10-20 — every leaf states, e.g. `exitInternal` `{never}`), each domain may be asked for its own `top`, the
+  interpretation gains ⊥, and non-recursive `data` carries its fields' metas. Never let the interpretation substitute
+  a top for a gap.
   Constructors `interval`/`closed`/`atLeast`/`atMost`/`whole` and the `where`-facing predicate
   `rangeWithin[Lo, Hi](i)` are abstract in the base, bodied per platform. `add`/`subtract` stay exact on a
   half-open interval; `multiply` widens to `whole` (its corner products lose the position that signs an infinity).
-- `type String {size: Interval[BigInteger]}` — the channel's **second domain** (`docs/string-length-meta.md`),
+- `type String {size: Interval[BigInteger]}` — the channel's **second domain** (`docs/meta.md` §2.2),
   the same one-slot shape and the same machinery, which is what proves the channel is not `Int`-shaped. The unit is the
   **code point** — what `String::length` counts on every target — so a `where` over a size means the same thing
   everywhere; the slot is `size` because `length` is taken by the runtime function in that module. A literal seeds it
@@ -401,7 +407,7 @@ contain `data` (a chosen representation), a native leaf, or any representation-d
   negative one is an ordinary subtraction the compile-time `Numeric[BigInteger]` reduces (`Bounded(0 - 1)`); S4's
   type-position workaround `boundedAt[V]` is deleted. An *ordinary def body* is still runtime-track, so a helper
   called from a brace cannot name a `BigInteger` constant in value position — which is why `rangeWithin[Lo, Hi]`
-  takes its bounds as type parameters. **S5 finished it and armed R2** (`docs/total-meta-transfers.md` §P2): eleven
+  takes its bounds as type parameters. **S5 finished it and armed R2** (`docs/meta.md` §3): eleven
   more leaves state — `Show[Int]::show` at `atLeast(1)` (the ceiling is a digit count, needing a logarithm no leaf
   offers), `Show[Path]::show` at `atLeast(0)`, and the nine jvm input/holder natives at the JVM's `String`/`int`
   representation limits — and `MetaTransferAccountingProcessor` is now a **codegen precondition** in
@@ -414,7 +420,7 @@ contain `data` (a chosen representation), a native leaf, or any representation-d
   representation's in the platform layer), and a leaf's statement is **axiomatic** — nothing rechecks it — so a bound
   that is merely usually true (POSIX's `[0, 255]` for an exit code, which Windows breaks) is a bug, and the honest
   wide statement wins. **A companion never names a meta type** (`core/processor/MetaCompanionLayout`,
-  `docs/total-meta-transfers.md` §8.8): naming one by spelling (`T` ⤳ `T$Meta`) failed for an alias, a computed type,
+  `docs/meta.md` §4.1): naming one by spelling (`T` ⤳ `T$Meta`) failed for an alias, a computed type,
   a type parameter and every slotless type. A `^Meta`/`^Where` companion takes the def's binders (as its effect desugar
   leaves them, so they line up with the callee's key), one binder per parameter and, for a transfer, one for the result;
   the channel instantiates them with `MetaInterpreter.metaTypeOf` of the def's **payload signature** `<name>$Payload`,
@@ -422,14 +428,14 @@ contain `data` (a chosen representation), a native leaf, or any representation-d
   yields). A slot-producing brace's meta *constructor* is not named either: the companion takes it as its first
   parameter (`constructor$`) and the channel passes the one of the result's evaluated meta type, so `{closed(0, 255)}`
   on a leaf returning an alias of `Int` states the same meta as on `Int`. R2 reads the evaluated result type too. A
-  **parameter brace** `x: Int {closed(0, 255)}` (§8.9) states the meta of the value at that parameter, and whoever
+  **parameter brace** `x: Int {closed(0, 255)}` (§4.4) states the meta of the value at that parameter, and whoever
   supplies it proves it: every full call demands its argument fit (`join(argument, stated) ≡ stated`, the join reached
   through `eliot.compiler.Meta::joined`), a demand in the body is checked at what each call supplies (P5), and a def
   with one cannot be passed as a value. Its statement companion
   (`MetaParameterDesugarer`, `<def>$Parameter$<p>`) reads no parameter: its parameters are placeholders that only count
-  and place. A brace on a `data` field is the same decision (§8.10): the constructor proves it, and the `match` eliminator
+  and place. A brace on a `data` field is the same decision (§4.5): the constructor proves it, and the `match` eliminator
   states it of what it hands a handler (a *handed* statement), which every accessor and arm reads it through;
-  one on a bodied return is declined (§8.9) — a meta is stated only where the compiler cannot see the supplier.
+  one on a bodied return is declined (§3.3) — a meta is stated only where the compiler cannot see the supplier.
 - `def foldLeft[A, B](initial: B, combine: ..., list: List[A]): B` — an abstract function, signature only.
 - A `type X = ...` alias and a body-less `type X` differ only by having a body; `data X(...)` is the *concrete*
   form that additionally introduces a value constructor.

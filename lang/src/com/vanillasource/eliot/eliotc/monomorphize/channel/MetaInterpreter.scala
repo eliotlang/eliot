@@ -27,8 +27,8 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
 
 import scala.annotation.tailrec
 
-/** **The meta interpretation** (`docs/total-meta-transfers.md` §6.2 / P4) — the answer to the one question *"what is
-  * this value's meta-information?"*, and the place the closure invariant of §2 is actually executed:
+/** **The meta interpretation** (`docs/meta.md` §5) — the answer to the one question *"what is
+  * this value's meta-information?"*, and the place the closure invariant of §1 is actually executed:
   *
   *   - a **leaf states** its transfer, so its meta is its `^Meta` companion reduced on the argument metas;
   *   - **everything else derives**, so its meta is obtained by *interpreting its own body* with its parameters bound to
@@ -40,7 +40,7 @@ import scala.annotation.tailrec
   * than of what the code *is* — `def label(s: String): String = s` lost its argument's size, and `String::show`
   * (bodied, therefore forbidden to state) derived nothing at all.
   *
-  * **This is Option B of §6, not Option A.** No shadow twin program is emitted: the interpretation walks the very
+  * **This is not a shadow twin program (§20).** No shadow twin program is emitted: the interpretation walks the very
   * monomorphized body the representation pass will stamp, so node correspondence is free. The stated transfers it
   * bottoms out at stay ordinary Eliot reduced by the one NbE evaluator ([[EscalatingReducer]]), so the single-evaluator
   * cornerstone is intact — this adds a *walk*, not a second evaluator.
@@ -54,14 +54,14 @@ import scala.annotation.tailrec
   * demands its preconditions: those are checked per context by [[MetaDemandsProcessor]], which asks this object what
   * each argument's meta is.
   *
-  * **Termination is the recursion gate's** (§2.3): user code cannot express recursion, so the derivation walks a DAG
+  * **Termination is the recursion gate's** (§1): user code cannot express recursion, so the derivation walks a DAG
   * and needs no fixpoint, no widening and no ascending-chain condition. The [[interpretationBudget]] is therefore not
-  * what makes this terminate — it is the §8.4 fail-safe against *cost*: a diamond-shaped call DAG re-interpreted per
+  * what makes this terminate — it is the §5.3 fail-safe against *cost*: a diamond-shaped call DAG re-interpreted per
   * path is exponential even though each path is acyclic. The budget is a step count threaded through the whole
   * derivation of one call node, and exhausting it yields **absence**, which is sound ("I know nothing" is always true)
   * and never a wrong answer.
   *
-  * **Higher-order through closures** (§6.2). A function value is a [[Value.Closure]] — the function-typed node and the
+  * **Higher-order through closures** (§5.2). A function value is a [[Value.Closure]] — the function-typed node and the
   * environment it was written in — and is interpreted only when something applies it: a callee applying one of its own
   * parameters (`def applyTo(f: Int => Int, x: Int): Int = f(x)`), an over-applied callee whose body returns a lambda,
   * or a pure `val` block, which lowers to an applied lambda (`(x -> rest)(e)`). A **stated** transfer cannot apply a
@@ -96,10 +96,10 @@ object MetaInterpreter {
     */
   type Env = Map[String, Value]
 
-  /** The §8.4 cost fail-safe: the number of interpretation steps one call node's derivation may spend, across depth
+  /** The §5.3 cost fail-safe: the number of interpretation steps one call node's derivation may spend, across depth
     * *and* fan-out together (each node visited costs one, and the budget is threaded through siblings rather than
     * reset). Exhaustion yields absence, never a wrong answer, so the only thing a small budget costs is precision on a
-    * deep call DAG. Memoization on `(vfqn, typeArgs, argMetas)` (§6.2) is the precision follow-on if this is ever
+    * deep call DAG. Memoization on `(vfqn, typeArgs, argMetas)` (§5.3) is the precision follow-on if this is ever
     * observed to bind in practice; a hard step count is the stronger guarantee of the two and is what must be here.
     */
   private val interpretationBudget: Int = 256
@@ -107,7 +107,7 @@ object MetaInterpreter {
   /** The meta of an ordinary call: the callee **states** its transfer (a native leaf — reduce the companion), or it
     * **derives** one from its body (everything else — interpret it). `resultType` is the *call node's* own ground type,
     * which is what decides whether there is anything to derive at all: an untracked type's meta is the trivial `Unit`
-    * (§2.3, meta is total on types but not structural), so a call returning one is skipped before any body is fetched.
+    * (§1, meta is total on types but not structural), so a call returning one is skipped before any body is fetched.
     * That gate is what keeps the interpretation off the overwhelming majority of call nodes in a program.
     */
   def metaOfCall(
@@ -136,7 +136,7 @@ object MetaInterpreter {
   def integerSeed(value: BigInt): CompilerIO[Option[GroundValue]] =
     reduceTransfer(WellKnownTypes.integerLiteralFQN, Seq(GroundValue.Direct(value, bigIntType)), Seq.empty)
 
-  /** The α seed of the `String` domain (`docs/string-length-meta.md` §3.1): a literal's singleton size, counted in
+  /** The α seed of the `String` domain (`docs/meta.md` §2.2): a literal's singleton size, counted in
     * **code points** — what `String::length` counts on every target — through the same path as the integer seed.
     */
   def stringSeed(text: String): CompilerIO[Option[GroundValue]] =
@@ -155,7 +155,7 @@ object MetaInterpreter {
     getFactOrAbort(UnifiedModuleNames.Key(typeName.moduleName, Platform.Compiler))
       .map(_.names.contains(metaStructureName(typeName)))
 
-  /** A parameter's **statement** (`docs/total-meta-transfers.md` §8.9): the companion stating the meta of the value at
+  /** A parameter's **statement** (`docs/meta.md` §4.4): the companion stating the meta of the value at
     * parameter `parameter`, which is the `position`th of the `arity` its definition takes, handles included.
     */
   case class Statement(companion: ValueFQN, parameter: String, position: Int, arity: Int)
@@ -220,7 +220,7 @@ object MetaInterpreter {
 
   /** What a body-less `callee` hands the code argument at parameter `position` when it runs it: per argument of that
     * code's `functionType`, the meta a **handed** statement states of it, or ⊤ where none does
-    * ([[MetaParameterDesugarer.handedStatement]], `docs/total-meta-transfers.md` §8.10). The supplier is the callee, which
+    * ([[MetaParameterDesugarer.handedStatement]], `docs/meta.md` §4.5). The supplier is the callee, which
     * the compiler cannot see, so the statement is axiomatic — the `match` eliminator's, for a braced field, holds because
     * the constructor proved it. Each is reduced as a parameter statement is, plus the meta type of the argument it states,
     * read off `functionType`, so a generic field is stated at its instantiation.
@@ -301,7 +301,7 @@ object MetaInterpreter {
       case _                                                           => (node, Seq.empty)
     }
 
-  /** The closure invariant of §2, executed: **state or derive**, split on the presence of a `^Meta` companion — the
+  /** The closure invariant of §1, executed: **state or derive**, split on the presence of a `^Meta` companion — the
     * same test [[MetaTransferAccountingProcessor]] enforces from the other side, so the two cannot drift into
     * disagreeing about which values summarise and which are read.
     */
@@ -665,7 +665,7 @@ object MetaInterpreter {
   }
 
   /** Whether a *node's* type carries meta-information at all — [[metaTypeOf]] read as a predicate, and the derivation's
-    * cheap gate. Non-structural by design (§2.3): `List[Int]` and `data Counter(n: Int)` carry none, so meta is lost at
+    * cheap gate. Non-structural today (§1, §13): `List[Int]` and `data Counter(n: Int)` carry none, so meta is lost at
     * every data boundary exactly as it is today.
     */
   private[channel] def carriesMeta(nodeType: GroundValue): CompilerIO[Boolean] = nodeType match {

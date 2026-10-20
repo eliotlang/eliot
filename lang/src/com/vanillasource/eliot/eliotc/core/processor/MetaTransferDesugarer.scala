@@ -36,7 +36,7 @@ object MetaTransferDesugarer {
   /** The name of the `^Meta` transfer companion of the value named `of` — its own name, in the meta namespace *of its
     * own qualifier* ([[Qualifier.Meta]]). The nesting is what keeps an ability-implementation leaf's transfer
     * (`Numeric[Int]::add` ⤳ `add^Meta(Numeric#Int…)`) apart from that of a plain `add` declared in the same module;
-    * dropping the qualifier — as this companion's name once did — merged the two (`docs/total-meta-transfers.md` §8.1).
+    * dropping the qualifier — as this companion's name once did — merged the two (`docs/meta.md` §4.2).
     *
     * The single source of truth for the name: every reader that asks "does this value state a transfer?" or reduces one
     * ([[com.vanillasource.eliot.eliotc.monomorphize.channel.RefinementChannelProcessor]],

@@ -12,7 +12,7 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced.compilerAbort
 
 import scala.annotation.tailrec
 
-/** **R2 + R3 enforcement** (docs/total-meta-transfers.md §2/§3/§P2/§P3) — the two halves of *"every named value has a
+/** **R2 + R3 enforcement** (docs/meta.md §1, §3) — the two halves of *"every named value has a
   * meta transfer, and exactly one way of having it"*:
   *
   *   - **R2 — a leaf must state.** Every **body-less** value — a native leaf — that produces a meta-carrying type must
@@ -28,7 +28,7 @@ import scala.annotation.tailrec
   *
   * A rider on [[MonomorphicValue]] (runtime track), on the [[RefinementChannelProcessor]] template. The leaf test both
   * rules split on is exactly the body test the fact already carries — `mv.runtime.isEmpty` (no Eliot body on this
-  * track), read *after* the layer merge, so §8.2's cross-layer case (the brace in one layer, the body in another) is
+  * track), read *after* the layer merge, so §3.2's cross-layer case (the brace in one layer, the body in another) is
   * the same check and needs no separate mechanism.
   *
   * R2's return-meta test uses the value's **declared** (pre-monomorphization) return type ([[OperatorResolvedValue]]),
@@ -38,11 +38,12 @@ import scala.annotation.tailrec
   *     for it, or it is a compile error at the leaf;
   *   - a **type-parameter return head** (`foldLeftInternal[F[_], A, B] : F[B]`, `runId[A] : A`) does not originate a
   *     meta — it forwards whatever its argument/instantiation carries — so it is **exempt**. Deriving such a
-  *     (higher-order) transfer is the meta-interpretation slice (§6.2/§P4), not this one.
+  *     (higher-order) transfer is the meta-interpretation slice (§5), not this one. `docs/meta.md` §10 reverses this
+  *     exemption (decided, not built): such a leaf mostly forwards nothing, so it will state too.
   *
   * R3 needs no such test: a brace is illegal on a bodied value whatever it returns.
   *
-  * The check is normatively **use-site, post-mono** (§4): whether a return's meta is `Unit` is a per-instantiation fact,
+  * The check is normatively **use-site, post-mono** (§3): whether a return's meta is `Unit` is a per-instantiation fact,
   * so it rides each `MonomorphicValue`. The fact is produced only when both checks pass; a violation aborts, and that
   * abort is a [[WovenValue]] `getFactOrAbort` precondition (S5's arming step), so a violating value blocks its own
   * codegen — a silently-defaulted or silently-overridden meta never reaches bytecode.
@@ -110,7 +111,8 @@ class MetaTransferAccountingProcessor
         } yield ()
       case _                                                      =>
         // A type-parameter (or literal) return head: the meta is forwarded from an argument/instantiation, not
-        // originated here — exempt, its (higher-order) transfer is the meta-interpretation slice (§P4).
+        // originated here — exempt, its (higher-order) transfer is the meta-interpretation slice (§5). Reversed by
+        // `docs/meta.md` §10, not yet built.
         ().pure[CompilerIO]
     }
   }
@@ -138,7 +140,7 @@ class MetaTransferAccountingProcessor
     *
     * Reading the same name the channel reads is deliberate: R3 then flags exactly the situation in which the channel
     * would prefer a companion to a bodied value's own code. Since the name keeps the value's own qualifier
-    * (docs/total-meta-transfers.md §8.1), a bodied `add` is no longer answered for by an ability-implementation
+    * (docs/meta.md §4.2), a bodied `add` is no longer answered for by an ability-implementation
     * sibling's brace in the same module — the one shape in which R3 reported a brace the value does not carry.
     */
   private def declaresTransfer(vfqn: ValueFQN): CompilerIO[Boolean] =

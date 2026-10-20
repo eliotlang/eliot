@@ -1,6 +1,6 @@
 package com.vanillasource.eliot.eliotc.jvm
 
-/** End-to-end proof of **field braces** (`docs/total-meta-transfers.md` §8.10): `r: Int {closed(0, 255)}` on a `data`
+/** End-to-end proof of **field braces** (`docs/meta.md` §4.5): `r: Int {closed(0, 255)}` on a `data`
   * field states the meta-information of the value the field holds. The constructor is its only supplier, so every
   * construction proves it, and the `match` eliminator states it of what it hands a handler — which is what an accessor
   * and every `match` arm read the field through.

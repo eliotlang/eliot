@@ -17,7 +17,7 @@ implement Numeric[Int] {
  * The stated size is `atLeast(1)`: every integer renders as at least one code point — zero is `"0"`, not `""` — and
  * that floor holds on every target, so it belongs in the base beside the declaration rather than in a platform layer.
  * The ceiling is real but not writable: it is the digit count of the argument's range, a base-10 logarithm no
- * arithmetic leaf offers (`docs/total-meta-transfers.md` decision 8). A half-open interval is what lets this state
+ * arithmetic leaf offers (`docs/meta.md` §18). A half-open interval is what lets this state
  * the half it knows instead of choosing between an invented maximum and saying nothing.
  */
 implement Show[Int] {

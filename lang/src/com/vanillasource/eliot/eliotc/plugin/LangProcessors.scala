@@ -114,8 +114,7 @@ object LangProcessors {
     CompilerMonomorphicTypeCheckProcessor(),
     RefinementChannelProcessor(),
     MetaDemandsProcessor(),
-    // R2 meta-transfer accounting. Landed but not yet armed: nothing demands its fact in a normal build, so it is
-    // dormant until wired as a `WovenValue` precondition (docs/total-meta-transfers.md §P2).
+    // R2/R3 meta-transfer accounting, demanded as a `WovenValue` codegen precondition (docs/meta.md §3).
     MetaTransferAccountingProcessor(),
     WovenValueProcessor(),
     UsedNamesProcessor(maxNestedRepeats),

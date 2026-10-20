@@ -186,7 +186,7 @@ object WellKnownTypes {
 
   /** `eliot.compiler.Meta::joined[D ~ Meta](a: D, b: D): D` — the `Meta` join at a meta type the refinement channel
     * holds only as a value. The channel reduces it to check that an argument's meta fits a parameter's stated one
-    * (`docs/total-meta-transfers.md` §8.9), so the join dispatches through the meta type's own instance.
+    * (`docs/meta.md` §4.4), so the join dispatches through the meta type's own instance.
     */
   val metaJoinedFQN: ValueFQN =
     ValueFQN(ModuleName(compilerPackage, "Meta"), QualifiedName("joined", Qualifier.Default))
@@ -197,7 +197,7 @@ object WellKnownTypes {
     * solely so the refinement channel can reduce its `stringLiteral^Meta` companion (from the `{closed(N, N)}`
     * return brace) at the literal's measured length, *seeding* the string's size meta. Keeping the seed's construction
     * in Eliot is the same discipline the integer seed follows — the channel supplies only the raw count
-    * (`docs/string-length-meta.md` §3.1).
+    * (`docs/meta.md` §2.2).
     */
   val stringLiteralFQN: ValueFQN =
     ValueFQN(ModuleName(defaultSystemPackage, "Runtime"), QualifiedName("stringLiteral", Qualifier.Default))

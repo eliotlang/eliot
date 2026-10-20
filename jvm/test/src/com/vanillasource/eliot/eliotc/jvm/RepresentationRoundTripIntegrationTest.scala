@@ -1,6 +1,6 @@
 package com.vanillasource.eliot.eliotc.jvm
 
-/** The backend's **round-trip peephole** (`docs/total-meta-transfers.md` §P4): a representation conversion whose only
+/** The backend's **round-trip peephole** (`docs/meta.md` §7): a representation conversion whose only
   * consumer immediately undoes it is not emitted.
   *
   * The channel stamps a width on a node; the backend used to treat that as an obligation to *materialise* it, and then

@@ -373,12 +373,12 @@ object ExpressionCodeGenerator {
     * node (`def length(s: String): Int {size(s)}` ⤳ `[5,5]` at `length("hello")`), the node's consumers — an argument
     * widening, a branch merge, a `CHECKCAST` — read that narrow width off the node, so without this conversion the
     * bignum on the stack meets a `java.lang.Byte` operand and the class verifier rejects the method
-    * (`docs/string-length-meta.md` §8). A no-op for a non-integer result, and for the ⊤ node meta that every call
+    * (`docs/meta.md` §7). A no-op for a non-integer result, and for the ⊤ node meta that every call
     * without a stated transfer carries.
     *
     * Narrowing is what the transfer *asserts*: the leaf that states the bound is the one answering for it, exactly as
     * an arithmetic leaf answers for the range it computes. An untruthful transfer truncates here rather than being
-    * caught, which is the R2 contract (`docs/total-meta-transfers.md` §3).
+    * caught, which is the R2 contract (`docs/meta.md` §3.2).
     */
   private def convertResultFromBoundary(
       methodGenerator: MethodGenerator,

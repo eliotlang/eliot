@@ -1,6 +1,6 @@
 package com.vanillasource.eliot.eliotc.jvm
 
-/** End-to-end proof of the **result-edge re-encode** (`docs/string-length-meta.md` §8, stage S3) and of the first
+/** End-to-end proof of the **result-edge re-encode** (`docs/meta.md` §7, stage S3) and of the first
   * *stated* meta transfer that needs it: `def length(s: String): Int {size(s)}`.
   *
   * A leaf's stated transfer pins a narrow range on the **call node** — `length("hello")` is `[5, 5]`, which the backend
@@ -14,13 +14,13 @@ package com.vanillasource.eliot.eliotc.jvm
   * rejecting case pins, since an unknown bound can only make a precondition *unprovable*, never *violated*.
   *
   * What the re-encode is *not* is an obligation to materialise the narrow width wherever the channel stamped one. Since
-  * the round-trip peephole (`docs/total-meta-transfers.md` §P4) a consumer that reads the ⊤ width anyway — an argument
+  * the round-trip peephole (`docs/meta.md` §7) a consumer that reads the ⊤ width anyway — an argument
   * slot, a method return — gets the boundary result unconverted, and a consumer that adapts to any width — an
   * intrinsic's operand — reads it as it arrives. So the re-encode is the *fallback* for a consumer that genuinely
   * demands the node's width, and the cases below pin both sides of that: what is emitted, and what is not.
   */
 class StatedTransferResultEdgeIntegrationTest extends FullIntegrationTest with EmittedInstructions {
-  // The `docs/string-length-meta.md` §4.4 program: a literal's size flows through `length`'s stated transfer into the
+  // S3's program (`docs/meta.md` §19): a literal's size flows through `length`'s stated transfer into the
   // `Int` domain, where an ordinary value-range `where` is discharged by it. Two domains, one `Interval` predicate.
   private val crossDomain =
     """|import eliot.effect.Console
@@ -52,7 +52,7 @@ class StatedTransferResultEdgeIntegrationTest extends FullIntegrationTest with E
 
   // The re-encode is derived from the node's own meta, so a result the channel could not pin stays at the bignum
   // boundary and nothing is emitted at all — the ⊤ case. Finding one now takes a *higher-order* call: since the meta
-  // interpretation landed (`docs/total-meta-transfers.md` §P4), an ordinary bodied callee no longer leaves ⊤ behind —
+  // interpretation landed (`docs/meta.md` §5), an ordinary bodied callee no longer leaves ⊤ behind —
   // it derives its result from its own body, which is what the earlier version of this case (`def twice(x: Int): Int =
   // x + x`, called at a literal) now exercises instead. A lambda still carries no meta of its own, so `applyTo`'s
   // result is genuinely unknown and its call emits nothing.

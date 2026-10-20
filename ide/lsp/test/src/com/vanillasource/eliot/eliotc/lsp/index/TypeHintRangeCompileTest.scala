@@ -46,7 +46,7 @@ class TypeHintRangeCompileTest extends AsyncFlatSpec with AsyncIOSpec with Match
     rangeAt(functionPosition).asserting(_ shouldBe None)
   }
 
-  // A string literal seeds the *size* domain (`docs/string-length-meta.md`), whose meta has exactly the same
+  // A string literal seeds the *size* domain (`docs/meta.md` §2.2), whose meta has exactly the same
   // `X$Meta(Interval(..))` shape as an `Int`'s range — so a shape-only decode would report `"hello"` as having
   // the value range `5..5`. A hover renders one domain and must name it; the size is simply not shown (until it has a
   // rendering of its own).

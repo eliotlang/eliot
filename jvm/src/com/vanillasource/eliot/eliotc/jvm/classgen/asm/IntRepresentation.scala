@@ -84,7 +84,7 @@ object IntRepresentation {
     *   - a future domain, or a malformed meta.
     *
     * A stated top and an absent meta therefore agree here; they differ only in what the meta channel itself may
-    * conclude (docs/total-meta-transfers.md §5).
+    * conclude (docs/meta.md §2.1).
     */
   def intervalBounds(meta: GroundValue): Option[(BigInt, BigInt)] =
     meta match {

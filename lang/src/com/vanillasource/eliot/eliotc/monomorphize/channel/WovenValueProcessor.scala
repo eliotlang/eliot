@@ -33,7 +33,7 @@ class WovenValueProcessor
       mv: MonomorphicValue
   ): CompilerIO[WovenValue] = {
     for {
-      // Meta-transfer accounting (R2) as the same kind of codegen precondition (docs/total-meta-transfers.md §P2): a
+      // Meta-transfer accounting (R2) as the same kind of codegen precondition (docs/meta.md §3): a
       // native leaf producing a meta-carrying type without stating what it does to the meta-information fails
       // accounting, whose abort here blocks its `WovenValue` and so its codegen. Without it such a leaf silently
       // defaults its meta to ⊤, which is indistinguishable downstream from "nobody has computed this yet" — the

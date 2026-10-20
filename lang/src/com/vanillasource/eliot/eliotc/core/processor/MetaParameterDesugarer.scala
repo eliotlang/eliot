@@ -6,7 +6,7 @@ import com.vanillasource.eliot.eliotc.core.fact.RoleHint
 import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, Qualifier}
 import com.vanillasource.eliot.eliotc.source.content.Sourced
 
-/** Desugars a parameter's **meta brace** into its **statement companion** (`docs/total-meta-transfers.md` §8.9) — the
+/** Desugars a parameter's **meta brace** into its **statement companion** (`docs/meta.md` §4.4) — the
   * meta-information the value at that position is stated to have, which the refinement channel demands of the argument
   * at every call and gives the parameter inside the body.
   *
@@ -65,7 +65,7 @@ object MetaParameterDesugarer {
         rest.drop(separator + 1).toIntOption.filter(_ => separator > 0).map(rest.take(separator) -> _)
       }
 
-  /** A **handed** statement (`docs/total-meta-transfers.md` §8.10): the meta of the `argument`-th value the body-less
+  /** A **handed** statement (`docs/meta.md` §4.5): the meta of the `argument`-th value the body-less
     * `definition` hands its code parameter `parameter` when it runs it — a supplier the compiler cannot see, so stated.
     * Its shape is a parameter statement's, with one more binder, typing what it states: the meta type of that argument,
     * which the channel reads off the code argument's own function type.

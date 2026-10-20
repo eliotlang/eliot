@@ -11,7 +11,7 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
 
 // `used` demands the post-mono `WovenValue` (the codegen source), so this manual-fact-injection harness runs the
 // `WovenValueProcessor` too, which is the identity image of each injected `MonomorphicValue`. `WovenValue` in turn
-// demands its codegen precondition `MetaTransferAccounting` (docs/total-meta-transfers.md §P2), which rides along: the
+// demands its codegen precondition `MetaTransferAccounting` (docs/meta.md §3), which rides along: the
 // injected bodies have no `OperatorResolvedValue` to read a declared return from, so it passes with nothing to check.
 class UsedNamesProcessorTest
     extends ProcessorTest(

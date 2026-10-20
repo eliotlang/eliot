@@ -1,9 +1,9 @@
 package com.vanillasource.eliot.eliotc.jvm
 
-/** End-to-end proof of **parameter braces** (`docs/total-meta-transfers.md` §8.9): `x: Int {closed(0, 255)}` states the
+/** End-to-end proof of **parameter braces** (`docs/meta.md` §4.4): `x: Int {closed(0, 255)}` states the
   * meta-information of the value at that parameter. Whoever supplies the value proves it, so every full call demands
   * that its argument's meta fits the stated one. Inside the body a demand is checked at what each call supplies
-  * (`docs/total-meta-transfers.md` P5), which every call has proven fits.
+  * (`docs/meta.md` §6), which every call has proven fits.
   */
 class ParameterBraceIntegrationTest extends FullIntegrationTest {
   private val asByte =

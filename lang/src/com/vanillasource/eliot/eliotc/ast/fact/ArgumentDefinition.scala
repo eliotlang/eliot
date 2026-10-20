@@ -24,8 +24,8 @@ import Parser.*
   *   requires `uses *` on the definition too (`docs/effects.md` D24); nothing past the parser reads it.
   * @param meta
   *   The parameter's **meta brace** — the slot values in `b: Int {byte}`, one per slot of the type's meta, which state
-  *   the meta-information of the value at this position (`docs/total-meta-transfers.md` §8.9), or on a `data` field
-  *   the value it holds (§8.10). Empty for an ordinary parameter. Consumed at the core boundary by `MetaParameterDesugarer`, which emits the parameter's statement
+  *   the meta-information of the value at this position (`docs/meta.md` §4.4), or on a `data` field
+  *   the value it holds (§4.5). Empty for an ordinary parameter. Consumed at the core boundary by `MetaParameterDesugarer`, which emits the parameter's statement
   *   companion from it, and never part of [[signatureEquality]], so the layer rule for a return brace applies unchanged.
   */
 case class ArgumentDefinition(
@@ -57,7 +57,7 @@ object ArgumentDefinition {
   }
 
   /** A `data` field's binder: a field's or meta slot's binder that may also carry a **meta brace** after its type,
-    * `r: Int {byte}` (`docs/total-meta-transfers.md` §8.10). The field is the constructor's parameter, so the brace is a
+    * `r: Int {byte}` (`docs/meta.md` §4.5). The field is the constructor's parameter, so the brace is a
     * parameter brace on the constructor — every construction proves it — and the `match` eliminator states it of what
     * it hands its handlers.
     */

@@ -1,7 +1,7 @@
 package com.vanillasource.eliot.eliotc.jvm
 
 /** End-to-end proof of the refinement channel's **second domain**: a `String`'s tracked `size`
-  * (`docs/string-length-meta.md`). `type String {size: Interval[BigInteger]}` declares the slot; a string
+  * (`docs/meta.md` §2.2). `type String {size: Interval[BigInteger]}` declares the slot; a string
   * literal *seeds* the singleton size of its own length through the same literal-protocol `^Meta` path the integer
   * seed uses (`eliot.lang.Runtime::stringLiteral`'s `{closed(N, N)}` brace).
   *
@@ -10,9 +10,9 @@ package com.vanillasource.eliot.eliotc.jvm
   * type. So the cases mirror [[WhereOnDefIntegrationTest]]'s, and the code-point cases pin the one claim that is new
   * here — that a size counts what `String::length` counts, on every target.
   *
-  * What the suite deliberately does *not* claim is precision beyond a literal: the channel is intra-procedural, so a
-  * string arriving through a parameter or a call is ⊤ and a `where` over it is a hard error rather than a silent pass
-  * (`docs/string-length-meta.md` §9). That is the same limitation the `Int` domain has, and the same fix retires both.
+  * What the suite deliberately does *not* claim is precision beyond a literal: derivation through calls is
+  * [[DerivedMetaTransferIntegrationTest]]'s, and a size that is not computed is a hard error at a `where` rather than a
+  * silent pass (`docs/meta.md` §1).
   */
 class StringSizeIntegrationTest extends FullIntegrationTest {
   // A display four code points wide. `size` is `String`'s meta slot exactly as `range` is `Int`'s, so the predicate is

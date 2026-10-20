@@ -24,7 +24,7 @@ object Qualifier {
     * It is the meta namespace **of another namespace**, not a flat one: a companion shadows exactly one value, and a
     * value's identity is its name *and* its qualifier, so the companion's is `(name, Meta(qualifier))`. Nesting is what
     * keeps `Numeric[Int]::add`'s transfer apart from a plain `add` declared in the same module — a collision the flat
-    * spelling had, since it dropped the `(ability, pattern)` key on the way in (`docs/total-meta-transfers.md` §8.1).
+    * spelling had, since it dropped the `(ability, pattern)` key on the way in (`docs/meta.md` §4.2).
     * The alternative that section first proposed — the companion in the callee's *own* qualifier, distinguished by a
     * name suffix — puts an extra member into an implementation's namespace, which
     * [[com.vanillasource.eliot.eliotc.ability.processor.AbilityImplementationCheckProcessor]] rejects as a method the

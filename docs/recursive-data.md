@@ -42,7 +42,7 @@ So the derivation both removes existing duplication and makes the currently impo
 
 ## The design: the recursor is `PatternMatch` with recursive fields expanded
 
-> **Amended (2026-10-20, `docs/total-meta-transfers.md` §9 S11): `PatternMatch` no longer has a `Cases[R]`.** A data
+> **Amended (2026-10-20, `docs/meta.md` §4.6): `PatternMatch` no longer has a `Cases[R]`.** A data
 > type's eliminator now takes its handlers as **separate `uses *` code parameters** —
 > `handleCases[R](value: T, case0 uses *: H₀, …, caseₙ uses *: Hₙ) uses *: R {joined(case0, …, caseₙ)}` — so that a
 > `match` states the join of its arms as a transfer, exactly as `Bool::fold` does, and the ability declares no

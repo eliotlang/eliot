@@ -13,7 +13,7 @@ package com.vanillasource.eliot.eliotc.jvm
   * an absent bound, "not satisfied" a violated one), pinned separately below.
   *
   * **Why these programs no longer state their own braces.** This suite used to put the brace on an ordinary bodied test
-  * def (`def f(a: Int, b: Int): Int {range(a) + range(b)} = a + b`). **R3** (`docs/total-meta-transfers.md` §3/§P3)
+  * def (`def f(a: Int, b: Int): Int {range(a) + range(b)} = a + b`). **R3** (`docs/meta.md` §3)
   * outlaws that shape: a bodied value *derives* its meta from its body, so only a native leaf may state one — and a
   * user module declares no natives. Each shape is therefore exercised through the layer brace that actually ships it
   * (`Numeric[Int]::add`, `Runtime::integerLiteral`, `Show[Int]::show`), and the last case pins R3 itself. Nothing is
@@ -21,9 +21,8 @@ package com.vanillasource.eliot.eliotc.jvm
   * call boundary is a deferred backend representation matter (`docs/refinement-channel-follow-ups.md` §4), since the
   * callee's body is compiled once with ⊤ parameters — was exactly a symptom of the shape R3 removes.
   *
-  * The arguments are **direct calls** (`add(60, 60)`) rather than infix `60 + 60`: an infix spine reaches the channel
-  * through a position it drops to ⊤, which is the intra-procedural limit `docs/string-length-meta.md` §9 already
-  * describes and is not what these cases are about.
+  * The arguments are **direct calls** (`add(60, 60)`) rather than infix `60 + 60`, so each case is about the brace
+  * alone; an infix spine derives the same meta through the interpretation (`docs/meta.md` §5).
   */
 class TransferBraceReductionIntegrationTest extends FullIntegrationTest {
   // `withinByte` is a test-local predicate (it deliberately lives only where a test needs it, not in any layer).
@@ -83,7 +82,7 @@ class TransferBraceReductionIntegrationTest extends FullIntegrationTest {
   }
 
   // `Show[Int]::show` states `{atLeast(1)}` — an interval open at its upper end, because the ceiling is a digit count
-  // no arithmetic leaf can compute (`docs/total-meta-transfers.md` decision 8). An open end must survive the reduction
+  // no arithmetic leaf can compute (`docs/meta.md` §18). An open end must survive the reduction
   // as an open end: no fixed-width precondition can be discharged by a bound that does not exist, however tight the
   // other side is. This is also the one case with no accepting counterpart — that is what half-open means.
   "a half-open endpoint" should "stay half-open, so a fixed-width precondition is rejected" in {
@@ -115,7 +114,7 @@ class TransferBraceReductionIntegrationTest extends FullIntegrationTest {
       .asserting(_ should include("precondition of 'Test::doubleFitsByte' is not satisfied"))
   }
 
-  // R3 itself (`docs/total-meta-transfers.md` §3/§P3), and the reason every case above goes through a layer brace: a
+  // R3 itself (`docs/meta.md` §3), and the reason every case above goes through a layer brace: a
   // value with an Eliot body derives its meta-information from that body, so a brace on it is a stated summary the
   // compiler would silently prefer to the code — the one shape in which the channel can be *wrong* rather than merely
   // imprecise, since `RefinementChannelProcessor.metaViaCompanion` reads a companion wherever one exists.

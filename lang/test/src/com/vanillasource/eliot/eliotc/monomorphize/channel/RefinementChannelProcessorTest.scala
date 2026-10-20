@@ -9,7 +9,7 @@ import org.scalatest.matchers.should.Matchers
   * (`fold` ⤳ `fold^Meta`) go through the same lookup, with no leaf FQN list. The arithmetic callee is an *ability-impl*
   * method, so this also pins that a companion keeps its callee's `(ability, pattern)` qualifier — nested inside the
   * meta namespace rather than dropped — which is what keeps that instance's transfer apart from a plain `add` declared
-  * in the same module (`docs/total-meta-transfers.md` §8.1). The end-to-end transfer/merge is exercised by the
+  * in the same module (`docs/meta.md` §4.2). The end-to-end transfer/merge is exercised by the
   * full-layer integration suite (`ExamplesIntegrationTest`).
   */
 class RefinementChannelProcessorTest extends AnyFlatSpec with Matchers {

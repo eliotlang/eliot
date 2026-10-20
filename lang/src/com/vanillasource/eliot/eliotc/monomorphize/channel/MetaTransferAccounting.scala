@@ -6,7 +6,7 @@ import com.vanillasource.eliot.eliotc.module.fact.ValueFQN
 import com.vanillasource.eliot.eliotc.monomorphize.fact.GroundValue
 import com.vanillasource.eliot.eliotc.processor.{CompilerFact, CompilerFactKey}
 
-/** The **meta-transfer accounting** of one monomorphic instance (docs/total-meta-transfers.md §2/§P2, closing the TODO
+/** The **meta-transfer accounting** of one monomorphic instance (docs/meta.md §1, §3, closing the TODO
   * *"A native that produces a meta-carrying type must state its meta-information"*) — the post-monomorphization witness
   * that a value satisfies **R2**: every body-less value (a native leaf) whose return carries non-`Unit`
   * meta-information states a `^Meta` transfer for it.
@@ -18,7 +18,7 @@ import com.vanillasource.eliot.eliotc.processor.{CompilerFact, CompilerFactKey}
   *
   * '''Armed''' (S5): [[WovenValueProcessor]] demands it as a codegen precondition, so a leaf that
   * states nothing blocks its own `WovenValue` and with it codegen. Arming waited until the meta-carrying stdlib leaves
-  * stated their transfers (docs/total-meta-transfers.md §P2).
+  * stated their transfers (docs/meta.md §3).
   *
   * The fact carries no payload beyond its identity — a pass/fail witness — but it is nonetheless **persisted**, like
   * the refinement table and unlike [[com.vanillasource.eliot.eliotc.monomorphize.fact.NativeBinding]]:

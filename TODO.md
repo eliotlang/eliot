@@ -19,16 +19,16 @@ notes.
   runtime-track, so a helper called from a brace still cannot name a `BigInteger` constant in value position —
   which is why `rangeWithin[Lo, Hi]` takes its bounds as type parameters.
 - **A reusable meta value's literals.** Meta braces on occurrences are built — parameters and `data` fields
-  (`docs/total-meta-transfers.md` §8.9, §8.10); a brace on a bodied return is declined. A reusable meta value
+  (`docs/meta.md` §4.4, §4.5); a brace on a bodied return is declined. A reusable meta value
   (`def byte: Interval[BigInteger] = …`) still has to write its literals in type position (`between[0, 255]`) until
   the `Int` literal item above is solved.
 - **Flow grades: quantitative computation tracking (cycles/WCET, stack, peak memory) on the
   effect row.** Design sketched 2026-07-10 in the bounds-as-refinements discussion. The dependency
   ladder is ranges → sizes → grades (fold cost needs sizes, frame sizes need ranges): the
   refinement channel's **ranges** domain has shipped, and so has a `String` `size` domain
-  (`docs/string-length-meta.md`) — but a fold's cost is a function of a *collection's* size, so what
+  (`docs/meta.md` §2.2) — but a fold's cost is a function of a *collection's* size, so what
   this still waits on is **`List`/`Array` `size`**, the one that needs structural meta
-  (`docs/total-meta-transfers.md` §2.3). Core idea: the effect row generalizes from "set of abilities" to
+  (`docs/meta.md` §13). Core idea: the effect row generalizes from "set of abilities" to
   "abilities + **named grades**" —
   `def onTick(s: State): {Timer, cycles: ≤800} Unit` — where a grade is *not* an ability
   (nothing is performed, nothing resolved or discharged) but a quantity with an algebra,

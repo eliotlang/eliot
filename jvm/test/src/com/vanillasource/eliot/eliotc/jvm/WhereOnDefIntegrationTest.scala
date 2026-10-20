@@ -32,7 +32,7 @@ class WhereOnDefIntegrationTest extends FullIntegrationTest {
       .asserting(_ should include("precondition of 'Test::useByte' is not satisfied"))
   }
 
-  // Demands are checked in context (`docs/total-meta-transfers.md` P5): every meta is known from `main`, so a demand on a
+  // Demands are checked in context (`docs/meta.md` §6): every meta is known from `main`, so a demand on a
   // parameter is checked at what each call actually supplies, never once over a ⊤ parameter.
   it should "accept a forwarded parameter at a call that fits" in {
     compileAndRun(

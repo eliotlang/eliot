@@ -21,7 +21,7 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
 
 import scala.annotation.tailrec
 
-/** Checks the **meta demands** of one body in one meta context (`docs/total-meta-transfers.md` P5) — every `where`
+/** Checks the **meta demands** of one body in one meta context (`docs/meta.md` §6) — every `where`
   * precondition and parameter brace a call in it demands — and produces its [[MetaDemands]].
   *
   * Every meta is a compile-time value known from `main`, so a demand is checked in each context its call is actually
@@ -204,7 +204,7 @@ class MetaDemandsProcessor
     }
 
   /** Walk an argument of a call to `callee`. A lambda is walked under what the callee states it hands it
-    * ([[MetaInterpreter.handedMetas]], `docs/total-meta-transfers.md` §8.10) — a `match` arm's field binders, for a
+    * ([[MetaInterpreter.handedMetas]], `docs/meta.md` §4.5) — a `match` arm's field binders, for a
     * braced field — and every other argument as any node is.
     */
   private def walkArgument(
@@ -366,7 +366,7 @@ class MetaDemandsProcessor
           }
       }
 
-  /** Demand what a callee's parameters state at a *full* call (`docs/total-meta-transfers.md` §8.9): each braced
+  /** Demand what a callee's parameters state at a *full* call (`docs/meta.md` §4.4): each braced
     * parameter's argument must have a known meta that fits the stated one ([[MetaInterpreter.fits]]). A partial
     * application is rejected as a bare reference is.
     */

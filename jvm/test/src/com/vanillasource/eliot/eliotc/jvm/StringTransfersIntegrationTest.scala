@@ -1,6 +1,6 @@
 package com.vanillasource.eliot.eliotc.jvm
 
-/** End-to-end proof of the **stated transfers on the `String` leaves** (`docs/string-length-meta.md` §6, stage S4):
+/** End-to-end proof of the **stated transfers on the `String` leaves** (`docs/meta.md` §2.2, stage S4):
   * the rest of `String.els`'s body-less definitions now say what their result's size is, so a size no longer stops at
   * the first call the way it did when only `length` stated one.
   *
@@ -10,11 +10,9 @@ package com.vanillasource.eliot.eliotc.jvm
   * difference too ("not satisfied" is a violated bound, "Cannot prove" is an absent one). Only both together show the
   * bound arriving at the call site with the precision the brace claims.
   *
-  * Each program is a single expression rather than a block, and calls its leaf directly rather than through a dot. Both
-  * are the intra-procedural limits `docs/string-length-meta.md` §9 already describes and neither is new here: a bodied
-  * wrapper (`++`, `take`, `indexOf`) derives nothing until the meta interpretation lands, and the dot's
-  * `Function.apply` bridge is one of the aliased positions the channel drops to ⊤ — the shipped `length` transfer
-  * behaves the same way, so this suite would fail identically against `"abc".length`.
+  * Each program is a single expression that calls its leaf directly, so a case pins the leaf's own statement and not
+  * the derivation through a bodied wrapper or a dot (`docs/meta.md` §5), which [[DerivedMetaTransferIntegrationTest]]
+  * covers.
   */
 class StringTransfersIntegrationTest extends FullIntegrationTest {
   // A display eight code points wide, exactly as `StringSizeIntegrationTest`'s is four: an ordinary `rangeWithin` over

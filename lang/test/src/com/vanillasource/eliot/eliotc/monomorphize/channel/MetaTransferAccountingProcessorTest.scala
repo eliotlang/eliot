@@ -5,7 +5,7 @@ import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, Qualifier, Val
 import com.vanillasource.eliot.eliotc.monomorphize.fact.GroundValue
 import com.vanillasource.eliot.eliotc.plugin.LangProcessors
 
-/** R2 + R3 enforcement (docs/total-meta-transfers.md §P2/§P3), the two halves of one rule:
+/** R2 + R3 enforcement (docs/meta.md §3), the two halves of one rule:
   *
   *   - **R2** — a **body-less** value (a native leaf) that produces a meta-carrying type must **state** a `^Meta`
   *     transfer; a leaf whose return is a type parameter (a forwarded, not originated, meta) is exempt.
@@ -124,7 +124,7 @@ class MetaTransferAccountingProcessorTest extends ProcessorTest(LangProcessors()
   }
 
   "a bodied value" should "not be answered for by an ability implementation's brace on the same bare name" in {
-    // §8.1: a companion keeps its callee's qualifier, so the `Sum[Gauge]` implementation's brace is that
+    // §4.2: a companion keeps its callee's qualifier, so the `Sum[Gauge]` implementation's brace is that
     // implementation's transfer and not the plain `combine`'s — which derives, states nothing, and is accepted.
     runGenerator(
       prelude +

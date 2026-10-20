@@ -5,7 +5,7 @@ def fitsDisplay(i: Interval[BigInteger]): Bool = rangeWithin[0, 16](i)
 
 /**
  * A `where` precondition over a **string's size** — the refinement channel's second domain, on the same machinery the
- * `Int` value-range domain uses (`docs/string-length-meta.md`). `banner` demands that its argument provably fit the
+ * `Int` value-range domain uses (`docs/meta.md` §2.2). `banner` demands that its argument provably fit the
  * display, and the compiler checks that at every call site before generating any code.
  *
  * A string literal seeds a singleton size, so `banner("Eliot")` is accepted (five code points fit sixteen) and the

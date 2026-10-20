@@ -153,7 +153,7 @@ object DataDefinitionDesugarer {
     * One handler per constructor, in declaration order, each taking that constructor's fields (a field-less one a
     * `Unit`). A handler is **code** — the arm the author wrote in place, on the effects in scope there — and the result
     * is the join of what the arms yield, stated as the eliminator's transfer exactly as `Bool::fold` states its own, so
-    * a `match` derives its meta through the one mechanism every leaf uses (`docs/total-meta-transfers.md` §9, S11).
+    * a `match` derives its meta through the one mechanism every leaf uses (`docs/meta.md` §4.6).
     */
   private def createPatternMatchImpl(definition: DataDefinition, implKey: String): Seq[FunctionDefinition] =
     definition.constructors
@@ -206,7 +206,7 @@ object DataDefinitionDesugarer {
           returnMeta = Seq(handlers.map(handler => reference(handler.name)).reduceRight(joined))
         )
 
-        // A braced field is stated of what the eliminator hands the handler (§8.10): the constructor proved it.
+        // A braced field is stated of what the eliminator hands the handler (`docs/meta.md` §4.5): the constructor proved it.
         val handed = ctors.zip(handlers).flatMap { (ctor, handler) =>
           ctor.fields.zipWithIndex.collect {
             case (field, index) if field.meta.nonEmpty =>

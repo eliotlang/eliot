@@ -99,7 +99,7 @@ object TypeHintIndex {
     * gate the hover would report a five-character string as having the *value range* `5..5`. Every domain this hover
     * can render is one it must name; the JVM backend gates the identical decode by the node's type instead
     * (`IntRepresentation.isIntegerType`). Recognising a domain by name is sanctioned in a *renderer* precisely because
-    * a mistake here is cosmetic (`docs/string-length-meta.md` §3.3).
+    * a mistake here is cosmetic (`docs/meta.md` §2.2).
     */
   private def boundsOf(meta: GroundValue): Option[(BigInt, BigInt)] =
     meta match {
