@@ -12,9 +12,9 @@ This skill governs all code under `lang/src/com/vanillasource/eliot/eliotc/monom
 ```
 monomorphize/
 ├── domain/
-│   ├── SemValue.scala          (VType, VConst, VLam, VPi, VNative, VTopDef, VStuckNative, VMeta, VNeutral, Spine)
+│   ├── SemValue.scala          (VType, VConst, VLam, VPi, VNative, VTopDef, VStuckNative, VFlex, VNeutral, Spine)
 │   ├── Env.scala               (Vector[SemValue] + names; lookup by name, last-bound-wins; `level` mints neutrals)
-│   └── MetaStore.scala         (IntMap[Option[SemValue]]; fresh/solve/lookup)
+│   └── FlexStore.scala         (IntMap[Option[SemValue]]; fresh/solve/lookup)
 ├── eval/
 │   ├── NbeEvaluator.scala      (the ONE shared pure traversal; abstract `decompose`)
 │   ├── Evaluator.scala         (NbeEvaluator over ORE; hosts applyValue/force/renormalize/groundToSem + object helpers)
@@ -53,7 +53,7 @@ monomorphize/
 │   └── WovenValueProcessor.scala (the seam; demands MetaTransferAccounting, so an unstated leaf transfer blocks
 │                                codegen)
 ├── unify/
-│   ├── Unifier.scala           (pattern unification; pure definitional equality; higherKindedMetas map; flushPostponed)
+│   ├── Unifier.scala           (pattern unification; pure definitional equality; higherKindedFlexes map; flushPostponed)
 │   ├── UnifyResult.scala       (Unified / Contradiction)
 │   ├── UnifyError.scala        (context + optional expected/actual)
 │   └── SemValuePrinter.scala   (human-readable SemValue rendering for error messages; nothing to invert since
@@ -126,7 +126,7 @@ set, no worklist. All read-back to `GroundValue` is deferred to a single post-dr
 | `VNative(paramType, fire)` | Primitive awaiting a concrete argument; `fire` yields its own stuck form when the arg is not concrete | SystemNativesProcessor (Function, integerLiteral, the Eq[Type] equals leaf), MatchNativesProcessor (handleCases/typeMatch), StdlibNativesProcessor (arithmetic, Bool `fold`/`&&`/comparisons) |
 | `VTopDef(fqn, cached, spine)` | Lazy top-level definition (cached=Some) **and** applied type/value constructor (cached=None) | BindingClosure (cached body), DataTypeNativesProcessor (body-less), the FQN-preserving missing-binding fallback |
 | `VStuckNative(fqn, spine)` | A **non-injective** native application (`add(x,y)`, `min`, `&&`, `fold`) stuck on not-yet-concrete args | a `VNative`'s `fire` when an argument is abstract |
-| `VMeta(id, spine)` | Unsolved metavariable (there is **no** `expected` field) | Checker (`MetaStore.fresh`) |
+| `VFlex(id, spine)` | Unsolved metavariable, a *flex* (there is **no** `expected` field; not `VMeta`, which read as refinement meta) | Checker (`FlexStore.fresh`) |
 | `VNeutral(head, spine)` | Stuck application on a rigid head. `NeutralHead` is **structural** (identity by constructor): `Param(level, name)` (bound vars), `Fresh(Origin.Unify/Quote, depth)` (binder-descending probes), `Reserved(Marker.BadApply/GuardProbe/Match)` (scope-less markers) | Evaluator (unresolved `ParameterReference` → `Param`), the `$bad-apply` fail-safe (`Reserved(BadApply)`) |
 
 `VStuckNative` is deliberately **distinct from `VTopDef`** (D3): a native application is *not injective* (`add(1,3)` =
@@ -136,7 +136,7 @@ set, no worklist. All read-back to `GroundValue` is deferred to a single post-dr
 ### `applyValue` — the one application primitive (fail-safe fallback, F1)
 
 `Evaluator.applyValue(f, x)` is exhaustive over every *applicable* head: `VLam`/`VPi` β-reduce, `VNative` fires (even
-on a non-concrete argument — the native produces its own `VStuckNative`), and `VNeutral`/`VTopDef`/`VStuckNative`/`VMeta`
+on a non-concrete argument — the native produces its own `VStuckNative`), and `VNeutral`/`VTopDef`/`VStuckNative`/`VFlex`
 grow their spine. The two remaining heads — `VConst` and `VType` — are **not applicable**; reaching them can only happen
 in an **ill-typed** program (one the checker has already, or is about to, reject). This case returns a **loud stuck
 form** — a `VNeutral` on the reserved head `NeutralHead.Reserved(Marker.BadApply)` carrying the argument — *never* the old
@@ -204,8 +204,8 @@ Missing-binding fallback for a **value reference** is an FQN-preserving stuck `V
 
 ### How computation runs
 
-`force(v, metaStore)` walks solved metas and unfolds `VTopDef` when the cached body is present.
-`renormalize(v, metaStore, lookupNative, deep)` additionally re-fires `VStuckNative`s whose args have concretised (and,
+`force(v, flexStore)` walks solved metas and unfolds `VTopDef` when the cached body is present.
+`renormalize(v, flexStore, lookupNative, deep)` additionally re-fires `VStuckNative`s whose args have concretised (and,
 with `deep=true`, descends under `VPi` binders — used **only** post-drain at quote time, where every meta is solved).
 `Checker.ensureBinding` prefetches transitively through the memoized `BodyValueReferences` fact (walked once per value),
 so a native reached only through a bodied helper is already in the flat `bindingCache` the re-fire lookup consults.
@@ -321,18 +321,18 @@ comments):
 - **Finalization** (once): carrier-kind verification (`CarrierKindChecker.verifyCarrierKinds`) and the
   calculated-return fail-safe. A finalization step can commit new solutions (the kind check unifies a solution's kind
   against its expectation), so the runner drains once more before defaulting.
-- **Finalizer** (`defaultUnsolvedMetas`): every still-unsolved meta defaults to `VType` — what remains unsolved after
+- **Finalizer** (`defaultUnsolvedFlexes`): every still-unsolved meta defaults to `VType` — what remains unsolved after
   the fixed point is an unconstrained (phantom) instantiation.
 - **Postponement flush** (`Unifier.flushPostponed`): any constraint still postponed after the finalizer is an equality
   obligation the check never discharged — flushed to a hard mismatch error (after a triage re-drain; the one exemption
   is a `$bad-apply`-headed constraint, owned by a more precise fail-safe).
-- **Postcondition** (`assertEveryMetaResolved`): every meta is solved — the compiler-bug backstop, `compilerAbort`ing
+- **Postcondition** (`assertEveryFlexResolved`): every meta is solved — the compiler-bug backstop, `compilerAbort`ing
   on an internal invariant violation.
 
 ### Bidirectional checker & its collaborators
 
 `Checker` is the **definitional-equality core only**: `check`/`infer`/`inferSpine`/`applyInferred`/`peelLams`/
-`instantiatePolymorphic` plus the shared primitives (`force`, `freshMeta`, `doUnify`, `evalExpr`, `ensureBinding`,
+`instantiatePolymorphic` plus the shared primitives (`force`, `freshFlex`, `doUnify`, `evalExpr`, `ensureBinding`,
 `prefetchBindings`). Application checking is **spine-level** (`inferSpine`): the whole curried spine is decomposed at
 the root and each argument slot runs the resolution ladder left to right. The check-mode **resolution ladder** per slot
 is just **instantiate → unify → mismatch**, with no arm between the two. There is no bind arm either — a slot that must sequence never needed one, the `row/` phase having already written every binding
@@ -346,24 +346,24 @@ boundary), and invoked from named hook points:
 | Collaborator — field | Concern | Hook points |
 |---|---|---|
 | `check/GuardDischargeResolver` — `checker.guards` (W2b) | effectful-guard discharge (the calculated-return half went with the `auto`/implicit-generics feature) | `Checker.infer`/`applyInferred`; `TypeStackLoop.settleAtRead` |
-| `check/CarrierKindChecker` — `checker.carriers` (D8) | HKT kind seeding + verification | `Checker.instantiatePolymorphic` → `recordCarrierMetas`; `TypeStackLoop` post-drain → `verifyCarrierKinds` |
+| `check/CarrierKindChecker` — `checker.carriers` (D8) | HKT kind seeding + verification | `Checker.instantiatePolymorphic` → `recordCarrierFlexes`; `TypeStackLoop` post-drain → `verifyCarrierKinds` |
 | `check/AbilityResolver` — `checker.abilityResolver` | ability-ref collection + the `resolve-abilities` saturation pass (resolve each ability-qualified ref to its impl) | `TypeStackLoop.processIO` → `collectAbilityRefs`; `TypeStackLoop` post-drain → `resolveAbilities` |
 
 Do not reintroduce a lift, a `pure`, or an `Id` decision here (the deleted `check/EffectLifter`) — that is a reversal
 of the design, not a fix.
 
-Per-meta bookkeeping (the binder's kind + its call-site context) lives in the **single** `higherKindedMetas` map on
+Per-meta bookkeeping (the binder's kind + its call-site context) lives in the **single** `higherKindedFlexes` map on
 the `Unifier`; the collaborators own the *algorithm*, not a private store.
 
-### Higher-kinded meta bookkeeping (`Unifier.higherKindedMetas`)
+### Higher-kinded meta bookkeeping (`Unifier.higherKindedFlexes`)
 
-One `Map[Int, (SemValue, Sourced[String])]` on the `Unifier`, seeded by `CarrierKindChecker.recordCarrierMetas` for
+One `Map[Int, (SemValue, Sourced[String])]` on the `Unifier`, seeded by `CarrierKindChecker.recordCarrierFlexes` for
 *higher-kinded* instantiation metas (`[F[_]]`) only: the binder's expected kind plus a call-site context, verified
 post-drain (a binder solved to a value of the wrong kind is rejected rather than silently accepted). Its one reader
 is `verifyCarrierKinds`, for the *kind* check alone, which is soundness and not effect machinery.
 
 Every meta without an entry is plain: solved by ordinary unification, else defaulted to `VType` by
-`defaultUnsolvedMetas`.
+`defaultUnsolvedFlexes`.
 
 ### Guard discharge (W2b) — `GuardDischargeResolver`
 
@@ -419,7 +419,7 @@ Read-back happens exactly once, post-drain, in `PostDrainQuoter`:
   `Quoter.quote`. On a `Left` it aborts with `"Cannot resolve type."` (detail = the quoter message) — **no** silent
   `Type` fallback.
 - The strict `Quoter` succeeds only on `VType`, `VConst`, `VPi` (→ Function `Structure`), and body-less
-  `VTopDef(fqn, None, spine)` (→ `Structure`). It **fails loudly** on `VNeutral`, `VMeta`, `VLam`, `VNative`,
+  `VTopDef(fqn, None, spine)` (→ `Structure`). It **fails loudly** on `VNeutral`, `VFlex`, `VLam`, `VNative`,
   `VStuckNative`, and an unapplied cached `VTopDef`.
 - `PostDrainQuoter` also hosts the **compile→runtime reification gate** (materialising erased-parameter-determined
   sub-terms into literal/constructor trees), the **`integerLiteral[V]` quote-time rewrite** (a value-position literal
@@ -437,14 +437,14 @@ Pattern unification on `SemValue`s with a `postponed` queue (`drain()` retries u
 3. `VNeutral`~`VNeutral` same head → zip spines. `VTopDef`~`VTopDef` same FQN → zip spines (definitional equality: a
    constructor applied to differing arguments is rejected).
 4. `VStuckNative`~`VStuckNative` same FQN → zip spines; it is **never** injectivity-decomposed against a meta (non-injective).
-5. `VMeta` → pattern rule: empty spine → solve directly (with an **occurs-check**); non-empty spine → `tryDecomposeApplied`
+5. `VFlex` → pattern rule: empty spine → solve directly (with an **occurs-check**); non-empty spine → `tryDecomposeApplied`
    (injectivity decomposition against a *rigid* `VTopDef(None)` / `VNeutral` head, equal-arity or partial-application),
    else postpone. A higher-kinded meta postponed against a non-rigid `VPi` (`?F[A,B] ~ Function[A,B]`) is **deliberately
    not decomposed** — `CarrierKindChecker` documents this as higher-order unification the pattern unifier cannot solve
    (see the diagnosing note on the two-arg HKT-over-Function limitation). **Flex-flex `?F[a..] ~ ?B`** (applied meta vs a
    *bare, unsolved* meta) solves the bare meta **in either orientation** — `?B := ?F[a..]` — rather than postponing when
    the applied side is on the left, so the outcome does not depend on which side a constraint is written. Pinned by
-   `unify/MetaApplicationUnifyTest`.
+   `unify/FlexApplicationUnifyTest`.
 
 `unify` is **pure definitional equality**: no assignability, no widening, no `refinements` map (`Int` is nullary;
 value ranges ride the `channel/` post-pass, strictly downstream of typing), and no flex-flex `?F[X] ~ ?G[Y]`
@@ -471,7 +471,7 @@ quiet-probe pattern.
    through `SignatureView` — do **not** mistake them for a violation:
    `walkTypeStack` itself (reconstructs the kind `Function[K1,…,Type]` from the signature's binders to kind-check
    against — the kind is a projection of the signature, never stored),
-   `CarrierKindChecker.recordCarrierMetas` (seeds carrier kinds off the referenced value's `SignatureView`),
+   `CarrierKindChecker.recordCarrierFlexes` (seeds carrier kinds off the referenced value's `SignatureView`),
    `AbilityResolver.abilityArity` (reads an ability-marker's binder count for impl queries),
    and `SaturatedValue.binderRoles` feeding `BindingClosure.reifyingWrap` (which leading binders a body reifies).
    None of these drives a definitional-equality decision.
@@ -500,7 +500,7 @@ quiet-probe pattern.
   missing *value* binding evaluates to a stuck `VTopDef` (FQN-preserving); a missing *parameter* to a `VNeutral`; either
   fails to unify against a concrete expected type. Add the missing case to the relevant supplier / prefetch.
 - **"Cannot resolve type."** A stuck `SemValue` survived to `PostDrainQuoter.quoteSem`. Inspect *which* stuck form
-  (`Quoter`'s `Left` message names it): an unsolved `VMeta` (a constraint that should have solved postponed and was
+  (`Quoter`'s `Left` message names it): an unsolved `VFlex` (a constraint that should have solved postponed and was
   dropped), a `VNeutral` (an unresolved parameter, or the `$bad-apply` fail-safe = an argument applied to a
   non-applicable head in an ill-typed program), a `VLam` (a polymorphic value not fully instantiated —
   `instantiateRemaining` should peel it), or a `VStuckNative` (see next).
@@ -590,7 +590,7 @@ Tests live under `lang/test/src/com/vanillasource/eliot/eliotc/monomorphize/`:
 - `channel/RefinementChannelProcessorTest.scala` — the refinement channel's flow analysis and `^Where` demands.
 - `eval/EvaluatorApplyValueTest.scala` — the F1 loud `$bad-apply` fallback shape + quoter failure.
 - `unify/UnifyResultTest.scala`, `unify/OccursCheckTest.scala`, `unify/StuckNativeUnifyTest.scala`,
-  `unify/MetaApplicationUnifyTest.scala`, `unify/PostponedFlushTest.scala`, `unify/HigherKindedMetaTest.scala` — pure
+  `unify/FlexApplicationUnifyTest.scala`, `unify/PostponedFlushTest.scala`, `unify/HigherKindedFlexTest.scala` — pure
   unifier unit tests (construct `SemValue`s directly; `AnyFlatSpec`).
 
 The write side lives with its own phase, not here: the effect suites under `jvm/test/.../` compile and run real

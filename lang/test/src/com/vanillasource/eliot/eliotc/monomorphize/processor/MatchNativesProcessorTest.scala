@@ -3,7 +3,7 @@ package com.vanillasource.eliot.eliotc.monomorphize.processor
 import cats.effect.IO
 import com.vanillasource.eliot.eliotc.ProcessorTest
 import com.vanillasource.eliot.eliotc.module.fact.ValueFQN
-import com.vanillasource.eliot.eliotc.monomorphize.domain.MetaStore
+import com.vanillasource.eliot.eliotc.monomorphize.domain.FlexStore
 import com.vanillasource.eliot.eliotc.monomorphize.eval.Quoter
 import com.vanillasource.eliot.eliotc.monomorphize.fact.{GroundValue, NativeBinding}
 import com.vanillasource.eliot.eliotc.monomorphize.fact.GroundValue.Literal
@@ -85,11 +85,11 @@ class MatchNativesProcessorTest extends ProcessorTest(LangProcessors()*) {
 
   /** Reduce the named closed value's NbE binding to a [[GroundValue]] through the closed-term read-back entry point:
     * [[Quoter.quote]], which forces the lazy [[com.vanillasource.eliot.eliotc.monomorphize.domain.SemValue.VTopDef]]
-    * body and reads the normal form back. No metas exist for a closed term, so an empty [[MetaStore]] suffices.
+    * body and reads the normal form back. No metas exist for a closed term, so an empty [[FlexStore]] suffices.
     */
   private def groundViaQuote(source: String, name: String): IO[Option[Either[String, GroundValue]]] = {
     val key = NativeBinding.Key(ValueFQN(testModuleName, default(name)))
     runGenerator(source, key, matchImports)
-      .map(_._2.get(key).flatMap(fact => fact.asInstanceOf[NativeBinding].semValue.map(Quoter.quote(0, _, MetaStore.empty))))
+      .map(_._2.get(key).flatMap(fact => fact.asInstanceOf[NativeBinding].semValue.map(Quoter.quote(0, _, FlexStore.empty))))
   }
 }

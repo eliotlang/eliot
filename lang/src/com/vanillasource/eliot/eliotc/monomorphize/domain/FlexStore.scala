@@ -9,23 +9,23 @@ import scala.collection.immutable.IntMap
   * @param nextId
   *   Next fresh meta id to allocate
   */
-case class MetaStore(entries: IntMap[Option[SemValue]], nextId: Int) {
+case class FlexStore(entries: IntMap[Option[SemValue]], nextId: Int) {
 
   /** Allocate a fresh unsolved metavariable. Returns the new id and updated store. */
-  def fresh: (SemValue.MetaId, MetaStore) = {
-    val id = SemValue.MetaId(nextId)
-    (id, MetaStore(entries.updated(nextId, None), nextId + 1))
+  def fresh: (SemValue.FlexId, FlexStore) = {
+    val id = SemValue.FlexId(nextId)
+    (id, FlexStore(entries.updated(nextId, None), nextId + 1))
   }
 
   /** Solve a metavariable. */
-  def solve(id: SemValue.MetaId, value: SemValue): MetaStore =
-    MetaStore(entries.updated(id.value, Some(value)), nextId)
+  def solve(id: SemValue.FlexId, value: SemValue): FlexStore =
+    FlexStore(entries.updated(id.value, Some(value)), nextId)
 
   /** Look up a metavariable's current solution. */
-  def lookup(id: SemValue.MetaId): Option[SemValue] =
+  def lookup(id: SemValue.FlexId): Option[SemValue] =
     entries.getOrElse(id.value, None)
 }
 
-object MetaStore {
-  val empty: MetaStore = MetaStore(IntMap.empty, 0)
+object FlexStore {
+  val empty: FlexStore = FlexStore(IntMap.empty, 0)
 }

@@ -123,11 +123,11 @@ class EqTypeLeafTest
   }
 
   it should "stay stuck (fail-safe) on a non-concrete argument rather than answer wrongly" in {
-    apply2(VMeta(MetaId(0), Spine.SNil), intType).asserting(_ shouldBe a[VStuckNative])
+    apply2(VFlex(FlexId(0), Spine.SNil), intType).asserting(_ shouldBe a[VStuckNative])
   }
 
   it should "stay stuck when a bound is a non-concrete metavariable" in {
-    apply2(typeCtor(intFQN, bound(0), VMeta(MetaId(1), Spine.SNil)), typeCtor(intFQN, bound(0), bound(5)))
+    apply2(typeCtor(intFQN, bound(0), VFlex(FlexId(1), Spine.SNil)), typeCtor(intFQN, bound(0), bound(5)))
       .asserting(_ shouldBe a[VStuckNative])
   }
 }

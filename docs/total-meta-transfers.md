@@ -561,7 +561,9 @@ one layer, the body in another" and "both in one declaration" are literally the 
 **8.3 `foldLeft` narrows nothing until the size domain lands.** `def size[A](list: List[A]): Int =
 list.foldLeft(0, _ -> count -> count + 1)` is the first thing anyone will try; its transfer stalls for want
 of an `n` (§5.2) and yields absence. Correct, but say so in the user-facing docs or the first report will
-be "you said meta was total".
+be "you said meta was total". **Said (2026-10-20)**: the `eliot-code` skill lists what a range is derived through
+(calls, closures, a `match`, a `fold`) and what is unknown today — a field read, hence `if … else`, a `List` fold,
+an input, a binder at a demand — each probed against the tree rather than taken from this document.
 
 **8.4 The interpretation needs a budget on two axes — the second one LANDED (S8).** Fold iteration (§5.2) is one, and
 is not reachable yet (nothing iterates until `List` carries a size). The other is depth/fan-out: the interpretation
@@ -580,10 +582,13 @@ keeps the walk off almost every call node. Add the memo when a program is found 
 is what limits precision — and measure with `--statistics`, diffing a run with and without the flag (the flag itself
 inflates ~20%).
 
-**8.6 The `Meta`/metavariable name collision.** `SemValue.VMeta`, `MetaStore`, `TypeStackLoop.returnMeta`
-are **unification metavariables**, nothing to do with refinement meta. New code in `monomorphize/` will
-read ambiguously. "Meta" is the user-facing word for the refinement side (`ability Meta[D]`), so the
-metavariable side is the better rename target — worth doing before this lands more of the other.
+**8.6 The `Meta`/metavariable name collision — RENAMED (2026-10-20).** `SemValue.VMeta`, `MetaStore`,
+`TypeStackLoop.returnMeta` were **unification metavariables**, nothing to do with refinement meta, and new code in
+`monomorphize/` read ambiguously. "Meta" is the user-facing word for the refinement side (`ability Meta[D]`), so the
+metavariable side took the rename: it is now a **flex** — the unification literature's word for a variable the
+unifier may instantiate, as against a rigid one (`VNeutral`) — so `VFlex`, `FlexId`, `FlexStore`, `freshFlex`,
+`returnFlex`, `higherKindedFlexes` and the rest. Only identifiers moved: prose keeps "metavariable", which never
+read ambiguously, and an identifier containing `Meta` in `monomorphize/` now means refinement meta.
 
 **8.7 A brace could not be stated on a def with an untracked parameter — LANDED (S5).** The `^Meta` companion types
 its parameters by the pure name transform `T` ⤳ `T$Meta`, and `T$Meta` is generated only for a **slotted** type — a

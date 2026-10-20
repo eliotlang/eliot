@@ -177,7 +177,7 @@ class AbilityImplementationProcessor extends SingleKeyTypeProcessor[AbilityImple
     * candidate at all.
     *
     * Every step is **fail-safe towards keeping**: the constraint is only allowed to decline a candidate when its
-    * ability arguments are known exactly. An untraced match (a `metaToGround`-collapsed binding, the same operand
+    * ability arguments are known exactly. An untraced match (a `flexToGround`-collapsed binding, the same operand
     * unreliability [[dischargeGuard]] refuses a guard over), a binding that is the defaulted universe, an argument
     * shape this cannot ground, an unreadable ability arity, an absent probe (its resolution aborted on an error
     * reported at its own definition) and a cyclic probe all answer "satisfied". So this never *creates* a resolution
@@ -307,7 +307,7 @@ class AbilityImplementationProcessor extends SingleKeyTypeProcessor[AbilityImple
     * and the compiler pool borrows the whole runtime track, so a runtime-layer guarded instance (the `Throw` self-lift,
     * `where E1 != E2`) resolves there too.
     *
-    * Fail-safe: a real guard is discharged only over faithfully-traced bindings — a `metaToGround`-collapsed binding
+    * Fail-safe: a real guard is discharged only over faithfully-traced bindings — a `flexToGround`-collapsed binding
     * could compare equal wrongly (§3.1), so an untraced match is an internal error rather than a silent wrong verdict.
     *
     * Second fail-safe — the guard-on-junk defusal: a match may trace a guard operand faithfully to the **defaulted
@@ -335,7 +335,7 @@ class AbilityImplementationProcessor extends SingleKeyTypeProcessor[AbilityImple
 
   /** A guard operand that is — or structurally contains — the defaulted universe [[GroundValue.Type]]: the read-back
     * of a type-argument slot unification never solved (defaulted at finalization, or produced by the matcher's
-    * `metaToGround` fallback). Descends into constructor `args` **only**, never a value's `valueType` — every
+    * `flexToGround` fallback). Descends into constructor `args` **only**, never a value's `valueType` — every
     * [[GroundValue.Structure]] carries `valueType = Type`, so descending there would flag every operand. See the
     * second fail-safe in [[dischargeGuard]].
     */

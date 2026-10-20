@@ -36,16 +36,16 @@ class PostponedFlushTest extends AnyFlatSpec with Matchers {
   private val konst: SemValue = VConst(GroundValue.Direct("k", GroundValue.Type))
 
   /** A fresh applied meta `?F[A]` over an empty store, as `(idF, unifier)`. */
-  private def appliedMeta: (SemValue.MetaId, Unifier) = {
-    val (idF, s1) = MetaStore.empty.fresh
+  private def appliedFlex: (SemValue.FlexId, Unifier) = {
+    val (idF, s1) = FlexStore.empty.fresh
     (idF, Unifier.create(s1, 0))
   }
 
-  private def applied(id: SemValue.MetaId): SemValue = VMeta(id, Spine.SNil :+ topDef("A"))
+  private def applied(id: SemValue.FlexId): SemValue = VFlex(id, Spine.SNil :+ topDef("A"))
 
   /** Postpone `?F[A] ~ konst` and return `(idF, postponed unifier)`. */
-  private def postponed: (SemValue.MetaId, Unifier) = {
-    val (idF, u) = appliedMeta
+  private def postponed: (SemValue.FlexId, Unifier) = {
+    val (idF, u) = appliedFlex
     (idF, u.unify(applied(idF), konst, ctx))
   }
 
@@ -56,31 +56,31 @@ class PostponedFlushTest extends AnyFlatSpec with Matchers {
   "a postponed application whose meta solved to a mismatching concrete head" should "flush to a mismatch error" in {
     val (idF, u) = postponed
     // `?F := _ -> Box`, so `?F[A]` now reduces to the concrete `Box`, which cannot equal `konst` — a genuine leak.
-    val solved   = u.copy(metaStore = u.metaStore.solve(idF, VLam("x", _ => topDef("Box"))))
+    val solved   = u.copy(flexStore = u.flexStore.solve(idF, VLam("x", _ => topDef("Box"))))
     solved.flushPostponed().errors should not be empty
   }
 
   it should "clear the postponement queue" in {
     val (idF, u) = postponed
-    val solved   = u.copy(metaStore = u.metaStore.solve(idF, VLam("x", _ => topDef("Box"))))
+    val solved   = u.copy(flexStore = u.flexStore.solve(idF, VLam("x", _ => topDef("Box"))))
     solved.flushPostponed().postponed shouldBe empty
   }
 
   "the triage re-drain" should "discharge a constraint whose meta solved to a now-consistent head" in {
     val (idF, u) = postponed
     // `?F := _ -> konst`, so `?F[A]` reduces to `konst` and the constraint holds — no error.
-    val solved   = u.copy(metaStore = u.metaStore.solve(idF, VLam("x", _ => konst)))
+    val solved   = u.copy(flexStore = u.flexStore.solve(idF, VLam("x", _ => konst)))
     solved.flushPostponed().errors shouldBe empty
   }
 
   "flushing an empty queue" should "add no errors" in {
-    appliedMeta._2.flushPostponed().errors shouldBe empty
+    appliedFlex._2.flushPostponed().errors shouldBe empty
   }
 
   "a phantom meta defaulted to VType, applied to a spine" should "be triaged benign ($bad-apply head)" in {
     val (idF, u) = postponed
-    // Mimic `defaultUnsolvedMetas`: solve the leftover meta to `VType`. `?F[A]` then reads back as `$bad-apply(A)`.
-    val defaulted = u.copy(metaStore = u.metaStore.solve(idF, VType))
+    // Mimic `defaultUnsolvedFlexes`: solve the leftover meta to `VType`. `?F[A]` then reads back as `$bad-apply(A)`.
+    val defaulted = u.copy(flexStore = u.flexStore.solve(idF, VType))
     defaulted.flushPostponed().errors shouldBe empty
   }
 }

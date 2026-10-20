@@ -100,7 +100,7 @@ class AbilityResolver(
           arity      <- abilityArity(abilityVfqn.value, abilityName)
           _          <- modify(_.recordAbilityArity(abilityVfqn.value, arity))
           refSliced   = refTypeArgs.take(arity)
-          refGroundE  = refSliced.toList.traverse(a => Quoter.quote(0, a, state.unifier.metaStore))
+          refGroundE  = refSliced.toList.traverse(a => Quoter.quote(0, a, state.unifier.flexStore))
           // A resolution is recorded under the ref's own ground arguments, which pin the impl and which the post-drain
           // quoter re-derives exactly. Arguments still unsolved metas leave the ref pending for the next round.
           progressed <- refGroundE match {

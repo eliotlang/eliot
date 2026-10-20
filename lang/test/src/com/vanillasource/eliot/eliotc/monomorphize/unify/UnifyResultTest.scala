@@ -28,7 +28,7 @@ class UnifyResultTest extends AnyFlatSpec with Matchers {
   private def boxed(args: SemValue*): SemValue =
     VTopDef(fqn("Box"), None, args.foldLeft(Spine.SNil: Spine)(_ :+ _))
 
-  private def freshUnifier: Unifier = Unifier.create(MetaStore.empty, 0)
+  private def freshUnifier: Unifier = Unifier.create(FlexStore.empty, 0)
 
   "tryUnify on definitionally equal values" should "report Unified" in {
     freshUnifier.tryUnify(topDef("A"), topDef("A"), ctx) shouldBe a[UnifyResult.Unified]
@@ -47,16 +47,16 @@ class UnifyResultTest extends AnyFlatSpec with Matchers {
   }
 
   "tryUnify solving a metavariable" should "carry the solution on the result" in {
-    val (id, store) = MetaStore.empty.fresh
-    val u           = Unifier.create(store, 0).tryUnify(VMeta(id, Spine.SNil), topDef("A"), ctx).unifier
-    u.metaStore.lookup(id) shouldBe Some(topDef("A"))
+    val (id, store) = FlexStore.empty.fresh
+    val u           = Unifier.create(store, 0).tryUnify(VFlex(id, Spine.SNil), topDef("A"), ctx).unifier
+    u.flexStore.lookup(id) shouldBe Some(topDef("A"))
   }
 
   "tryUnify failing after a partial solve" should "preserve solutions but strip the error (what drain relies on)" in {
-    val (id, store) = MetaStore.empty.fresh
-    val solved      = boxed(VMeta(id, Spine.SNil), topDef("A"))
+    val (id, store) = FlexStore.empty.fresh
+    val solved      = boxed(VFlex(id, Spine.SNil), topDef("A"))
     val concrete    = boxed(topDef("B"), topDef("C"))
     val u           = Unifier.create(store, 0).tryUnify(solved, concrete, ctx).unifier
-    (u.metaStore.lookup(id), u.errors) shouldBe (Some(topDef("B")), Nil)
+    (u.flexStore.lookup(id), u.errors) shouldBe (Some(topDef("B")), Nil)
   }
 }

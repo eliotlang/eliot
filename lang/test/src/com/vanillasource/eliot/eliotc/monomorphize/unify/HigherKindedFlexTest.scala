@@ -9,15 +9,15 @@ import org.scalatest.matchers.should.Matchers
 
 import java.net.URI
 
-/** The per-meta *kind* bookkeeping ([[Unifier.higherKindedMetas]]): which instantiation metas were peeled from a
+/** The per-meta *kind* bookkeeping ([[Unifier.higherKindedFlexes]]): which instantiation metas were peeled from a
   * higher-kinded (`[F[_]]`) binder, and to what kind, which post-drain kind verification reads.
   */
-class HigherKindedMetaTest extends AnyFlatSpec with Matchers {
+class HigherKindedFlexTest extends AnyFlatSpec with Matchers {
   private val ctx: Sourced[String] = Sourced(URI.create("Test.els"), PositionRange.zero, "ctx")
 
   /** Allocate `n` fresh metavariables, returning their ids and a fresh unifier over them. */
-  private def withMetas(n: Int): (Vector[SemValue.MetaId], Unifier) = {
-    val (ids, store) = (0 until n).foldLeft((Vector.empty[SemValue.MetaId], MetaStore.empty)) { case ((acc, s), _) =>
+  private def withFlexes(n: Int): (Vector[SemValue.FlexId], Unifier) = {
+    val (ids, store) = (0 until n).foldLeft((Vector.empty[SemValue.FlexId], FlexStore.empty)) { case ((acc, s), _) =>
       val (id, next) = s.fresh
       (acc :+ id, next)
     }
@@ -25,13 +25,13 @@ class HigherKindedMetaTest extends AnyFlatSpec with Matchers {
   }
 
   "a fresh metavariable" should "be ordinary — no kind bookkeeping" in {
-    val (_, u) = withMetas(1)
-    u.carrierMetas shouldBe empty
+    val (_, u) = withFlexes(1)
+    u.carrierFlexes shouldBe empty
   }
 
-  "recordHigherKindedMeta" should "expose the meta and its kind via carrierMetas" in {
-    val (ids, u) = withMetas(1)
+  "recordHigherKindedFlex" should "expose the meta and its kind via carrierFlexes" in {
+    val (ids, u) = withFlexes(1)
     val id       = ids.head
-    u.recordHigherKindedMeta(id, VType, ctx).carrierMetas shouldBe List((id.value, (VType, ctx)))
+    u.recordHigherKindedFlex(id, VType, ctx).carrierFlexes shouldBe List((id.value, (VType, ctx)))
   }
 }

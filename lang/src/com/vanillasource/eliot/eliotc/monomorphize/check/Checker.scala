@@ -54,7 +54,7 @@ class Checker(
     * [[TypeStackLoop]] (callee side). See [[GuardDischargeResolver]].
     */
   private[check] val guards: GuardDischargeResolver =
-    new GuardDischargeResolver(force, freshMeta)
+    new GuardDischargeResolver(force, freshFlex)
 
   /** The ability-resolution saturation concern: discovering ability-qualified references and resolving each to its
     * concrete impl. A non-equality *saturation* pass, kept out of this checker's definitional equality concern. Called
@@ -110,14 +110,14 @@ class Checker(
 
   /** Force a SemValue through the current meta store. */
   private[check] def force(v: SemValue): CheckIO[SemValue] =
-    inspect(s => Evaluator.force(v, s.unifier.metaStore))
+    inspect(s => Evaluator.force(v, s.unifier.flexStore))
 
   /** Deeply normalise a SemValue, re-firing stuck native applications (e.g. the dependent-bounds `add` in
     * `Int[add(LMin,RMin), …]`) whose bound arguments have since been solved. Uses the binding cache as the native
     * lookup. See [[Evaluator.renormalize]].
     */
   private[check] def renormalize(v: SemValue): CheckIO[SemValue] =
-    inspect(s => Evaluator.renormalize(v, s.unifier.metaStore, fqn => s.bindingCache.getOrElse(fqn, None)))
+    inspect(s => Evaluator.renormalize(v, s.unifier.flexStore, fqn => s.bindingCache.getOrElse(fqn, None)))
 
   /** Unify two semantic values, updating the unifier in the state. */
   private def doUnify(l: SemValue, r: SemValue, context: Sourced[String]): CheckIO[Unit] =
@@ -135,12 +135,12 @@ class Checker(
     )
 
   /** Allocate a fresh metavariable. */
-  private[check] def freshMeta: CheckIO[VMeta] =
+  private[check] def freshFlex: CheckIO[VFlex] =
     for {
       s                   <- get
-      (metaId, freshStore) = s.unifier.metaStore.fresh
-      _                   <- modify(_.withUnifier(s.unifier.copy(metaStore = freshStore)))
-    } yield VMeta(metaId, Spine.SNil)
+      (flexId, freshStore) = s.unifier.flexStore.fresh
+      _                   <- modify(_.withUnifier(s.unifier.copy(flexStore = freshStore)))
+    } yield VFlex(flexId, Spine.SNil)
 
   /** Check a term against a known expected type. */
   def check(
@@ -306,9 +306,9 @@ class Checker(
         result <- forced match {
                     case VLam(name, closure) =>
                       for {
-                        meta <- freshMeta
-                        _    <- if (bindInEnv) modify(_.bindTypeParam(name, meta)) else pure(())
-                        rest <- loop(closure(meta), acc :+ meta)
+                        flex <- freshFlex
+                        _    <- if (bindInEnv) modify(_.bindTypeParam(name, flex)) else pure(())
+                        rest <- loop(closure(flex), acc :+ flex)
                       } yield rest
                     case other               => pure((other, acc))
                   }
@@ -389,7 +389,7 @@ class Checker(
       hole: OperatorResolvedExpression.HandleHole
   ): CheckIO[(SemExpression, SemValue)] =
     for {
-      handleType <- freshMeta
+      handleType <- freshFlex
       asked      <- handleEntry(hole.entry)
       candidates <- hole.candidates.traverse(_.traverse { candidate =>
                       for {
@@ -427,7 +427,7 @@ class Checker(
   private def explicitTypeArgument(typeArg: Sourced[OperatorResolvedExpression]): CheckIO[SemValue] =
     typeArg.value match {
       case OperatorResolvedExpression.ValueReference(name, Seq()) if name.value === WellKnownTypes.inferredTypeArgumentFQN =>
-        freshMeta.widen[SemValue]
+        freshFlex.widen[SemValue]
       case OperatorResolvedExpression.ValueReference(name, Seq(key)) if name.value === WellKnownTypes.inferredTypeArgumentFQN =>
         key.value match {
           case OperatorResolvedExpression.IntegerLiteral(k) => sharedHole(k.value).widen[SemValue]
@@ -438,12 +438,12 @@ class Checker(
           case Seq() => evalExpr(other)
           case keys  =>
             for {
-              metas <- keys.traverse(key => sharedHole(key).map(key -> _))
-              rho   <- inspect(_.rho)
-              value <- evalExpr(
-                         withoutKeyedHoles(other),
-                         Some(metas.foldLeft(rho) { case (env, (key, meta)) => env.bind(keyedHoleName(key), meta) })
-                       )
+              flexes <- keys.traverse(key => sharedHole(key).map(key -> _))
+              rho    <- inspect(_.rho)
+              value  <- evalExpr(
+                          withoutKeyedHoles(other),
+                          Some(flexes.foldLeft(rho) { case (env, (key, flex)) => env.bind(keyedHoleName(key), flex) })
+                        )
             } yield value
         }
     }
@@ -484,10 +484,10 @@ class Checker(
   /** Not a name the tokenizer can produce, so it shadows no parameter. */
   private def keyedHoleName(key: BigInt): String = s"$$hole$$$key"
 
-  private def sharedHole(key: BigInt): CheckIO[VMeta] =
+  private def sharedHole(key: BigInt): CheckIO[VFlex] =
     get.flatMap(_.sharedHoles.get(key) match {
-      case Some(meta) => pure(meta)
-      case None       => freshMeta.flatTap(meta => modify(s => s.copy(sharedHoles = s.sharedHoles.updated(key, meta))))
+      case Some(flex) => pure(flex)
+      case None       => freshFlex.flatTap(flex => modify(s => s.copy(sharedHoles = s.sharedHoles.updated(key, flex))))
     })
 
   /** Infer a value reference's type from its saturated signature, applying the given (already-evaluated) explicit type
@@ -565,7 +565,7 @@ class Checker(
     ) pure(None)
     else
       get.flatMap { s =>
-        explicitTypeArgs.toList.traverse(a => Quoter.quote(0, a, s.unifier.metaStore)) match {
+        explicitTypeArgs.toList.traverse(a => Quoter.quote(0, a, s.unifier.flexStore)) match {
           case Right(groundArgs) =>
             liftF(
               getFactIfProduced(
@@ -642,9 +642,9 @@ class Checker(
                                    case p: VPi => pure(p)
                                    case _      =>
                                      for {
-                                       domMeta <- freshMeta
-                                       codMeta <- freshMeta
-                                       p        = VPi(domMeta, _ => codMeta)
+                                       domFlex <- freshFlex
+                                       codFlex <- freshFlex
+                                       p        = VPi(domFlex, _ => codFlex)
                                        _       <- doUnify(peeled, p, target.as("Not a function."))
                                      } yield p
                                  }
@@ -657,7 +657,7 @@ class Checker(
       // left untouched; it resolves through the meta store wherever it is next forced.
       rawRetType               = vpi.codomain(argSem)
       retType                 <- rawRetType match {
-                                   case _: VMeta => pure(rawRetType)
+                                   case _: VFlex => pure(rawRetType)
                                    // Renormalise the codomain (re-firing any stuck guard natives now that the argument
                                    // checks solved their bounds), then discharge a `{Throw[String]}` guard the callee
                                    // returns (W2b) — `Right(t)` ⤳ `t`, `Left` aborts, a still-stuck guard is left to
@@ -757,9 +757,9 @@ class Checker(
       tpe: SemValue
   ): CheckIO[(SemExpression, SemValue)] =
     for {
-      (peeled, implicitMetas) <- peelLams(tpe)
-      _                       <- carriers.recordCarrierMetas(expr, implicitMetas)
-      updated                 <- appendTypeArgs(expr, implicitMetas)
+      (peeled, implicitFlexes) <- peelLams(tpe)
+      _                       <- carriers.recordCarrierFlexes(expr, implicitFlexes)
+      updated                 <- appendTypeArgs(expr, implicitFlexes)
     } yield (updated.copy(expressionType = peeled), peeled)
 
   /** Append implicit-meta type args to a [[SemExpression.ValueReference]] expression. Only a value reference can

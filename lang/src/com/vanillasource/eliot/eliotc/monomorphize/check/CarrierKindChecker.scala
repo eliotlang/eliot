@@ -20,14 +20,14 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
   * meta's solution against it, post-drain.
   *
   * Two entry points, mirroring the two phases:
-  *   - [[recordCarrierMetas]] — at *instantiation* time (called from `Checker.instantiatePolymorphic`), tag each
+  *   - [[recordCarrierFlexes]] — at *instantiation* time (called from `Checker.instantiatePolymorphic`), tag each
   *     freshly-peeled higher-kinded instantiation meta with its expected kind.
   *   - [[verifyCarrierKinds]] — at *finalization* time (a `TypeStackLoop` post-drain pass), check every recorded
   *     carrier two ways: a wrong-kind solution is a mismatch; an unsolved carrier with an unsatisfiable rigid-arity
   *     postponement is reported rather than silently dropped.
   *
   * The recorded kind itself lives in the [[com.vanillasource.eliot.eliotc.monomorphize.unify.Unifier]]'s
-  * [[com.vanillasource.eliot.eliotc.monomorphize.unify.Unifier.higherKindedMetas]] map — this module only *seeds* and
+  * [[com.vanillasource.eliot.eliotc.monomorphize.unify.Unifier.higherKindedFlexes]] map — this module only *seeds* and
   * *reads* it. Operates over [[CheckIO]], reading and writing the shared [[CheckState]] through
   * `get`/`modify`/`inspect`. It depends on exactly three checker primitives, passed at construction — that narrow
   * surface is the module boundary.
@@ -54,17 +54,17 @@ class CarrierKindChecker(
     *
     * The record is unfiltered by ability constraints: every higher-kinded binder is kind-checked, constrained or not.
     */
-  def recordCarrierMetas(expr: SemExpression, implicitMetas: Seq[SemValue]): CheckIO[Unit] =
+  def recordCarrierFlexes(expr: SemExpression, implicitFlexes: Seq[SemValue]): CheckIO[Unit] =
     expr.expression match {
-      case SemExpression.ValueReference(fqn, explicitArgs) if implicitMetas.nonEmpty =>
+      case SemExpression.ValueReference(fqn, explicitArgs) if implicitFlexes.nonEmpty =>
         for {
           svOpt <- liftF(getFactIfProduced(SaturatedValue.Key(fqn.value, platform)))
           _     <- svOpt match {
                      case None     => pure(())
                      case Some(sv) =>
                        val binders = SignatureView.of(sv.value.signature).binders.drop(explicitArgs.size)
-                       implicitMetas.zip(binders).traverse_ {
-                         case (VMeta(id, _), binder) => recordIfHigherKinded(id, binder, fqn)
+                       implicitFlexes.zip(binders).traverse_ {
+                         case (VFlex(id, _), binder) => recordIfHigherKinded(id, binder, fqn)
                          case _                      => pure(())
                        }
                    }
@@ -73,11 +73,11 @@ class CarrierKindChecker(
     }
 
   /** Evaluate a binder's kind annotation; if it forces to a `VPi` (a higher kind such as `Type -> Type`), record the
-    * meta as higher-kinded with that kind (see [[recordCarrierMetas]]). A `Type`-kinded (ordinary) binder, or one with
+    * meta as higher-kinded with that kind (see [[recordCarrierFlexes]]). A `Type`-kinded (ordinary) binder, or one with
     * no annotation, is not recorded.
     */
   private def recordIfHigherKinded(
-      id: SemValue.MetaId,
+      id: SemValue.FlexId,
       binder: SignatureView.Binder,
       fqn: Sourced[ValueFQN]
   ): CheckIO[Unit] =
@@ -89,14 +89,14 @@ class CarrierKindChecker(
           forced <- force(kind)
           ctx     = fqn.as("Higher-kinded type parameter mismatch.")
           _      <- forced match {
-                      case _: VPi => modify(_.recordHigherKindedMeta(id, forced, ctx))
+                      case _: VPi => modify(_.recordHigherKindedFlex(id, forced, ctx))
                       case _      => pure(())
                     }
         } yield ()
     }
 
   /** Post-drain kind check for higher-kinded type-parameter instantiation metas (`[F[_]]` carriers). Each carrier
-    * recorded by [[recordCarrierMetas]] is checked two ways:
+    * recorded by [[recordCarrierFlexes]] is checked two ways:
     *
     *   - **Solved** to a value of the wrong kind — a fully-applied proper type (e.g. `?F := Box[String]`, kind `Type`)
     *     where a `Type -> Type` constructor is required — is reported as a mismatch. The unifier's direct empty-spine
@@ -111,11 +111,11 @@ class CarrierKindChecker(
   def verifyCarrierKinds: CheckIO[Unit] =
     for {
       s <- get
-      _ <- s.unifier.carrierMetas.traverse_ { case (rawId, (expectedKind, context)) =>
+      _ <- s.unifier.carrierFlexes.traverse_ { case (rawId, (expectedKind, context)) =>
              for {
-               solution <- force(VMeta(SemValue.MetaId(rawId), Spine.SNil))
+               solution <- force(VFlex(SemValue.FlexId(rawId), Spine.SNil))
                _        <- solution match {
-                             case _: VMeta => checkUnsolvedCarrier(SemValue.MetaId(rawId), context)
+                             case _: VFlex => checkUnsolvedCarrier(SemValue.FlexId(rawId), context)
                              case _        =>
                                kindOfSolution(solution).flatMap {
                                  case None       => pure(())
@@ -130,10 +130,10 @@ class CarrierKindChecker(
     * [[verifyCarrierKinds]]). The postponement queue is at its fixed point by the time this runs, so such a constraint
     * can never resolve.
     */
-  private def checkUnsolvedCarrier(id: SemValue.MetaId, context: Sourced[String]): CheckIO[Unit] =
+  private def checkUnsolvedCarrier(id: SemValue.FlexId, context: Sourced[String]): CheckIO[Unit] =
     for {
       s    <- get
-      store = s.unifier.metaStore
+      store = s.unifier.flexStore
       unsat = s.unifier.postponed.exists { case (l, r, _) =>
                 unsatisfiableApplication(id, l, r, store) || unsatisfiableApplication(id, r, l, store)
               }
@@ -149,13 +149,13 @@ class CarrierKindChecker(
     * postponed constraint.)
     */
   private def unsatisfiableApplication(
-      id: SemValue.MetaId,
+      id: SemValue.FlexId,
       applied: SemValue,
       other: SemValue,
-      store: MetaStore
+      store: FlexStore
   ): Boolean =
     Evaluator.force(applied, store) match {
-      case VMeta(mid, spine) if mid.value == id.value && spine.toList.nonEmpty =>
+      case VFlex(mid, spine) if mid.value == id.value && spine.toList.nonEmpty =>
         Evaluator.force(other, store) match {
           case VTopDef(_, None, rhsSpine, _) => rhsSpine.toList.length < spine.toList.length
           case VNeutral(_, rhsSpine)         => rhsSpine.toList.length < spine.toList.length

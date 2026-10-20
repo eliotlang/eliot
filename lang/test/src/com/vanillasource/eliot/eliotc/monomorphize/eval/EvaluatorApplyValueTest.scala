@@ -24,7 +24,7 @@ class EvaluatorApplyValueTest extends AnyFlatSpec with Matchers {
   }
 
   "the $bad-apply stuck form surviving to read-back" should "make the quoter fail loudly rather than mint a wrong type" in {
-    Quoter.quote(0, Evaluator.applyValue(VType, arg), MetaStore.empty) shouldBe
+    Quoter.quote(0, Evaluator.applyValue(VType, arg), FlexStore.empty) shouldBe
       Left("Cannot quote neutral value — contains unresolved variable")
   }
 }

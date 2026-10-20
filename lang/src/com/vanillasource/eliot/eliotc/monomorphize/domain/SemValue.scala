@@ -13,7 +13,8 @@ import com.vanillasource.eliot.eliotc.monomorphize.fact.GroundValue
   * - VNative: primitive that fires on concrete arguments.
   * - VTopDef: lazy top-level definition with a spine.
   * - VStuckNative: a primitive (native) application stuck on not-yet-concrete arguments.
-  * - VMeta: unsolved metavariable with a spine and expected type.
+  * - VFlex: a *flex* — an unsolved metavariable unification may still instantiate (as opposed to a rigid
+  *   [[VNeutral]]), applied to a spine. Named so as not to read as refinement meta-information.
   * - VNeutral: stuck application with a variable head and a spine.
   */
 sealed trait SemValue
@@ -94,15 +95,15 @@ object SemValue {
     def of(fqn: ValueFQN, args: SemValue*): SemValue = VStuckNative(fqn, args.foldLeft(Spine.SNil: Spine)(_ :+ _))
   }
 
-  case class VMeta(id: MetaId, spine: Spine) extends SemValue
+  case class VFlex(id: FlexId, spine: Spine) extends SemValue
 
   case class VNeutral(head: NeutralHead, spine: Spine) extends SemValue
 
   /** Opaque wrapper for metavariable identifiers. */
-  opaque type MetaId = Int
-  object MetaId {
-    def apply(id: Int): MetaId          = id
-    extension (id: MetaId) def value: Int = id
+  opaque type FlexId = Int
+  object FlexId {
+    def apply(id: Int): FlexId          = id
+    extension (id: FlexId) def value: Int = id
   }
 
   /** Head of a stuck neutral term. Identity is **structural** — the constructor and its fields — so neutrals minted by

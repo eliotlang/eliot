@@ -4,18 +4,18 @@ import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.module.fact.ValueFQN
 import com.vanillasource.eliot.eliotc.monomorphize.domain.SemValue
 import com.vanillasource.eliot.eliotc.monomorphize.domain.SemValue.*
-import com.vanillasource.eliot.eliotc.monomorphize.domain.MetaStore
+import com.vanillasource.eliot.eliotc.monomorphize.domain.FlexStore
 import com.vanillasource.eliot.eliotc.monomorphize.fact.GroundValue
 
 /** Quotes semantic values back to ground values. This is the "read-back" phase of NbE.
   *
-  * Fails on VNeutral, VMeta, VLam, VStuckNative — those should be resolved (or reduced) before quoting.
+  * Fails on VNeutral, VFlex, VLam, VStuckNative — those should be resolved (or reduced) before quoting.
   */
 object Quoter {
 
   /** Quote a semantic value to a ground value, forcing metas as needed. */
-  def quote(depth: Int, v: SemValue, metaStore: MetaStore): Either[String, GroundValue] = {
-    val forced = Evaluator.force(v, metaStore)
+  def quote(depth: Int, v: SemValue, flexStore: FlexStore): Either[String, GroundValue] = {
+    val forced = Evaluator.force(v, flexStore)
     forced match {
       case VType =>
         Right(GroundValue.Type)
@@ -25,8 +25,8 @@ object Quoter {
 
       case VPi(domain, codomain) =>
         for {
-          domGround <- quote(depth, domain, metaStore)
-          codGround <- quote(depth + 1, codomain(freshVar(depth)), metaStore)
+          domGround <- quote(depth, domain, flexStore)
+          codGround <- quote(depth + 1, codomain(freshVar(depth)), flexStore)
         } yield GroundValue.Structure(
           com.vanillasource.eliot.eliotc.module.fact.WellKnownTypes.functionDataTypeFQN,
           Seq(domGround, codGround),
@@ -39,13 +39,13 @@ object Quoter {
         // parameter that keeps the body structural). The spine (a higher-kinded binder's application, `F[Unit]`) is
         // quoted positionally.
         for {
-          args <- spine.toList.traverse(quote(depth, _, metaStore))
+          args <- spine.toList.traverse(quote(depth, _, flexStore))
         } yield GroundValue.Param(index, args, GroundValue.Type)
 
       case VNeutral(_, _) =>
         Left("Cannot quote neutral value — contains unresolved variable")
 
-      case VMeta(id, _) =>
+      case VFlex(id, _) =>
         Left(s"Cannot quote unsolved meta ?${id.value}")
 
       case VLam(_, _) =>
@@ -57,7 +57,7 @@ object Quoter {
       case VTopDef(fqn, None, spine, _) =>
         // An unevaluated constructor-like application (cached body is absent, e.g. for data value constructors).
         for {
-          args <- spine.toList.traverse(quote(depth, _, metaStore))
+          args <- spine.toList.traverse(quote(depth, _, flexStore))
         } yield GroundValue.Structure(fqn, args, GroundValue.Type)
 
       case VTopDef(fqn, _, _, _) =>

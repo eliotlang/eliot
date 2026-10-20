@@ -11,7 +11,7 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
 /** Pattern unification on SemValues with a postponement queue. All operations return a new Unifier instance — no
   * mutation occurs.
   *
-  * @param metaStore
+  * @param flexStore
   *   The current meta store
   * @param depth
   *   The current binding depth (for fresh variable generation)
@@ -24,31 +24,31 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
   * evaluator (= normalises) and compares. There is no notion of "assignability", directional widening, or branch
   * joining here — a mismatch is a mismatch.
   *
-  * Per-metavariable *kind* bookkeeping lives in [[higherKindedMetas]] — the expected kind of each higher-kinded
+  * Per-metavariable *kind* bookkeeping lives in [[higherKindedFlexes]] — the expected kind of each higher-kinded
   * (`[F[_]]`) instantiation meta, seeded at instantiation and verified post-drain
   * ([[com.vanillasource.eliot.eliotc.monomorphize.check.CarrierKindChecker]]). A meta absent from the map is ordinary
   * (kind `Type`) and is solved by ordinary unification or defaulted to `Type` at finalization.
   *
-  * @param higherKindedMetas
+  * @param higherKindedFlexes
   *   Per-meta-id expected kind for higher-kinded instantiation metas, with the call-site context an error is reported
-  *   at. Written by [[recordHigherKindedMeta]].
+  *   at. Written by [[recordHigherKindedFlex]].
   */
 case class Unifier(
-    metaStore: MetaStore,
+    flexStore: FlexStore,
     depth: Int,
     postponed: List[(SemValue, SemValue, Sourced[String])],
     errors: List[UnifyError],
-    higherKindedMetas: Map[Int, (SemValue, Sourced[String])] = Map.empty
+    higherKindedFlexes: Map[Int, (SemValue, Sourced[String])] = Map.empty
 ) {
 
   /** Every higher-kinded instantiation meta with its recorded kind, as `(id, (expectedKind, context))`. Drives
     * post-drain carrier-kind verification.
     */
-  def carrierMetas: List[(Int, (SemValue, Sourced[String]))] = higherKindedMetas.toList
+  def carrierFlexes: List[(Int, (SemValue, Sourced[String]))] = higherKindedFlexes.toList
 
   /** Record a higher-kinded instantiation meta's expected kind (`[F[_]]`). */
-  def recordHigherKindedMeta(id: MetaId, expectedKind: SemValue, context: Sourced[String]): Unifier =
-    copy(higherKindedMetas = higherKindedMetas.updated(id.value, (expectedKind, context)))
+  def recordHigherKindedFlex(id: FlexId, expectedKind: SemValue, context: Sourced[String]): Unifier =
+    copy(higherKindedFlexes = higherKindedFlexes.updated(id.value, (expectedKind, context)))
 
   /** Speculatively unify `l` against `r` without committing a mismatch (D5), returning an explicit [[UnifyResult]]
     * rather than forcing callers to diff [[errors]] before and after a [[unify]] call. A [[UnifyResult.Unified]]
@@ -73,8 +73,8 @@ case class Unifier(
     * equality.
     */
   def unify(l: SemValue, r: SemValue, context: Sourced[String]): Unifier = {
-    val fl = Evaluator.force(l, metaStore)
-    val fr = Evaluator.force(r, metaStore)
+    val fl = Evaluator.force(l, flexStore)
+    val fr = Evaluator.force(r, flexStore)
     (fl, fr) match {
       case (VType, VType) => this
 
@@ -108,17 +108,17 @@ case class Unifier(
       // the application, which is the most general unifier, exactly as the mirror orientation (bare left) does via the
       // next case. Without this arm the pattern rule would get `?F[a] ~ ?B` and postpone it, so the outcome would
       // depend on which side a constraint happens to be written.
-      case (VMeta(idA, spineA), VMeta(idB, Spine.SNil))
-          if spineA.toList.nonEmpty && idA.value != idB.value && metaStore.lookup(idB).isEmpty =>
+      case (VFlex(idA, spineA), VFlex(idB, Spine.SNil))
+          if spineA.toList.nonEmpty && idA.value != idB.value && flexStore.lookup(idB).isEmpty =>
         if (occursIn(idB, fl)) addOccursError(context)
-        else copy(metaStore = metaStore.solve(idB, fl))
+        else copy(flexStore = flexStore.solve(idB, fl))
 
-      // Meta solving (pattern rule)
-      case (VMeta(id, spine), rhs)                            =>
-        solveMeta(id, spine, rhs, context)
+      // Flex solving (pattern rule)
+      case (VFlex(id, spine), rhs)                            =>
+        solveFlex(id, spine, rhs, context)
 
-      case (lhs, VMeta(id, spine))                                              =>
-        solveMeta(id, spine, lhs, context)
+      case (lhs, VFlex(id, spine))                                              =>
+        solveFlex(id, spine, lhs, context)
 
       // VTopDef equality by FQN: same constructor → unify spines pointwise (definitional equality). Constructors
       // applied to differing arguments are genuinely unequal values and are rejected here.
@@ -139,15 +139,15 @@ case class Unifier(
   /** Try to solve a meta. Empty spine solves directly. Non-empty spine attempts injectivity-style decomposition against
     * a rigid applied rhs (see [[tryDecomposeApplied]]); failing that, postpones.
     */
-  private def solveMeta(id: MetaId, spine: Spine, rhs: SemValue, context: Sourced[String]): Unifier =
-    metaStore.lookup(id) match {
+  private def solveFlex(id: FlexId, spine: Spine, rhs: SemValue, context: Sourced[String]): Unifier =
+    flexStore.lookup(id) match {
       case Some(solved) =>
         // Already solved — unify the solution (with spine applied) against rhs.
         val applied = spine.toList.foldLeft(solved)(Evaluator.applyValue)
         unify(applied, rhs, context)
       case None         =>
         rhs match {
-          case VMeta(rhsId, _) if rhsId.value == id.value =>
+          case VFlex(rhsId, _) if rhsId.value == id.value =>
             this // Same unsolved meta — trivially equal, no solve needed
           case _                                          =>
             val spineList = spine.toList
@@ -156,11 +156,11 @@ case class Unifier(
               // `rhs` would build an infinite type (the `x x` / Y-combinator route) and loop `Evaluator.force` once the
               // cyclic meta is in the store. This is precondition #2 of the termination model — reject it instead.
               if (occursIn(id, rhs)) addOccursError(context)
-              else copy(metaStore = metaStore.solve(id, rhs))
+              else copy(flexStore = flexStore.solve(id, rhs))
             } else {
               // Non-empty spine — try injectivity decomposition first, otherwise postpone.
               tryDecomposeApplied(id, spineList, rhs, context)
-                .getOrElse(copy(postponed = (VMeta(id, spine), rhs, context) :: postponed))
+                .getOrElse(copy(postponed = (VFlex(id, spine), rhs, context) :: postponed))
             }
         }
     }
@@ -191,42 +191,42 @@ case class Unifier(
     * `renormalize`/defaulting once the arguments concretise.
     */
   private def tryDecomposeApplied(
-      id: MetaId,
-      metaSpine: List[SemValue],
+      id: FlexId,
+      flexSpine: List[SemValue],
       rhs: SemValue,
       context: Sourced[String]
   ): Option[Unifier] = rhs match {
     case VTopDef(fqn, None, rhsSpine, _) =>
-      decomposeSpines(id, metaSpine, rhsSpine, prefix => VTopDef(fqn, None, prefix), context)
+      decomposeSpines(id, flexSpine, rhsSpine, prefix => VTopDef(fqn, None, prefix), context)
     case VNeutral(head, rhsSpine)        =>
-      decomposeSpines(id, metaSpine, rhsSpine, prefix => VNeutral(head, prefix), context)
+      decomposeSpines(id, flexSpine, rhsSpine, prefix => VNeutral(head, prefix), context)
     case _                               => None
   }
 
-  /** Decompose `?id metaSpine ~ head rhsSpine` by injectivity. `rebuildHead` reattaches the leading prefix of
-    * `rhsSpine` (everything beyond the trailing `metaSpine.length` args) to the rigid head, which becomes `?id`'s
-    * solution; the trailing args unify pointwise against `metaSpine`. Returns `None` when the rhs is under-applied
+  /** Decompose `?id flexSpine ~ head rhsSpine` by injectivity. `rebuildHead` reattaches the leading prefix of
+    * `rhsSpine` (everything beyond the trailing `flexSpine.length` args) to the rigid head, which becomes `?id`'s
+    * solution; the trailing args unify pointwise against `flexSpine`. Returns `None` when the rhs is under-applied
     * relative to the meta (`n < m`), which has no injective solution.
     */
   private def decomposeSpines(
-      id: MetaId,
-      metaSpine: List[SemValue],
+      id: FlexId,
+      flexSpine: List[SemValue],
       rhsSpine: Spine,
       rebuildHead: Spine => SemValue,
       context: Sourced[String]
   ): Option[Unifier] = {
     val rhsList = rhsSpine.toList
-    if (rhsList.length < metaSpine.length) None
+    if (rhsList.length < flexSpine.length) None
     else {
-      val (prefix, suffix) = rhsList.splitAt(rhsList.length - metaSpine.length)
+      val (prefix, suffix) = rhsList.splitAt(rhsList.length - flexSpine.length)
       val headWithPrefix   = rebuildHead(prefix.foldLeft(Spine.SNil: Spine)(_ :+ _))
       // Occurs-check the injective solution too: `?F[A] ~ Either[?F, A]` would solve `?F := Either[?F]` (infinite).
       // Returning None here postpones rather than committing the cycle, so it surfaces as an unresolved type, never a
       // silently-accepted recursive one.
       if (occursIn(id, headWithPrefix)) None
       else {
-        val solvedMeta = copy(metaStore = metaStore.solve(id, headWithPrefix))
-        Some(metaSpine.zip(suffix).foldLeft(solvedMeta) { case (u, (l, r)) => u.unify(l, r, context) })
+        val solvedFlex = copy(flexStore = flexStore.solve(id, headWithPrefix))
+        Some(flexSpine.zip(suffix).foldLeft(solvedFlex) { case (u, (l, r)) => u.unify(l, r, context) })
       }
     }
   }
@@ -270,7 +270,7 @@ case class Unifier(
     hasBenignHead(l) || hasBenignHead(r)
 
   private def hasBenignHead(v: SemValue): Boolean =
-    Evaluator.force(v, metaStore) match {
+    Evaluator.force(v, flexStore) match {
       case VNeutral(NeutralHead.Reserved(NeutralHead.Marker.BadApply), _) => true
       case _                                                              => false
     }
@@ -312,9 +312,9 @@ case class Unifier(
     * mentioning `?id` — is also caught. This is the soundness gate of precondition #2 (no inferred infinite type): the
     * caller refuses to solve `?id := value` when this holds, so `Evaluator.force` can never enter a cyclic meta.
     */
-  private def occursIn(id: MetaId, value: SemValue): Boolean =
-    Evaluator.force(value, metaStore) match {
-      case VMeta(other, spine)     => other.value == id.value || spine.toList.exists(occursIn(id, _))
+  private def occursIn(id: FlexId, value: SemValue): Boolean =
+    Evaluator.force(value, flexStore) match {
+      case VFlex(other, spine)     => other.value == id.value || spine.toList.exists(occursIn(id, _))
       case VTopDef(_, _, spine, _) => spine.toList.exists(occursIn(id, _))
       case VStuckNative(_, spine)  => spine.toList.exists(occursIn(id, _))
       case VNeutral(_, spine)      => spine.toList.exists(occursIn(id, _))
@@ -362,6 +362,6 @@ case class Unifier(
 }
 
 object Unifier {
-  def create(metaStore: MetaStore, depth: Int): Unifier =
-    Unifier(metaStore, depth, Nil, Nil)
+  def create(flexStore: FlexStore, depth: Int): Unifier =
+    Unifier(flexStore, depth, Nil, Nil)
 }

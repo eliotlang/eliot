@@ -14,7 +14,7 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
 /** Structural ability-pattern matching via the monomorphize NbE unifier.
   *
   * A query evaluates one or more marker-function ORE signatures into the semantic domain, treating every abstract
-  * ability-typed reference as a fresh [[VMeta]] and every type constructor as a [[VTopDef]] head. Leading
+  * ability-typed reference as a fresh [[VFlex]] and every type constructor as a [[VTopDef]] head. Leading
   * type-parameter lambdas are peeled into fresh metas and the remaining curried function type is walked to
   * extract pattern arguments. Matching and overlap questions then reduce to [[Unifier]] calls.
   *
@@ -25,7 +25,7 @@ object AbilityMatcher {
 
   /** The outcome of a successful [[matchImpl]]: the GroundValue each of the impl's leading type parameters was bound
     * to (declaration order), plus whether every one of those bindings was recovered by the faithful structural trace
-    * ([[tracePatternMetas]]) rather than the lossy [[metaToGround]] fallback. A guard must not be evaluated over a
+    * ([[tracePatternFlexes]]) rather than the lossy [[flexToGround]] fallback. A guard must not be evaluated over a
     * fallback-collapsed binding (it could compare equal wrongly — ability-guards §3.1 fail-safe), so the discharge
     * refuses when `allTraced` is false.
     */
@@ -174,7 +174,7 @@ object AbilityMatcher {
 
   // ---- Phase 2: build a pure Evaluator over the classifications ----
 
-  private case class Setup(evaluator: Evaluator, metaStore: MetaStore)
+  private case class Setup(evaluator: Evaluator, flexStore: FlexStore)
 
   private def setupEvaluation(sigs: Seq[Sourced[OperatorResolvedExpression]]): CompilerIO[Setup] =
     sigs.foldLeft(Map.empty[ValueFQN, Binding].pure[CompilerIO])((acc, sig) =>
@@ -184,7 +184,7 @@ object AbilityMatcher {
   private def buildSetup(classifications: Map[ValueFQN, Binding]): Setup = {
     // Pre-allocate a stable meta per abstract ability-typed reference so that multiple references to the same
     // abstract associated type unify with each other without a substitution pass.
-    val (store0, abilityMetaIds) = classifications.foldLeft((MetaStore.empty, Map.empty[ValueFQN, MetaId])) {
+    val (store0, abilityFlexIds) = classifications.foldLeft((FlexStore.empty, Map.empty[ValueFQN, FlexId])) {
       case ((s, ids), (vfqn, Binding.AbstractAbility)) =>
         val (id, next) = s.fresh
         (next, ids + (vfqn -> id))
@@ -195,7 +195,7 @@ object AbilityMatcher {
     // defers evaluation until the VTopDef is forced. Both vals resolve in any order at first access.
     lazy val bindings: Map[ValueFQN, SemValue]      = classifications.map {
       case (vfqn, Binding.Constructor)     => vfqn -> VTopDef(vfqn, None, Spine.SNil)
-      case (vfqn, Binding.AbstractAbility) => vfqn -> VMeta(abilityMetaIds(vfqn), Spine.SNil)
+      case (vfqn, Binding.AbstractAbility) => vfqn -> VFlex(abilityFlexIds(vfqn), Spine.SNil)
       case (vfqn, Binding.Body(body))      =>
         vfqn -> VTopDef(vfqn, Some(Lazy(evaluator.eval(Env.empty, body.value))), Spine.SNil)
     } + (WellKnownTypes.typeFQN -> VType)
@@ -208,15 +208,15 @@ object AbilityMatcher {
 
   private case class Peeled(
       setup: Setup,
-      paramMetas: Seq[(String, MetaId)],
+      paramFlexes: Seq[(String, FlexId)],
       args: Seq[SemValue]
   )
 
   private def peelPattern(setup: Setup, sig: Sourced[OperatorResolvedExpression]): Peeled = {
     val evaluated                     = setup.evaluator.eval(Env.empty, sig.value)
-    val (body, nextStore, paramMetas) = peelLambdas(evaluated, setup.metaStore, Seq.empty)
+    val (body, nextStore, paramFlexes) = peelLambdas(evaluated, setup.flexStore, Seq.empty)
     val args                          = extractFunctionArgs(body, nextStore)
-    Peeled(Setup(setup.evaluator, nextStore), paramMetas, args)
+    Peeled(Setup(setup.evaluator, nextStore), paramFlexes, args)
   }
 
   /** Peel leading lambdas but return the whole body (not decomposed into function args). Used for signature
@@ -225,34 +225,34 @@ object AbilityMatcher {
   private def peelToBody(
       setup: Setup,
       sig: Sourced[OperatorResolvedExpression]
-  ): (Setup, Seq[(String, MetaId)], SemValue) = {
+  ): (Setup, Seq[(String, FlexId)], SemValue) = {
     val evaluated                     = setup.evaluator.eval(Env.empty, sig.value)
-    val (body, nextStore, paramMetas) = peelLambdas(evaluated, setup.metaStore, Seq.empty)
-    (Setup(setup.evaluator, nextStore), paramMetas, body)
+    val (body, nextStore, paramFlexes) = peelLambdas(evaluated, setup.flexStore, Seq.empty)
+    (Setup(setup.evaluator, nextStore), paramFlexes, body)
   }
 
   @scala.annotation.tailrec
   private def peelLambdas(
       sv: SemValue,
-      metaStore: MetaStore,
-      acc: Seq[(String, MetaId)]
-  ): (SemValue, MetaStore, Seq[(String, MetaId)]) =
-    Evaluator.force(sv, metaStore) match {
+      flexStore: FlexStore,
+      acc: Seq[(String, FlexId)]
+  ): (SemValue, FlexStore, Seq[(String, FlexId)]) =
+    Evaluator.force(sv, flexStore) match {
       case VLam(name, closure) =>
-        val (id, nextStore) = metaStore.fresh
-        val metaVal         = VMeta(id, Spine.SNil)
-        peelLambdas(closure(metaVal), nextStore, acc :+ (name, id))
-      case other               => (other, metaStore, acc)
+        val (id, nextStore) = flexStore.fresh
+        val flexVal         = VFlex(id, Spine.SNil)
+        peelLambdas(closure(flexVal), nextStore, acc :+ (name, id))
+      case other               => (other, flexStore, acc)
     }
 
   /** Walk a curried function type (a [[VTopDef]] at the Function FQN with spine `[paramType, returnType]`) and
     * collect argument positions, dropping the final return type.
     */
-  private def extractFunctionArgs(sv: SemValue, metaStore: MetaStore): Seq[SemValue] =
-    Evaluator.force(sv, metaStore) match {
+  private def extractFunctionArgs(sv: SemValue, flexStore: FlexStore): Seq[SemValue] =
+    Evaluator.force(sv, flexStore) match {
       case VTopDef(fqn, _, spine, _) if fqn == WellKnownTypes.functionDataTypeFQN =>
         spine.toList match {
-          case paramType :: returnType :: Nil => paramType +: extractFunctionArgs(returnType, metaStore)
+          case paramType :: returnType :: Nil => paramType +: extractFunctionArgs(returnType, flexStore)
           case _                              => Seq.empty
         }
       case _                                                                   => Seq.empty
@@ -269,40 +269,40 @@ object AbilityMatcher {
     else {
       val querySems = queryArgs.map(Evaluator.groundToSem)
       val context   = sourceRef.as("ability-match")
-      val unified   = peeled.args.zip(querySems).foldLeft(Unifier.create(peeled.setup.metaStore, 0)) {
+      val unified   = peeled.args.zip(querySems).foldLeft(Unifier.create(peeled.setup.flexStore, 0)) {
         case (u, (pat, q)) => u.unify(pat, q, context)
       }.drain()
       if (unified.errors.nonEmpty) None
       else {
         // For each impl type parameter meta, prefer its original query slot (walked structurally from the pattern
         // tree alongside the raw GroundValue) so that data-type field naming is preserved verbatim. Fall back to
-        // quoting the metastore for cases we can't structurally trace (runtime-bodied aliases, etc.).
-        val traced: Map[MetaId, GroundValue] =
-          peeled.args.zip(queryArgs).flatMap { case (p, q) => tracePatternMetas(p, q) }.toMap
-        val groundArgs                       = peeled.paramMetas.map { case (_, id) =>
-          traced.getOrElse(id, metaToGround(id, unified.metaStore))
+        // quoting the flex store for cases we can't structurally trace (runtime-bodied aliases, etc.).
+        val traced: Map[FlexId, GroundValue] =
+          peeled.args.zip(queryArgs).flatMap { case (p, q) => tracePatternFlexes(p, q) }.toMap
+        val groundArgs                       = peeled.paramFlexes.map { case (_, id) =>
+          traced.getOrElse(id, flexToGround(id, unified.flexStore))
         }
-        val allTraced                        = peeled.paramMetas.forall { case (_, id) => traced.contains(id) }
+        val allTraced                        = peeled.paramFlexes.forall { case (_, id) => traced.contains(id) }
         Some(Match(groundArgs, allTraced))
       }
     }
 
   /** Walk a pattern [[SemValue]] alongside the original query [[GroundValue]] that it was unified against, and
-    * record every [[MetaId]] → [[GroundValue]] pairing that appears at a structurally-aligned position.
+    * record every [[FlexId]] → [[GroundValue]] pairing that appears at a structurally-aligned position.
     *
     * Preserves the exact query-side ground values on complex bindings rather than re-quoting the meta's solution
-    * through the metastore, so the returned GroundValue matches the one present on the call site.
+    * through the flex store, so the returned GroundValue matches the one present on the call site.
     */
-  private def tracePatternMetas(
+  private def tracePatternFlexes(
       pattern: SemValue,
       query: GroundValue
-  ): Seq[(MetaId, GroundValue)] = pattern match {
-    case VMeta(id, Spine.SNil)  =>
+  ): Seq[(FlexId, GroundValue)] = pattern match {
+    case VFlex(id, Spine.SNil)  =>
       Seq(id -> query)
     case VTopDef(fqn, _, spine, _) =>
       query match {
         case GroundValue.Structure(queryFqn, args, _) if queryFqn == fqn =>
-          spine.toList.zip(args).flatMap { case (s, g) => tracePatternMetas(s, g) }
+          spine.toList.zip(args).flatMap { case (s, g) => tracePatternFlexes(s, g) }
         case _                                                           => Seq.empty
       }
     case _                      => Seq.empty
@@ -310,7 +310,7 @@ object AbilityMatcher {
 
   private def attemptSigCompat(
       setup: Setup,
-      absParams: Seq[(String, MetaId)],
+      absParams: Seq[(String, FlexId)],
       markerArgs: Seq[SemValue],
       absBody: SemValue,
       implBody: SemValue,
@@ -320,9 +320,9 @@ object AbilityMatcher {
     // Bind the leading (ability-level) abstract type params to the impl marker's pattern args via unification.
     // Any remaining abstract params (method-level) stay as free metas and will unify with the impl method's
     // corresponding metas during body unification.
-    val bound   = absParams.zip(markerArgs).foldLeft(Unifier.create(setup.metaStore, 0)) {
-      case (u, ((_, absMetaId), patternArg)) =>
-        u.unify(VMeta(absMetaId, Spine.SNil), patternArg, context)
+    val bound   = absParams.zip(markerArgs).foldLeft(Unifier.create(setup.flexStore, 0)) {
+      case (u, ((_, absFlexId), patternArg)) =>
+        u.unify(VFlex(absFlexId, Spine.SNil), patternArg, context)
     }
     bound.unify(absBody, implBody, context).drain().errors.isEmpty
   }
@@ -336,7 +336,7 @@ object AbilityMatcher {
     if (argsA.size != argsB.size) false
     else {
       val context = sourceRef.as("ability-overlap")
-      val unified = argsA.zip(argsB).foldLeft(Unifier.create(setup.metaStore, 0)) {
+      val unified = argsA.zip(argsB).foldLeft(Unifier.create(setup.flexStore, 0)) {
         case (u, (a, b)) => u.unify(a, b, context)
       }.drain()
       unified.errors.isEmpty
@@ -345,11 +345,11 @@ object AbilityMatcher {
   /** Read back a meta's solution as a GroundValue, mirroring the previous implementation's behaviour of defaulting
     * complex (non-simple-constructor, non-primitive) bindings to [[GroundValue.Type]].
     */
-  private def metaToGround(id: MetaId, metaStore: MetaStore): GroundValue =
-    metaStore.lookup(id) match {
+  private def flexToGround(id: FlexId, flexStore: FlexStore): GroundValue =
+    flexStore.lookup(id) match {
       case None      => GroundValue.Type
       case Some(sem) =>
-        Evaluator.force(sem, metaStore) match {
+        Evaluator.force(sem, flexStore) match {
           case VType                       => GroundValue.Type
           case VConst(g)                   => g
           case VTopDef(fqn, _, Spine.SNil, _) =>

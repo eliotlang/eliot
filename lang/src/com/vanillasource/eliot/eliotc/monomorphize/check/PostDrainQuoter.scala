@@ -10,7 +10,7 @@ import com.vanillasource.eliot.eliotc.module.fact.{
   ValueFQN,
   WellKnownTypes
 }
-import com.vanillasource.eliot.eliotc.monomorphize.domain.{Env, MetaStore, SemValue}
+import com.vanillasource.eliot.eliotc.monomorphize.domain.{Env, FlexStore, SemValue}
 import com.vanillasource.eliot.eliotc.monomorphize.eval.{Evaluator, Quoter, SemExpressionEvaluator}
 import com.vanillasource.eliot.eliotc.monomorphize.fact.{
   CompilerMonomorphicValue,
@@ -30,7 +30,7 @@ import scala.collection.mutable
 
 /** Post-drain conversion of a [[SemExpression]] tree into a [[MonomorphicExpression]] tree.
   *
-  * Every [[SemValue]] slot is quoted via [[Quoter.quote]] against the final metastore. Unresolved metas, neutrals,
+  * Every [[SemValue]] slot is quoted via [[Quoter.quote]] against the final flex store. Unresolved metas, neutrals,
   * lambdas, native applications, and unapplied top-level definitions surface as explicit `Cannot resolve type.`
   * compiler errors (with source positions taken from the enclosing expression / name) — there is no silent
   * `GroundValue.Type` fallback.
@@ -57,7 +57,7 @@ import scala.collection.mutable
   *     compiler error (never a silent bad emit of a runtime reference to an erased parameter).
   */
 class PostDrainQuoter(
-    metaStore: MetaStore,
+    flexStore: FlexStore,
     abilityResolutions: Map[CheckState.AbilityResolutionKey, (ValueFQN, Seq[GroundValue])],
     abilityArities: Map[ValueFQN, Int],
     monoEnv: Env,
@@ -78,7 +78,7 @@ class PostDrainQuoter(
     * which differ only in how they treat a `Left`: [[orAbort]] vs. `.toOption`.
     */
   private def quoteDeep(v: SemValue): Either[String, GroundValue] =
-    Quoter.quote(0, Evaluator.renormalize(v, metaStore, lookupTopDef, deep = true), metaStore)
+    Quoter.quote(0, Evaluator.renormalize(v, flexStore, lookupTopDef, deep = true), flexStore)
 
   /** A quoted result, or the fail-safe loud `Cannot resolve type.` abort at `at` — never a silent `Type` fallback. */
   private def orAbort(result: Either[String, GroundValue], at: Sourced[?]): CompilerIO[GroundValue] =
@@ -141,7 +141,7 @@ class PostDrainQuoter(
     */
   def reduceSourced(expr: Sourced[SemExpression]): CompilerIO[Sourced[MonomorphicExpression]] =
     reduceWithEscalation(monoEnv, expr.value, EscalatingReducer.reducibleStuck).flatMap { reduced =>
-      Quoter.quote(0, reduced, metaStore) match {
+      Quoter.quote(0, reduced, flexStore) match {
         case Left(_)       => quoteSourced(expr)
         case Right(ground) =>
           materialise(ground, expr).flatMap {
@@ -168,7 +168,7 @@ class PostDrainQuoter(
     * type and a value whose normal form merely *quotes* like one (see [[reduceSourced]]).
     */
   private def isTypedAsType(expressionType: SemValue): Boolean =
-    Evaluator.force(expressionType, metaStore) match {
+    Evaluator.force(expressionType, flexStore) match {
       case SemValue.VType => true
       case _              => false
     }
@@ -191,7 +191,7 @@ class PostDrainQuoter(
   private def reduceWithEscalation(
       env: Env,
       expr: SemExpression,
-      stuck: (SemValue, MetaStore) => Boolean
+      stuck: (SemValue, FlexStore) => Boolean
   ): CompilerIO[SemValue] = {
     val resolved = resolveAbilityRefs(expr)
     // Evaluate, then **renormalise** (re-firing a stuck native `add(2,1)` ⤳ `3`, descending under `VPi` binders) before
@@ -202,11 +202,11 @@ class PostDrainQuoter(
     def evalWith(extra: Map[ValueFQN, SemValue]): SemValue =
       Evaluator.renormalize(
         new SemExpressionEvaluator(fqn => extra.get(fqn).orElse(lookupTopDef(fqn))).eval(env, resolved),
-        metaStore,
+        flexStore,
         lookupTopDef,
         deep = true
       )
-    EscalatingReducer.escalatingLoop(metaStore, evalWith, escalationBindings(resolved, _), stuck)
+    EscalatingReducer.escalatingLoop(flexStore, evalWith, escalationBindings(resolved, _), stuck)
   }
 
   /** Whether evaluating the checked `expr` can run a control effect — reach an escape frame. An evaluation that does is
@@ -243,7 +243,7 @@ class PostDrainQuoter(
     // referenced at two distinct instantiations (§2.3) rather than silently escalating an arbitrary first one. Identical
     // (fqn, args) duplicates are folded by `escalate`'s own `.distinct`.
     val candidates = valueRefsWithArgs(resolved).flatMap { case (fqn, typeArgs) =>
-      typeArgs.toList.traverse(a => Quoter.quote(0, a, metaStore)).toOption.map(fqn -> _)
+      typeArgs.toList.traverse(a => Quoter.quote(0, a, flexStore)).toOption.map(fqn -> _)
     }
     EscalatingReducer.escalate(candidates, already, reduceInstance, absorbTypeArgs(_, _))
   }
@@ -394,8 +394,8 @@ class PostDrainQuoter(
       expr: Sourced[SemExpression],
       evalEnv: Env
   ): CompilerIO[Option[Sourced[MonomorphicExpression]]] = {
-    val forced = Evaluator.force(semEvaluator.eval(evalEnv, expr.value), metaStore)
-    Quoter.quote(0, forced, metaStore) match {
+    val forced = Evaluator.force(semEvaluator.eval(evalEnv, expr.value), flexStore)
+    Quoter.quote(0, forced, flexStore) match {
       case Left(_)       => Option.empty[Sourced[MonomorphicExpression]].pure[CompilerIO]
       case Right(ground) => materialise(ground, expr).map(_.map(expr.as))
     }
@@ -540,7 +540,7 @@ class PostDrainQuoter(
 
   /** Whether `name` denotes a runtime value parameter in this eval env (ρ) — i.e. it is bound to a neutral, the fresh
     * rigid variable a runtime `FunctionLiteral` introduces during read-back. Erased type parameters are bound to values
-    * (`monoEnv` seeds them) and instantiation metas to `VMeta`, so only runtime lambda binders read back as neutrals.
+    * (`monoEnv` seeds them) and instantiation metas to `VFlex`, so only runtime lambda binders read back as neutrals.
     * Reading this off ρ replaces a separately-threaded `runtimeParams` set.
     */
   private def isRuntimeParam(name: String, evalEnv: Env): Boolean =
@@ -586,7 +586,7 @@ class PostDrainQuoter(
     semTypeArgs
       .take(abilityArities.getOrElse(methodVfqn, Int.MaxValue))
       .toList
-      .traverse(a => Quoter.quote(0, a, metaStore))
+      .traverse(a => Quoter.quote(0, a, flexStore))
       .toOption
 
   /** The implementation method's type arguments: its instance's, then the call's method-level ones. A clause's binders

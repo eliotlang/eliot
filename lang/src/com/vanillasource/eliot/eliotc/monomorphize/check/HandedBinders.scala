@@ -4,7 +4,7 @@ import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.module.fact.{ValueFQN, WellKnownTypes}
 import com.vanillasource.eliot.eliotc.monomorphize.check.CheckIO.*
 import com.vanillasource.eliot.eliotc.monomorphize.domain.SemValue
-import com.vanillasource.eliot.eliotc.monomorphize.domain.SemValue.{Spine, VMeta, VTopDef}
+import com.vanillasource.eliot.eliotc.monomorphize.domain.SemValue.{Spine, VFlex, VTopDef}
 import com.vanillasource.eliot.eliotc.monomorphize.eval.{Evaluator, Quoter}
 import com.vanillasource.eliot.eliotc.monomorphize.fact.GroundValue
 import com.vanillasource.eliot.eliotc.operator.fact.OperatorResolvedExpression
@@ -65,10 +65,10 @@ object HandedBinders {
   ): CheckIO[Boolean] =
     references.toList.foldLeftM(false) { (progress, reference) =>
       get.flatMap { state =>
-        val store   = state.unifier.metaStore
+        val store   = state.unifier.flexStore
         val first   = reference.handed.min
         val open    = reference.handed.exists(index =>
-          reference.typeArguments.lift(index).exists(argument => Evaluator.force(argument, store).isInstanceOf[VMeta])
+          reference.typeArguments.lift(index).exists(argument => Evaluator.force(argument, store).isInstanceOf[VFlex])
         )
         val leading = reference.typeArguments.take(first).toList.traverse(Quoter.quote(0, _, store))
         (open, leading) match {
@@ -97,12 +97,12 @@ object HandedBinders {
     * is performed rather than silently dispatched. A bodied value whose runs never solve one never runs that code.
     */
   def own(hasBody: Boolean, at: Sourced[?]): CheckIO[Seq[SemValue]] =
-    inspect(_.ownHanded).flatMap(_.toList.traverse[CheckIO, SemValue] { (name, meta) =>
-      inspect(s => Evaluator.force(meta, s.unifier.metaStore)).flatMap {
-        case unsolved: VMeta if !hasBody =>
+    inspect(_.ownHanded).flatMap(_.toList.traverse[CheckIO, SemValue] { (name, flex) =>
+      inspect(s => Evaluator.force(flex, s.unifier.flexStore)).flatMap {
+        case unsolved: VFlex if !hasBody =>
           val mark = VTopDef(WellKnownTypes.handedTypeFQN, None, Spine.SNil)
           modify(s => s.withUnifier(s.unifier.unify(unsolved, mark, at.as("Type mismatch.")))).as(mark: SemValue)
-        case _: VMeta                    =>
+        case _: VFlex                    =>
           liftF(
             compilerError(
               at.as(s"This value never runs the code whose handle '$name' its clause lists, so the handle has no type."),

@@ -89,7 +89,7 @@ class TypeStackLoop(
       //   - on the **compiler** track (the guard's *producer*) the guarded signature is left undischarged for a
       //     consumer.
       settled               <- settleAtRead(instantiated, bodyToCheck.isDefined, resolvedValue)
-      (checkSig, returnMeta) = settled
+      (checkSig, returnFlex) = settled
 
       // Capture ρ now, before `check` binds the runtime value parameters as `FunctionLiteral` binders — so ρ holds only
       // the erased type-stack parameters (each already in its evaluable `groundToSem` form) and the leftover-binder
@@ -109,7 +109,7 @@ class TypeStackLoop(
 
       // Post-drain resolution + quoter assembly (shared with the signature twin): drain-and-resolve every metavariable,
       // abort on any unification error, then build the `PostDrainQuoter` over the drain-resolved impl bindings.
-      quoter    <- drainAndBuildQuoter(resolvedValue, abilityRefs, returnMeta, monoEnv, handedRefs, runtime.isDefined)
+      quoter    <- drainAndBuildQuoter(resolvedValue, abilityRefs, returnFlex, monoEnv, handedRefs, runtime.isDefined)
       ownHanded <- inspect(_.ownHanded.map(_._2))
       handed    <- liftF(ownHanded.traverse(quoter.quoteSem(_, resolvedValue.name)))
       choices   <- inspect(_.handleChoices)
@@ -239,16 +239,16 @@ class TypeStackLoop(
     * drain-and-resolve loop that meta should have been solved to the body's inferred type. If it is still a bare
     * metavariable the body left it unconstrained, and if it forced to a stuck neutral the result depends on a variable
     * the inputs do not determine. Either way report a specific error — naming the producer and, for a neutral, the
-    * stuck head — rather than letting [[defaultUnsolvedMetas]] silently make the return `Type`. (A return solved to
+    * stuck head — rather than letting [[defaultUnsolvedFlexes]] silently make the return `Type`. (A return solved to
     * some *other* non-quotable form — an unforced top-level definition, a residual native/lambda — is caught instead by
     * the strict post-drain quoter, which knows precisely which of those are irreducible, so those are left to it.)
     */
   private def failOnUndeterminedDeferredReturn(
-      returnMeta: SemValue.VMeta,
+      returnFlex: SemValue.VFlex,
       resolvedValue: OperatorResolvedValue
   ): CheckIO[Unit] =
-    checker.force(returnMeta).flatMap {
-      case _: SemValue.VMeta          =>
+    checker.force(returnFlex).flatMap {
+      case _: SemValue.VFlex          =>
         reportUndeterminedReturn(resolvedValue, "the body leaves it unconstrained")
       case SemValue.VNeutral(head, _) =>
         reportUndeterminedReturn(
@@ -270,14 +270,14 @@ class TypeStackLoop(
     * point, so any meta unification could have determined is already solved; what remains is an unconstrained (phantom)
     * instantiation, whose canonical value is `Type`.
     */
-  private def defaultUnsolvedMetas: CheckIO[Unit] =
+  private def defaultUnsolvedFlexes: CheckIO[Unit] =
     modify { s =>
-      val store  = s.unifier.metaStore
+      val store  = s.unifier.flexStore
       val solved = store.entries.foldLeft(store) {
-        case (acc, (rawId, None)) => acc.solve(SemValue.MetaId(rawId), VType)
+        case (acc, (rawId, None)) => acc.solve(SemValue.FlexId(rawId), VType)
         case (acc, _)             => acc
       }
-      s.withUnifier(s.unifier.copy(metaStore = solved))
+      s.withUnifier(s.unifier.copy(flexStore = solved))
     }
 
   /** The shared post-drain tail of both monos (the value mono and the signature twin): run the drain-and-resolve
@@ -293,13 +293,13 @@ class TypeStackLoop(
   private def drainAndBuildQuoter(
       resolvedValue: OperatorResolvedValue,
       abilityRefs: Seq[AbilityRef],
-      returnMeta: Option[SemValue.VMeta],
+      returnFlex: Option[SemValue.VFlex],
       monoEnv: Env,
       handedRefs: Seq[HandedBinders.Reference] = Seq.empty,
       hasBody: Boolean = true
   ): CheckIO[PostDrainQuoter] =
     for {
-      _                    <- runPostDrainResolution(resolvedValue, abilityRefs, returnMeta, handedRefs, hasBody)
+      _                    <- runPostDrainResolution(resolvedValue, abilityRefs, returnFlex, handedRefs, hasBody)
       state                <- get
       _                    <- state.unifier.errors.reverse.traverse_(err => liftF(reportUnifyError(err, state)))
       _                    <- if (state.unifier.errors.nonEmpty) liftF(abort[Unit]) else pure(())
@@ -308,7 +308,7 @@ class TypeStackLoop(
                                 implBindings.get(implFqn).map(ref.value -> _)
                               }.toMap
     } yield new PostDrainQuoter(
-      state.unifier.metaStore,
+      state.unifier.flexStore,
       state.abilityResolutions,
       state.abilityArities,
       monoEnv,
@@ -325,29 +325,29 @@ class TypeStackLoop(
     *   - a final drain: a finalization step can commit new solutions (carrier-kind verification unifies a solution's
     *     kind against its expectation), so the equality core settles once more before defaulting — a constraint
     *     postponed against a meta those solutions ground still resolves instead of its metas defaulting to `Type`.
-    *   - the FINALIZER ([[defaultUnsolvedMetas]]), the postponement flush, and the postcondition assertion.
+    *   - the FINALIZER ([[defaultUnsolvedFlexes]]), the postponement flush, and the postcondition assertion.
     */
   private def runPostDrainResolution(
       resolvedValue: OperatorResolvedValue,
       abilityRefs: Seq[AbilityRef],
-      returnMeta: Option[SemValue.VMeta],
+      returnFlex: Option[SemValue.VFlex],
       handedRefs: Seq[HandedBinders.Reference],
       hasBody: Boolean
   ): CheckIO[Unit] =
     for {
       _ <- resolveAbilitiesToFixedPoint(abilityRefs, handedRefs)
       _ <- checker.carriers.verifyCarrierKinds
-      _ <- returnMeta.traverse_(failOnUndeterminedDeferredReturn(_, resolvedValue))
+      _ <- returnFlex.traverse_(failOnUndeterminedDeferredReturn(_, resolvedValue))
       _ <- modify(s => s.withUnifier(s.unifier.drain()))
       // A handed type is never defaulted: its runs decide it, or nothing does ([[HandedBinders.own]]).
       _ <- HandedBinders.own(hasBody, resolvedValue.name)
-      _ <- defaultUnsolvedMetas
+      _ <- defaultUnsolvedFlexes
       // Fail-safe (TODO.md): any constraint still postponed after the finalizer is an equality obligation the check
       // never discharged. Flush the queue to hard mismatch errors (triaging benign, now-defaulted constraints away
       // first) rather than silently carrying and forgetting them — the hole that let pre-fix applied-associated-type
       // garbage compile. Runs before the meta-postcondition assertion, which the defaulting already satisfies.
       _ <- modify(s => s.withUnifier(s.unifier.flushPostponed()))
-      _ <- assertEveryMetaResolved(resolvedValue)
+      _ <- assertEveryFlexResolved(resolvedValue)
     } yield ()
 
   /** Saturation: drain the unifier — so the resolver sees every solution the previous round injected — then resolve
@@ -375,14 +375,14 @@ class TypeStackLoop(
   }
 
   /** Postcondition of the post-drain pipeline (D1): every metavariable is solved. The finalizer
-    * ([[defaultUnsolvedMetas]]) makes this hold by construction, so it never fires in normal operation; it is the
+    * ([[defaultUnsolvedFlexes]]) makes this hold by construction, so it never fires in normal operation; it is the
     * *compiler-bug* backstop — were a future resolution path to bypass the finalizer and leave a meta unsolved, this
     * assertion catches it. It [[compilerAbort]]s rather than reporting a user diagnostic because a surviving unsolved
     * meta is an internal invariant violation, not a type error of the user's making.
     */
-  private def assertEveryMetaResolved(resolvedValue: OperatorResolvedValue): CheckIO[Unit] =
+  private def assertEveryFlexResolved(resolvedValue: OperatorResolvedValue): CheckIO[Unit] =
     inspect { s =>
-      s.unifier.metaStore.entries.collect { case (rawId, None) => rawId }.toList
+      s.unifier.flexStore.entries.collect { case (rawId, None) => rawId }.toList
     }.flatMap {
       case Nil      => pure(())
       case unsolved =>
@@ -421,31 +421,31 @@ class TypeStackLoop(
         for {
           // One fresh metavariable per *leftover* binder index, memoised so the ρ binding and the `GroundValue.Param`
           // re-inflation below share the same meta.
-          paramMetas <- (typeArguments.size until binders.size).toList
-                          .traverse(i => checker.freshMeta.map(m => i -> (m: SemValue)))
-                          .map(_.toMap)
-          _          <- binders.zipWithIndex.traverse_ { case (binder, i) =>
-                          typeArguments.lift(i) match {
-                            case Some(arg) =>
-                              modify(
-                                _.bindTypeStackParam(
-                                  binder.name.value,
-                                  Evaluator.groundToSem(arg.valueType),
-                                  Evaluator.groundToSem(arg)
-                                )
-                              )
-                            case None      =>
-                              for {
-                                kindSem <- binder.parameterType
-                                             .traverse(k => checker.evalExpr(k.value))
-                                             .map(_.getOrElse(VType))
-                                _       <- modify(_.bindTypeStackParam(binder.name.value, kindSem, paramMetas(i)))
-                              } yield ()
-                          }
-                        }
-          handed      = HandedBinders.of(resolvedValue.signature).filter(paramMetas.contains)
-          _          <- modify(_.copy(ownHanded = handed.map(i => binders(i).name.value -> paramMetas(i))))
-        } yield Evaluator.groundToSemPiParam(groundSig, i => paramMetas.getOrElse(i, VType))
+          paramFlexes <- (typeArguments.size until binders.size).toList
+                           .traverse(i => checker.freshFlex.map(m => i -> (m: SemValue)))
+                           .map(_.toMap)
+          _           <- binders.zipWithIndex.traverse_ { case (binder, i) =>
+                           typeArguments.lift(i) match {
+                             case Some(arg) =>
+                               modify(
+                                 _.bindTypeStackParam(
+                                   binder.name.value,
+                                   Evaluator.groundToSem(arg.valueType),
+                                   Evaluator.groundToSem(arg)
+                                 )
+                               )
+                             case None      =>
+                               for {
+                                 kindSem <- binder.parameterType
+                                              .traverse(k => checker.evalExpr(k.value))
+                                              .map(_.getOrElse(VType))
+                                 _       <- modify(_.bindTypeStackParam(binder.name.value, kindSem, paramFlexes(i)))
+                               } yield ()
+                           }
+                         }
+          handed       = HandedBinders.of(resolvedValue.signature).filter(paramFlexes.contains)
+          _           <- modify(_.copy(ownHanded = handed.map(i => binders(i).name.value -> paramFlexes(i))))
+        } yield Evaluator.groundToSemPiParam(groundSig, i => paramFlexes.getOrElse(i, VType))
     }
   }
 
@@ -458,16 +458,16 @@ class TypeStackLoop(
       instantiated: SemValue,
       hasBody: Boolean,
       resolvedValue: OperatorResolvedValue
-  ): CheckIO[(SemValue, Option[SemValue.VMeta])] =
+  ): CheckIO[(SemValue, Option[SemValue.VFlex])] =
     track.platform match {
       case Platform.Runtime  =>
         checker.guards.dischargeGuardedSignature(instantiated, hasBody, resolvedValue.name)
       case Platform.Compiler =>
-        pure((instantiated, Option.empty[SemValue.VMeta]))
+        pure((instantiated, Option.empty[SemValue.VFlex]))
     }
 
   /** Emit a [[UnifyError]] as a compiler error, including `Expected` / `Actual` hints when the error carries both
-    * sides. The semantic values are re-forced through the final metastore so any metas that were solved after the error
+    * sides. The semantic values are re-forced through the final store so any metas that were solved after the error
     * was raised display their resolution.
     */
   private def reportUnifyError(err: UnifyError, state: CheckState): CompilerIO[Unit] =
@@ -477,8 +477,8 @@ class TypeStackLoop(
     (err.expected, err.actual) match {
       case (Some(expected), Some(actual)) =>
         Seq(
-          s"Expected: ${SemValuePrinter.show(expected, state.unifier.metaStore)}",
-          s"Actual:   ${SemValuePrinter.show(actual, state.unifier.metaStore)}"
+          s"Expected: ${SemValuePrinter.show(expected, state.unifier.flexStore)}",
+          s"Actual:   ${SemValuePrinter.show(actual, state.unifier.flexStore)}"
         )
       case _                              => Seq.empty
     }

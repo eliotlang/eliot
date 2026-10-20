@@ -37,40 +37,40 @@ class StuckNativeUnifyTest extends AnyFlatSpec with Matchers {
   private def stuck(f: ValueFQN, args: SemValue*): SemValue = VStuckNative(f, spineOf(args*))
 
   /** A fresh unifier with one metavariable, plus that meta's id. */
-  private def withMeta(): (SemValue.MetaId, Unifier) = {
-    val (id, store) = MetaStore.empty.fresh
+  private def withFlex(): (SemValue.FlexId, Unifier) = {
+    val (id, store) = FlexStore.empty.fresh
     (id, Unifier.create(store, 0))
   }
 
   "an applied meta unified against a constructor application" should "decompose injectively, solving the meta to the constructor" in {
-    val (id, u) = withMeta()
-    val result  = u.unify(VMeta(id, spineOf(rigid("a"))), VTopDef(boxFqn, None, spineOf(rigid("a"))), ctx).drain()
-    (result.errors, result.metaStore.lookup(id)) shouldBe (Nil, Some(VTopDef(boxFqn, None, Spine.SNil)))
+    val (id, u) = withFlex()
+    val result  = u.unify(VFlex(id, spineOf(rigid("a"))), VTopDef(boxFqn, None, spineOf(rigid("a"))), ctx).drain()
+    (result.errors, result.flexStore.lookup(id)) shouldBe (Nil, Some(VTopDef(boxFqn, None, Spine.SNil)))
   }
 
   "an applied meta unified against a stuck native application" should "not injectivity-decompose the non-injective native" in {
-    val (id, u) = withMeta()
-    u.unify(VMeta(id, spineOf(rigid("a"))), stuck(addFqn, rigid("x"), rigid("y")), ctx).drain().metaStore.lookup(id) shouldBe None
+    val (id, u) = withFlex()
+    u.unify(VFlex(id, spineOf(rigid("a"))), stuck(addFqn, rigid("x"), rigid("y")), ctx).drain().flexStore.lookup(id) shouldBe None
   }
 
   it should "postpone the constraint rather than erroring" in {
-    val (id, u) = withMeta()
-    val result  = u.unify(VMeta(id, spineOf(rigid("a"))), stuck(addFqn, rigid("x"), rigid("y")), ctx)
+    val (id, u) = withFlex()
+    val result  = u.unify(VFlex(id, spineOf(rigid("a"))), stuck(addFqn, rigid("x"), rigid("y")), ctx)
     (result.errors, result.postponed.size) shouldBe (Nil, 1)
   }
 
   "two stuck natives with the same FQN and arguments" should "unify by definitional equality" in {
-    val (_, u) = withMeta()
+    val (_, u) = withFlex()
     u.unify(stuck(addFqn, rigid("x"), rigid("y")), stuck(addFqn, rigid("x"), rigid("y")), ctx).errors shouldBe empty
   }
 
   "two stuck natives with different FQNs" should "fail to unify" in {
-    val (_, u) = withMeta()
+    val (_, u) = withFlex()
     u.unify(stuck(addFqn, rigid("x"), rigid("y")), stuck(subFqn, rigid("x"), rigid("y")), ctx).errors should not be empty
   }
 
   "a stuck native surviving to read-back" should "make the quoter fail loudly" in {
-    Quoter.quote(0, stuck(addFqn, rigid("x"), rigid("y")), MetaStore.empty) shouldBe
+    Quoter.quote(0, stuck(addFqn, rigid("x"), rigid("y")), FlexStore.empty) shouldBe
       Left(s"Cannot quote stuck native application ${addFqn.show}")
   }
 }

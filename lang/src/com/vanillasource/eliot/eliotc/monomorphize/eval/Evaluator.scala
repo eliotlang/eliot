@@ -68,7 +68,7 @@ object Evaluator {
 
   /** Apply a semantic value to an argument.
     *
-    * The head cases (`VLam`/`VPi` β-reduce, `VNative` fires, `VNeutral`/`VTopDef`/`VStuckNative`/`VMeta` grow their
+    * The head cases (`VLam`/`VPi` β-reduce, `VNative` fires, `VNeutral`/`VTopDef`/`VStuckNative`/`VFlex` grow their
     * spine) are exhaustive for every applicable head. The remaining heads — `VConst` and `VType` — are *not*
     * applicable: applying an argument to a literal, a concrete type value, or `Type` can only arise in an **ill-typed**
     * program (one the checker has already, or is about to, reject with a "Not a function." / "Type mismatch."). The
@@ -104,7 +104,7 @@ object Evaluator {
 
     case VStuckNative(fqn, spine) => VStuckNative(fqn, spine :+ x)
 
-    case VMeta(id, spine) => VMeta(id, spine :+ x)
+    case VFlex(id, spine) => VFlex(id, spine :+ x)
 
     case VConst(_) | VType =>
       // Non-applicable head in an ill-typed program (already-recorded diagnostic) — fail loud at read-back, never
@@ -112,7 +112,7 @@ object Evaluator {
       VNeutral(badApplyHead, Spine.SNil :+ x)
   }
 
-  /** Unfold a VTopDef by evaluating its cached body and applying the spine. Does not require MetaStore — used at
+  /** Unfold a VTopDef by evaluating its cached body and applying the spine. Does not require FlexStore — used at
     * evaluation time before metas exist.
     */
   private def unfoldTopDef(v: SemValue): SemValue = v match {
@@ -199,55 +199,55 @@ object Evaluator {
 
   def renormalize(
       v: SemValue,
-      metaStore: MetaStore,
+      flexStore: FlexStore,
       lookupNative: ValueFQN => Option[SemValue],
       deep: Boolean = false
   ): SemValue =
-    if (currentNativeLookup.value eq lookupNative) renormalizeUnder(v, metaStore, lookupNative, deep)
-    else currentNativeLookup.withValue(lookupNative)(renormalizeUnder(v, metaStore, lookupNative, deep))
+    if (currentNativeLookup.value eq lookupNative) renormalizeUnder(v, flexStore, lookupNative, deep)
+    else currentNativeLookup.withValue(lookupNative)(renormalizeUnder(v, flexStore, lookupNative, deep))
 
   private def renormalizeUnder(
       v: SemValue,
-      metaStore: MetaStore,
+      flexStore: FlexStore,
       lookupNative: ValueFQN => Option[SemValue],
       deep: Boolean = false
   ): SemValue =
-    force(v, metaStore) match {
+    force(v, flexStore) match {
       case VStuckNative(fqn, spine)      =>
-        val args = spine.toList.map(renormalize(_, metaStore, lookupNative, deep))
+        val args = spine.toList.map(renormalize(_, flexStore, lookupNative, deep))
         lookupNative(fqn) match {
           case Some(native: VNative) =>
             args.foldLeft(native: SemValue)(applyValue) match {
               // Still stuck on the same native (an argument is genuinely abstract) — keep it (renormalised args carried).
               case stuckAgain @ VStuckNative(stuckFqn, _) if stuckFqn == fqn => stuckAgain
-              case fired                                                     => renormalize(fired, metaStore, lookupNative, deep)
+              case fired                                                     => renormalize(fired, flexStore, lookupNative, deep)
             }
           case _                     =>
             // No native reducer found (should not happen for a stuck native) — keep the stuck form, renormalised.
             args.foldLeft(VStuckNative(fqn, Spine.SNil): SemValue)(applyValue)
         }
       case VTopDef(fqn, None, spine, _)  =>
-        val args = spine.toList.map(renormalize(_, metaStore, lookupNative, deep))
+        val args = spine.toList.map(renormalize(_, flexStore, lookupNative, deep))
         args.foldLeft(VTopDef(fqn, None, Spine.SNil): SemValue)(applyValue)
       case VPi(domain, codomain) if deep =>
         VPi(
-          renormalize(domain, metaStore, lookupNative, deep),
-          arg => renormalize(codomain(arg), metaStore, lookupNative, deep)
+          renormalize(domain, flexStore, lookupNative, deep),
+          arg => renormalize(codomain(arg), flexStore, lookupNative, deep)
         )
       case forced                        => forced
     }
 
   /** Force a semantic value by walking solved metas and unfolding VTopDef. */
-  def force(v: SemValue, metaStore: MetaStore): SemValue = v match {
-    case VMeta(id, spine)                        =>
-      metaStore.lookup(id) match {
+  def force(v: SemValue, flexStore: FlexStore): SemValue = v match {
+    case VFlex(id, spine)                        =>
+      flexStore.lookup(id) match {
         case Some(solved) =>
-          val base = force(solved, metaStore)
+          val base = force(solved, flexStore)
           spine.toList.foldLeft(base)(applyValue)
         case None         => v
       }
     case topDef @ VTopDef(_, Some(cached), _, _) =>
-      force(applySpine(topDef, force(cached.value, metaStore)), metaStore)
+      force(applySpine(topDef, force(cached.value, flexStore)), flexStore)
     case _                                       => v
   }
 

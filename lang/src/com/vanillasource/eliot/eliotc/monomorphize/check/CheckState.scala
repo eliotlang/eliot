@@ -22,8 +22,8 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
   *
   * Per-metavariable kind bookkeeping (which instantiation metas are higher-kinded, and to what kind) is **not** held
   * here as a separate side-table: it lives in the
-  * [[com.vanillasource.eliot.eliotc.monomorphize.unify.Unifier.higherKindedMetas]] map on the [[unifier]], and
-  * [[recordHigherKindedMeta]] below delegates into it.
+  * [[com.vanillasource.eliot.eliotc.monomorphize.unify.Unifier.higherKindedFlexes]] map on the [[unifier]], and
+  * [[recordHigherKindedFlex]] below delegates into it.
   *
   * @param gamma
   *   Γ: the typing context — parameter name → its type (de Bruijn level environment).
@@ -73,7 +73,7 @@ case class CheckState(
     bindingCache: Map[ValueFQN, Option[SemValue]],
     abilityResolutions: Map[CheckState.AbilityResolutionKey, (ValueFQN, Seq[GroundValue])],
     abilityArities: Map[ValueFQN, Int] = Map.empty,
-    sharedHoles: Map[BigInt, VMeta] = Map.empty,
+    sharedHoles: Map[BigInt, VFlex] = Map.empty,
     handleHoles: Seq[HandleHoleResolver.Hole] = Seq.empty,
     handleChoices: Map[Int, String] = Map.empty,
     handedBinders: Map[ValueFQN, Seq[Int]] = Map.empty,
@@ -81,8 +81,8 @@ case class CheckState(
 ) {
 
   /** Record a higher-kinded type-parameter instantiation meta with its expected kind, for post-drain verification. */
-  def recordHigherKindedMeta(id: MetaId, expectedKind: SemValue, context: Sourced[String]): CheckState =
-    withUnifier(unifier.recordHigherKindedMeta(id, expectedKind, context))
+  def recordHigherKindedFlex(id: FlexId, expectedKind: SemValue, context: Sourced[String]): CheckState =
+    withUnifier(unifier.recordHigherKindedFlex(id, expectedKind, context))
 
   /** The neutral a runtime value parameter binds to in ρ: a fresh rigid variable at the current ρ level, standing for
     * the parameter's not-yet-known runtime value. Read *before* [[bindValueParam]] so the checker can substitute it into
@@ -107,10 +107,10 @@ case class CheckState(
 
   /** Bind a peeled instantiation meta (a leftover type parameter): the meta in both Γ and ρ — its value is the meta
     * (the evaluator keeps it abstract until unification solves it) and, referenced in value position, its type slot is
-    * the meta too (it resolves through the metastore).
+    * the meta too (it resolves through the flex store).
     */
-  def bindTypeParam(name: String, meta: SemValue): CheckState =
-    copy(gamma = gamma.bind(name, meta), rho = rho.bind(name, meta))
+  def bindTypeParam(name: String, flex: SemValue): CheckState =
+    copy(gamma = gamma.bind(name, flex), rho = rho.bind(name, flex))
 
   def withUnifier(u: Unifier): CheckState = copy(unifier = u)
 
@@ -136,7 +136,7 @@ object CheckState {
   def initial: CheckState = CheckState(
     Env.empty,
     Env.empty,
-    Unifier.create(MetaStore.empty, 0),
+    Unifier.create(FlexStore.empty, 0),
     Map.empty,
     Map.empty
   )

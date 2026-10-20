@@ -27,12 +27,12 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced.compilerError
   *
   * @param force
   *   Force a SemValue through the current meta store — the checker's `force`.
-  * @param freshMeta
-  *   Allocate a fresh metavariable — the checker's `freshMeta`.
+  * @param freshFlex
+  *   Allocate a fresh metavariable — the checker's `freshFlex`.
   */
 class GuardDischargeResolver(
     force: SemValue => CheckIO[SemValue],
-    freshMeta: CheckIO[VMeta]
+    freshFlex: CheckIO[VFlex]
 ) {
 
   /** The guard-carrier recognition for the *kind* position (W2b, and ability-implementation guards). A return-type
@@ -143,15 +143,15 @@ class GuardDischargeResolver(
       sig: SemValue,
       hasBody: Boolean,
       at: Sourced[?]
-  ): CheckIO[(SemValue, Option[VMeta])] = {
+  ): CheckIO[(SemValue, Option[VFlex])] = {
     // A guard's return depends only on the (now concrete) type parameters, so any value stands in to peel the
-    // value-parameter arrows; a fresh neutral keeps the metastore clean (unlike a meta) for the non-guard common case.
+    // value-parameter arrows; a fresh neutral keeps the flex store clean (unlike a meta) for the non-guard common case.
     val probe: SemValue = VNeutral(NeutralHead.Reserved(NeutralHead.Marker.GuardProbe), Spine.SNil)
 
     def rebuild(domains: List[SemValue], leaf: SemValue): SemValue =
       domains.foldLeft(leaf)((acc, dom) => VPi(dom, _ => acc))
 
-    def peel(current: SemValue, domains: List[SemValue]): CheckIO[(SemValue, Option[VMeta])] =
+    def peel(current: SemValue, domains: List[SemValue]): CheckIO[(SemValue, Option[VFlex])] =
       force(current).flatMap {
         case VPi(domain, codomain) => peel(codomain(probe), domain :: domains)
         case leaf                  =>
@@ -159,7 +159,7 @@ class GuardDischargeResolver(
             case Some(payload) => pure((rebuild(domains, payload), None))
             case None          =>
               isUndischargedGuard(leaf).flatMap {
-                case true if hasBody => freshMeta.map(m => (rebuild(domains, m), Some(m)))
+                case true if hasBody => freshFlex.map(m => (rebuild(domains, m), Some(m)))
                 case _               => pure((sig, None))
               }
           }

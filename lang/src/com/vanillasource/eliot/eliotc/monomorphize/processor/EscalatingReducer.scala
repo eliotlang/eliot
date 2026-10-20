@@ -2,7 +2,7 @@ package com.vanillasource.eliot.eliotc.monomorphize.processor
 
 import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.module.fact.{Qualifier, ValueFQN}
-import com.vanillasource.eliot.eliotc.monomorphize.domain.{Env, MetaStore, SemValue}
+import com.vanillasource.eliot.eliotc.monomorphize.domain.{Env, FlexStore, SemValue}
 import com.vanillasource.eliot.eliotc.monomorphize.eval.{Evaluator, MonomorphicEvaluator, Quoter}
 import com.vanillasource.eliot.eliotc.monomorphize.fact.{CompilerMonomorphicValue, GroundValue, MonomorphicExpression}
 import com.vanillasource.eliot.eliotc.platform.Platform
@@ -39,7 +39,7 @@ object EscalatingReducer {
     *   1. link each of its value references **reduced at its own ground type arguments**
     *      ([[ReducedBindingClosure.collectBindings]], `deep = true`): linked raw, one hop at a time, a `where` over
     *      `rangeWithin[0, 255](range(x))` does not evaluate (`WhereOnDefIntegrationTest`);
-    *   1. evaluate the reduced body, apply `argMetas`, and `renormalize` (re-fires natives; empty metastore), and quote.
+    *   1. evaluate the reduced body, apply `argMetas`, and `renormalize` (re-fires natives; empty store), and quote.
     *
     * [[None]] when the value produced no `CompilerMonomorphicValue`, has no reduced body, or the final result does not
     * reduce to a quotable ground form.
@@ -59,14 +59,14 @@ object EscalatingReducer {
             val body    =
               new MonomorphicEvaluator(lookup).eval(Env.empty, MonomorphicExpression(GroundValue.Type, linked.body))
             val applied = argMetas.foldLeft(body)(Evaluator.applyValue)
-            Evaluator.renormalize(applied, MetaStore.empty, lookup, deep = true)
+            Evaluator.renormalize(applied, FlexStore.empty, lookup, deep = true)
           }
           escalatingLoop(
-            MetaStore.empty,
+            FlexStore.empty,
             evalWith,
             _ => Map.empty[ValueFQN, SemValue].pure[CompilerIO],
             channelStuck
-          ).map(result => Quoter.quote(0, result, MetaStore.empty).toOption.filterNot(isAbstractAbilityStructure))
+          ).map(result => Quoter.quote(0, result, FlexStore.empty).toOption.filterNot(isAbstractAbilityStructure))
         }
       case _                                                         => none[GroundValue].pure[CompilerIO]
     }
@@ -79,12 +79,12 @@ object EscalatingReducer {
     * once, mirroring [[reducibleStuck]], so the hot common path pays no extra cost
     * (`docs/refinement-channel-follow-ups.md` §2.5).
     */
-  private def channelStuck(forced: SemValue, metaStore: MetaStore): Boolean = forced match {
+  private def channelStuck(forced: SemValue, flexStore: FlexStore): Boolean = forced match {
     case SemValue.VLam(_, _)                                    => false
     case SemValue.VNeutral(SemValue.NeutralHead.Param(_, _), _) => false
     case SemValue.VNeutral(SemValue.NeutralHead.Fresh(_, _), _) => false
     case other                                                  =>
-      Quoter.quote(0, other, metaStore) match {
+      Quoter.quote(0, other, flexStore) match {
         case Left(_)   => true
         case Right(gv) => isAbstractAbilityStructure(gv)
       }
@@ -104,7 +104,7 @@ object EscalatingReducer {
   }
 
   /** The shared stuck-driven escalation loop. Evaluate with the current escalated bindings; if the forced result is not
-    * `stuck` (against `metaStore`) return it — the common case pays nothing. If it is stuck, `fetch` more bindings
+    * `stuck` (against `flexStore`) return it — the common case pays nothing. If it is stuck, `fetch` more bindings
     * (keyed by what has already been escalated) and loop until it is unstuck or no new binding is available.
     *
     * `stuck` defaults to [[reducibleStuck]] — the in-checker read-back keeps that predicate byte-for-byte — while the
@@ -112,14 +112,14 @@ object EscalatingReducer {
     * rather than being accepted (§2.5).
     */
   def escalatingLoop(
-      metaStore: MetaStore,
+      flexStore: FlexStore,
       eval: Map[ValueFQN, SemValue] => SemValue,
       fetch: Set[ValueFQN] => CompilerIO[Map[ValueFQN, SemValue]],
-      stuck: (SemValue, MetaStore) => Boolean = reducibleStuck
+      stuck: (SemValue, FlexStore) => Boolean = reducibleStuck
   ): CompilerIO[SemValue] = {
     def loop(bindings: Map[ValueFQN, SemValue]): CompilerIO[SemValue] = {
       val forced = eval(bindings)
-      if (!stuck(forced, metaStore)) forced.pure[CompilerIO]
+      if (!stuck(forced, flexStore)) forced.pure[CompilerIO]
       else
         fetch(bindings.keySet).flatMap { extra =>
           if (extra.isEmpty) forced.pure[CompilerIO] else loop(bindings ++ extra)
@@ -133,11 +133,11 @@ object EscalatingReducer {
     * straight through to the caller, never re-fire escalation. Anything else that fails to quote (a bodied top-def, a
     * stuck `match`, a stuck native) is a candidate.
     */
-  def reducibleStuck(forced: SemValue, metaStore: MetaStore): Boolean = forced match {
+  def reducibleStuck(forced: SemValue, flexStore: FlexStore): Boolean = forced match {
     case SemValue.VLam(_, _)                                    => false
     case SemValue.VNeutral(SemValue.NeutralHead.Param(_, _), _) => false
     case SemValue.VNeutral(SemValue.NeutralHead.Fresh(_, _), _) => false
-    case other                                                  => Quoter.quote(0, other, metaStore).isLeft
+    case other                                                  => Quoter.quote(0, other, flexStore).isLeft
   }
 
   /** [[reducibleStuck]] for a **type-level** read-back (a signature): stuck also when the result quotes but still holds
@@ -146,12 +146,12 @@ object EscalatingReducer {
     * undispatched call, which quotes. Treating that as stuck escalates to `if` reduced at its instantiation, where the
     * call is dispatched. A runtime track signature never holds such a call, so the extra quote is the only cost.
     */
-  def typeLevelStuck(forced: SemValue, metaStore: MetaStore): Boolean = forced match {
+  def typeLevelStuck(forced: SemValue, flexStore: FlexStore): Boolean = forced match {
     case SemValue.VLam(_, _)                                    => false
     case SemValue.VNeutral(SemValue.NeutralHead.Param(_, _), _) => false
     case SemValue.VNeutral(SemValue.NeutralHead.Fresh(_, _), _) => false
     case other                                                  =>
-      Quoter.quote(0, other, metaStore) match {
+      Quoter.quote(0, other, flexStore) match {
         case Left(_)   => true
         case Right(gv) => holdsAbilityCall(gv)
       }

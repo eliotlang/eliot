@@ -7,7 +7,7 @@ import com.vanillasource.eliot.eliotc.module.fact.WellKnownTypes.{
   exitIntrinsicFQNs,
   typeFQN
 }
-import com.vanillasource.eliot.eliotc.monomorphize.domain.{MetaStore, SemValue}
+import com.vanillasource.eliot.eliotc.monomorphize.domain.{FlexStore, SemValue}
 import com.vanillasource.eliot.eliotc.monomorphize.domain.SemValue.*
 import com.vanillasource.eliot.eliotc.monomorphize.eval.Evaluator
 import com.vanillasource.eliot.eliotc.monomorphize.fact.GroundValue
@@ -82,7 +82,7 @@ object EffectIntrinsics {
     * Re-firing can only ever reduce further: [[Evaluator.renormalize]] keeps a native stuck when it does not fire.
     */
   private def settle(v: SemValue): SemValue =
-    Evaluator.renormalize(v, MetaStore.empty, Evaluator.currentNativeLookup.value)
+    Evaluator.renormalize(v, FlexStore.empty, Evaluator.currentNativeLookup.value)
 
   // ----------------------------------------------------------------------------------------------------------------
   // escape
@@ -160,7 +160,7 @@ object EffectIntrinsics {
 
   /** The identity of a frame value, or [[None]] for anything else — `unit`, a neutral, a parameter nothing passed. */
   private def frameOf(value: SemValue): Option[Long] =
-    Evaluator.force(value, MetaStore.empty) match {
+    Evaluator.force(value, FlexStore.empty) match {
       case VStuckNative(fqn, Spine.SApp(Spine.SNil, VConst(GroundValue.Direct(Literal.IntegerValue(id), _))))
           if fqn == escapeFrameFQN =>
         Some(id.toLong)

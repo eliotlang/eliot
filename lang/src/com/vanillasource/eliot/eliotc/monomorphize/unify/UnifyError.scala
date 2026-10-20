@@ -9,7 +9,7 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
   *   The sourced user-facing message (e.g. `"Type mismatch."`). The source position drives the error highlight.
   * @param expected
   *   The expected semantic value (when the error carries one). Captured in possibly-unforced form so that report-time
-  *   forcing through the final metastore can reveal solutions that arrived after the error was raised.
+  *   forcing through the final flex store can reveal solutions that arrived after the error was raised.
   * @param actual
   *   The actual (inferred) semantic value.
   */

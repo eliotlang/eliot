@@ -104,7 +104,7 @@ class HandleHoleResolver {
       def shown(entry: Entry): String =
         entry.ability.abilityName +
           (if (entry.args.isEmpty) ""
-           else entry.args.map(SemValuePrinter.show(_, state.unifier.metaStore)).mkString("[", ", ", "]"))
+           else entry.args.map(SemValuePrinter.show(_, state.unifier.flexStore)).mkString("[", ", ", "]"))
       val messages = untaken.collect {
         case candidate if Handles.isBinding(candidate.name.value)   =>
           candidate.name.as(s"This `with` binds nothing: no use of '${shown(candidate.entry)}' in its subject takes it.") ->
@@ -118,7 +118,7 @@ class HandleHoleResolver {
     }
 
   private def diagnose(unifier: Unifier, hole: Hole): (String, Seq[String]) = {
-    val store = unifier.metaStore
+    val store = unifier.flexStore
     def shown(entry: Entry): String =
       entry.ability.abilityName +
         (if (entry.args.isEmpty) "" else entry.args.map(SemValuePrinter.show(_, store)).mkString("[", ", ", "]"))
@@ -168,7 +168,7 @@ class HandleHoleResolver {
   private def unchanged(before: Unifier, after: Unifier): Boolean =
     solved(before) == solved(after) && before.postponed.size == after.postponed.size
 
-  private def solved(unifier: Unifier): Int = unifier.metaStore.entries.count(_._2.isDefined)
+  private def solved(unifier: Unifier): Int = unifier.flexStore.entries.count(_._2.isDefined)
 
   /** Take `candidate` for `hole`: the hole's type is the handle's. Only a run of a code parameter can disagree here —
     * its block's handle type is one per slot entry, which every run hands it (`docs/effects.md` D36 point 6), while
