@@ -142,7 +142,8 @@ structure — is the natural completion and is what the second refinement domain
 needs anyway. **Out of scope here**, because it multiplies the number of leaves forced to state and needs a
 decision on recursive `data` that the size domain should drive.
 
-Consequence to accept: meta is lost at every data boundary, exactly as today.
+Consequence to accept: meta is lost at every data boundary, exactly as today. *(Taken up for non-recursive `data` by
+`docs/structural-meta.md`.)*
 
 ---
 
@@ -1210,7 +1211,9 @@ and the rest are byte-identical; across the corpus jars went from 657 477 to 565
 classes and 18 870 to 16 042 instructions (−15.0%) — the selector chains. The whole suite is green.
 
 **P6 — precision follow-ons.** Structural meta types (§2.3), which `List` size, the fold and the higher-order rows of §5
-wait on.
+wait on. **Designed for non-recursive `data`, decisions pending (2026-10-20): `docs/structural-meta.md`.** Its finding
+for this document: `if … else` is blocked by an exit as well as by the field read — `abort` bottoms out at
+`exitInternal`, whose meta is ⊤ rather than ⊥ — so that design also gives the interpretation a bottom.
 
 Each stage verified by the fast example sweep + byte-identity compare
 (`reference_verification_harness_recipes`).
@@ -1219,7 +1222,7 @@ Each stage verified by the fast example sweep + byte-identity compare
 
 ## 10. Non-goals
 
-- Structural/functorial meta types — the second refinement domain's project.
+- Structural/functorial meta types — the second refinement domain's project. *(Its non-recursive half: `docs/structural-meta.md`.)*
 - Derived `where` preconditions; `where` stays a stated contract. (P5's in-context checking is not one: it declares
   nothing on the enclosing def and checks only the uses the program makes.)
 - Meta-driven monomorphization — refinements stay invisible to instantiation identity.
