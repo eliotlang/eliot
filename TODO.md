@@ -18,10 +18,12 @@ notes.
   written `Bounded(0)` / `Bounded(0 - 1)`. What remains is the general case: an *ordinary def body* is
   runtime-track, so a helper called from a brace still cannot name a `BigInteger` constant in value position —
   which is why `rangeWithin[Lo, Hi]` takes its bounds as type parameters.
-- **A `where` demands every argument's meta, even one its predicate never reads.** A code argument reaches the channel
-  as a thunk, whose meta is never known, so a `where` on a def with a code parameter yielding a tracked type
-  (`body uses *: Int`) can never be proven (§8.8). Demanding only what the predicate reads would fix it, but narrows the
-  decided "⊤ cannot discharge a demand" fail-safe — needs a decision.
+- **Check meta demands in context (P5, decided 2026-10-20).** A body is checked once with its parameters at ⊤, so
+  `def relay(y: Int): Int = pick(5, y)` is rejected although `pick`'s predicate never reads `y`, `useByte(y)` is rejected
+  whatever the callers pass, and a `where` on a def with a code parameter yielding a tracked type can never be proven.
+  Every meta is a compile-time value known from `main`, so a `where` and a parameter brace are to be checked in every
+  context their call is reached in, with that context's argument metas — reported at the demand with the call chain,
+  deduplicated on `(callee, typeArgs, argMetas)`, layout unchanged (`docs/total-meta-transfers.md` P5).
 - **The rest of meta braces on occurrences.** Parameter braces (`def writeByte(b: Int {byte}): Unit`) are built
   (`docs/total-meta-transfers.md` §8.9): every full call proves its argument fits, and inside the body the parameter
   carries the stated meta. One occurrence of the same decision (2026-09-15: a brace states the meta of the value at
