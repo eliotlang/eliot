@@ -377,9 +377,10 @@ contain `data` (a chosen representation), a native leaf, or any representation-d
   (`docs/meta.md` §1). A *not computed* meta (`None`, ⊤ in older comments) is never a meta value: it is a gap the
   interpretation has not closed or its step budget, fail-safe at every demand, and the remaining gaps are listed in
   `docs/meta.md` §8. Part II closes them, decisions pending: R2's type-parameter exemption is **reversed** (decided
-  2026-10-20 — every leaf states, e.g. `exitInternal` `{never}`), each domain may be asked for its own `top`, the
-  interpretation gains ⊥, and non-recursive `data` carries its fields' metas. Never let the interpretation substitute
-  a top for a gap.
+  2026-10-20 — every leaf states, e.g. `exitInternal` `{never}`); what reaches a native through a frame, a cell or a
+  loop is followed (a loop is a fixpoint the domain's widening makes finite); the interpretation gains ⊥; and `data`,
+  recursive included, carries its fields' metas. **The process has no special values** (decided 2026-10-20): no `top`
+  on `Meta`, nothing marking a meta missing or biggest — only a domain may have a top, in its own value type.
   Constructors `interval`/`closed`/`atLeast`/`atMost`/`whole` and the `where`-facing predicate
   `rangeWithin[Lo, Hi](i)` are abstract in the base, bodied per platform. `add`/`subtract` stay exact on a
   half-open interval; `multiply` widens to `whole` (its corner products lose the position that signs an infinity).

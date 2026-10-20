@@ -1,13 +1,17 @@
 # Meta — the refinement channel
 
 Status (2026-10-20): **two domains shipped, R2 and R3 armed, the interpretation and in-context demands built** (Part I).
-**Completing totality is designed, with decisions pending** (Part II): every leaf states (type-parameter results
-included), each domain states its own top, a value that is never produced is ⊥, and a non-recursive `data` value
-carries the metas of its fields. Nothing in Part II is built.
+**Completing totality is designed, with decisions pending** (Part II):
+- every leaf states its meta, type-parameter results included;
+- what reaches a native through a frame, a cell or a loop is followed by the interpretation;
+- a value that is never produced is ⊥;
+- a `data` value carries the metas of its fields.
+
+Nothing in Part II is built.
 
 This document replaces three: `total-meta-transfers.md` (the rules and the interpretation), `string-length-meta.md`
 (the `String` size domain) and `structural-meta.md` (the P6 design). Their full text is at `2a66009a`, and §21 maps
-their section numbers, which code comments still cite, to this one.
+their section numbers, which older commits and notes cite, to this one.
 
 - **Part I** is the shipped design, stated as it now stands. Where code or a test disagrees with it, the code is the
   defect.
@@ -15,9 +19,11 @@ their section numbers, which code comments still cite, to this one.
 - **Part III** is the record: how the design got here (§19), what must not come back (§20), and the citation map
   (§21).
 
-One word is used carefully throughout. A **top** is a meta value: a domain's statement that *nothing bounds this*
-(`whole` for an interval). **Not computed** (spelled `None` in the code, and ⊤ in older text and comments) is not a
-meta. It is the interpretation failing to compute one, which is a gap (§8), never a semantics.
+**The process has no special values.** Metas are never lost, and nothing marks a meta as missing, unknown or
+biggest. A **top** exists only where a domain has one in its own value type, such as `whole` for an interval: a value
+of that domain like any other. Neither the machinery nor `ability Meta` has a top. Today's implementation still
+produces a *not computed* result in a few places (spelled `None` in the code, and ⊤ in older text and comments).
+That is not a meta. Each place is a gap to close (§8), not part of the design.
 
 ---
 
@@ -57,16 +63,17 @@ leaves**. Leaves are exactly where the loops live (`foldLeft`, `forever`), and e
 **R1 makes meta total on types.** `metaTypeOf(T)` is `T$Meta` for a slotted type and `Unit` otherwise, computed from
 the *evaluated* type (§4.1). `Unit` is a real meta: it says that nothing is tracked about this type, and it is always
 known. Today `metaTypeOf` is not **structural**, so `Option[Int]` and `data Counter(n: Int)` both have meta `Unit`, and a
-value put into one loses its meta (§8). Part II §13 makes it structural for non-recursive `data`.
+value put into one loses its meta (§8). Part II §13 makes it structural.
 
-**What not computed means.** Two causes produce one, and both are named:
+**Where today's implementation falls short.** Two things can still leave a node with no meta:
 
 - an implementation gap the interpretation has not closed (§8, each one a work item);
-- a resource bound it hit (the step budget, §5.3).
+- the step budget running out (§5.3).
 
-Neither may be mistaken for a meta. Every demand that meets a value that was not computed fails, with *"Cannot
-prove"*. That is a different diagnostic from *"not satisfied"*, so a gap is fail-safe by construction and never
-admits a program.
+Neither is a meta and neither may be read as one. Every demand that meets such a node fails with *"Cannot prove"*,
+which is a different diagnostic from *"not satisfied"*. So a gap is fail-safe and never admits a program. The design
+target is that no gap is left. Part II closes them, and turns the budget into a compiler limit whose exhaustion is
+reported as an error, never handed on as a value.
 
 ## 2. The domains
 
@@ -399,19 +406,19 @@ join their arms. When a handled statement exists (§4.5), the handler is applied
 
 - **The budget is a step count**, `interpretationBudget = 256` per call node, threaded through depth *and* fan-out
   together. A hard count bounds a diamond-shaped call DAG absolutely, and a cache would not: distinct argument metas
-  defeat its key. When the budget runs out, the meta is *not computed*. That is a resource outcome and never a wrong
-  answer.
+  defeat its key. Today, when the budget runs out, the node is left with no meta, and a demand on it fails. That is
+  never a wrong answer, but it is a gap (§1). Part II makes the budget a compiler limit: running out of it is an error
+  naming the call, never a value handed on (pending decision I, §18).
 - **The type gate makes it affordable.** Before any body is fetched, a call whose result type carries no meta is
   skipped. Under today's non-structural R1 that is the overwhelming majority of call nodes: the 43-example sweep ran
   4m18s with the interpretation against 4m20s without. Part II §13 opens this gate, and §16 measures it.
 - **There is no memo.** A memo on `(vfqn, typeArgs, argMetas)` is the prepared answer if the budget or the clock is
   ever observed to bind. Measure it with `--statistics`, diffing a run with and without the flag, since the flag
   itself inflates a build by about 20%. P5's contexts are already such a memo, for demands (§6).
-- **Iteration is budgeted, never widened.** A fold's transfer, once `List` carries a size, iterates `combine`'s
-  transfer over the size: exact for a singleton or a small interval, and budgeted otherwise. *Finite* is not *computable
-  at compile time*: `readLines`' size is truthfully `0 .. 2³¹−1`. The iteration lives in the transfer language as one
-  primitive (`iterate(n, f, x)`) that `foldLeft`'s statement calls, because the channel names no leaf. Widening is
-  possible now that `whole` exists, but it stays unchosen (§18, open decision C).
+- **A loop's meta is a fixpoint** (Part II §11.2). A loop lives in a native, which states it through one primitive
+  of the transfer language recognised by name, because the channel names no leaf. *Finite* is not *computable at
+  compile time*: `readLines`' size is truthfully `0 .. 2³¹−1`. So the iteration count is never run out; the domain's
+  widening makes the fixpoint finite.
 
 ## 6. Demands are checked in context (P5)
 
@@ -504,12 +511,14 @@ Each of these is a gap: fail-safe at every demand, and pinned by a test that cha
 |---|---|---|
 | a field read out of a `data` value | `orZero(Some(7))`, `case Some(x) -> x` | structural meta (§13) |
 | a call that reaches an exit | `fold(c, 5, abort)`: `exitInternal` states nothing | ⊥ (§12) and R2 without exemption (§10) |
-| what an escape, a cell or a fold produces or hands its code | `runAbort`, `runStateToPair`, `foldLeft` | §10, §11, §14 |
+| what an escape, a cell or a loop produces or hands its code | `runAbort`, `runStateToPair`, `foldLines` | §10, §11, §14 |
+| a holder that returns any type | `resultValue[A](r: IoResult): A` | decomposing it in the jvm layer (§11.3) |
+| the elements of a `List` | `foldLeft`'s `combine` is handed an element with no meta | `List` carrying its elements' meta (§13.3) |
 | hence `if … else` | `else` reads its result back out of an `Option` built by an escape | all of the above (§15) |
 | a demand on a closure the walk cannot see applied | `applyTo(y -> useByte(y), 10)`; `useByte(f(x))` with `f` a parameter | a context that can carry a closure (a fact key holding a body and an environment), when a program needs it |
-| the step budget | a deep or wide derived DAG | a memo (§5.3), when observed |
+| the step budget | a deep or wide derived DAG | a memo when observed, and exhaustion reported as an error (§5.3) |
 
-The first four rows are not separate defects. Each is a leaf that does not define its meta, or a structure that
+The first six rows are not separate defects. Each is a leaf that does not define its meta, or a structure that
 cannot carry one, which is what Part II finds.
 
 The `eliot-code` skill tells users what a range is derived through and what is not computed today. It was probed
@@ -568,54 +577,80 @@ with a type-parameter result and what each must define:
 
 | leaf | statement |
 |---|---|
-| `exitInternal[K, A](frame, err): A` (Abort, Throw) | `{never}`: it does not return (§12) |
-| `escapeInternal[K, A, R](body, onExit, onValue): R` (Abort, Throw) | `{joined(onExit, onValue)}`. It hands `onValue` `{body}` and `onExit` `{top}` (§14). |
-| `withCellInternal[S, A, R](initial, body, combine): R` (State, Writer, Dep) | `{combine}`. It hands `combine` `{body}` and `{top}`, since the final state is whatever was written through the cell. |
-| `readCellInternal[S](cell): S` (State, Writer, Dep) | `{top}`: what was last written through the cell |
-| `foldLeftInternal[A, B](list, initial, combine): B` | `{joined(initial, combine)}`, handing `combine` `{top}` for both arguments (sound by monotonicity, §12) until `List` carries a size and the transfer can iterate (§5.3) |
-| `resultValue[A](r: IoResult): A` (File) | `{top}`: an untyped holder the platform reads back |
+| `exitInternal[K, A](frame, err): A` (Abort, Throw) | `{never}`: it does not return (§12). What it is given is received by its frame (§11.1). |
+| `escapeInternal[K, A, R](body, onExit, onValue): R` (Abort, Throw) | `{joined(onExit, onValue)}`. It hands `onValue` what `body` yields, and `onExit` what `body`'s exits gave the frame, which is ⊥ when nothing exits (§11.1, §14). |
+| `withCellInternal[S, A, R](initial, body, combine): R` (State, Writer, Dep) | `{combine}`. It hands `combine` what `body` yields and the cell's content when `body` returns (§11.1). |
+| `readCellInternal[S](cell): S` (State, Writer, Dep) | the cell's content where it is read (§11.1) |
+| `foldLeftInternal[A, B](list, initial, combine): B` | the loop's fixpoint from `initial` (§11.2), handing `combine` the meta of the list's elements, which `List` does not carry yet (§13.3) |
+| `foldLinesInternal`, `foldCodePointsInternal` (File) | the loop's fixpoint (§11.2), once their holder is decomposed (§11.3), handing the step `{closed(0, 2147483647)}` per line and `{closed(0, 1114111)}` per code point |
+| `resultValue[A](r: IoResult): A` (File) | none can be honest: it returns its holder's content as any `A`. Decomposed away (§11.3). |
 | `Bool::fold[A]` | already `{join(whenTrue, whenFalse)}` |
 
-`foldLeftInternal`'s statement is honest and better than the top. The result is either `initial` (an empty list) or
-the last `combine` yield, and a monotone `combine` applied to the tops covers every yield. So
-`foldLeft(0, _ -> c -> 5)` is `[0, 5]`, and a counting fold is `whole`.
+`foreverInternal` returns `Unit`, so R2 asks nothing of it, but it may state `{never}`: it returns only by an exit. Its
+step's writes and exits are a loop (§11.2).
 
 The armed check is the proof of the table. Removing the exemption compiles the tree and the examples, and any leaf
-the table missed is an error naming it.
+the table missed is an error naming it. It can be removed only once the last row can state, which is
+`foldLeftInternal`, waiting on `List` (§17).
 
-## 11. Each domain states its own top
+## 11. What reaches a native through a frame, a cell or a loop
 
-**Pending decision A; recommended.** Four leaves above receive a value through a frame, a cell or a loop, so its
-supplier is another native call elsewhere in the run. The honest statement about it is *nothing bounds this*, in the
-value's own domain. So `ability Meta[D]` gains a member:
+Three kinds of native receive a value from elsewhere in the run rather than from their arguments: an escape receives
+what its body's exits carried, a cell what was written into it, a loop what its own previous iteration produced. Each
+value has a meta, and the process follows it. **There is no top to state instead.** `ability Meta` gains no `top`:
+the process needs none, and only a domain may have one, in its own value type (decided 2026-10-20, §18).
 
-```eliot
-ability Meta[D] {
-   def join(a: D, b: D): D
-   def top: D
-}
-```
+### 11.1 Frames and cells are followed
 
-- `Meta[Interval[T]]`'s `top` is `whole`.
-- The derived instance of a meta structure is its slots' tops: `Int$Meta(whole)`, `String$Meta(whole)`.
-- `Unit`'s is `unit`.
-- A structural meta's (§13) has every constructor reached with its fields' tops.
+A frame and a cell are made by one call of their native (`escapeInternal`, `withCellInternal`), handed to that call's
+body, and gone when the call returns (`docs/effects.md` §3.4). They are private and second-class, so they never
+escape the call. That is the property `termination/PurityGuardTest` keeps, since a public cell is Landin's knot. So
+while the interpretation runs that one call, it can follow them exactly, in Eliot's strict evaluation order:
 
-**This reverses one clause of a decided rule.** §2.1's third amendment (the history is in §19) concluded that there is
-*no global top*: no `top` member on `Meta` and no wrapper that manufactures one. Its principle survives intact.
-**Every top is a domain top**, in the domain's own and only spelling, so the reconcile pass sees one structure per
-top. What changes is that the machinery may *ask* a domain for its top. The deleted `Meta[Bound[D]]` manufactured a
-second spelling for any domain. This invents no spelling at all.
+- **A frame collects its exits.** Interpreting `exitInternal(frame, err)` adds `err`'s meta to what the frame
+  received, and the call itself is `Never` (§12). When `body` is done, the escape hands `onExit` the join of what the
+  frame received. If nothing exited, `onExit` is handed ⊥: its arm is unreached, as a `match`'s is.
+- **A cell holds content.** It starts at `initial`'s meta. A write replaces the content, and a read returns it. Where
+  control splits (a join over code arguments: `fold`, a `match`), each branch starts from the same content, and the
+  content after is the join of the branches' contents. A branch that is `Never` contributes nothing. `combine` is
+  handed the content when `body` returns.
 
-**The bright line.** `top` is a *statement*. Only a leaf's brace (or a handed brace, §14) may say it, about a value
-it honestly knows nothing of. The interpretation **never** substitutes a top for a meta it did not compute. A gap
-stays a gap, and stays fail-safe (§8). Without that line, `top` would be a way to paper over a gap.
+The interpretation gains a value for a frame and a cell, each with an identity local to one call and its received
+meta or content. The natives say what they hand through a few compile-track meta primitives, recognised by name as
+`joined` and `never` are (§14). So the channel still names no leaf. This is the one place the interpretation becomes
+stateful, and the state never outlives the call that made it.
 
-**The alternative, declined for now: follow the value.** When interpreting `escapeInternal`'s body, collect the metas
-reaching `exitInternal` for that frame, and the writes through a cell, iterating a cell to a fixpoint. That is
-precise: `catch(raise("x"), e -> length(e))` would be `[1, 1]` rather than `whole`. But it is a flow across calls the
-interpretation does not do, and a cell needs a fixpoint, which needs widening. It is a precision follow-on, frames
-first, since a frame needs no fixpoint (open decision D).
+### 11.2 A loop is a fixpoint, which the domain makes finite
+
+`foldLeftInternal`, the file folds, and a cell written or a frame exited inside `foreverInternal`'s step all run code
+an unknown number of times. The meta of a loop's result is the join over every iteration count: `acc₀` is
+`initial`, and `accₙ₊₁` is `join(accₙ, step(element, accₙ))`, up to its fixpoint. That is exact for every count, and
+it is sound with no bound on the count.
+
+The fixpoint is reached only if the domain's ascending chains are finite, and an interval's are not
+(`[0, 0] ⊑ [0, 1] ⊑ …`). So **the domain supplies a widening**: an operation of its own, beside `join`, that makes
+every ascending chain finite. An interval opens each endpoint that moved, so a counter's accumulator reaches
+`Interval(Bounded(0), Unbounded)`. That is a value the domain already has. A domain of finite height widens by
+joining. The machinery gets an operation from the domain, and no value.
+
+Where the count is known exactly (a list whose size meta is `[n, n]`), iterating `n` times is exact and may be
+preferred. That is a precision choice for later.
+
+This reverses the recommendation the open "budget, not widening" decision carried (§19). A budget that ran out would
+have to hand on a missing meta, and the process has none.
+
+### 11.3 A holder that returns any type is decomposed
+
+`resultValue[A](r: IoResult): A` returns its holder's content as whatever `A` its caller names. Nothing relates `A`
+to what the producing native put in the holder, so no statement can be honest. Per §1, the gap is closed in the
+declarations:
+
+- the file natives read a concrete result through typed leaves, each stating its own meta
+  (`resultString(r): String {closed(0, 2147483647)}`, and so on);
+- a generic fold returns its accumulator itself and takes its error path as code, so its result is the loop's
+  fixpoint joined with what the error path yields, which is ⊥ when the path raises.
+
+That is a platform decomposition written in Eliot, over smaller leaves, and it needs no compiler change.
 
 ## 12. ⊥: a value that is never produced
 
@@ -636,20 +671,20 @@ form, and no companion ever receives it.
   f(…v…)), and exact for a join, which is idempotent. So `fold(c, 5, abort)` is `[5, 5]`, and a `match` with an
   unreached arm is the join of the reached ones. If every yield the companion reads is `Never`, the call is `Never`:
   `fold(c, abort, abort)` does not return. **Monotonicity becomes a stated obligation on statements**, and every one
-  in the tree meets it (interval arithmetic, the joins, constants, `top`).
+  in the tree meets it (interval arithmetic, the joins, constants).
 - **What is stamped.** A `Never` node is never materialised, so its width is irrelevant. It is stamped at the boundary
   width, which is a representation choice, not a meta claim.
 - **A demand under ⊥ is vacuous** (pending decision C; recommended). A demand whose call is never made (a `Never`
   argument, or an arm handed ⊥) is not checked in that context. This is P5 read literally: a demand is checked where
   it is *reached*. `f(Some(5))` compiles over `case None -> useByte(1000)`, and adding `f(None)` reports at that call.
 
-## 13. Structural meta for non-recursive `data`
+## 13. Structural meta: a `data` value carries its fields' metas
 
 **Pending decisions E–G; recommended.**
 
 ### 13.1 The rule
 
-> **The meta of a value of a non-recursive `data` type is, per constructor, whether that constructor can have built it
+> **The meta of a value of a `data` type is, per constructor, whether that constructor can have built it
 > and, if so, the metas of the fields it was built with.**
 
 This is the structural map, `meta(D(f₁: T₁, …)) = D$Meta(f₁: meta(T₁), …)`, plus the one thing a sum forces: a record
@@ -662,7 +697,7 @@ never spells a structural meta (§13.6).
 
 ### 13.2 The meta structure
 
-Per non-recursive `data`, the core desugar emits into the compiler pool (dead in the runtime pool, as `Int$Meta` is):
+Per `data`, the core desugar emits into the compiler pool (dead in the runtime pool, as `Int$Meta` is):
 
 ```eliot
 data Option[A] = None | Some(value: A)
@@ -670,13 +705,12 @@ data Option[A] = None | Some(value: A)
       data Option$Meta[M$Some$value](None: Reach[Unit], Some: Reach[Option$Meta$Some[M$Some$value]])
       implement[M$Some$value ~ Meta] Meta[Option$Meta[M$Some$value]] {  -- field-wise, as MetaConstructorDesugarer does
          def join(a, b) = Option$Meta(join(None(a), None(b)), join(Some(a), Some(b)))
-         def top = Option$Meta(top, top)
       }
       type Option$Fields[A] = Function[A, Unit]                          -- every constructor's field types, in order
 ```
 
 - **`Reach[M]`** is one compile-track `data Reach[M] = Unreached | Reached(meta: M)`, with
-  `implement[M ~ Meta] Meta[Reach[M]]`. `Unreached` is the join's identity, and `top` is `Reached(top)`. It lives with
+  `implement[M ~ Meta] Meta[Reach[M]]`. `Unreached` is the join's identity. It lives with
   `Interval`/`Bound` in the compiler overlay, since a `data` may not be in the base. It is a bottom **for a
   constructor**, a fact about the program with one spelling, so it is not a second spelling of any domain's top.
 - **One binder per field, not per type parameter**, instantiated by the channel. `metaTypeOf(Option[Int])` reduces
@@ -687,17 +721,43 @@ data Option[A] = None | Some(value: A)
 - **Excluded:** the generated meta structures themselves (a regress), and any type that declares **slots**. A slotted
   type's meta is what it declares (`Int`, `String`, or `docs/recursive-data.md`'s `data Tree[A] {depth: …}`).
 
-### 13.3 Recursive `data` keeps the meta `Unit`
+### 13.3 Recursive `data` folds into its own summary
 
-The structural map does not terminate on `List`, a `Tree` or a mutually recursive pair. What should summarise one (a
-size, a depth) is the size domain's decision, so their meta stays `Unit`. That is a known meta, so R1 holds.
+The structural map does not terminate on a recursive type: `meta(Tree[A])` would contain `meta(Tree[A])`. Keeping
+`Unit` there, as the first draft did, would lose the meta of everything stored in a tree, and metas are not lost. So a
+recursive type's meta **folds its recursive positions into itself**: per constructor, its reach and field metas,
+joined over every node of the value.
 
-**The test is on the declaration.** D is recursive iff the type-level references of `D$Fields`'s body reach D, followed
-through aliases, type-level definitions and other types' `$Fields`. So `data A(b: Option[B])` and
-`data B(a: Option[A])` are both recursive, while `Box[Box[Int]]` is not (`Box`'s field is its parameter, which is no
-reference). A direct self-mention test misses mutual recursion. A cycle on the instantiated types' head constructors
-misreads `Option[Option[Int]]`. It is computed once per type FQN, reading resolved bodies and **never another type's
-verdict**, so it cannot form a fact cycle.
+```eliot
+data Tree[A] = Leaf | Node(left: Tree[A], value: A, right: Tree[A])
+  ⟶  data Tree$Meta$Node[M$value](value: M$value)                  -- the recursive fields have no slot
+      data Tree$Meta[M$Node$value](Leaf: Reach[Unit], Node: Reach[Tree$Meta$Node[M$Node$value]])
+      Node(left, value, right) states  joined(left, right, ⟨Unreached, Reached(Tree$Meta$Node(value))⟩)
+```
+
+Here `⟨…⟩` is the meta constructor applied, `constructor$` (§4.1).
+
+- **A recursive field gets no slot.** The constructor joins that field's meta, a summary of the same type, into its
+  own. The eliminator hands a handler the whole summary for a recursive field. That is sound, because every node of a
+  subtree is a node of the tree.
+- **Nothing a value holds is lost.** The summary is finite, and every field meta of every node is in it. What it does
+  not say is **shape**: how many nodes, and how deep. Shape is a property the size domain states as a slot of its own
+  (`docs/recursive-data.md`'s `{depth: …}`, `List`'s `size`), and a slotted type keeps its slots (§13.2).
+- **Mutual recursion folds over the group.** Types that reach each other share one summary, with a slot per
+  constructor of every member. So `meta(A)` and `meta(B)` are the same summary for `data A(b: Option[B])` and
+  `data B(a: Option[A])`.
+
+**The test is on the declaration.** D's recursive group is the set of types whose `$Fields` bodies reach D and that D
+reaches, followed through aliases, type-level definitions and other types' `$Fields`. So `data A(b: Option[B])` and
+`data B(a: Option[A])` form one group, while `Box[Box[Int]]` forms none: `Box`'s field is its parameter, which is no
+reference. A direct self-mention test misses mutual recursion. A cycle on the instantiated types' head constructors
+misreads `Option[Option[Int]]`. The test is computed once per type FQN, reading resolved bodies and **never another
+type's verdict**, so it cannot form a fact cycle.
+
+**`List` is not `data` on the jvm.** It is a native type (`java.util.List`), so its meta is not generated and must be
+declared. Its elements' meta would be a slot whose type is the element type's meta type, and no slot can be that today:
+a slot's type is fixed (`Interval[BigInteger]`). That parametric slot, together with `size`, is the `List` domain's
+project, and `foldLeftInternal` waits on it (§10).
 
 ### 13.4 The constructor and the eliminator state
 
@@ -724,8 +784,8 @@ brace still answers, as today.
 
 ### 13.5 A field's meta is always defined
 
-A constructor's transfer stores each argument's meta. By §1, each argument has one: a computed meta, a stated top, or
-the known `Unit`. So a structural meta has no unknown field, and needs no per-field "unknown" form. A `Known | Unknown`
+A constructor's transfer stores each argument's meta. By §1, each argument has one: a computed or stated meta, or the
+known `Unit`. So a structural meta has no unknown field, and needs no per-field "unknown" form. A `Known | Unknown`
 wrapper would have been a second spelling of every domain's top.
 
 A gap in an argument is a gap in the construction. It propagates, and is never replaced by anything. That needs two
@@ -777,14 +837,27 @@ is the callee. That gives the table a fifth row:
 | handed argument, bodied callee | the body | **yes** | **declined (R3)** |
 
 ```eliot
-private def escapeInternal[K, A, R](body uses *: AbortFrame[K] => A, onExit uses *: K {top} => R,
+private def escapeInternal[K, A, R](body uses *: AbortFrame[K] => A, onExit uses *: K {exited(body)} => R,
                                     onValue uses *: A {body} => R) uses *: R {joined(onExit, onValue)}
 ```
 
 `{body}` after `onValue`'s domain says that what `onValue` is handed is what `body` yields. It is read as a code
-parameter always is, as the value its code yields. The grammar slot is free: a brace *before* a type is the rejected
-row spelling, and one *after* a parameter's type is §4.4's. It desugars to the handed companion the data desugarer
-writes (`escapeInternal$Handed$onValue$0`), which can now read parameters. It is accepted on a body-less def only (R3).
+parameter always is, as the value its code yields. `{exited(body)}` after `onExit`'s says it is handed the join of what
+`body`'s exits gave the frame (§11.1). The cell's natives say the same of its content:
+
+```eliot
+private def withCellInternal[S, A, R](initial: S, body uses *: StateCell[S] => A,
+                                      combine uses *: A {body} => S {stored(body)} => R) uses *: R {combine}
+private def readCellInternal[S](cell: StateCell[S]): S {content(cell)}
+private def writeCellInternal[S](cell: StateCell[S], s: S): Unit {store(cell, s)}
+```
+
+`exited`, `stored`, `content` and `store` are compile-track meta primitives, recognised by name as `joined` and
+`never` are, so the channel names no native. Their spelling is part of decision A.
+
+The arrow-domain grammar slot is free: a brace *before* a type is the rejected row spelling, and one *after* a
+parameter's type is §4.4's. It desugars to the handed companion the data desugarer writes
+(`escapeInternal$Handed$onValue$0`), which can now read parameters. It is accepted on a body-less def only (R3).
 
 **Declined (pending decision F): reshaping the escape primitive** to `escape(body: Frame => R, onExit: K => R)`, so
 its transfer is a plain join and nothing is handed. It would need nothing new here, but `docs/effects.md` §3.4 fixes
@@ -803,20 +876,24 @@ slot.
   result is `[5, 7]`. `useByte(if(c, 300) else 5)` is then *not satisfied* rather than *cannot prove*: the
   accept/reject pair the tests want.
 - **`catch`.** This is the same shape over `Throw`'s `escapeInternal` and `Either`. A `raise` is `Never`, and the
-  body's value is `Right`'s field. `onError` is handed `top` for the error, so `catch(raise("x"), e -> length(e))` is
-  `whole` (decision D would make it `[1, 1]`). The result is the join of the handler's yield and the body's.
+  body's value is `Right`'s field. `onError` is handed what the `raise`s gave the frame, so `catch(raise("x"), e -> length(e))` is
+  `[1, 1]`. The result is the join of the handler's yield and the body's. A body that never raises hands `onError` ⊥,
+  and the result is the body's alone.
 - **`pick(B)`** with `data AB = A | B`, `pick(x) = x match { case A -> 10 case B -> 20 }`. Today it is `[10, 20]`.
   With `B`'s meta `{Unreached, Reached(unit)}`, the `A` arm is handed ⊥, so `pick(B)` is `[20, 20]`.
 
 ## 16. Cost and risk
 
-- **The type gate opens.** Every non-recursive data type now carries meta, so every call returning one is
+- **The type gate opens.** Every data type now carries meta, so every call returning one is
   interpreted. So is every handle, since a named implementation's handle is a `data`. Handles stay in: excluding them
   would key a rule on `Handles.isDataType` and lose a double's `with` arguments, which are exactly what a test's
   `where` would read.
 - **P5's contexts multiply.** A context is keyed by the metas of every meta-carrying parameter, so a deferred body
   taking an `Option[Int]` gets one context per distinct structural meta its callers supply. Contexts exist only for
   bodies whose root defers, but that bound is not measured.
+- **The interpretation carries state, and computes fixpoints.** Following a frame or a cell (§11.1) threads their
+  contents through one call's interpretation. A loop (§11.2) iterates its step until the domain's widening is stable,
+  which for an interval is a few steps per endpoint.
 - **Generated values.** Per data type, the desugar generates a meta structure, a record per constructor with fields,
   a join instance, a `$Fields`, a transfer per constructor, and a handed transfer per handler argument. Each record is
   itself desugared (type, constructor, accessors, eliminators). This is compiler-pool and demand-driven, but every cold
@@ -834,19 +911,23 @@ cache once kept a stale companion across a change and hid a brace that did not e
 
 - **T1: gap mechanics** (§13.5, §13.8). The dedicated neutral and gap propagation; `Unit` metas passed as `unit`;
   `intervalBounds` checks the FQN. Expected byte-identical.
-- **T2: domain tops** (§11). `Meta[D].top`: `whole` for `Interval`, derived for every meta structure, `unit` for
-  `Unit`. Expected byte-identical, since nothing states it yet.
-- **T3: ⊥** (§12). `Value.Never`, `{never}` on each `exitInternal`, strictness, same-meta-type substitution, vacuous
+- **T2: ⊥** (§12). `Value.Never`, `{never}` on each `exitInternal`, strictness, same-meta-type substitution, vacuous
   demands. It is observable through a demand in an `Abort`-using body: `def g(c: Bool) uses Abort: Int =
   useByte(fold(c, 5, abort))` is proven.
-- **T4: every leaf states** (§10, §14). The arrow-domain brace in the parser and desugarer; the statements of §10's
-  table; R2's exemption removed. `catch` becomes an accept/reject pair. `if … else` still waits on the field read.
-- **T5: structural meta** (§13). `Reach`, the structures, records, join instances and `$Fields`; the recursion test;
-  constructor and handed transfers; `metaConstructorOf` for a generic meta type; the overlay agreement check. This
-  flips `DerivedMetaTransferIntegrationTest`'s field-read case and makes `if … else` an accept/reject pair, and it adds
-  `Pair`, `Either`, a user record and `pick(B)`'s pruning. Jars change wherever an `Int` is read out of a `data`.
-  **Gated on §16's measurement.**
-- **T6: the record.** This document's status, CLAUDE.md's refinement-channel paragraph, and `eliot-code`'s list of
+- **T3: frames and cells** (§11.1, §14). The arrow-domain brace in the parser and desugarer; the frame and cell values
+  in the interpretation, and their primitives; the statements of the escape and cell natives. `catch` and
+  `runStateToPair` become accept/reject pairs. `if … else` still waits on the field read.
+- **T4: loops and the holder** (§11.2, §11.3). The fixpoint primitive and `Meta`'s widening, with an interval's; the
+  file folds and `resultValue` decomposed in the jvm layer.
+- **T5: structural meta** (§13). `Reach`, the structures, records, join instances and `$Fields`; the recursive groups
+  and their folded summaries; constructor and handed transfers; `metaConstructorOf` for a generic meta type; the overlay
+  agreement check. This flips `DerivedMetaTransferIntegrationTest`'s field-read case and makes `if … else` an
+  accept/reject pair, and it adds `Pair`, `Either`, a user record, a user tree and `pick(B)`'s pruning. Jars change
+  wherever an `Int` is read out of a `data`. **Gated on §16's measurement**, which also decides the memo, and with it
+  the budget becoming a reported limit (decision I).
+- **T6: `List` carries its elements.** The parametric slot (§13.3), with the size domain. `foldLeftInternal` states,
+  and R2's exemption is removed: the last runtime leaf now states.
+- **T7: the record.** This document's status, CLAUDE.md's refinement-channel paragraph, and `eliot-code`'s list of
   what is not computed today.
 
 ## 18. Decisions
@@ -855,32 +936,38 @@ cache once kept a stale companion across a change and hid a brace that did not e
 
 - *One document* for the channel (this one).
 - *Every leaf states, type-parameter results included* (§10). This reverses R2's exemption.
+- *The process has no special values* (Robert: *"There is no 'null' or some special value to mark 'missing', or
+  'biggest' … The process does not need a 'top', only the domain may."*). `Meta` gains no `top`. A domain has a top
+  only in its own value type. Nothing marks a meta missing, and a gap is closed, never represented (§1, §11). This
+  declined the first draft's per-domain `top` statement.
 - *A structural meta has no unknown field* (§13.5). It dissolves the earlier "all-or-nothing knowledge per
   construction" and its deferred per-field unknown, both of which assumed an unknown argument was a meta.
 
 **Pending, each recommended:**
 
-- **A. Each domain states its own top** (§11): `Meta[D]` gains `top`. This reverses the "no `top` member" clause of
-  §2.1's history and keeps its principle. The interpretation never substitutes a top.
+- **A. Frames and cells are followed** (§11.1): the interpretation threads what reaches a frame and a cell through the
+  one call that made it, and the natives state it through name-recognised primitives (§14).
 - **B. The interpretation gains ⊥** (§12): `{never}` at the exits, strictness, same-meta-type substitution, and
-  monotonicity as an obligation on statements.
+  monotonicity as an obligation on statements. ⊥ says *this call does not return*: a fact about control, which every
+  join absorbs. It is not a marker for a missing meta, but it is the one form the process adds, so it is listed for
+  your call.
 - **C. A demand an unreached path holds is vacuous** in that context (§12), rather than checked with unknown binders.
+- **D. A loop's meta is its fixpoint, which the domain's widening makes finite** (§11.2): `Meta` gains `widen` beside
+  `join`, an operation and no value. This reverses the earlier open recommendation of a budget for iteration.
 - **E. A sum's meta is tagged by reach** (§13.1), rather than a tag-blind structure or single-constructor data only.
 - **F. The arrow-domain brace** (§14), rather than reshaping the escape primitive.
-- **G. Recursive `data` keeps the meta `Unit`** (§13.3), tested on the declaration, until the size domain decides its
-  summary.
+- **G. Recursive `data` folds into its own summary** (§13.3), joined over every node, with mutual recursion folded over
+  the group. Shape stays the size domain's.
 - **H. An overlay `data` must agree with the runtime one** (§13.7), as an error.
+- **I. The step budget becomes a compiler limit** (§5.3): running out of it is an error naming the call, never a value.
 
 **Open, not blocking anything:**
 
-- **D. Follow a frame** (§11): the metas reaching a frame's exits, for what `onExit` is handed. A precision follow-on
-  to A.
-- **Budget, not widening**, for iterating a fold (§5.3). Still recommended. The budget is simpler, and Eliot
-  deliberately has no widening machinery.
 - **May an ability declare a transfer its implementations must satisfy?** (§3.1). A contract feature, not part of
   totality.
 - **A compile-time `power` native**, which would make `parseIntInternal` tight (`"42"` ⤳ `[-99, 99]`). Safe now that
-  there is a top to saturate into. A prerequisite for nothing.
+  the interval domain has `whole` to saturate into. A prerequisite for nothing.
+- **Iterating a loop exactly** when its count is known (`[n, n]`), instead of widening (§11.2).
 - **An interval intersection**, which `substring`'s index ceiling waits on (§2.2).
 - **A meta-accessor namespace** (`Qualifier.Meta` for slot accessors), owed to `List` (§2.2).
 
@@ -902,7 +989,7 @@ The stages in order. The full narrative of each is in the three retired document
   4. The generic `Meta[Bound[D]]` top was deleted, leaving every top a domain top and the machinery with none.
 
   All 40 compiling examples were byte-identical at each step, since a stated top and a half-open range decode to the
-  same boundary layout. (Decision A revisits only the "machinery has none" clause; §11.)
+  same boundary layout. That conclusion stands: the process has no top (§18).
 - **S0: code-point indices.** `length` and the index family switched units on both tracks. It was justified on its
   own: string slicing was already non-portable.
 - **S1–S2: the `size` slot and the literal seed**, plus the LSP hover gate. The declaration alone was inert, with every
@@ -947,7 +1034,10 @@ The stages in order. The full narrative of each is in the three retired document
   `Meta` in `monomorphize/` means refinement meta.
 - **Totality revisited (Part II)**, 2026-10-20. The structural design was first written leaving type-parameter leaves
   exempt and treating a not-computed meta as a value: "⊤ fields", "a `Never` recorded as ⊤", "all-or-nothing
-  knowledge". It was revised against §1's principle the same day.
+  knowledge". It was revised against §1's principle the same day. That revision proposed `Meta[D]` gaining a `top` for
+  the leaves fed through a frame, a cell or a loop, and it was declined: the process needs no top. So those values are
+  followed (§11), a loop is a fixpoint the domain widens, and recursive `data` folds into a summary instead of keeping
+  `Unit`.
 
 ## 20. Do not re-propose
 
@@ -955,7 +1045,10 @@ The stages in order. The full narrative of each is in the three retired document
   correspondence to the monomorphized body, so every higher-order transfer would degrade.
 - **A wrapper top** (`Bound` around a slot, the generic `Meta[Bound[D]]`). Any second spelling of a top reads as a
   disagreement. A domain grows its own top.
-- **The interpretation inserting a top for a gap.** A gap stays a gap (§11).
+- **A `top` (or `bottom`, `unknown`, `missing`) member on `Meta`, or any process-level value standing for a meta.**
+  The process has no special values; a domain may have a top in its own value type (§18). A gap is closed, never
+  represented.
+- **A budget whose exhaustion hands on a missing meta** (§5.3, decision I).
 - **An `{Inf}` leaf may not return a meta-carrying type.** It buys nothing, since a leaf is summarized, never executed.
   It would also forbid an honestly bounded blocking read.
 - **A brace on a bodied return** (§3.3).
@@ -971,6 +1064,7 @@ The stages in order. The full narrative of each is in the three retired document
 - **A derived `where`.** A precondition is a stated contract. P5 checks uses and declares nothing.
 - **A definition-site demand check over not-computed parameters.** That is a modular certificate; P5 replaced it.
 - **A tag-blind structural meta**, or **single-constructor data only** (§13.1).
+- **Recursive `data` with the meta `Unit`.** It loses every meta stored in the structure (§13.3).
 - **An empty type as ⊥** (`exitInternal: K => Nothing`). It would change every exit primitive's signature on both
   tracks and need an eliminator with no handlers. `{never}` states the same fact at the leaf that knows it.
 - **⊥ by parametricity** ("a native returning a type parameter it was never given does not return"). That is true of a
@@ -988,7 +1082,7 @@ Code comments cite the retired documents by section. Read them through this tabl
 | … §2.3 (structural meta) | §13 |
 | … §3 (R1–R4), §4 (use-site R2) | §3 |
 | … §5 (tops), its amendments | §2.1, §19 |
-| … §5.1, §5.2 (loops, budget, iteration) | §3.2, §5.3 |
+| … §5.1, §5.2 (loops, budget, iteration) | §3.2, §5.3, §11.2 |
 | … §6, §6.2, P4, S8 (the interpretation) | §5 |
 | … §7 (meta vs. stamping, layout) | §7 |
 | … §8.1 (companion naming), S7 | §4.2 |
