@@ -160,7 +160,7 @@ class JvmClassGenerator extends SingleKeyTypeProcessor[GeneratedModule.Key] with
                                       singletonClasses <- if (handleCasesUsed) {
                                                             generatePatternMatchSingleton(
                                                               mainClassGenerator, typeVFQ,
-                                                              ctorsWithInfo.size === 1
+                                                              ctorsWithInfo.size
                                                             ).map(Seq(_))
                                                           } else {
                                                             Seq.empty[ClassFile].pure[CompilerIO]
@@ -589,8 +589,10 @@ class JvmClassGenerator extends SingleKeyTypeProcessor[GeneratedModule.Key] with
   private def generatePatternMatchSingleton(
       mainClassGenerator: ClassGenerator,
       dataTypeVfqn: ValueFQN,
-      isSingleConstructor: Boolean
+      constructorCount: Int
   ): CompilerIO[ClassFile] = {
+    val isSingleConstructor = constructorCount === 1
+    val handlers            = Seq.fill(constructorCount)(systemFunctionValue)
     val innerClassName = patternMatchSingletonName(dataTypeVfqn)
     val singletonVfqn = ValueFQN(mainClassGenerator.moduleName, QualifiedName(innerClassName, Qualifier.Default))
     val dataTypeName   = convertToNestedClassName(dataTypeVfqn)
@@ -611,27 +613,29 @@ class JvmClassGenerator extends SingleKeyTypeProcessor[GeneratedModule.Key] with
       _           <- singletonCg
                        .createPublicInstanceMethod[CompilerIO](
                          JvmIdentifier.encode("handleCases"),
-                         Seq(systemAnyValue, systemFunctionValue),
+                         systemAnyValue +: handlers,
                          systemAnyValue
                        )
                        .use { bridge =>
                          for {
                            _ <- bridge.addLoadVar[CompilerIO](systemAnyValue, 1)
                            _ <- bridge.addCastTo[CompilerIO](dataTypeVfqn)
-                           _ <- bridge.addLoadVar[CompilerIO](systemFunctionValue, 2)
+                           _ <- handlers.indices.toList.traverse_(index =>
+                                  bridge.addLoadVar[CompilerIO](systemFunctionValue, index + 2)
+                                )
                            _ <-
                              if (isSingleConstructor) {
                                bridge.addCallToVirtualMethod[CompilerIO](
                                  dataTypeName,
                                  JvmIdentifier.encode("handleCases"),
-                                 Seq(systemFunctionValue),
+                                 handlers,
                                  systemAnyValue
                                )
                              } else {
                                bridge.addCallToAbilityMethod[CompilerIO](
                                  dataTypeName,
                                  JvmIdentifier.encode("handleCases"),
-                                 Seq(systemFunctionValue),
+                                 handlers,
                                  systemAnyValue
                                )
                              }

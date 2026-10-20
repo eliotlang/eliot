@@ -24,11 +24,10 @@ import com.vanillasource.eliot.eliotc.processor.common.SingleFactProcessor
   * so the user supplier contributes `None` for them; the merger's native precedence makes this contributor's reduction
   * win for checking, with no ordering to arrange.
   *
-  *   - **`PatternMatch.handleCases`** (one impl per data type): a curried [[VNative]] collecting `(value, cases)`. The
-  *     data type's value constructors, in source-declaration order, are baked in at fact-generation time. On a concrete
-  *     `value` (a body-less constructor [[VTopDef]]), it computes the constructor's declaration index `i`, builds the
-  *     Church selector `pickᵢ = \a0 … a_{N-1} -> a_i`, applies `cases` to it to obtain the matching handler, then
-  *     applies that handler to the constructor's fields (or to a unit placeholder for a field-less constructor).
+  *   - **`PatternMatch.handleCases`** (one impl per data type): a curried [[VNative]] collecting `(value, h1, …, hn)`.
+  *     The data type's value constructors, in source-declaration order, are baked in at fact-generation time. On a
+  *     concrete `value` (a body-less constructor [[VTopDef]]), it applies the handler at the constructor's declaration
+  *     index to the constructor's fields (or to a unit placeholder for a field-less constructor).
   *   - **`TypeMatch.typeMatch`** (one impl per constructor): a curried [[VNative]] collecting `(obj, matched,
   *     notMatched)`. The target type-constructor name is baked in. On a concrete `obj`, if its head matches the target
   *     it applies `matched` to `obj`'s fields, otherwise applies `notMatched` to a unit placeholder.
@@ -94,15 +93,20 @@ class MatchNativesProcessor extends SingleFactProcessor[ContributedBinding.Key] 
   ): CompilerIO[Seq[ValueFQN]] =
     getFactOrAbort(ModuleConstructors.Key(moduleName, platform)).map(_.of(dataType))
 
-  /** `handleCases(value, cases)`: dispatch a concrete constructor `value` to its handler in `cases`. */
+  /** `handleCases(value, h1, …, hn)`: dispatch a concrete constructor `value` to its own handler, one per constructor
+    * in declaration order.
+    */
   private def handleCasesNative(ordered: Seq[ValueFQN]): SemValue =
-    VNative(VType, value => VNative(VType, cases => dispatchHandleCases(ordered, value, cases)))
+    VNative(VType, value => collectHandlers(ordered, value, Vector.empty))
 
-  private def dispatchHandleCases(ordered: Seq[ValueFQN], value: SemValue, cases: SemValue): SemValue =
+  private def collectHandlers(ordered: Seq[ValueFQN], value: SemValue, handlers: Vector[SemValue]): SemValue =
+    if (handlers.size === ordered.size) dispatchHandleCases(ordered, value, handlers)
+    else VNative(VType, handler => collectHandlers(ordered, value, handlers :+ handler))
+
+  private def dispatchHandleCases(ordered: Seq[ValueFQN], value: SemValue, handlers: Vector[SemValue]): SemValue =
     value match {
       case VTopDef(ctorFqn, None, spine, _) if ordered.contains(ctorFqn) =>
-        val handler = Evaluator.applyValue(cases, churchSelector(ordered.size, ordered.indexOf(ctorFqn)))
-        applyHandlerToFields(handler, spine.toList)
+        applyHandlerToFields(handlers(ordered.indexOf(ctorFqn)), spine.toList)
       case _                                                          => stuck(value)
     }
 
@@ -130,14 +134,6 @@ class MatchNativesProcessor extends SingleFactProcessor[ContributedBinding.Key] 
   private def applyHandlerToFields(handler: SemValue, fields: List[SemValue]): SemValue =
     if (fields.isEmpty) Evaluator.applyValue(handler, Evaluator.unitValue)
     else fields.foldLeft(handler)(Evaluator.applyValue)
-
-  /** The Church selector `pickᵢ = \a0 … a_{n-1} -> a_i`, as nested [[VLam]]s. */
-  private def churchSelector(n: Int, index: Int): SemValue = {
-    def go(k: Int, collected: Vector[SemValue]): SemValue =
-      if (k === n) collected(index)
-      else VLam(s"$$case$k", arg => go(k + 1, collected :+ arg))
-    go(0, Vector.empty)
-  }
 
   /** Stuck dispatch on a symbolic scrutinee. Open-term re-firing is deferred (plan P4); for now this collapses to an
     * opaque neutral, mirroring [[Evaluator.applyValue]]'s `VNative`-on-neutral behaviour.

@@ -210,8 +210,25 @@ object EffectSugarDesugarer {
           case EffectfulType(effects, _) => Option.when(arrows > 0)(arrows -> effects)
           case _                               => codomainRow(parts.last).map { case (n, e) => (arrows + n, e) }
         }
-      case _                                       => None
+      case _                                       =>
+        qualifiedArrow(expr).flatMap(codomain =>
+          codomain.value match {
+            case EffectfulType(effects, _) => Some(1 -> effects)
+            case _                         => codomainRow(codomain).map { case (n, e) => (n + 1, e) }
+          }
+        )
     }
+
+  /** The codomain of a `Function[A, B]` written by module (`eliot.lang.Function::Function`) — the spelling a compiler
+    * generated signature uses, which needs no `=>` in scope (`DataDefinitionDesugarer`'s `match` eliminator).
+    */
+  private def qualifiedArrow(expr: Sourced[Expression]): Option[Sourced[Expression]] = expr.value match {
+    case FunctionApplication(Some(module), name, Some(Seq(_, codomain)), Seq())
+        if module.value === WellKnownTypes.functionDataTypeFQN.moduleName.show &&
+          name.value === WellKnownTypes.functionDataTypeFQN.name.name =>
+      Some(codomain)
+    case _ => None
+  }
 
   private def isArrow(part: Sourced[Expression]): Boolean = part.value match {
     case FunctionApplication(None, name, None, Seq()) => name.value === "=>"
@@ -266,15 +283,27 @@ object EffectSugarDesugarer {
     case _                       => false
   }
 
-  /** How a definition's parameter types are rewritten: [[thunked]] ordinarily, and [[bare]] for a **meta companion**.
+  /** How a definition's parameter types are rewritten: [[thunked]] ordinarily, and [[yielded]] for a **meta
+    * companion**.
     *
     * A `^Meta` transfer brace or `^Where` predicate is compiler-track code about a value's *payload* — `def fold[A](…,
-    * whenTrue: {} A, whenFalse: {} A): A { join(whenTrue, whenFalse) }` joins the two arms' refinement metas, not two
-    * thunks. Thunking there would hand `join` a `Unit -> A` and the brace would stop type-checking; the row says
-    * nothing about a refinement, so erasing it is what the companion means.
+    * whenTrue uses *: A, whenFalse uses *: A): A { join(whenTrue, whenFalse) }` joins the two arms' refinement metas,
+    * not two thunks. Thunking there would hand `join` a `Unit -> A` and the brace would stop type-checking; the row
+    * says nothing about a refinement, so a code parameter is what its code yields.
     */
   private def parameterType(function: FunctionDefinition): Sourced[Expression] => Sourced[Expression] =
-    if (isMetaCompanion(function)) bare else thunked
+    if (isMetaCompanion(function)) yielded else thunked
+
+  /** A meta companion's parameter type: the payload of what the code at it **yields** — the result under a top-level
+    * row (`body uses *: A` ⤳ `A`), or under the row in an arrow chain's final codomain (`f uses *: E => A` ⤳ `A`),
+    * since the arguments code is called with are the callee's to supply. Any other type is [[bare]].
+    */
+  private def yielded(expr: Sourced[Expression]): Sourced[Expression] = expr.value match {
+    case EffectfulType(_, resultType)                          => bare(resultType)
+    case FlatExpression(parts) if codomainRow(expr).isDefined => yielded(parts.last)
+    case _ if codomainRow(expr).isDefined                     => qualifiedArrow(expr).fold(bare(expr))(yielded)
+    case _                                                     => bare(expr)
+  }
 
   private def isMetaCompanion(function: FunctionDefinition): Boolean =
     function.name.value.qualifier match {

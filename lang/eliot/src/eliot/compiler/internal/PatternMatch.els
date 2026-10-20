@@ -3,16 +3,10 @@
  *
  * Provided automatically for every `data` type. User code uses `match` rather than naming this
  * ability directly.
+ *
+ * Each implementation has one member, `handleCases`, which takes the value and then one handler per
+ * constructor, in declaration order: each takes that constructor's fields (a field-less one takes a
+ * `Unit`) and is code, on the effects in scope where the `match` is written. Its shape depends on the
+ * type's constructors, so the ability declares no signature for it.
  */
-ability PatternMatch[T] {
-   /**
-    * The shape of the case handlers for `T`: one function per constructor, in declaration order, each
-    * taking that constructor's fields and returning `R`.
-    */
-   type Cases[R]
-
-   /**
-    * Eliminate `value` by applying the matching case from `cases`.
-    */
-   def handleCases[R](value: T, cases: Cases[R]): R
-}
+ability PatternMatch[T]

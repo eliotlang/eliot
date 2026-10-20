@@ -111,11 +111,11 @@ object DataClassGenerator {
     for {
       // Create the interface for the data type
       interfaceGen   <- outerClassGenerator.createInnerInterfaceGenerator[F](JvmIdentifier.encode(typeVFQ.name.name))
-      // Add abstract handleCases method to the interface if used
+      // Add abstract handleCases method to the interface if used: one handler per constructor
       _              <- interfaceGen
                           .createAbstractMethod[F](
                             JvmIdentifier.encode("handleCases"),
-                            Seq(systemFunctionValue),
+                            Seq.fill(ctors.size)(systemFunctionValue),
                             systemAnyValue
                           )
                           .whenA(generateHandleCases)
@@ -176,11 +176,11 @@ object DataClassGenerator {
         } yield ()
       }
 
-  /** Create a data class with fields, constructor, and optionally a handleCases instance method that implements
-    * Church-encoded pattern matching.
+  /** Create a data class with fields, constructor, and optionally the `handleCases` instance method a `match`
+    * dispatches to: it takes one handler per constructor and applies its own constructor's handler to its fields.
     *
     * @param handleCasesInfo
-    *   If present, (constructorIndex, totalConstructors) for generating handleCases with Church encoding.
+    *   If present, (constructorIndex, totalConstructors) for generating handleCases.
     */
   private def createDataClass[F[_]: Sync](
       outerClassGenerator: ClassGenerator,
@@ -193,222 +193,42 @@ object DataClassGenerator {
       innerClassWriter <-
         outerClassGenerator.createInnerClassGenerator[F](JvmIdentifier.encode(innerClassName), javaInterfaces)
       _                <- innerClassWriter.addMonomorphicDataFieldsAndCtor[F](fields)
-      // Generate handleCases instance method with Church encoding if requested
-      selectorClasses  <- handleCasesInfo match {
-                            case Some((ctorIndex, totalCtors)) =>
-                              val ctorVfqn =
-                                ValueFQN(
-                                  outerClassGenerator.moduleName,
-                                  QualifiedName(innerClassName, Qualifier.Default)
-                                )
-                              for {
-                                lambdaFiles <- generateSelectorLambdas(
-                                                 outerClassGenerator,
-                                                 innerClassName,
-                                                 ctorIndex,
-                                                 totalCtors,
-                                                 fields
-                                               )
-                                _           <- innerClassWriter
-                                                 .createPublicInstanceMethod[F](
-                                                   JvmIdentifier.encode("handleCases"),
-                                                   Seq(systemFunctionValue),
-                                                   systemAnyValue
-                                                 )
-                                                 .use { mg =>
-                                                   val selector0Name =
-                                                     s"handleCases$$${innerClassName}$$0"
-                                                   val selector0Vfqn = ValueFQN(
-                                                     outerClassGenerator.moduleName,
-                                                     QualifiedName(selector0Name, Qualifier.Default)
-                                                   )
-                                                   for {
-                                                     // Load cases (param 1, after 'this')
-                                                     _ <- mg.addLoadVar[F](systemFunctionValue, 1)
-                                                     // Create Selector_0(this.field1, this.field2, ...)
-                                                     _ <- mg.addNew[F](selector0Vfqn)
-                                                     _ <- fields.traverse_ { field =>
-                                                            for {
-                                                              _ <- mg.addLoadThis[F]()
-                                                              _ <- mg.addGetField[F](
-                                                                     JvmIdentifier.encode(field.name.value),
-                                                                     valueType(field.parameterType),
-                                                                     ctorVfqn
-                                                                   )
-                                                            } yield ()
-                                                          }
-                                                     _ <- mg.addCallToCtor[F](
-                                                            selector0Vfqn,
-                                                            fields.map(_.parameterType).map(valueType)
-                                                          )
-                                                     // Call cases.apply(selector_0)
-                                                     _ <- mg.addCallToApply[F]()
-                                                   } yield ()
-                                                 }
-                              } yield lambdaFiles
-                            case None                          =>
-                              Seq.empty[ClassFile].pure[F]
+      _                <- handleCasesInfo.traverse_ { (ctorIndex, totalCtors) =>
+                            val ctorVfqn =
+                              ValueFQN(outerClassGenerator.moduleName, QualifiedName(innerClassName, Qualifier.Default))
+                            innerClassWriter
+                              .createPublicInstanceMethod[F](
+                                JvmIdentifier.encode("handleCases"),
+                                Seq.fill(totalCtors)(systemFunctionValue),
+                                systemAnyValue
+                              )
+                              .use(mg => applyHandlerToFields(mg, ctorVfqn, ctorIndex, fields))
                           }
       classFile        <- innerClassWriter.generate[F]()
-    } yield classFile +: selectorClasses
+    } yield Seq(classFile)
 
-  /** Generate the chain of selector lambda inner classes for Church-encoded pattern matching. */
-  private def generateSelectorLambdas[F[_]: Sync](
-      outerClassGenerator: ClassGenerator,
-      ctorName: String,
-      ctorIndex: Int,
-      totalConstructors: Int,
-      ctorFields: Seq[MonomorphicParameterDefinition]
-  ): F[Seq[ClassFile]] = {
-    val moduleName       = outerClassGenerator.moduleName
-    val n                = totalConstructors
-    val ctorFieldEntries = ctorFields.map(f => (f.name.value, valueType(f.parameterType)))
-
-    (0 until n).toList
-      .traverse { (j: Int) =>
-        val lambdaName = s"handleCases$$${ctorName}$$$j"
-        val lambdaVfqn = ValueFQN(moduleName, QualifiedName(lambdaName, Qualifier.Default))
-        val hasHandler = j > ctorIndex
-        val isTarget   = j === ctorIndex
-        val isLast     = j === n - 1
-
-        val capturedEntries =
-          if (hasHandler) ctorFieldEntries :+ ("$handler", systemFunctionValue)
-          else ctorFieldEntries
-
-        for {
-          lambdaCg  <- outerClassGenerator.createInnerClassGenerator[F](
-                         JvmIdentifier.encode(lambdaName),
-                         Seq("java/util/function/Function")
-                       )
-          _         <- addFieldsAndCtor(lambdaCg, capturedEntries)
-          _         <- lambdaCg.createApplyMethod[F](Seq(systemAnyValue), systemAnyValue).use { mg =>
-                         if (!isLast) {
-                           generateSelectorContinuation(
-                             mg,
-                             outerClassGenerator,
-                             ctorName,
-                             ctorIndex,
-                             j,
-                             n,
-                             lambdaVfqn,
-                             ctorFieldEntries,
-                             hasHandler,
-                             isTarget
-                           )
-                         } else {
-                           generateSelectorTermination(
-                             mg,
-                             lambdaVfqn,
-                             ctorFieldEntries,
-                             isTarget
-                           )
-                         }
-                       }
-          classFile <- lambdaCg.generate[F]()
-        } yield classFile
-      }
-      .map(_.toSeq)
-  }
-
-  /** Generate the body of a non-terminal selector lambda: creates the next selector in the chain. */
-  private def generateSelectorContinuation[F[_]: Sync](
+  /** Apply this constructor's handler — parameter `ctorIndex + 1`, after `this` — to its fields, one `apply` each, or to
+    * `null` for a field-less constructor, whose handler takes an ignored `Unit`.
+    */
+  private def applyHandlerToFields[F[_]: Sync](
       mg: com.vanillasource.eliot.eliotc.jvm.classgen.asm.MethodGenerator,
-      outerClassGenerator: ClassGenerator,
-      ctorName: String,
+      ctorVfqn: ValueFQN,
       ctorIndex: Int,
-      j: Int,
-      n: Int,
-      lambdaVfqn: ValueFQN,
-      ctorFieldEntries: Seq[(String, ValueFQN)],
-      hasHandler: Boolean,
-      isTarget: Boolean
-  ): F[Unit] = {
-    val moduleName       = outerClassGenerator.moduleName
-    val nextName         = s"handleCases$$${ctorName}$$${j + 1}"
-    val nextVfqn         = ValueFQN(moduleName, QualifiedName(nextName, Qualifier.Default))
-    val nextNeedsHandler = (j + 1) > ctorIndex
-    val nextEntries      =
-      if (nextNeedsHandler) ctorFieldEntries :+ ("$handler", systemFunctionValue)
-      else ctorFieldEntries
-
-    for {
-      _ <- mg.addNew[F](nextVfqn)
-      // Load constructor fields from this
-      _ <- ctorFieldEntries.traverse_ { (name, fieldType) =>
-             mg.addLoadVar[F](lambdaVfqn, 0) >> // this
-               mg.addGetField[F](JvmIdentifier.encode(name), fieldType, lambdaVfqn)
-           }
-      // Load handler for next selector if needed
-      _ <-
-        if (isTarget) {
-          // Capture the apply argument as handler
-          mg.addLoadVar[F](systemAnyValue, 1)
-        } else if (hasHandler) {
-          // Pass through captured handler
-          mg.addLoadVar[F](lambdaVfqn, 0) >>
-            mg.addGetField[F](JvmIdentifier.encode("$handler"), systemFunctionValue, lambdaVfqn)
-        } else {
-          ().pure[F]
-        }
-      _ <- mg.addCallToCtor[F](nextVfqn, nextEntries.map(_._2))
-    } yield ()
-  }
-
-  /** Generate the body of the terminal selector lambda: applies the target handler to constructor fields. */
-  private def generateSelectorTermination[F[_]: Sync](
-      mg: com.vanillasource.eliot.eliotc.jvm.classgen.asm.MethodGenerator,
-      lambdaVfqn: ValueFQN,
-      ctorFieldEntries: Seq[(String, ValueFQN)],
-      isTarget: Boolean
+      fields: Seq[MonomorphicParameterDefinition]
   ): F[Unit] =
     for {
-      // Get the handler: either the apply argument (if this is the target) or the captured $handler
+      _ <- mg.addLoadVar[F](systemFunctionValue, ctorIndex + 1)
       _ <-
-        if (isTarget) {
-          mg.addLoadVar[F](systemAnyValue, 1) >> mg.addCastTo[F](systemFunctionValue)
-        } else {
-          mg.addLoadVar[F](lambdaVfqn, 0) >>
-            mg.addGetField[F](JvmIdentifier.encode("$handler"), systemFunctionValue, lambdaVfqn)
-        }
-      // Apply handler to constructor fields
-      _ <-
-        if (ctorFieldEntries.isEmpty) {
-          mg.addConstNull[F]() >> mg.addCallToApply[F]()
-        } else {
-          ctorFieldEntries.zipWithIndex.traverse_ { case ((name, fieldType), fieldIdx) =>
+        if (fields.isEmpty) mg.addConstNull[F]() >> mg.addCallToApply[F]()
+        else
+          fields.zipWithIndex.traverse_ { (field, fieldIdx) =>
             for {
-              _ <- mg.addLoadVar[F](lambdaVfqn, 0) // this
-              _ <- mg.addGetField[F](JvmIdentifier.encode(name), fieldType, lambdaVfqn)
+              _ <- mg.addLoadThis[F]()
+              _ <- mg.addGetField[F](JvmIdentifier.encode(field.name.value), valueType(field.parameterType), ctorVfqn)
               _ <- mg.addCallToApply[F]()
-              _ <- mg.addCastTo[F](systemFunctionValue).whenA(fieldIdx < ctorFieldEntries.size - 1)
+              _ <- mg.addCastTo[F](systemFunctionValue).whenA(fieldIdx < fields.size - 1)
             } yield ()
           }
-        }
-    } yield ()
-
-  /** Add fields and constructor to a class without requiring MonomorphicParameterDefinition. */
-  private def addFieldsAndCtor[F[_]: Sync](
-      classGenerator: ClassGenerator,
-      fields: Seq[(String, ValueFQN)]
-  ): F[Unit] =
-    for {
-      _ <- fields.traverse_ { (name, fieldType) =>
-             classGenerator.createField[F](JvmIdentifier.encode(name), fieldType)
-           }
-      _ <- classGenerator.createCtor[F](fields.map(_._2)).use { mg =>
-             for {
-               _ <- mg.addLoadThis[F]()
-               _ <- mg.addCallToObjectCtor[F]()
-               _ <- fields.zipWithIndex.traverse_ { case ((name, fieldType), index) =>
-                      for {
-                        _ <- mg.addLoadThis[F]()
-                        _ <- mg.addLoadVar[F](fieldType, index + 1)
-                        _ <- mg.addPutField[F](JvmIdentifier.encode(name), fieldType)
-                      } yield ()
-                    }
-             } yield ()
-           }
     } yield ()
 
   /** Create a type constructor data class that implements the external Type interface. */

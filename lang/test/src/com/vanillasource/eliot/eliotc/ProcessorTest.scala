@@ -287,7 +287,7 @@ object ProcessorTest {
     * them via `ambientStubsWith("PatternMatch" -> patternMatchAbilityStub, "TypeMatch" -> typeMatchAbilityStub)`.
     */
   val patternMatchAbilityStub: String =
-    "ability PatternMatch[T] {\ntype Cases[R]\ndef handleCases[R](value: T, cases: Cases[R]): R\n}"
+    "ability PatternMatch[T]"
   val typeMatchAbilityStub: String    =
     "ability TypeMatch[T] {\ntype Fields[R]\ndef typeMatch[R](value: Type, matched: Fields[R], notMatched: Function[Unit, R]): R\n}"
 

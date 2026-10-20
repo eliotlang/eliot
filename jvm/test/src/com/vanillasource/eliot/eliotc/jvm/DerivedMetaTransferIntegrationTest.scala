@@ -15,10 +15,10 @@ package com.vanillasource.eliot.eliotc.jvm
   * (`docs/string-length-meta.md` §8).
   *
   * A function value is a **closure** over the metas in scope where it was written, interpreted when something applies
-  * it, and a stated transfer over code parameters reads each code argument as what it yields (§6.2). What stays ⊤ is
-  * a native applying a function argument by itself — a `match` (`handleCases`) — and a demand inside a lambda body,
-  * whose binder only the callee applying it knows. A callee's own `where` is demanded at what each use site supplies
-  * (§P5), never over ⊤ parameters.
+  * it, and a stated transfer over code parameters reads each code argument as what it yields (§6.2) — `fold`'s, and a
+  * data type's `match` eliminator's, which states the join of its handlers. What stays ⊤ is a field read back out of a
+  * data value (structural meta) and a demand inside a lambda body, whose binder only the callee applying it knows. A
+  * callee's own `where` is demanded at what each use site supplies (§P5), never over ⊤ parameters.
   */
 class DerivedMetaTransferIntegrationTest extends FullIntegrationTest {
   // `withinByte`/`useByte` are test-local, exactly as in [[TransferBraceReductionIntegrationTest]]: the precondition is
@@ -147,12 +147,24 @@ class DerivedMetaTransferIntegrationTest extends FullIntegrationTest {
     rejects("", "fold(true, 10, 200)")
   }
 
+  // A data type's eliminator states the join of its handlers, exactly as `fold` does, so a `match` is the join of what
+  // its arms yield.
+  private val pick = "data AB = A | B\ndef pick(x: AB): Int = x match { case A -> 10 case B -> 20 }\n"
+
+  "a match" should "derive the join of what its arms yield" in {
+    accepts(pick, "pick(B)", "20")
+  }
+
+  it should "reject when one arm's yield is too large" in {
+    rejects("data AB = A | B\ndef pick(x: AB): Int = x match { case A -> 10 case B -> 200 }\n", "pick(A)")
+  }
+
   // The gaps this stage keeps, stated as tests so that closing one is a visible change. "Cannot prove" — an absent
   // bound — is the right diagnostic for each, and it is *not* "not satisfied": the interpretation declined.
-  "a match" should "stay ⊤, since the native applying its cases states no transfer" in {
+  "a field read in a match arm" should "stay ⊤, since a data value carries no meta of its fields" in {
     compileForErrors(
-      useByte + "data AB = A | B\ndef pick(x: AB): Int = x match { case A -> 10 case B -> 20 }\n" +
-        "def main uses Console: Unit = printLine(show(useByte(pick(A))))"
+      useByte + "def orZero(o: Option[Int]): Int = o match { case Some(x) -> x case None -> 0 }\n" +
+        "def main uses Console: Unit = printLine(show(useByte(orZero(Some(7)))))"
     ).asserting(_ should include("Cannot prove the precondition of 'Test::useByte'"))
   }
 

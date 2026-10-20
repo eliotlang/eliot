@@ -13,6 +13,9 @@ import com.vanillasource.eliot.eliotc.token.Tokenizer
 
 class CoreProcessorTest extends ProcessorTest(Tokenizer(), ASTParser(), CoreProcessor()) {
   private val T = Qualifier.Type
+
+  /** `Function` written by its module, as a compiler-generated signature spells it. */
+  private val Fn = QualRef("Function", "eliot.lang.Function")
   // The meta namespace of the plain (Default) namespace — where a plain def's `^Meta`/`^Where` companion
   // lives. A companion keeps its callee's qualifier, so an ability implementation's is a different one.
   private val M = Qualifier.Meta(Qualifier.Default)
@@ -368,10 +371,10 @@ class CoreProcessorTest extends ProcessorTest(Tokenizer(), ASTParser(), CoreProc
     }
   }
 
-  it should "generate impl marker, Cases type, and handleCases" in {
+  it should "generate impl marker and handleCases, and no Cases type" in {
     namedValues("data Box[A](value: A)").asserting { nvs =>
       findByNameAndImplQualifier(nvs, "PatternMatch") should not be empty
-      findByNameAndImplQualifier(nvs, "Cases") should not be empty
+      findByNameAndImplQualifier(nvs, "Cases") shouldBe empty
       findByNameAndImplQualifier(nvs, "handleCases") should not be empty
     }
   }
@@ -405,8 +408,7 @@ class CoreProcessorTest extends ProcessorTest(Tokenizer(), ASTParser(), CoreProc
   it should "have correct type for handleCases on single-constructor data" in {
     namedValues("data Box[A](value: A)").asserting { nvs =>
       val nv = findByNameAndImplQualifier(nvs, "handleCases").head
-      // handleCases[A, R](value: Box[A], cases: Function[Function[Function[A, R], R], R]): R
-      val churchCasesType = App(App(Ref("Function", T), App(App(Ref("Function", T), App(App(Ref("Function", T), Ref("A", T)), Ref("R", T))), Ref("R", T))), Ref("R", T))
+      // handleCases[A, R](value: Box[A], case0 uses *: A => R): R — one handler per constructor
       nv.signature.value.structure shouldBe Lambda(
         "A",
         Ref("Type", T),
@@ -415,32 +417,36 @@ class CoreProcessorTest extends ProcessorTest(Tokenizer(), ASTParser(), CoreProc
           Ref("Type", T),
           App(
             App(Ref("Function", T), App(Ref("Box", T), Ref("A", T))),
-            App(App(Ref("Function", T), churchCasesType), Ref("R", T))
+            App(App(Ref("Function", T), App(App(Fn, Ref("A", T)), Ref("R", T))), Ref("R", T))
           )
         )
       )
     }
   }
 
-  it should "have abstract Cases type for single-constructor data" in {
-    namedValues("data Box[A](value: A)").asserting { nvs =>
-      val nv = findByNameAndImplQualifier(nvs, "Cases").head
-      nv.runtime shouldBe None
+  it should "take one handler per constructor, a field-less one taking Unit" in {
+    namedValues("data Color = Red | Green").asserting { nvs =>
+      val unitHandler = (rest: ExprStructure) => App(App(Ref("Function", T), App(App(Fn, QualRef("Unit", "eliot.lang.Unit")), Ref("R", T))), rest)
+      findByNameAndImplQualifier(nvs, "handleCases").head.signature.value.structure shouldBe Lambda(
+        "R",
+        Ref("Type", T),
+        App(App(Ref("Function", T), Ref("Color", T)), unitHandler(unitHandler(Ref("R", T))))
+      )
     }
   }
 
-  it should "have abstract Cases type for enum-like data" in {
-    namedValues("data Color = Red | Green | Blue").asserting { nvs =>
-      val nv = findByNameAndImplQualifier(nvs, "Cases").head
-      nv.runtime shouldBe None
-    }
+  it should "state the join of its handlers as a transfer" in {
+    namedValues("data Color = Red | Green").asserting(
+      _.exists(nv =>
+        nv.qualifiedName.value.name == "handleCases" && nv.qualifiedName.value.qualifier.isInstanceOf[Qualifier.Meta]
+      ) shouldBe true
+    )
   }
 
   it should "avoid clashing result parameter name with existing generic parameter R" in {
     namedValues("data Foo[R](value: R)").asserting { nvs =>
       val nv = findByNameAndImplQualifier(nvs, "handleCases").head
-      // handleCases[R, R0](value: Foo[R], cases: Function[Function[Function[R, R0], R0], R0]): R0
-      val churchCasesType = App(App(Ref("Function", T), App(App(Ref("Function", T), App(App(Ref("Function", T), Ref("R", T)), Ref("R0", T))), Ref("R0", T))), Ref("R0", T))
+      // handleCases[R, R0](value: Foo[R], case0 uses *: R => R0): R0
       nv.signature.value.structure shouldBe Lambda(
         "R",
         Ref("Type", T),
@@ -449,7 +455,7 @@ class CoreProcessorTest extends ProcessorTest(Tokenizer(), ASTParser(), CoreProc
           Ref("Type", T),
           App(
             App(Ref("Function", T), App(Ref("Foo", T), Ref("R", T))),
-            App(App(Ref("Function", T), churchCasesType), Ref("R0", T))
+            App(App(Ref("Function", T), App(App(Fn, Ref("R", T)), Ref("R0", T))), Ref("R0", T))
           )
         )
       )

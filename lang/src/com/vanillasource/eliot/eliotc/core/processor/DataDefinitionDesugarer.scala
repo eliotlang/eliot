@@ -11,7 +11,7 @@ import com.vanillasource.eliot.eliotc.ast.fact.{
   Pattern as SourcePattern
 }
 import com.vanillasource.eliot.eliotc.core.fact.RoleHint
-import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, Qualifier}
+import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, Qualifier, ValueFQN, WellKnownTypes}
 import com.vanillasource.eliot.eliotc.source.content.Sourced
 
 /** Desugars data definitions into synthetic FunctionDefinitions. Works entirely in the source AST domain.
@@ -140,9 +140,20 @@ object DataDefinitionDesugarer {
     )
   }
 
-  /** Create a PatternMatch ability implementation for data types with constructors. Generates:
-    *   1. Implementation marker function (signals this type implements PatternMatch) 2. Cases[R] associated type alias
-    *      (Church encoding wrapper type) 3. handleCases[R] method (abstract - JVM backend generates implementation)
+  /** Create a PatternMatch ability implementation for data types with constructors. Generates the implementation
+    * marker (signals this type implements PatternMatch) and the `handleCases` eliminator, body-less — every backend
+    * generates its implementation:
+    *
+    * {{{
+    *   data Shape = Circle(r: Int) | Empty
+    *     ⟶  def handleCases[R](value: Shape, case0 uses *: Int => R, case1 uses *: Unit => R) uses *: R
+    *            {joined(case0, case1)}
+    * }}}
+    *
+    * One handler per constructor, in declaration order, each taking that constructor's fields (a field-less one a
+    * `Unit`). A handler is **code** — the arm the author wrote in place, on the effects in scope there — and the result
+    * is the join of what the arms yield, stated as the eliminator's transfer exactly as `Bool::fold` states its own, so
+    * a `match` derives its meta through the one mechanism every leaf uses (`docs/total-meta-transfers.md` §9, S11).
     */
   private def createPatternMatchImpl(definition: DataDefinition, implKey: String): Seq[FunctionDefinition] =
     definition.constructors
@@ -162,17 +173,6 @@ object DataDefinitionDesugarer {
           definition.genericParameters.map(gp => typeExpr(gp.name))
         )
 
-        // Build the Church encoding selector type: Function[H0, Function[H1, ..., Function[Hn, R]...]]
-        val selectorType = ctors.foldRight(typeExpr(s.as(resultParamName))) { (ctor, acc) =>
-          typeExpr(s.as("Function"), Seq(eliminatorHandlerType(definition, ctor, resultParamName), acc))
-        }
-
-        // Church Cases type: Function[SelectorType, R]
-        val churchCasesType = typeExpr(
-          s.as("Function"),
-          Seq(selectorType, typeExpr(s.as(resultParamName)))
-        )
-
         // Like every implementation marker, this is a body-less signature vessel whose return-type slot carries the
         // guard — here the default (unguarded) `true`, so the use-site guard discharge keeps it unconditionally
         // (ability-guards §2.3). The former identity body (`arg`) is retired uniformly with `ImplementBlock`.
@@ -189,19 +189,9 @@ object DataDefinitionDesugarer {
           None
         )
 
-        val casesTypeDef = FunctionDefinition(
-          s.as(
-            QualifiedName(
-              "Cases",
-              Qualifier.AbilityImplementation("PatternMatch", implKey, None)
-            )
-          ),
-          definition.genericParameters,
-          Seq(ArgumentDefinition(s.as(resultParamName), typeExpr(s.as("Type")))),
-          typeExpr(s.as("Type")),
-          None
-        )
-
+        val handlers       = ctors.zipWithIndex.map { (ctor, index) =>
+          ArgumentDefinition(s.as(s"case$index"), handlerType(definition, ctor, resultParamName), openRow = true)
+        }
         val handleCasesDef = FunctionDefinition(
           s.as(
             QualifiedName(
@@ -210,16 +200,60 @@ object DataDefinitionDesugarer {
             )
           ),
           definition.genericParameters :+ resultParam,
-          Seq(
-            ArgumentDefinition(s.as("value"), dataTypeRef),
-            ArgumentDefinition(s.as("cases"), churchCasesType)
-          ),
+          ArgumentDefinition(s.as("value"), dataTypeRef) +: handlers,
           typeExpr(s.as(resultParamName)),
-          None
+          None,
+          returnMeta = Seq(handlers.map(handler => reference(handler.name)).reduceRight(joined))
         )
 
-        Seq(implMarker, casesTypeDef, handleCasesDef)
+        Seq(implMarker, handleCasesDef)
       }
+
+  /** A `match` handler's parameter type — `case uses *: F1 => F2 => R`: the constructor's fields (a `Unit` for none)
+    * curried into `Function`s, with the open row on the final codomain. Every name is written by its module, so a data
+    * type's module needs nothing in scope for it.
+    */
+  private def handlerType(
+      definition: DataDefinition,
+      ctor: DataConstructor,
+      resultParamName: String
+  ): Sourced[SourceExpression] = {
+    val s                                  = definition.name
+    val domains                            =
+      if (ctor.fields.isEmpty) Seq(qualified(s, WellKnownTypes.unitTypeFQN, Seq.empty)) else ctor.fields.map(_.typeExpression)
+    val result: Sourced[SourceExpression] = s.as(SourceExpression.EffectfulType(Seq.empty, typeExpr(s.as(resultParamName))))
+    domains.foldRight(result)((domain, codomain) => qualified(s, WellKnownTypes.functionDataTypeFQN, Seq(domain, codomain)))
+  }
+
+  /** A type named by its module: `vfqn` applied to `genericArgs`. */
+  private def qualified(
+      at: Sourced[?],
+      vfqn: ValueFQN,
+      genericArgs: Seq[Sourced[SourceExpression]]
+  ): Sourced[SourceExpression] =
+    at.as(
+      SourceExpression.FunctionApplication(
+        Some(at.as(vfqn.moduleName.show)),
+        at.as(vfqn.name.name),
+        Option.when(genericArgs.nonEmpty)(genericArgs),
+        Seq.empty
+      )
+    )
+
+  /** A reference to the parameter `name`. */
+  private def reference(name: Sourced[String]): Sourced[SourceExpression] =
+    name.as(SourceExpression.FunctionApplication(None, name, None, Seq.empty))
+
+  /** `eliot.compiler.Meta::joined(a, b)`, named by its module so the data's own module needs no import of it. */
+  private def joined(a: Sourced[SourceExpression], b: Sourced[SourceExpression]): Sourced[SourceExpression] =
+    a.as(
+      SourceExpression.FunctionApplication(
+        Some(a.as(WellKnownTypes.metaJoinedFQN.moduleName.show)),
+        a.as(WellKnownTypes.metaJoinedFQN.name.name),
+        None,
+        Seq(a, b)
+      )
+    )
 
   /** Create a TypeMatch ability implementation for each data definition. This is a binary discriminator that checks if
     * a Type value was constructed by this data type's type constructor. Generates:
@@ -306,31 +340,6 @@ object DataDefinitionDesugarer {
   private def freshName(base: String, existingNames: Set[String]): String =
     if (!existingNames.contains(base)) base
     else Iterator.from(0).map(i => s"$base$i").find(!existingNames.contains(_)).get
-
-  /** Build the handler type for an eliminator. Zero fields: Function[Unit, R]. One field: Function[FieldType, R].
-    * Multiple fields: curried Function[Field1, Function[Field2, ..., R]].
-    */
-  private def eliminatorHandlerType(
-      definition: DataDefinition,
-      ctor: DataConstructor,
-      resultParamName: String
-  ): Sourced[SourceExpression] =
-    if (ctor.fields.isEmpty) {
-      typeExpr(
-        definition.name.as("Function"),
-        Seq(
-          typeExpr(definition.name.as("Unit")),
-          typeExpr(definition.name.as(resultParamName))
-        )
-      )
-    } else {
-      ctor.fields.foldRight(typeExpr(definition.name.as(resultParamName))) { (field, acc) =>
-        typeExpr(
-          definition.name.as("Function"),
-          Seq(field.typeExpression, acc)
-        )
-      }
-    }
 
   /** Helper to create a sourced type expression from a name and optional generic arguments. */
   private def typeExpr(

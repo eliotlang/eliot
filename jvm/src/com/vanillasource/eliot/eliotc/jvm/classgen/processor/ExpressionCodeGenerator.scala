@@ -455,10 +455,11 @@ object ExpressionCodeGenerator {
                                   expression
                                 )
                               )
+      // The scrutinee, then one handler per constructor.
       _                    <- methodGenerator.addCallToVirtualMethod[CompilationTypesIO](
                                 singletonInternalName,
                                 JvmIdentifier.encode("handleCases"),
-                                Seq(NativeType.systemAnyValue, NativeType.systemFunctionValue),
+                                NativeType.systemAnyValue +: Seq.fill(arguments.size - 1)(NativeType.systemFunctionValue),
                                 NativeType.systemAnyValue
                               )
       _                    <- methodGenerator.addCastTo[CompilationTypesIO](valueType(expectedResultType))

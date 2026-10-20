@@ -36,7 +36,7 @@ class ModuleNamesProcessorTest
       names should contain(QualifiedName("Person", Qualifier.Default))
       names should contain(QualifiedName("name", Qualifier.Default))
       names.exists(qn => qn.name == "PatternMatch" && qn.qualifier.isInstanceOf[Qualifier.AbilityImplementation]) shouldBe true
-      names.exists(qn => qn.name == "Cases" && qn.qualifier.isInstanceOf[Qualifier.AbilityImplementation]) shouldBe true
+      names.exists(qn => qn.name == "Cases" && qn.qualifier.isInstanceOf[Qualifier.AbilityImplementation]) shouldBe false
       names.exists(qn => qn.name == "handleCases" && qn.qualifier.isInstanceOf[Qualifier.AbilityImplementation]) shouldBe true
       names.exists(qn => qn.name == "TypeMatch" && qn.qualifier.isInstanceOf[Qualifier.AbilityImplementation]) shouldBe true
       names.exists(qn => qn.name == "Fields" && qn.qualifier.isInstanceOf[Qualifier.AbilityImplementation]) shouldBe true

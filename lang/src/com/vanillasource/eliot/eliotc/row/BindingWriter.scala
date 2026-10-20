@@ -49,8 +49,9 @@ import scala.collection.mutable
   *     the argument of another code parameter, and nothing else — not an argument at a value slot, not a result, and
   *     not a capture by a value lambda, which would carry the code past the call that bound it.
   *
-  * A `match` is lowered to lambdas before this phase ([[isMatchMachinery]]): its arms are the author's code in place,
-  * so they are walked as code, not as the values their lowering makes them look like.
+  * A `match` is lowered to lambdas before this phase: its arms are the author's code in place, so they are walked as
+  * code, not as the values their lowering makes them look like — a data `match`'s by its eliminator's `uses *`
+  * parameters, a type `match`'s by [[isMatchMachinery]].
   */
 object BindingWriter {
 
@@ -348,17 +349,13 @@ object BindingWriter {
     names.take(view.binders.size + view.parameters.size).takeRight(view.parameters.size).dropWhile(Handles.isParameter)
   }
 
-  /** Whether `callee` is one of the members a `match` lowers to — `handleCases` of a `PatternMatch` implementation, or
-    * `typeMatch` of a `TypeMatch` one. Their arguments are the arms of the `match`, which the author wrote in place:
-    * code, whatever the lowering's types say. No user can name them, so nothing else is read as an arm.
+  /** Whether `callee` is `typeMatch` of a `TypeMatch` implementation, which a type `match` lowers to. Its arguments are
+    * the arms of the `match`, which the author wrote in place: code, whatever the lowering's types say. No user can
+    * name it, so nothing else is read as an arm. A data `match`'s eliminator needs no such reading: its handlers are
+    * `uses *` parameters, code by declaration.
     */
   private def isMatchMachinery(callee: ValueFQN): Boolean =
-    WellKnownTypes.isPatternMatchHandleCases(callee) || WellKnownTypes.isTypeMatchTypeMatch(callee)
-
-  /** The parameter a `match`'s Church-encoded selector binds ([[isMatchMachinery]]): the lowering applies it to each
-    * arm, so its arguments are arms too. The `$` keeps it out of reach of anything a user writes.
-    */
-  private val matchSelector = "$selector"
+    WellKnownTypes.isTypeMatchTypeMatch(callee)
 
   /** An implementation's type parameters its **pattern does not take**: `K` of `implement[T, K] keyed(f: T => K):
     * Source[T]`. Nothing where the implementation runs determines one, so it is refused at the marker
@@ -489,8 +486,6 @@ object BindingWriter {
                 walkArgument(arg, callee.value, index, scope, writtenBy)
               }
               expr.as(applyChain(written, holes ++ adjusted))
-            case ParameterReference(selector) if selector.value === matchSelector =>
-              expr.as(applyChain(walk(expr.as(head), scope), args.map(walkCode(_, scope, Int.MaxValue))))
             case _                                                                  =>
               expr.as(applyChain(walkCode(expr.as(head), scope, args.size), args.map(walk(_, scope))))
           }

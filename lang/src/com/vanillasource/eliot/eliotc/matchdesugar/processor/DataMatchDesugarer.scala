@@ -218,22 +218,14 @@ class DataMatchDesugarer(context: MatchDesugarContext) {
                  )
     } yield handler
 
+  /** `handleCases(scrutinee, h1, …, hn)`: one handler per constructor, in declaration order, each the arm the author
+    * wrote — code, at a `uses *` parameter of the eliminator (see DataDefinitionDesugarer).
+    */
   private def buildHandleCasesCall(
       scrutinee: Sourced[Expression],
       handleCasesFqn: ValueFQN,
       handlers: Seq[Sourced[Expression]]
-  ): Expression = {
-    val selectorParam            = scrutinee.as("$selector")
-    // Build: $selector(h1)(h2)...
-    val selectorBody: Expression = handlers.foldLeft[Expression](
-      Expression.ParameterReference(selectorParam)
-    ) { (acc, handler) =>
-      Expression.FunctionApplication(scrutinee.as(acc), handler)
-    }
-    // Build: \$selector -> $selector(h1)(h2)...
-    val casesLambda              =
-      wrapExpr(scrutinee, Expression.FunctionLiteral(selectorParam, None, wrapExpr(scrutinee, selectorBody)))
-    // Build: handleCases(scrutinee)(casesLambda)
-    buildCurriedCall(scrutinee, Expression.ValueReference(scrutinee.as(handleCasesFqn)), Seq(scrutinee, casesLambda))
-  }
+  ): Expression =
+    buildCurriedCall(scrutinee, Expression.ValueReference(scrutinee.as(handleCasesFqn)), scrutinee +: handlers)
+
 }

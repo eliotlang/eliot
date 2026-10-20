@@ -42,6 +42,14 @@ So the derivation both removes existing duplication and makes the currently impo
 
 ## The design: the recursor is `PatternMatch` with recursive fields expanded
 
+> **Amended (2026-10-20, `docs/total-meta-transfers.md` §9 S11): `PatternMatch` no longer has a `Cases[R]`.** A data
+> type's eliminator now takes its handlers as **separate `uses *` code parameters** —
+> `handleCases[R](value: T, case0 uses *: H₀, …, caseₙ uses *: Hₙ) uses *: R {joined(case0, …, caseₙ)}` — so that a
+> `match` states the join of its arms as a transfer, exactly as `Bool::fold` does, and the ability declares no
+> signature for it. The construction below still holds with one substitution: where it rewrites "the handler fields of
+> `Cases[R]`", read "the handler parameters", and the derived `fold` gets one code parameter per constructor and a
+> generated brace the same way. The text is kept as written.
+
 `PatternMatch` already solves the hard part — an ability whose method signature varies per
 implementation:
 

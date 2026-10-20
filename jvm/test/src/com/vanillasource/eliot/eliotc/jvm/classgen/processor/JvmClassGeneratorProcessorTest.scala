@@ -59,7 +59,7 @@ class JvmClassGeneratorProcessorTest extends AsyncFlatSpec with AsyncIOSpec with
                      // (ability-guards §2.3), so Bool must be loadable — as it always is in a real layer.
                      ModuleName(ModuleName.defaultSystemPackage, "Bool")     -> "type Bool\ndef true: Bool\ndef false: Bool",
                      ModuleName(ModuleName.defaultSystemPackage, "Implementation") -> "type Inferred\ntype Handed = Type",
-                     ModuleName(ModuleName.defaultSystemPackage, "PatternMatch") -> "ability PatternMatch[T] {\ntype Cases[R]\ndef handleCases[R](value: T, cases: Cases[R]): R\n}",
+                     ModuleName(ModuleName.defaultSystemPackage, "PatternMatch") -> "ability PatternMatch[T]",
                      ModuleName(ModuleName.defaultSystemPackage, "TypeMatch")    -> "ability TypeMatch[T] {\ntype Fields[R]\ndef typeMatch[R](value: Type, matched: Fields[R], notMatched: Function[Unit, R]): R\n}"
                    ).traverse { (moduleName, content) =>
                      val path    = moduleName.toPath

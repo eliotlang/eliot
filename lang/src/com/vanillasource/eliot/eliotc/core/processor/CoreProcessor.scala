@@ -39,9 +39,12 @@ class CoreProcessor
     val desugaredMetaConstructors: Seq[(FunctionDefinition, RoleHint)] =
       sourceAstData.functionDefinitions.flatMap(MetaConstructorDesugarer.desugar)
     // Return-position transfer brace on a def (`def add(…): Int {a.range + b.range}`) → the def's `^Meta` transfer
-    // companion (bounds-as-refinements §4.2, Step 4b).
+    // companion (bounds-as-refinements §4.2, Step 4b). A data type's `match` eliminator states one too (the join of its
+    // arms, see DataDefinitionDesugarer), so the data-desugared definitions are read as well.
+    val bracedDefinitions: Seq[FunctionDefinition]                 =
+      sourceAstData.functionDefinitions ++ desugaredFromData.map(_._1)
     val desugaredMetaTransfers: Seq[(FunctionDefinition, RoleHint)] =
-      sourceAstData.functionDefinitions.flatMap(MetaTransferDesugarer.desugar)
+      bracedDefinitions.flatMap(MetaTransferDesugarer.desugar)
     // `where <predicate>` precondition on a def (`def useByte(x: Int): Int where withinByte(range(x))`) → the def's
     // `^Where` companion (bounds-as-refinements §4.3), the `Bool` the refinement channel demands at each call site.
     val desugaredWhereCompanions: Seq[(FunctionDefinition, RoleHint)] =
@@ -53,7 +56,7 @@ class CoreProcessor
     // The payload signature every companion is instantiated by: a def's parameter and result types as a companion
     // reads them, which the channel evaluates at each call (see MetaCompanionLayout).
     val desugaredPayloadSignatures: Seq[(FunctionDefinition, RoleHint)] =
-      sourceAstData.functionDefinitions.flatMap(MetaCompanionLayout.desugar)
+      bracedDefinitions.flatMap(MetaCompanionLayout.desugar)
     // A named `implement` (effects v6 §9.3) lowers to its methods, its marker and its name marker, exactly as the
     // anonymous form lowers in `ImplementBlock` — except that the named form is parsed into a node of its own, so the
     // lowering runs here rather than in the parser. See NamedImplementationDesugarer.

@@ -295,7 +295,7 @@ needed for `foldLeft`. **Both withdrawn.** Walking the leaves that seemed to nee
 | `Process::exitCode` | `0 .. 255` | nothing |
 | `String::parseIntInternal` | ~~the platform int range~~ — **`Unbounded`**, spelled `whole` and **stated** (S4) | the domain top (above) |
 | ~~`Function::apply`~~ | **derived (S10)**: not a leaf — the `lang` layer bodies it `f(a)`, so a lambda argument is a closure the interpretation applies | nothing |
-| `PatternMatch::handleCases` | join over the cases' transfers | **higher-order** — still ⊤ after S10, see §9 |
+| ~~`PatternMatch::handleCases`~~ | **stated (S11)**: `{joined(case0, …, caseₙ)}` — the eliminator takes one `uses *` handler per constructor, so the join is an ordinary transfer over code parameters | nothing |
 | `List::foldLeft` | `combine`'s transfer iterated over `list`'s size meta | **higher-order + §5.2** |
 
 The structural reason there is no gap: **on a real target every meta-carrying type has a representation,
@@ -1105,7 +1105,7 @@ Three things this stage settled:
 - **A native applying a function argument itself** — `handleCases`, so every `match`. Its cases argument is a closure
   taking a *selector*, so reading its yield cannot reach the arms, and the native states nothing. Closing it is a
   decision, not a work item: the transfer language has no function metas, and the channel names no branch construct
-  (`docs/generic-refinement-merges.md`).
+  (`docs/generic-refinement-merges.md`). **Decided and closed by S11**, below.
 - **`if … else`**, which is blocked twice over: `else` is `foldOption(fallback, a -> a, runAbort(computation))`, a
   `match` whose value arm reads the result *inside an `Option`* — the structural gap of P6.
 - **A demand on a closure the walk cannot see applied.** A demand inside a lambda body (`applyTo(y -> useByte(y), 10)`)
@@ -1116,6 +1116,47 @@ Three things this stage settled:
 
 Measured: all 47 example jars byte-identical (no example feeds a closure or a `fold` result to a demand), and the
 whole suite green.
+
+**Gaps — a `match` states the join of its arms (S11).** Decided 2026-10-20 among four options (function metas in the
+transfer language, naming the `PatternMatch` protocol in the channel, deferring to P6, or this): **reshape the
+eliminator like `fold`.** A data type's `handleCases` takes its handlers as separate parameters, each **code**, and
+states their join:
+
+```eliot
+data Shape = Circle(r: Int) | Empty
+   ⟶  def handleCases[R](value: Shape, case0 uses *: Int => R, case1 uses *: Unit => R) uses *: R
+          {joined(case0, case1)}
+```
+
+It was the only option that breaks no decided rule: the channel still recognises a merge solely by its `^Meta`
+companion (`docs/generic-refinement-merges.md`), the transfer language gains nothing, and a `match` is now the same
+thing `fold` is — `Bool`'s eliminator. What it needed:
+
+- **The payload reads every code parameter as what it yields** (`EffectSugarDesugarer.yielded`). A *function-typed*
+  code parameter (`f uses *: E => A`) had read as the function, meta type `Unit`, so a handler taking fields — and any
+  callback — reached a companion as ⊤. Since the arguments code is called with are its callee's to supply, it is the
+  meta of `A`, which is what "a code parameter reads as what its code yields" always said; the rule was only applied to
+  the top-level form. S10's yield reading applies a closure to as many unknown arguments as its type takes, so the
+  two now agree on every code parameter.
+- **The eliminator's handlers are real `uses *` parameters**, written in the parser's own shape (an arrow run with the
+  open row on its final codomain), so the `row` phase walks the arms as code by declaration. Its special reading of the
+  Church selector (`$selector`, and `handleCases` in `isMatchMachinery`) is gone; a type `match`'s `typeMatch` keeps
+  it. The handler *types* are unchanged — a field-less constructor's is still `Unit => R` — so the match desugarer,
+  the compile-time native and the backend changed only in arity.
+- **The meta desugarers read data-desugared definitions too** (`CoreProcessor`), and the generated brace names
+  `eliot.compiler.Meta::joined` by its module, so a data type's module needs no import for it.
+- **`PatternMatch` declares no signature** for `handleCases`, since its arity is per type. Nothing read the
+  declaration: a `match` names its eliminator directly and the two-site search never selects one, which is also why
+  the old `Cases` type — body-less, and so never equal to the shape `handleCases` inlined — never failed conformance.
+- **The backend got smaller**: each constructor class's `handleCases` applies its own handler to its fields, and the
+  chain of generated selector-lambda classes per constructor is gone.
+
+What stays ⊤ is a **field read** in an arm (`case Some(x) -> x`): a data value carries no meta of its fields, which is
+P6. `if … else` is that case, since `else` reads its result back out of an `Option`.
+
+Measured against S10's sweep: every example's exit code and output identical; the 30 jars containing a `match` changed
+and the rest are byte-identical; across the corpus jars went from 657 477 to 565 827 bytes (−13.9%), 1 184 to 1 010
+classes and 18 870 to 16 042 instructions (−15.0%) — the selector chains. The whole suite is green.
 
 **P6 — precision follow-ons.** Structural meta types (§2.3), which `List` size, the fold and the higher-order rows of §5
 wait on.
