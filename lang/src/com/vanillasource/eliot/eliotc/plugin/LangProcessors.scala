@@ -19,6 +19,7 @@ import com.vanillasource.eliot.eliotc.module.processor.{
   UnifiedModuleValueProcessor
 }
 import com.vanillasource.eliot.eliotc.monomorphize.channel.{
+  MetaDemandsProcessor,
   MetaTransferAccountingProcessor,
   RefinementChannelProcessor,
   WovenValueProcessor
@@ -112,6 +113,7 @@ object LangProcessors {
     MonomorphicTypeCheckProcessor(),
     CompilerMonomorphicTypeCheckProcessor(),
     RefinementChannelProcessor(),
+    MetaDemandsProcessor(),
     // R2 meta-transfer accounting. Landed but not yet armed: nothing demands its fact in a normal build, so it is
     // dormant until wired as a `WovenValue` precondition (docs/total-meta-transfers.md §P2).
     MetaTransferAccountingProcessor(),

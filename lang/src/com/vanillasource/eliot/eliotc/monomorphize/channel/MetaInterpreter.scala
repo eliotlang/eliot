@@ -51,7 +51,8 @@ import scala.annotation.tailrec
   * walked**. A derived meta is therefore consumed at the **call node in the caller** and nowhere else — the callee's
   * own body is laid out once, conservatively, from its own table at ⊤ parameters (§7: "get that wrong and it arrives as
   * a `ClassCastException`, not a type error"). Interpreting a callee's body here never records into its table and never
-  * re-demands its preconditions; both are made once, at the definition.
+  * demands its preconditions: those are checked per context by [[MetaDemandsProcessor]], which asks this object what
+  * each argument's meta is.
   *
   * **Termination is the recursion gate's** (§2.3): user code cannot express recursion, so the derivation walks a DAG
   * and needs no fixpoint, no widening and no ascending-chain condition. The [[interpretationBudget]] is therefore not
@@ -482,7 +483,7 @@ object MetaInterpreter {
     * cheap gate. Non-structural by design (§2.3): `List[Int]` and `data Counter(n: Int)` carry none, so meta is lost at
     * every data boundary exactly as it is today.
     */
-  private def carriesMeta(nodeType: GroundValue): CompilerIO[Boolean] = nodeType match {
+  private[channel] def carriesMeta(nodeType: GroundValue): CompilerIO[Boolean] = nodeType match {
     case GroundValue.Structure(fqn, _, _) => declaresMetaStructure(fqn)
     case _                                => false.pure[CompilerIO]
   }

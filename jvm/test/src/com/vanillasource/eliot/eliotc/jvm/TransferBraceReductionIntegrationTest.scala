@@ -54,7 +54,8 @@ class TransferBraceReductionIntegrationTest extends FullIntegrationTest {
 
   it should "stay ⊤ for an unknown operand rather than bogus-narrow (soundness)" in {
     compileForErrors(
-      useByte + "def relay(y: Int): Int = useByte(add(y, y))\ndef main uses Console: Unit = printLine(show(relay(10)))"
+      useByte + "def applyTo(f: Int => Int, x: Int): Int = f(x)\n" +
+        "def main uses Console: Unit = printLine(show(applyTo(y -> useByte(add(y, y)), 10)))"
     ).asserting(_ should include("Cannot prove the precondition of 'Test::useByte'"))
   }
 

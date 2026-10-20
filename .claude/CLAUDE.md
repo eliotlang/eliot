@@ -293,7 +293,9 @@ subset of its data.
     - riders on `MonomorphicValue`: `channel/RefinementChannelProcessor` (Int ranges; it walks a definition's leading
       handle parameters as parameters, and a `where` companion leaves a callee's handles out) and
       `channel/MetaTransferAccountingProcessor` (meta transfers: R2 a leaf must state, R3 nothing else may), the
-      latter a `WovenValue` codegen precondition.
+      latter a `WovenValue` codegen precondition, and `channel/MetaDemandsProcessor` (P5: every `where` and parameter
+      brace checked in each meta context its call is reached in from `main`, one `MetaDemands` fact per context; a
+      body's root context leaves its meta-carrying parameters symbolic and defers what reads them to its callers).
 14. **used** — collects used value names starting from a `main`
 15. **uncurry** — uncurries calls for the backend
 
@@ -422,8 +424,8 @@ contain `data` (a chosen representation), a native leaf, or any representation-d
   on a leaf returning an alias of `Int` states the same meta as on `Int`. R2 reads the evaluated result type too. A
   **parameter brace** `x: Int {closed(0, 255)}` (§8.9) states the meta of the value at that parameter, and whoever
   supplies it proves it: every full call demands its argument fit (`join(argument, stated) ≡ stated`, the join reached
-  through `eliot.compiler.Meta::joined`), the body reads the parameter at the stated meta instead of ⊤ (its checks only,
-  never its layout), and a def with one cannot be passed as a value. Its statement companion
+  through `eliot.compiler.Meta::joined`), a demand in the body is checked at what each call supplies (P5), and a def
+  with one cannot be passed as a value. Its statement companion
   (`MetaParameterDesugarer`, `<def>$Parameter$<p>`) reads no parameter: its parameters are placeholders that only count
   and place. A brace on a `data` field is the same decision, not yet built;
   one on a bodied return is declined (§8.9) — a meta is stated only where the compiler cannot see the supplier.

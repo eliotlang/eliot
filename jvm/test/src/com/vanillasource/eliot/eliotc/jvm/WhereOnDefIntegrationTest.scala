@@ -32,10 +32,53 @@ class WhereOnDefIntegrationTest extends FullIntegrationTest {
       .asserting(_ should include("precondition of 'Test::useByte' is not satisfied"))
   }
 
+  // Demands are checked in context (`docs/total-meta-transfers.md` P5): every meta is known from `main`, so a demand on a
+  // parameter is checked at what each call actually supplies, never once over a ⊤ parameter.
+  it should "accept a forwarded parameter at a call that fits" in {
+    compileAndRun(
+      useByte + "def relay(y: Int): Int = useByte(y)\ndef main uses Console: Unit = printLine(show(relay(42)))"
+    ).asserting(_ shouldBe "42")
+  }
+
+  it should "reject a forwarded parameter at the call that does not fit, naming where it is demanded" in {
+    compileForErrors(
+      useByte + "def relay(y: Int): Int = useByte(y)\ndef main uses Console: Unit = printLine(show(relay(1000)))"
+    ).asserting(_ should (include("precondition of 'Test::useByte' is not satisfied") and include("In 'Test::relay'")))
+  }
+
+  it should "check a demand through every body between it and main" in {
+    compileForErrors(
+      useByte + "def relay(y: Int): Int = useByte(y)\ndef twice(z: Int): Int = relay(add(z, z))\n" +
+        "def main uses Console: Unit = printLine(show(twice(100)))"
+    ).asserting(_ should (include("In 'Test::relay'") and include("In 'Test::twice'")))
+  }
+
+  it should "not demand the meta of an argument its context does not decide" in {
+    compileAndRun(
+      useByte + "def pick(index: Int, fallback: Int): Int where withinByte(range(index)) = index\n" +
+        "def relay(y: Int): Int = pick(5, y)\ndef main uses Console: Unit = printLine(show(relay(1000)))"
+    ).asserting(_ shouldBe "5")
+  }
+
+  it should "read a code argument as what its code yields" in {
+    compileAndRun(
+      useByte + "def times(count: Int, body uses *: Int) uses *: Int where withinByte(range(count)) = body\n" +
+        "def main uses Console: Unit = printLine(show(times(3, 7)))"
+    ).asserting(_ shouldBe "7")
+  }
+
   it should "reject a call whose argument range is unknown (top), rather than silently accept" in {
     compileForErrors(
-      useByte + "def relay(y: Int): Int = useByte(y)\ndef main uses Console: Unit = printLine(show(relay(42)))"
+      useByte + "def applyTo(f: Int => Int, x: Int): Int = f(x)\n" +
+        "def main uses Console: Unit = printLine(show(applyTo(y -> useByte(y), 42)))"
     ).asserting(_ should include("Cannot prove the precondition of 'Test::useByte'"))
+  }
+
+  it should "reject a def whose demand its arguments decide, passed as a value" in {
+    compileForErrors(
+      useByte + "def relay(y: Int): Int = useByte(y)\ndef call(f: Int => Int, x: Int): Int = f(x)\n" +
+        "def main uses Console: Unit = printLine(show(call(relay, 5)))"
+    ).asserting(_ should (include("Cannot prove the precondition of 'Test::useByte'") and include("'y' is not known")))
   }
 
   // Higher-order escape (`docs/refinement-channel-follow-ups.md` §2.1): passing a `where`-bearing def as a *value*

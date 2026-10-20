@@ -12,9 +12,9 @@ native leaf in the tree that produces a meta-carrying type states its transfer, 
 a leaf that states nothing no longer compiles, and neither does a bodied value that states one. With it the
 channel's own untotality is gone: a meta that is absent now means "nobody has computed this yet", never "a native
 quietly defaulted to ⊤" — and since S8 the *bodied* half of that residue is answered too, leaving only what the
-interpretation itself declines (a lambda, a `match`, a budget it exhausted). **P5 is decided, not built** (2026-10-20): a
-demand is checked in every context it is reached in from `main`, where every meta is known, instead of once per body
-over ⊤ parameters. The pieces that had to land first all did:
+interpretation itself declines (a lambda, a `match`, a budget it exhausted). **P5 is built** (2026-10-20): a demand is
+checked in every context it is reached in from `main`, where every meta is known, instead of once per body over ⊤
+parameters (`monomorphize/channel/MetaDemandsProcessor`). The pieces that had to land first all did:
 the range domain's top (`whole`, §5), the removal of the last *global* top (the generic `Meta[Bound[D]]`, §5's third
 amendment) — so every top is a domain top and the machinery keeps none — and the backend's result-edge re-encode
 (`docs/string-length-meta.md` §8, S3), which the first stated transfer tripped and which S8 then leaned on at every
@@ -652,8 +652,8 @@ reads it. (Before this change it could not be either; the brief interim that typ
 admitted it by accident.) Demanding only what the predicate reads is the obvious refinement — a well-typed predicate
 can observe a meta only through its type's eliminators, which stall on the placeholder — but it narrows a decided
 fail-safe and is left for a decision. **Superseded by P5 (2026-10-20):** the ⊤ argument is an artefact of checking a
-body once with ⊤ parameters; checked in context every argument meta is known, so there is nothing to exempt, and the
-placeholder survives only as a stopgap while the walk still declines at a thunk.
+body once with ⊤ parameters; checked in context every argument meta is known, so there is nothing to exempt, and a code
+argument is read as what its code yields.
 
 *The meta constructor is passed, not named (2026-10-19).* A slot-producing brace lists slots, and its body used to apply
 the constructor named by suffixing the result type as written (`Int$Meta(…)`), so a leaf whose result type is an alias
@@ -706,6 +706,7 @@ def asByte(x: Int {closed(0, 255)}): Int = useByte(x)      // useByte's `where r
   cannot discharge the demand, exactly as for a `where`; a brace on a parameter whose type carries no meta is reported
   at the call, naming the parameter and the type.
 - **Inside the body** the parameter carries the stated meta instead of ⊤ — sound, since every manifest call proved it.
+  *(Retired by P5: a body's demands are checked at what each call supplies, which the call has proven fits.)*
   The walk binds it by position to the def's leading parameter lambdas (handles included, as the companion's
   placeholders are) and a lambda's own binder of the same name shadows it. What a `where` could not give is this: a
   predicate does not turn back into an interval, so `useByte(x)` inside `asByte` above was unprovable. The stated meta
@@ -917,7 +918,7 @@ Four decisions this stage made:
 - **A `where` is still demanded at the definition, over ⊤ parameters.** The interpretation computes metas; it does not
   demand preconditions. So `def relay(y: Int): Int = useByte(y)` is still rejected at `relay`, even where the use site
   would satisfy it — re-demanding a callee's `where` with the caller's argument metas is P5 (decided 2026-10-20: every
-  demand is checked in each context it is reached in from `main`), and it is now possible for the first time.
+  demand is checked in each context it is reached in from `main`), and it is now possible for the first time. **Built (P5).**
 
 **What it costs the emitted code, honestly.** 35 of the 40 compiling examples are byte-identical; the five that moved
 (`Arithmetic`, `ArithmeticAbility`, `IntReturn`, `Ranges`, `WherePrecondition`) all *grew*, and each still prints its
@@ -980,7 +981,7 @@ call boundary, because nothing narrows there; it truncates wherever the narrow w
 all. That does not weaken R2, which was always axiomatic — nothing rechecks a leaf's statement — but it does mean the
 backend is no longer an accidental second opinion on one.
 
-**P5 — demands are checked in context (decided 2026-10-20, not built).** Every meta the checker demands is a
+**P5 — demands are checked in context (decided and built 2026-10-20).** Every meta the checker demands is a
 compile-time value, and every one is known: the program is monomorphized from `main`, which takes no parameters, so
 each call chain starts at known metas — literals, the transfers natives state, `Unit` for a handle — and each twin
 (§1: `f^Meta` takes `MetaOf` of each parameter to `MetaOf` of the result) is evaluated on known inputs. *Known* is not
@@ -1015,26 +1016,54 @@ It also closes the question §8.8 left open, *demand only what the predicate rea
 is known there is nothing to exempt. Code parameters stop being special — a code argument's meta is the meta of what it
 yields, one more twin input.
 
-**Most of the machinery exists.** Since S8 `MetaInterpreter` evaluates a callee's body at the caller's argument metas
-(`quadruple(30)` interprets `double` twice), so `useIt(42)` already computes `y = [42, 42]` inside `useIt`. It raises no
-demand while doing so, by design (§6.2's note): a callee's positions would land in the caller's table and be reported
-once per call site. What P5 builds is therefore the reporting, not the analysis:
+**How it is built.** Since S8 `MetaInterpreter` evaluates a callee's body at the caller's argument metas, so `useIt(42)`
+already computed `y = [42, 42]` inside `useIt`; what P5 added is the checking and the reporting, as a fact of its own
+beside the stamping walk:
 
-- **The interpretation demands.** A `where` and a parameter brace met while interpreting a body are checked at that
-  context's metas, deduplicated on `(callee, typeArgs, argMetas)` — §8.5's memo key, which stops being optional here.
-- **A failure is reported at the demand, with the chain that reached it**: *"the precondition of `useByte` is not
-  satisfied at `Probe:3`, reached from `main` at `Probe:7` with `y` ∈ [1000, 1000]"*.
+- **A demand is a fact per context.** `MetaDemands(vfqn, typeArgs, context)` is one body's demands checked in one meta
+  context, a `Known`, `Unknown` or `Symbolic` entry per leading parameter (`MetaDemandsProcessor`). The fact cache is
+  §8.5's memo on `(callee, typeArgs, argMetas)`, so a context reached from many calls is checked once. The stamping walk
+  (`RefinementChannelProcessor`) demands nothing any more; its table waits on the value's root context, which keeps the
+  reporting where it was. (Demanding it at the `WovenValue` seam instead would withhold a violating value's woven body,
+  and with it the walk of the used graph and every later value's own diagnostics: an engine registers no fact for a
+  generation that reported an error.)
+- **The root context is the definition, made symbolic.** A value's root leaves each meta-carrying parameter `Symbolic`
+  and every other one (a handle, a function, a code parameter) `Unknown`. A demand reading a value that is unknown
+  *because* a symbolic parameter decides it is **deferred**: the root context's fact says so, and a call to that value
+  asks for the context its arguments make instead. A body that references nothing demanding is not walked at all, so
+  its metas are never computed — the overwhelming majority.
+- **Each violation is reported once, at the use site that decides it.** A context's walk tracks which of its parameter
+  positions each meta derives from, and a context other than the root reports only what depends on what it supplies;
+  everything else is decided identically, and reported, by the root. A non-root context reports nothing itself: its
+  violations travel in its fact, and the caller lifts each to its own call, adding a line naming where the demand sits
+  and what the call supplied. They reach the first root context on the way out — the body where the knowledge was
+  written — and are reported there:
+
+  ```
+  Probe.els:8:19: The precondition of 'Probe::useByte' is not satisfied by the argument's meta-information.
+  8 |    printLine(show(twice(100)))
+    |  In 'Probe::useIt' at Probe.els:4:26, where 'y' is Int$Meta(Interval(Bounded(200), Bounded(200))).
+    |  In 'Probe::twice' at Probe.els:5:26, where 'z' is Int$Meta(Interval(Bounded(100), Bounded(100))).
+  ```
+
+- **What a call does not apply is unknown.** A bare reference or partial application of a value whose root defers is
+  checked with its unapplied parameters `Unknown`, so `call(useIt, 5)` fails loudly ("'y' is not known") rather than
+  escaping through a function value the channel never sees applied.
+- **A code argument reads as what its code yields.** A `where` reads a lambda argument at a code parameter as its
+  innermost body's meta, so `times(3, 7)` above is decided by `count` alone and compiles.
 - **Layout is untouched.** A body still has one layout, stamped at its ⊤ parameters, so metas stay invisible to
-  instantiation identity (§10). Only checking is per context. A parameter brace keeps its meaning as the stated contract
-  every call proves; inside the body, the context's own meta is at least as narrow.
-- **The definition-site check goes.** `WhereOnDefIntegrationTest`'s "reject a call whose argument range is unknown
-  (top)" encodes the modular check and changes with it: `relay(42)` compiles and `relay(1000)` is rejected.
+  instantiation identity (§10). A parameter brace keeps its meaning as the stated contract every call proves; inside
+  the body, demands read the context's own meta, which that proof makes at least as narrow — so §8.9's "the body reads
+  the stated meta" is retired with the root walk it served.
+- **The definition-site check is gone.** The integration tests that pinned it now pin P5: `relay(42)` compiles,
+  `relay(1000)` is rejected naming `relay`, and the genuinely unknown case is a lambda's binder
+  (`applyTo(y -> useByte(y), 42)`). All 47 example jars are byte-identical and the sweep's time is unchanged.
 
 **What ⊤ is left meaning: gaps in the walk, not a design rule.** The interpretation still declines at a lambda (it is
 first-order, §P4), a `match`, a field read back out of a `data` value (structural meta, §2.3) and an exhausted budget.
 Each must stay a loud failure at any demand that reaches it — a gap is fail-safe or it is a hole — and each is now a work item,
-not a semantics. The budget needs revisiting with it: 256 steps per call site was sized for *computing a value*, not
-for *verifying the program from `main`*, and the memo is what makes that affordable.
+not a semantics. The budget was left as it is: a context is walked as a fact per body, so its 256 steps per call node
+still bound only *computing a value*, and verifying the program from `main` is bounded by the call DAG and the memo.
 
 A cheap stopgap stays available while those gaps are open: an unknown argument passed as a free variable, so a predicate
 that never reads it reduces anyway (a reduction to `true` with a free variable holds for every value of it). Its one

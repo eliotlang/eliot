@@ -16,7 +16,7 @@ package com.vanillasource.eliot.eliotc.jvm
   *
   * The last two cases pin the boundaries this stage deliberately keeps: a **higher-order** call is still ⊤ (a lambda
   * carries no meta of its own — §5's table, which additionally waits on the `List` size domain), and a callee's own
-  * `where` is still demanded at its *definition* over ⊤ parameters rather than re-demanded per use site (§P5).
+  * `where` is demanded at what each use site supplies (§P5), never over ⊤ parameters.
   */
 class DerivedMetaTransferIntegrationTest extends FullIntegrationTest {
   // `withinByte`/`useByte` are test-local, exactly as in [[TransferBraceReductionIntegrationTest]]: the precondition is
@@ -118,13 +118,19 @@ class DerivedMetaTransferIntegrationTest extends FullIntegrationTest {
     ).asserting(_ should include("Cannot prove the precondition of 'Test::useByte'"))
   }
 
-  // A callee's own `where` is demanded once, at its definition, over ⊤ parameters — the interpretation computes metas
-  // but demands no precondition, so it neither repeats nor relaxes that check. Re-demanding it per use site with the
-  // caller's metas is §P5, and until then this program is rejected even though the use site would satisfy it.
-  "a where precondition inside a bodied def" should "still be demanded at the definition over ⊤ parameters" in {
-    compileForErrors(
+  // A `where` inside a bodied def is demanded at what each use site supplies (§P5), with the meta the interpretation
+  // derives for it there: `relay(10)` fits, `relay(1000)` does not.
+  "a where precondition inside a bodied def" should "be demanded at what the use site supplies" in {
+    compileAndRun(
       useByte + "def relay(y: Int): Int = useByte(y)\n" +
         "def main uses Console: Unit = printLine(show(relay(10)))"
-    ).asserting(_ should include("Cannot prove the precondition of 'Test::useByte'"))
+    ).asserting(_ shouldBe "10")
+  }
+
+  it should "be rejected where the use site supplies a meta that does not fit" in {
+    compileForErrors(
+      useByte + "def relay(y: Int): Int = useByte(y)\n" +
+        "def main uses Console: Unit = printLine(show(relay(1000)))"
+    ).asserting(_ should include("precondition of 'Test::useByte' is not satisfied"))
   }
 }

@@ -2,8 +2,8 @@ package com.vanillasource.eliot.eliotc.jvm
 
 /** End-to-end proof of **parameter braces** (`docs/total-meta-transfers.md` §8.9): `x: Int {closed(0, 255)}` states the
   * meta-information of the value at that parameter. Whoever supplies the value proves it, so every full call demands
-  * that its argument's meta fits the stated one, and inside the body the parameter carries the stated meta instead of
-  * ⊤ — which is what a `where` cannot give, since a predicate does not turn back into an interval.
+  * that its argument's meta fits the stated one. Inside the body a demand is checked at what each call supplies
+  * (`docs/total-meta-transfers.md` P5), which every call has proven fits.
   */
 class ParameterBraceIntegrationTest extends FullIntegrationTest {
   private val asByte =
@@ -21,13 +21,26 @@ class ParameterBraceIntegrationTest extends FullIntegrationTest {
       .asserting(_ should include("which the parameter 'x' of 'Test::asByte' states"))
   }
 
+  it should "accept a forwarded parameter at a call that fits" in {
+    compileAndRun(
+      asByte + "def relay(y: Int): Int = asByte(y)\ndef main uses Console: Unit = printLine(show(relay(42)))"
+    ).asserting(_ shouldBe "42")
+  }
+
+  it should "reject a forwarded parameter at the call that does not fit" in {
+    compileForErrors(
+      asByte + "def relay(y: Int): Int = asByte(y)\ndef main uses Console: Unit = printLine(show(relay(300)))"
+    ).asserting(_ should (include("which the parameter 'x' of 'Test::asByte' states") and include("In 'Test::relay'")))
+  }
+
   it should "reject a call whose argument's meta is unknown, rather than silently accept" in {
     compileForErrors(
-      asByte + "def relay(y: Int): Int = asByte(y)\ndef main uses Console: Unit = printLine(show(relay(42)))"
+      asByte + "def applyTo(f: Int => Int, v: Int): Int = f(v)\n" +
+        "def main uses Console: Unit = printLine(show(applyTo(y -> asByte(y), 42)))"
     ).asserting(_ should include("Cannot prove what the parameter 'x' of 'Test::asByte' states"))
   }
 
-  it should "give the parameter its stated meta inside the body" in {
+  it should "satisfy a demand inside the body with what its call supplies" in {
     compileAndRun(
       "import eliot.effect.Console\n" + useByte +
         "def asByte(x: Int {closed(0, 255)}): Int = useByte(x)\n" +
@@ -42,10 +55,10 @@ class ParameterBraceIntegrationTest extends FullIntegrationTest {
     ).asserting(_ shouldBe "42")
   }
 
-  it should "not prove a narrower brace from a wider one" in {
+  it should "check a narrower brace inside a wider one's body at what its call supplies" in {
     compileForErrors(
       asByte + "def asWord(w: Int {closed(0, 65535)}): Int = asByte(w)\n" +
-        "def main uses Console: Unit = printLine(show(asWord(42)))"
+        "def main uses Console: Unit = printLine(show(asWord(300)))"
     ).asserting(_ should include("which the parameter 'x' of 'Test::asByte' states"))
   }
 

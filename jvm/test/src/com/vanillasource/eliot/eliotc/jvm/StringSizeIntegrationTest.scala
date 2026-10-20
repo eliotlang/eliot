@@ -38,10 +38,17 @@ class StringSizeIntegrationTest extends FullIntegrationTest {
       .asserting(_ should include("precondition of 'Test::banner' is not satisfied"))
   }
 
-  it should "reject a string whose size is unknown, rather than silently accept" in {
-    compileForErrors(
+  it should "check a forwarded parameter at what its call supplies" in {
+    compileAndRun(
       banner + """def relay(s: String): String = banner(s)
                  |def main uses Console: Unit = printLine(relay("ab"))""".stripMargin
+    ).asserting(_ shouldBe "ab")
+  }
+
+  it should "reject a string whose size is unknown, rather than silently accept" in {
+    compileForErrors(
+      banner + """def applyTo(f: String => String, s: String): String = f(s)
+                 |def main uses Console: Unit = printLine(applyTo(t -> banner(t), "ab"))""".stripMargin
     ).asserting(_ should include("Cannot prove the precondition of 'Test::banner'"))
   }
 
