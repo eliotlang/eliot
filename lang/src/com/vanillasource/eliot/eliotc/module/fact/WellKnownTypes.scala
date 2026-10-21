@@ -191,6 +191,12 @@ object WellKnownTypes {
   val metaJoinedFQN: ValueFQN =
     ValueFQN(ModuleName(compilerPackage, "Meta"), QualifiedName("joined", Qualifier.Default))
 
+  /** `eliot.compiler.Meta::never[D]: D` — what a call that does not return states of its result (`docs/meta.md`
+    * §12). The refinement channel recognises a stated transfer reducing to it as ⊥, never as a meta.
+    */
+  val metaNeverFQN: ValueFQN =
+    ValueFQN(ModuleName(compilerPackage, "Meta"), QualifiedName("never", Qualifier.Default))
+
   /** `stringLiteral[N]: String` — the string literal's *size* protocol, the [[integerLiteralFQN]] twin for the `String`
     * refinement domain. A string literal needs no conversion (its characters are already the value), so unlike
     * `integerLiteral` this declaration is never referenced by a program and no desugaring rewrites into it: it exists

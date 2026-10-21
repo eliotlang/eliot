@@ -1,3 +1,5 @@
+import eliot.compiler.Meta
+
 // Merge copy of the base declaration so the implementation below can resolve it (name resolution is per-file). The
 // merge verifies this copy agrees with the abstract declaration in the stdlib layer, which carries the documentation.
 effect Throw[E] {
@@ -43,7 +45,7 @@ type ThrowFrame[K]
 private def escapeInternal[K, A, R](body uses *: ThrowFrame[K] => A, onExit uses *: K => R, onValue uses *: A => R) uses *: R
 
 /**
- * Leave through `frame`, carrying `err`. Control does not return, so the result stands in for a value of any type.
- * Implemented by the backend.
+ * Leave through `frame`, carrying `err`. Control does not return, so the result stands in for a value of any type, and
+ * that is what it states (`{never}`). Implemented by the backend.
  */
-private def exitInternal[K, A](frame: ThrowFrame[K], err: K): A
+private def exitInternal[K, A](frame: ThrowFrame[K], err: K): A {never}

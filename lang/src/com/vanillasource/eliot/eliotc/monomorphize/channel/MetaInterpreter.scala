@@ -83,6 +83,17 @@ object MetaInterpreter {
       * to a def) and the `env` it was written in, which is what the parameters it captures read.
       */
     case Closure(node: Sourced[MonomorphicExpression], env: Env)
+
+    /** ⊥ (`docs/meta.md` §12): evaluating this does not produce a value. It is a fact about control, never a meta: no
+      * companion receives it, and it originates only where a leaf states `{never}`.
+      */
+    case Never
+
+    /** The meta this value is known to have: a closure's type carries none, and ⊥ is never materialised. */
+    def known: Option[GroundValue] = this match {
+      case Meta(meta) => meta
+      case _          => None
+    }
   }
 
   object Value {
@@ -115,18 +126,18 @@ object MetaInterpreter {
       typeArguments: Seq[GroundValue],
       resultType: GroundValue,
       arguments: Seq[Value]
-  ): CompilerIO[Option[GroundValue]] =
-    metaOf(callee, typeArguments, resultType, arguments, interpretationBudget).map((_, value) => metaOfValue(value))
+  ): CompilerIO[Value] =
+    metaOf(callee, typeArguments, resultType, arguments, interpretationBudget).map((_, value) => settled(value))
 
   /** What a walk hands the interpretation for an argument it walked: a function-typed `node` is a closure over
-    * `captured`, what the walk knows of the parameters in scope; any other node is the `meta` the walk computed for it.
+    * `captured`, what the walk knows of the parameters in scope; any other node is the `value` the walk computed for it.
     */
   def argument(
       node: Sourced[MonomorphicExpression],
-      meta: Option[GroundValue],
+      value: Value,
       captured: Map[String, Option[GroundValue]]
   ): Value =
-    if (isFunction(node)) Value.Closure(node, captured.view.mapValues(Value.Meta(_)).toMap) else Value.Meta(meta)
+    if (isFunction(node)) Value.Closure(node, captured.view.mapValues(Value.Meta(_)).toMap) else value
 
   /** The α seed of the `Int` domain: a literal `n`'s singleton range, built in Eliot by
     * `eliot.lang.Runtime::integerLiteral`'s `{closed(V, V)}` brace and reduced here through the *same* stated-transfer
@@ -313,14 +324,19 @@ object MetaInterpreter {
       arguments: Seq[Value],
       budget: Int
   ): CompilerIO[(Int, Value)] =
-    declaresTransfer(callee).ifM(
-      stated(callee, typeArguments, arguments, budget),
-      derive(callee, typeArguments, resultType, arguments, budget)
-    )
+    if (arguments.contains(Value.Never)) (budget, Value.Never).pure[CompilerIO]
+    else
+      declaresTransfer(callee).ifM(
+        stated(callee, typeArguments, arguments, budget),
+        derive(callee, typeArguments, resultType, arguments, budget)
+      )
 
   /** A stated transfer over the call's arguments. A companion is Eliot over metas and cannot apply a closure, so a
     * function-typed argument is passed as what it **yields** ([[yieldOf]]) where the companion reads a meta for it — a
-    * code parameter, whose payload type is what its code yields — and as a placeholder where it reads none.
+    * code parameter, whose payload type is what its code yields — and as `unit` where it reads none.
+    *
+    * A yield may be ⊥, which no companion receives ([[withoutNever]]); a companion reducing to `never` is ⊥ itself
+    * ([[fromReduced]]).
     */
   private def stated(
       callee: ValueFQN,
@@ -331,18 +347,53 @@ object MetaInterpreter {
     companionTypeArguments(callee, RefinementChannelProcessor.metaCompanionFqn(callee), typeArguments, arguments.size, withResult = false)
       .map(_.getOrElse(Seq.empty))
       .flatMap { metaTypes =>
-        arguments.zipWithIndex.foldLeftM((budget, Seq.empty[Option[GroundValue]])) { case ((left, metas), (argument, index)) =>
-          argument match {
-            case Value.Meta(meta)                                                => (left, metas :+ meta).pure[CompilerIO]
-            case closure: Value.Closure if metaTypes.lift(index).exists(_ != unitType) =>
-              handedMetas(callee, typeArguments, index, closure.node.value.expressionType)
-                .flatMap(handed => yieldOf(closure, handed, left))
-                .map((remaining, meta) => (remaining, metas :+ meta))
-            case _: Value.Closure                                                => (left, metas :+ None).pure[CompilerIO]
+        arguments.zipWithIndex
+          .foldLeftM((budget, Seq.empty[Value])) { case ((left, values), (argument, index)) =>
+            argument match {
+              case closure: Value.Closure if metaTypes.lift(index).exists(_ != unitType) =>
+                handedMetas(callee, typeArguments, index, closure.node.value.expressionType)
+                  .flatMap(handed => yieldOf(closure, handed, left))
+                  .map((remaining, value) => (remaining, values :+ value))
+              case _: Value.Closure                                                      => (left, values :+ Value.unknown).pure[CompilerIO]
+              case value                                                                 => (left, values :+ value).pure[CompilerIO]
+            }
           }
-        }
+          .flatMap { (left, values) =>
+            withoutNever(values, metaTypes, arguments.map(_.isInstanceOf[Value.Closure])) match {
+              case Some(metas) => reduceTransfer(callee, typeArguments, metas).map(meta => (left, fromReduced(meta)))
+              case None        => (left, Value.Never).pure[CompilerIO]
+            }
+          }
       }
-      .flatMap((left, metas) => reduceTransfer(callee, typeArguments, metas).map(meta => (left, Value.Meta(meta))))
+
+  /** The argument metas a stated transfer is reduced over when some of its code yields ⊥ (`docs/meta.md` §12), or
+    * `None` when every yield is ⊥, so the call does not return. A ⊥ yield is replaced by another argument of the **same
+    * meta type**: statements are monotone, so `f(…⊥…) ⊑ f(…v…)` for any `v`, which makes the replacement sound, and it is
+    * exact for a join, which is idempotent — `fold(c, 5, abort)` is `[5, 5]`. A ⊥ yield with no such sibling is passed
+    * as not computed. Only code yields ⊥ here: a ⊥ *value* argument made the call ⊥ before it got this far.
+    */
+  private def withoutNever(
+      values: Seq[Value],
+      metaTypes: Seq[GroundValue],
+      isCode: Seq[Boolean]
+  ): Option[Seq[Option[GroundValue]]] = {
+    val returning = values.indices.filter(values(_) != Value.Never)
+    if (values.indices.forall(index => returning.contains(index))) Some(values.map(_.known))
+    else if (values.indices.filter(isCode).forall(index => !returning.contains(index))) None
+    else
+      Some(values.indices.map { index =>
+        if (returning.contains(index)) values(index).known
+        else returning.find(other => metaTypes.lift(other) == metaTypes.lift(index)).flatMap(values(_).known)
+      })
+  }
+
+  /** What a reduced stated transfer is: ⊥ when it reduced to `eliot.compiler.Meta::never`, else the meta it reduced
+    * to, or not computed.
+    */
+  private def fromReduced(meta: Option[GroundValue]): Value = meta match {
+    case Some(GroundValue.Structure(fqn, _, _)) if fqn == WellKnownTypes.metaNeverFQN => Value.Never
+    case other                                                                         => Value.Meta(other)
+  }
 
   /** What a function value yields: its result once applied to as many arguments as its type takes — a code argument's
     * thunk or handle block applied to the unit or handles it is run with, which carry no meta, or a handler applied to
@@ -352,10 +403,10 @@ object MetaInterpreter {
       closure: Value.Closure,
       handed: Seq[Option[GroundValue]],
       budget: Int
-  ): CompilerIO[(Int, Option[GroundValue])] = {
+  ): CompilerIO[(Int, Value)] = {
     val functionType = closure.node.value.expressionType
     val arguments    = Seq.tabulate(functionType.functionArity)(index => Value.Meta(handed.lift(index).flatten))
-    applyValue(closure, arguments, functionType.deepReturnType, budget).map((left, value) => (left, metaOfValue(value)))
+    applyValue(closure, arguments, functionType.deepReturnType, budget).map((left, value) => (left, settled(value)))
   }
 
   /** Derive a bodied callee's meta by interpreting its body under the caller's arguments. Three things make this
@@ -428,7 +479,10 @@ object MetaInterpreter {
       }
 
   /** Apply the head of an application, written in `env`, to `arguments`: a def is called, a lambda binds its binders, and
-    * a parameter is applied as whatever it is bound to. `resultType` is the type of the whole application.
+    * a parameter is applied as whatever it is bound to. `resultType` is the type of the whole application. Evaluation is
+    * strict, so an application one of whose arguments is ⊥ is never made, and is ⊥ itself — a `val` block included,
+    * which lowers to an applied lambda. A code argument is a closure, never ⊥: whether it returns is its callee's
+    * business.
     */
   private def applyHead(
       head: Sourced[MonomorphicExpression],
@@ -437,16 +491,18 @@ object MetaInterpreter {
       resultType: GroundValue,
       budget: Int
   ): CompilerIO[(Int, Value)] =
-    head.value.expression match {
-      case MonomorphicExpression.MonomorphicValueReference(vfqn, ta) =>
-        metaOf(vfqn.value, ta, resultType, arguments, budget)
-      case MonomorphicExpression.FunctionLiteral(_, _, _)            =>
-        applyLambda(head, env, arguments, resultType, budget)
-      case MonomorphicExpression.ParameterReference(parameterName)   =>
-        applyValue(env.getOrElse(parameterName.value, Value.unknown), arguments, resultType, budget)
-      case _                                                         =>
-        unknown(budget)
-    }
+    if (arguments.contains(Value.Never)) (budget, Value.Never).pure[CompilerIO]
+    else
+      head.value.expression match {
+        case MonomorphicExpression.MonomorphicValueReference(vfqn, ta) =>
+          metaOf(vfqn.value, ta, resultType, arguments, budget)
+        case MonomorphicExpression.FunctionLiteral(_, _, _)            =>
+          applyLambda(head, env, arguments, resultType, budget)
+        case MonomorphicExpression.ParameterReference(parameterName)   =>
+          applyValue(env.getOrElse(parameterName.value, Value.unknown), arguments, resultType, budget)
+        case _                                                         =>
+          unknown(budget)
+      }
 
   /** Apply a body written in `env` to `arguments`: its leading lambdas bind as many of them as they can, what is under
     * them is interpreted, and its value is applied to any arguments left over. A body taking no parameters is simply
@@ -519,9 +575,10 @@ object MetaInterpreter {
   private def isFunction(node: Sourced[MonomorphicExpression]): Boolean =
     node.value.expressionType.asFunctionType.isDefined
 
-  private def metaOfValue(value: Value): Option[GroundValue] = value match {
-    case Value.Meta(meta)       => meta
-    case _: Value.Closure       => None
+  /** A finished interpretation's value: a closure left unapplied is a function value, whose type carries no meta. */
+  private def settled(value: Value): Value = value match {
+    case _: Value.Closure => Value.unknown
+    case other            => other
   }
 
   /** Whether this callee **states** its transfer — a cached [[UnifiedModuleNames]] membership test for its `^Meta`

@@ -159,6 +159,36 @@ class DerivedMetaTransferIntegrationTest extends FullIntegrationTest {
     rejects("data AB = A | B\ndef pick(x: AB): Int = x match { case A -> 10 case B -> 200 }\n", "pick(A)")
   }
 
+  // ⊥ (`docs/meta.md` §12): `abort` reaches `exitInternal`, which states `{never}`, so an arm that aborts adds nothing to
+  // the join and `fold(c, 5, abort)` is `[5, 5]`. The fallback is printed when the arm aborts.
+  private def aborting(body: String, main: String) =
+    useByte + s"def g(c: Bool) uses Abort: Int = $body\n" + s"def main uses Console: Unit = printLine(show($main))"
+
+  "an arm that does not return" should "add nothing to the join of the arms" in {
+    compileAndRun(aborting("useByte(fold(c, 5, abort))", "g(true) else 0")).asserting(_ shouldBe "5")
+  }
+
+  it should "leave the other arm's meta to be checked" in {
+    compileForErrors(aborting("useByte(fold(c, 200, abort))", "g(true) else 0"))
+      .asserting(_ should include("precondition of 'Test::useByte' is not satisfied"))
+  }
+
+  it should "add nothing through `if`, whose body is derived" in {
+    compileAndRun(aborting("useByte(if(c, 5))", "g(false) else 7")).asserting(_ shouldBe "7")
+  }
+
+  it should "add nothing when it raises" in {
+    compileAndRun(
+      useByte + "def g(c: Bool) uses Throw[String]: Int = useByte(fold(c, 5, raise(\"no\")))\n" +
+        "def main uses Console: Unit = printLine(show(catch(g(false), (e: String) -> 9)))"
+    ).asserting(_ shouldBe "9")
+  }
+
+  // A call one of whose arguments does not return is never made, so what it demands is vacuous there (§12, decision C).
+  "a demand on a call that is never made" should "not be checked" in {
+    compileAndRun(aborting("useByte(add(1000, abort))", "g(true) else 3")).asserting(_ shouldBe "3")
+  }
+
   // The gaps this stage keeps, stated as tests so that closing one is a visible change. "Cannot prove" — an absent
   // bound — is the right diagnostic for each, and it is *not* "not satisfied": the interpretation declined.
   "a field read in a match arm" should "stay ⊤, since a data value carries no meta of its fields" in {

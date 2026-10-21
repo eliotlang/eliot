@@ -69,7 +69,8 @@ class RefinementChannelProcessor
   import RefinementChannelProcessor.*
 
   /** The result of walking one node: the opaque meta [[GroundValue]] the channel knows for the node's *own* value
-    * (⊤ = [[None]]) and every per-node verdict recorded in the subtree (this node's plus its descendants').
+    * (⊤ = [[None]]) and every per-node verdict recorded in the subtree (this node's plus its descendants'). A node that
+    * does not return (⊥, `docs/meta.md` §12) is never materialised, so it is stamped at the boundary width: [[None]].
     */
   private case class Flow(
       own: Option[GroundValue],
@@ -146,8 +147,10 @@ class RefinementChannelProcessor
                               vfqn.value,
                               typeArgs,
                               node.value.expressionType,
-                              args.zip(argResults).map((arg, result) => MetaInterpreter.argument(arg, result.own, Map.empty))
-                            )
+                              args.zip(argResults).map((arg, result) =>
+                                MetaInterpreter.argument(arg, MetaInterpreter.Value.Meta(result.own), Map.empty)
+                              )
+                            ).map(_.known)
             } yield Flow(meta, argResults.flatMap(_.records) ++ recordAt(node, meta))
           case _ =>
             // Any other application (a `match`, a `typeMatch`, an applied lambda): the result is a ⊤ boundary, and so
@@ -169,7 +172,7 @@ class RefinementChannelProcessor
         // question answers ⊤ there without a special case.
         MetaInterpreter
           .metaOfCall(vfqn.value, typeArgs, node.value.expressionType, Seq.empty)
-          .map(meta => Flow(meta, recordAt(node, meta)))
+          .map(value => Flow(value.known, recordAt(node, value.known)))
 
       case MonomorphicExpression.ParameterReference(_) =>
         // A parameter arrives at the width of its boundary, whatever is known of its value.

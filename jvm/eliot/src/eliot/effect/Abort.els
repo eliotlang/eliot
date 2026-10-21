@@ -1,3 +1,5 @@
+import eliot.compiler.Meta
+
 // Merge copy of the base declaration so the implementation below can resolve it (name resolution is per-file).
 effect Abort {
    def abort[A]: A
@@ -38,6 +40,6 @@ type AbortFrame[K]
 private def escapeInternal[K, A, R](body uses *: AbortFrame[K] => A, onExit uses *: K => R, onValue uses *: A => R) uses *: R
 
 /**
- * Leave through `frame`. Implemented by the backend.
+ * Leave through `frame`. Control does not return, which is what it states (`{never}`). Implemented by the backend.
  */
-private def exitInternal[K, A](frame: AbortFrame[K], nothing: K): A
+private def exitInternal[K, A](frame: AbortFrame[K], nothing: K): A {never}

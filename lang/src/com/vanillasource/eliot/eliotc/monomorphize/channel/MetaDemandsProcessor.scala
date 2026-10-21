@@ -166,34 +166,40 @@ class MetaDemandsProcessor
         for {
           rejected <- rejectedAsValue(scope, node, vfqn.value)
           internal <- internalDemands(scope, node, vfqn.value, typeArgs, Seq.empty)
-          meta     <- MetaInterpreter.metaOfCall(vfqn.value, typeArgs, node.value.expressionType, Seq.empty)
-        } yield Walked(Info.of(meta), Info.of(meta), internal.deferred, rejected ++ internal.violations)
+          value    <- MetaInterpreter.metaOfCall(vfqn.value, typeArgs, node.value.expressionType, Seq.empty)
+        } yield Walked(Info.of(value), Info.of(value), internal.deferred, rejected ++ internal.violations)
       case _: MonomorphicExpression.FunctionApplication                    =>
         val (head, args) = MetaInterpreter.flatten(node)
         head.value.expression match {
           case MonomorphicExpression.MonomorphicValueReference(vfqn, typeArgs) =>
+            // A call one of whose arguments does not return is never made (`docs/meta.md` §12), so what it would
+            // demand, itself or inside its callee, is vacuous here.
             for {
               walkedArgs <- args.zipWithIndex.traverse((arg, position) => walkArgument(scope, vfqn.value, typeArgs, position, arg, env))
-              own        <- ownDemands(scope, node, vfqn.value, typeArgs, walkedArgs)
-              internal   <- internalDemands(scope, node, vfqn.value, typeArgs, walkedArgs.map(_.info))
-              meta       <- MetaInterpreter.metaOfCall(
+              made        = !walkedArgs.exists(_.info.never)
+              own        <- if (made) ownDemands(scope, node, vfqn.value, typeArgs, walkedArgs) else Walked.nothing.pure[CompilerIO]
+              internal   <- if (made) internalDemands(scope, node, vfqn.value, typeArgs, walkedArgs.map(_.info))
+                            else Walked.nothing.pure[CompilerIO]
+              value      <- MetaInterpreter.metaOfCall(
                               vfqn.value,
                               typeArgs,
                               node.value.expressionType,
                               args
                                 .zip(walkedArgs)
-                                .map((arg, walked) => MetaInterpreter.argument(arg, walked.info.meta, env.view.mapValues(_.meta).toMap))
+                                .map((arg, walked) => MetaInterpreter.argument(arg, walked.info.value, env.view.mapValues(_.meta).toMap))
                             )
             } yield {
-              val info = Info.derived(meta, walkedArgs.map(_.info))
+              val info = Info.derived(value, walkedArgs.map(_.info))
               Walked(info, info, false, Seq.empty).andAll(walkedArgs :+ own :+ internal)
             }
           case _: MonomorphicExpression.FunctionLiteral                        =>
             // An applied lambda — what a pure `val` block lowers to — binds its binders to its arguments, so a block's
-            // `val`s carry what is known of them, symbolic or not, into the rest of the block.
+            // `val`s carry what is known of them, symbolic or not, into the rest of the block. One bound to an argument
+            // that does not return is never entered, so the rest of the block demands nothing.
             for {
               walkedArgs <- args.traverse(walk(scope, _, env))
-              applied    <- applyLambda(scope, head, walkedArgs.map(_.info), env)
+              applied    <- if (walkedArgs.exists(_.info.never)) Walked.leaf(Info.never).pure[CompilerIO]
+                            else applyLambda(scope, head, walkedArgs.map(_.info), env)
             } yield applied.andAll(walkedArgs)
           case _                                                               =>
             // A `match`, a `typeMatch`, an applied parameter: the result is unknown in every context.
@@ -599,21 +605,31 @@ object MetaDemandsProcessor {
   /** What is known of one value's meta: the meta itself, whether it is unknown because a symbolic parameter decides it,
     * and which of the context's parameter positions it derives from.
     */
-  private case class Info(meta: Option[GroundValue], symbolic: Boolean, dependsOn: Set[Int]) {
+  private case class Info(meta: Option[GroundValue], symbolic: Boolean, dependsOn: Set[Int], never: Boolean = false) {
     def knowledge: Knowledge =
       if (symbolic) Knowledge.Symbolic else meta.fold(Knowledge.Unknown)(Knowledge.Known(_))
+
+    /** What the interpretation is handed for this value: ⊥ when it does not return, else its meta. */
+    def value: MetaInterpreter.Value = if (never) MetaInterpreter.Value.Never else MetaInterpreter.Value.Meta(meta)
   }
 
   private object Info {
     val unknown: Info = Info(None, symbolic = false, Set.empty)
 
+    /** A value that does not return (`docs/meta.md` §12): it depends on nothing, since it is ⊥ in every context. */
+    val never: Info = Info(None, symbolic = false, Set.empty, never = true)
+
     def of(meta: Option[GroundValue]): Info = Info(meta, symbolic = false, Set.empty)
 
+    def of(value: MetaInterpreter.Value): Info =
+      if (value == MetaInterpreter.Value.Never) never else of(value.known)
+
     /** A call's result: known metas carry what their arguments depend on; an unknown one is symbolic when an argument
-      * is, since a context that knows that argument may know it.
+      * is, since a context that knows that argument may know it. A call that does not return is ⊥ in every context.
       */
-    def derived(meta: Option[GroundValue], args: Seq[Info]): Info =
-      Info(meta, meta.isEmpty && args.exists(_.symbolic), args.flatMap(_.dependsOn).toSet)
+    def derived(value: MetaInterpreter.Value, args: Seq[Info]): Info =
+      if (value == MetaInterpreter.Value.Never) never
+      else Info(value.known, value.known.isEmpty && args.exists(_.symbolic), args.flatMap(_.dependsOn).toSet)
   }
 
   /** One walked node: what is known of its meta, of what it yields as code (its innermost lambda body's — itself for a

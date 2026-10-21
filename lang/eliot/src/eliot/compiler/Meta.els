@@ -43,3 +43,17 @@ ability Meta[D] {
  * argument's meta fits when joining it into the stated one leaves the stated one unchanged.
  */
 def joined[D ~ Meta](a: D, b: D): D = join(a, b)
+
+/**
+ * The meta-information of a value that is never produced: the call stating it does not return.
+ *
+ * A primitive that leaves through a frame, or loops forever, states it on its result. It is no
+ * meta-information of any type: every join absorbs it, so a branch that does not return adds
+ * nothing to what the other branches produce, and a call one of whose arguments does not return
+ * is never made.
+ *
+ * ```eliot
+ * private def exitInternal[K, A](frame: AbortFrame[K], nothing: K): A {never}
+ * ```
+ */
+def never[D]: D

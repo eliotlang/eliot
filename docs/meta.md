@@ -7,7 +7,7 @@ Status (2026-10-21): **two domains shipped, R2 and R3 armed, the interpretation 
 - a value that is never produced is ⊥;
 - a `data` value carries the metas of its fields.
 
-Of Part II, only T1 (the gap mechanics, §17) is built. Where the work stopped, and how to continue it, is §18.1.
+Of Part II, T1 (the gap mechanics) and T2 (⊥) are built (§17). Where the work stopped, and how to continue it, is §18.1.
 
 This document replaces three: `total-meta-transfers.md` (the rules and the interpretation), `string-length-meta.md`
 (the `String` size domain) and `structural-meta.md` (the P6 design). Their full text is at `2a66009a`, and §21 maps
@@ -373,6 +373,8 @@ real monomorphized body:
 - **Parameters** are bound to the caller's argument metas.
 - **Leaves** are substituted by their stated transfer, reduced by the one evaluator.
 - **Every other callee** is interpreted recursively.
+- **A call that does not return** is ⊥ (`Value.Never`, §12): a leaf states it with `{never}`, a call any of whose
+  value arguments is ⊥ is ⊥, and a stated transfer reads a ⊥ yield as a sibling of the same meta type.
 
 ### 5.1 State or derive
 
@@ -512,7 +514,6 @@ Each of these is a gap: fail-safe at every demand, and pinned by a test that cha
 | gap | example | closed by |
 |---|---|---|
 | a field read out of a `data` value | `orZero(Some(7))`, `case Some(x) -> x` | structural meta (§13) |
-| a call that reaches an exit | `fold(c, 5, abort)`: `exitInternal` states nothing | ⊥ (§12) and R2 without exemption (§10) |
 | what an escape, a cell or a loop produces or hands its code | `runAbort`, `runStateToPair`, `foldLines` | §10, §11, §14 |
 | a holder that returns any type | `resultValue[A](r: IoResult): A` | decomposing it in the jvm layer (§11.3) |
 | the elements of a `List` | `foldLeft`'s `combine` is handed an element with no meta | `List` carrying its elements' meta (§13.3) |
@@ -579,7 +580,7 @@ with a type-parameter result and what each must define:
 
 | leaf | statement |
 |---|---|
-| `exitInternal[K, A](frame, err): A` (Abort, Throw) | `{never}`: it does not return (§12). What it is given is received by its frame (§11.1). |
+| `exitInternal[K, A](frame, err): A` (Abort, Throw) | `{never}`, **stated since T2**: it does not return (§12). What it is given is received by its frame (§11.1). |
 | `escapeInternal[K, A, R](body, onExit, onValue): R` (Abort, Throw) | `{joined(onExit, onValue)}`. It hands `onValue` what `body` yields, and `onExit` what `body`'s exits gave the frame, which is ⊥ when nothing exits (§11.1, §14). |
 | `withCellInternal[S, A, R](initial, body, combine): R` (State, Writer, Dep) | `{combine}`. It hands `combine` what `body` yields and the cell's content when `body` returns (§11.1). |
 | `readCellInternal[S](cell): S` (State, Writer, Dep) | the cell's content where it is read (§11.1) |
@@ -656,7 +657,8 @@ That is a platform decomposition written in Eliot, over smaller leaves, and it n
 
 ## 12. ⊥: a value that is never produced
 
-**Decided 2026-10-21 (decision B).** The interpretation's `Value` gains **`Never`**: *evaluating this does not
+**Decided 2026-10-21 (decision B); built in T2 (2026-10-21)**, except what waits on later stages: a handed
+`Unreached` argument is T5's (§13.4), and a frame receiving what exits through it is T3's (§11.1). The interpretation's `Value` gains **`Never`**: *evaluating this does not
 produce a value.* It is the identity of every join. It is not a value in any domain. It is the interpretation's own
 form, and no companion ever receives it.
 
@@ -679,6 +681,10 @@ form, and no companion ever receives it.
 - **A demand under ⊥ is vacuous** (decision C). A demand whose call is never made (a `Never`
   argument, or an arm handed ⊥) is not checked in that context. This is P5 read literally: a demand is checked where
   it is *reached*. `f(Some(5))` compiles over `case None -> useByte(1000)`, and adding `f(None)` reports at that call.
+  Built for a call with a ⊥ argument and a `val` block bound to one; an arm handed ⊥ waits on T5.
+- **Where ⊥ is not followed.** A derived body is interpreted only when its result type carries a meta (§5.3's gate),
+  so a call returning `Unit` that always exits is read as `unit`, not ⊥. That is sound, since ⊥ ⊑ every meta, and it
+  costs only the pruning a ⊥ would allow downstream of such a call.
 
 ## 13. Structural meta: a `data` value carries its fields' metas
 
@@ -915,7 +921,8 @@ cache once kept a stale companion across a change and hid a brace that did not e
   `intervalBounds` checks the FQN. **Built 2026-10-21**, byte-identical across all 47 examples.
 - **T2: ⊥** (§12). `Value.Never`, `{never}` on each `exitInternal`, strictness, same-meta-type substitution, vacuous
   demands. It is observable through a demand in an `Abort`-using body: `def g(c: Bool) uses Abort: Int =
-  useByte(fold(c, 5, abort))` is proven.
+  useByte(fold(c, 5, abort))` is proven. **Built 2026-10-21** (`DerivedMetaTransferIntegrationTest`), byte-identical
+  across all 47 examples, since none demands or narrows an `Int` an arm may exit from.
 - **T3: frames and cells** (§11.1, §14). The arrow-domain brace in the parser and desugarer; the frame and cell values
   in the interpretation, and their primitives; the statements of the escape and cell natives. `catch` and
   `runStateToPair` become accept/reject pairs. `if … else` still waits on the field read.
@@ -978,12 +985,13 @@ cache once kept a stale companion across a change and hid a brace that did not e
 
 ### 18.1 Where this was left (2026-10-21)
 
-Of Part II, T1 is built (2026-10-21) and the rest is a design. Every decision in §18 is
+Of Part II, T1 and T2 are built (2026-10-21) and the rest is a design. Every decision in §18 is
 taken: B on 2026-10-21 after the question whether ⊥ is a special value (it is not), then A and C–I as recommended.
 Two spellings are left to the stage that builds them, and are not decisions: the frame and cell primitives
 (`exited`, `stored`, `content`, `store`, §14) in T3, and how D's `widen` sits beside `join` on `Meta` in T4.
 
-To continue: **start T2** (§17): ⊥ and vacuous demands, observable through a demand in an `Abort`-using body. T5 waits on
+To continue: **start T3** (§17): frames and cells, with the arrow-domain brace (decision F) and the spelling of the
+frame and cell primitives (`exited`, `stored`, `content`, `store`, §14). T5 waits on
 §16's measurement, and T6 on `List` carrying its elements' meta.
 
 The probes behind §9 used a throwaway `ScratchProbeTest` in `jvm/test`, over `DerivedMetaTransferIntegrationTest`'s
