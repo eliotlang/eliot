@@ -1,7 +1,7 @@
 # Meta — the refinement channel
 
-Status (2026-10-20): **two domains shipped, R2 and R3 armed, the interpretation and in-context demands built** (Part I).
-**Completing totality is designed, with decisions pending** (Part II):
+Status (2026-10-21): **two domains shipped, R2 and R3 armed, the interpretation and in-context demands built** (Part I).
+**Completing totality is designed and decided, and not yet built** (Part II):
 - every leaf states its meta, type-parameter results included;
 - what reaches a native through a frame, a cell or a loop is followed by the interpretation;
 - a value that is never produced is ⊥;
@@ -409,7 +409,7 @@ join their arms. When a handled statement exists (§4.5), the handler is applied
   together. A hard count bounds a diamond-shaped call DAG absolutely, and a cache would not: distinct argument metas
   defeat its key. Today, when the budget runs out, the node is left with no meta, and a demand on it fails. That is
   never a wrong answer, but it is a gap (§1). Part II makes the budget a compiler limit: running out of it is an error
-  naming the call, never a value handed on (pending decision I, §18).
+  naming the call, never a value handed on (decision I, §18).
 - **The type gate makes it affordable.** Before any body is fetched, a call whose result type carries no meta is
   skipped. Under today's non-structural R1 that is the overwhelming majority of call nodes: the 43-example sweep ran
   4m18s with the interpretation against 4m20s without. Part II §13 opens this gate, and §16 measures it.
@@ -527,7 +527,7 @@ against the tree, not taken from this document. Update it when a row closes.
 
 ---
 
-# Part II — Completing totality (design, decisions pending)
+# Part II — Completing totality (design, decided 2026-10-21)
 
 ## 9. The finding
 
@@ -675,13 +675,13 @@ form, and no companion ever receives it.
   in the tree meets it (interval arithmetic, the joins, constants).
 - **What is stamped.** A `Never` node is never materialised, so its width is irrelevant. It is stamped at the boundary
   width, which is a representation choice, not a meta claim.
-- **A demand under ⊥ is vacuous** (pending decision C; recommended). A demand whose call is never made (a `Never`
+- **A demand under ⊥ is vacuous** (decision C). A demand whose call is never made (a `Never`
   argument, or an arm handed ⊥) is not checked in that context. This is P5 read literally: a demand is checked where
   it is *reached*. `f(Some(5))` compiles over `case None -> useByte(1000)`, and adding `f(None)` reports at that call.
 
 ## 13. Structural meta: a `data` value carries its fields' metas
 
-**Pending decisions E–G; recommended.**
+**Decisions E–G.**
 
 ### 13.1 The rule
 
@@ -812,7 +812,7 @@ the generated records may be named freely: no user code can depend on their shap
 A data type's meta is generated from its **compiler-pool** declaration: the jvm layer's (borrowed), or the compiler
 overlay's where one supersedes it (`Option`, `Either`, `Pair`, `Bound`, `Interval`). The bodies the channel
 interprets are the runtime track's. Handed transfers go by handler *index*, so an overlay that declared constructors
-in another order would hand arm *i* the wrong constructor's fields, silently. **Required** (pending decision H):
+in another order would hand arm *i* the wrong constructor's fields, silently. **Required** (decision H):
 
 - the two declarations agree on constructor names, order and field count;
 - this is checked where the meta type is first asked for;
@@ -854,13 +854,13 @@ private def writeCellInternal[S](cell: StateCell[S], s: S): Unit {store(cell, s)
 ```
 
 `exited`, `stored`, `content` and `store` are compile-track meta primitives, recognised by name as `joined` and
-`never` are, so the channel names no native. Their spelling is part of decision A.
+`never` are, so the channel names no native. Decision A takes the shape; their spelling is settled when T3 builds them.
 
 The arrow-domain grammar slot is free: a brace *before* a type is the rejected row spelling, and one *after* a
 parameter's type is §4.4's. It desugars to the handed companion the data desugarer writes
 (`escapeInternal$Handed$onValue$0`), which can now read parameters. It is accepted on a body-less def only (R3).
 
-**Declined (pending decision F): reshaping the escape primitive** to `escape(body: Frame => R, onExit: K => R)`, so
+**Declined (decision F): reshaping the escape primitive** to `escape(body: Frame => R, onExit: K => R)`, so
 its transfer is a plain join and nothing is handed. It would need nothing new here, but `docs/effects.md` §3.4 fixes
 the three-argument shape for every target (a microcontroller's status-flag path). The change would also reach the
 backend's frame codegen and the compile track's intrinsic. That is a cross-cutting change bought to avoid one grammar
@@ -944,7 +944,7 @@ cache once kept a stale companion across a change and hid a brace that did not e
 - *A structural meta has no unknown field* (§13.5). It dissolves the earlier "all-or-nothing knowledge per
   construction" and its deferred per-field unknown, both of which assumed an unknown argument was a meta.
 
-**Decided 2026-10-21:**
+**Decided 2026-10-21** (Robert took A and C–I as recommended, after B):
 
 - **B. The interpretation gains ⊥** (§12): `{never}` at the exits, strictness, same-meta-type substitution, and
   monotonicity as an obligation on statements. ⊥ says *this call does not return*: a fact about control, which every
@@ -953,14 +953,11 @@ cache once kept a stale companion across a change and hid a brace that did not e
   accept, if this is the way to get to the other features"*): the alternative, an empty result type on every exit
   primitive, is declined in §20, and without ⊥ neither `if … else` (`fold(c, 5, abort)` is `[5, 5]`) nor a pruned
   `match` arm (§15) derives.
-
-**Pending, each recommended:**
-
 - **A. Frames and cells are followed** (§11.1): the interpretation threads what reaches a frame and a cell through the
   one call that made it, and the natives state it through name-recognised primitives (§14).
 - **C. A demand an unreached path holds is vacuous** in that context (§12), rather than checked with unknown binders.
 - **D. A loop's meta is its fixpoint, which the domain's widening makes finite** (§11.2): `Meta` gains `widen` beside
-  `join`, an operation and no value. This reverses the earlier open recommendation of a budget for iteration.
+  `join`, an operation and no value. This reverses the earlier open recommendation of a budget for iteration (§19).
 - **E. A sum's meta is tagged by reach** (§13.1), rather than a tag-blind structure or single-constructor data only.
 - **F. The arrow-domain brace** (§14), rather than reshaping the escape primitive.
 - **G. Recursive `data` folds into its own summary** (§13.3), joined over every node, with mutual recursion folded over
@@ -980,15 +977,13 @@ cache once kept a stale companion across a change and hid a brace that did not e
 
 ### 18.1 Where this was left (2026-10-21)
 
-Part II is a design, and no code for it exists. Part I matches the tree at `336992f4`. The open question of
-2026-10-20, whether ⊥ is a special value, is answered: it is not, and decision B is taken (§18).
+Part II is a design, and no code for it exists. Part I matches the tree at `336992f4`. Every decision in §18 is
+taken: B on 2026-10-21 after the question whether ⊥ is a special value (it is not), then A and C–I as recommended.
+Two spellings are left to the stage that builds them, and are not decisions: the frame and cell primitives
+(`exited`, `stored`, `content`, `store`, §14) in T3, and how D's `widen` sits beside `join` on `Meta` in T4.
 
-To continue:
-
-1. **Decide A, C–I.** Each is recommended. A records only the shape; the spelling of the frame and cell primitives
-   (`exited`, `stored`, `content`, `store`, §14) is still open, and so is how D's `widen` sits beside `join` on `Meta`.
-2. **Start T1** (§17), which is expected to be byte-identical. T2 (⊥) can follow it, since B is decided and C is
-   the only decision T2 also carries. T5 waits on §16's measurement, and T6 on `List` carrying its elements' meta.
+To continue: **start T1** (§17), which is expected to be byte-identical, then T2 (⊥ and vacuous demands). T5 waits on
+§16's measurement, and T6 on `List` carrying its elements' meta.
 
 The probes behind §9 used a throwaway `ScratchProbeTest` in `jvm/test`, over `DerivedMetaTransferIntegrationTest`'s
 `useByte` harness, with `compileForErrors` printing each verdict. Its proofs were run with
@@ -1062,6 +1057,8 @@ The stages in order. The full narrative of each is in the three retired document
   the leaves fed through a frame, a cell or a loop, and it was declined: the process needs no top. So those values are
   followed (§11), a loop is a fixpoint the domain widens, and recursive `data` folds into a summary instead of keeping
   `Unit`.
+- **Part II decided**, 2026-10-21. ⊥ was accepted as a fact about control rather than a special value (B), as the way
+  to the rest of Part II, and A and C–I were then taken as recommended. Nothing was built.
 
 ## 20. Do not re-propose
 
