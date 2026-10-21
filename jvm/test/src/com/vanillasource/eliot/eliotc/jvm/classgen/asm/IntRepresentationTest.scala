@@ -65,6 +65,17 @@ class IntRepresentationTest extends AnyFlatSpec with Matchers {
       GroundValue.Type
     )
 
+  /** A `String`'s size meta: the same shape as an `Int`'s range, under another name. */
+  private def stringMeta(intMetaValue: GroundValue): GroundValue = intMetaValue match {
+    case GroundValue.Structure(_, arguments, valueType) =>
+      GroundValue.Structure(
+        ValueFQN(ModuleName(defaultSystemPackage, "String"), QualifiedName("String$Meta", Qualifier.Default)),
+        arguments,
+        valueType
+      )
+    case other                                         => other
+  }
+
   "widthOf" should "pick JvmByte for a range within the signed byte bounds" in {
     IntRepresentation.widthOf(0, 127) shouldBe jvm("JvmByte")
   }
@@ -131,6 +142,10 @@ class IntRepresentationTest extends AnyFlatSpec with Matchers {
 
   it should "be None for a stated whole range" in {
     IntRepresentation.intervalBounds(whole) shouldBe None
+  }
+
+  it should "be None for another domain's meta of the same shape" in {
+    IntRepresentation.intervalBounds(stringMeta(interval(5, 5))) shouldBe None
   }
 
   // A half-open interval is bounded on one side only, so no fixed width contains it however tight that side is —

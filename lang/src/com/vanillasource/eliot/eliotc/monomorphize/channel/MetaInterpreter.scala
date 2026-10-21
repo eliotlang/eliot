@@ -194,7 +194,8 @@ object MetaInterpreter {
 
   /** What `statement` states at the callee's type arguments. The companion is reduced at those, the meta types of the
     * callee's parameters and the type of the stated parameter's meta constructor, which it takes first — as a
-    * slot-producing transfer does ([[reduceTransfer]]). It reads no parameter, so each is passed as a placeholder.
+    * slot-producing transfer does ([[reduceTransfer]]). It reads no parameter, so each is passed as [[notComputed]]:
+    * were one read, the statement would not reduce.
     */
   def statedMeta(callee: ValueFQN, calleeTypeArgs: Seq[GroundValue], statement: Statement): CompilerIO[Stated] =
     payloadTypes(callee, calleeTypeArgs, statement.arity).flatMap {
@@ -206,7 +207,7 @@ object MetaInterpreter {
                 .reduceApplied(
                   statement.companion,
                   calleeTypeArgs ++ metaTypes :+ constructor.valueType,
-                  Evaluator.groundToSem(constructor) +: Seq.fill(statement.arity)(SemValue.VType)
+                  Evaluator.groundToSem(constructor) +: Seq.fill(statement.arity)(notComputed)
                 )
                 .map {
                   case Some(meta: GroundValue.Structure) => Stated.Meta(meta, metaTypes(statement.position))
@@ -272,7 +273,7 @@ object MetaInterpreter {
                 .reduceApplied(
                   companion,
                   calleeTypeArgs ++ metaTypes :+ handedType :+ constructor.valueType,
-                  Evaluator.groundToSem(constructor) +: Seq.fill(arity)(SemValue.VType)
+                  Evaluator.groundToSem(constructor) +: Seq.fill(arity)(notComputed)
                 )
                 .map(_.collect { case meta: GroundValue.Structure => meta })
             case None              => none[GroundValue].pure[CompilerIO]
@@ -538,9 +539,9 @@ object MetaInterpreter {
     * ([[metaConstructorOf]]); a result whose meta type is `Unit` has none, so its transfer is ⊤ — R2 reports a leaf
     * stating slots over such a result ([[MetaTransferAccountingProcessor]]).
     *
-    * `None` (⊤) when an input is unknown in a way the companion's body actually projects: an unknown argument is a
-    * `SemValue.VType` placeholder the reduction ignores unless it feeds a slot projection, in which case the projection
-    * stalls and the result does not quote to a structure. `None` too for a call that does not apply exactly the
+    * Each argument is passed by [[companionArgument]]. `None` when the result depends on an argument whose meta is not
+    * computed, whether the companion projects it or stores it (`docs/meta.md` §13.5). `None` too for a call that does
+    * not apply exactly the
     * companion's parameters — a partial application is a function value, whose type carries no meta. Reduction runs
     * through the post-monomorphize linker-executor ([[EscalatingReducer]]), so a transfer routed through an ability
     * instance resolves through that instance's own monomorphization instead of sticking on the abstract ability method.
@@ -551,16 +552,13 @@ object MetaInterpreter {
       argMetas: Seq[Option[GroundValue]]
   ): CompilerIO[Option[GroundValue]] = {
     val companion = RefinementChannelProcessor.metaCompanionFqn(callee)
-    val arguments = argMetas.map {
-      case Some(gv) => Evaluator.groundToSem(gv) // the argument's own meta value, passed opaquely
-      case None     => SemValue.VType            // ⊤ placeholder: an unknown/untracked argument
-    }
-    def reduce(typeArguments: Seq[GroundValue], leading: Seq[SemValue]): CompilerIO[Option[GroundValue]] =
-      EscalatingReducer
-        .reduceApplied(companion, typeArguments, leading ++ arguments)
-        .map(_.collect { case s: GroundValue.Structure => s })
     companionTypeArguments(callee, companion, calleeTypeArgs, argMetas.size, withResult = true).flatMap {
       case Some(metaTypes) =>
+        val arguments = metaTypes.zip(argMetas).map(companionArgument)
+        def reduce(typeArguments: Seq[GroundValue], leading: Seq[SemValue]): CompilerIO[Option[GroundValue]] =
+          EscalatingReducer
+            .reduceApplied(companion, typeArguments, leading ++ arguments)
+            .map(_.collect { case s: GroundValue.Structure => s })
         takesConstructor(companion).ifM(
           metaConstructorOf(metaTypes.last).flatMap {
             case Some(constructor) =>
@@ -572,6 +570,22 @@ object MetaInterpreter {
       case None            => none[GroundValue].pure[CompilerIO]
     }
   }
+
+  /** What a companion is passed for an argument of meta type `metaType`: its meta when computed; `unit` when its meta
+    * type is `Unit`, since that meta is known (§1); otherwise [[notComputed]], never a value that could quote.
+    */
+  private[channel] def companionArgument(metaType: GroundValue, meta: Option[GroundValue]): SemValue =
+    meta match {
+      case Some(gv)                    => Evaluator.groundToSem(gv)
+      case None if metaType == unitType => unitMeta
+      case None                        => notComputed
+    }
+
+  /** The argument a companion is passed for a meta that is not computed (`docs/meta.md` §13.5): a dedicated neutral that
+    * never quotes, so a result holding it, projected or stored, is not computed either.
+    */
+  private val notComputed: SemValue =
+    SemValue.VNeutral(SemValue.NeutralHead.Reserved(SemValue.NeutralHead.Marker.NotComputed), SemValue.Spine.SNil)
 
   /** The meta *value* constructor of `metaType`, as a ground reference typed by its own signature (a function from the
     * slots to the meta type) — or `None` for a meta type that declares no structure (`Unit`). It is the value
@@ -692,4 +706,8 @@ object MetaInterpreter {
     */
   private[channel] val unitType: GroundValue =
     GroundValue.Structure(ValueFQN(unitModule, QualifiedName("Unit", Qualifier.Type)), Seq.empty, GroundValue.Type)
+
+  /** `unit`, the meta of every value whose type carries none. */
+  private val unitMeta: SemValue =
+    Evaluator.groundToSem(GroundValue.Structure(WellKnownTypes.unitValueFQN, Seq.empty, unitType))
 }

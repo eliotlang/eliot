@@ -145,7 +145,7 @@ object SemValue {
     }
 
     /** A reserved, binder-less marker with no scope: the fail-safe bad-apply head, the effectful-guard signature probe,
-      * the stuck-match placeholder. Identity is the [[Marker]] — recognised by constructor, not by a magic name string.
+      * the stuck-match placeholder, the refinement channel's not-computed argument. Identity is the [[Marker]] — recognised by constructor, not by a magic name string.
       */
     case class Reserved(marker: Marker) extends NeutralHead {
       override def name: String = marker.tag
@@ -162,6 +162,11 @@ object SemValue {
       case BadApply   extends Marker("$bad-apply")
       case GuardProbe extends Marker("$guard-probe")
       case Match      extends Marker("match")
+
+      /** An argument whose meta the refinement channel has not computed (`docs/meta.md` §13.5). It never quotes, so a
+        * meta reduced over it is not computed either, whether the companion projects the argument or stores it.
+        */
+      case NotComputed extends Marker("$not-computed")
     }
   }
 

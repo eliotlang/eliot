@@ -7,7 +7,7 @@ Status (2026-10-21): **two domains shipped, R2 and R3 armed, the interpretation 
 - a value that is never produced is ⊥;
 - a `data` value carries the metas of its fields.
 
-Nothing in Part II is built. Where the work stopped, and how to continue it, is §18.1.
+Of Part II, only T1 (the gap mechanics, §17) is built. Where the work stopped, and how to continue it, is §18.1.
 
 This document replaces three: `total-meta-transfers.md` (the rules and the interpretation), `string-length-meta.md`
 (the `String` size domain) and `structural-meta.md` (the P6 design). Their full text is at `2a66009a`, and §21 maps
@@ -270,8 +270,9 @@ def add(a: Int, b: Int): Int {a.range + b.range}
   leaf returning an alias of `Int` states the same meta as on `Int`. A structure-producing brace (a bare
   type-parameter result, such as `fold`'s `{join(whenTrue, whenFalse)}`) takes none. The channel tells the two apart
   by the companion's leading parameter.
-- **A `Unit` meta is known** for a `where`: an argument whose meta type is `Unit` counts as known and is passed as an
-  opaque placeholder. A predicate that reads it anyway fails to check in the companion and is reported.
+- **A `Unit` meta is known**: an argument whose meta type is `Unit` is passed as `unit`, to a transfer and to a
+  `where` alike. An argument whose meta is not computed is passed as a dedicated neutral that never reads back, so a
+  companion that projects it or stores it produces no meta (§13.5).
 
 ### 4.2 A companion's identity is its callee's
 
@@ -790,14 +791,14 @@ known `Unit`. So a structural meta has no unknown field, and needs no per-field 
 wrapper would have been a second spelling of every domain's top.
 
 A gap in an argument is a gap in the construction. It propagates, and is never replaced by anything. That needs two
-mechanical repairs to the stated-transfer path, and both are independent of `data`:
+mechanical repairs to the stated-transfer path, and both are independent of `data`. **Both are built (T1)**:
 
 - **A not-computed argument reaches a companion as a dedicated neutral, and a reduced result containing it is not
-  computed.** Today it arrives as a `SemValue.VType` placeholder. That is safe only because every companion
-  *projects* its arguments: `range(a)` stalls on it. A constructor transfer *stores* its argument, so the placeholder
-  would quote into the structure as `Type`, a well-formed and wrong meta.
-- **A `Unit` meta is passed as `unit`**, never as a placeholder. It is known (§4.1 already counts it as known for a
-  `where`).
+  computed** (`Marker.NotComputed`, `MetaInterpreter.companionArgument`). It used to arrive as a `SemValue.VType`
+  placeholder. That was safe only because every companion *projects* its arguments: `range(a)` stalls on it. A
+  constructor transfer *stores* its argument, so the placeholder would have quoted into the structure as `Type`, a
+  well-formed and wrong meta. A statement companion's placeholders, which read no parameter, are the same neutral.
+- **A `Unit` meta is passed as `unit`**, never as a placeholder. It is known (§4.1).
 
 ### 13.6 Structural meta has no surface
 
@@ -823,8 +824,8 @@ Today every overlay copy is spelled exactly as the jvm layer's.
 ### 13.8 Representation
 
 Nothing in the backend reads a structural meta: a `data` is an object whatever is known of its fields. One hardening
-goes with it. `IntRepresentation.intervalBounds` decodes `Int$Meta(Interval(…))` by **shape**, without checking the
-name. It should check the FQN, as hover does (§2.2).
+goes with it, built in T1: `IntRepresentation.intervalBounds` decoded `Int$Meta(Interval(…))` by **shape**, without
+checking the name, and now checks it as hover does (§2.2), since a `String`'s size meta has the same shape.
 
 ## 14. What a native hands its code
 
@@ -911,7 +912,7 @@ example's output unchanged and the whole suite green. Clear `target/` between th
 cache once kept a stale companion across a change and hid a brace that did not evaluate.
 
 - **T1: gap mechanics** (§13.5, §13.8). The dedicated neutral and gap propagation; `Unit` metas passed as `unit`;
-  `intervalBounds` checks the FQN. Expected byte-identical.
+  `intervalBounds` checks the FQN. **Built 2026-10-21**, byte-identical across all 47 examples.
 - **T2: ⊥** (§12). `Value.Never`, `{never}` on each `exitInternal`, strictness, same-meta-type substitution, vacuous
   demands. It is observable through a demand in an `Abort`-using body: `def g(c: Bool) uses Abort: Int =
   useByte(fold(c, 5, abort))` is proven.
@@ -977,12 +978,12 @@ cache once kept a stale companion across a change and hid a brace that did not e
 
 ### 18.1 Where this was left (2026-10-21)
 
-Part II is a design, and no code for it exists. Part I matches the tree at `336992f4`. Every decision in §18 is
+Of Part II, T1 is built (2026-10-21) and the rest is a design. Every decision in §18 is
 taken: B on 2026-10-21 after the question whether ⊥ is a special value (it is not), then A and C–I as recommended.
 Two spellings are left to the stage that builds them, and are not decisions: the frame and cell primitives
 (`exited`, `stored`, `content`, `store`, §14) in T3, and how D's `widen` sits beside `join` on `Meta` in T4.
 
-To continue: **start T1** (§17), which is expected to be byte-identical, then T2 (⊥ and vacuous demands). T5 waits on
+To continue: **start T2** (§17): ⊥ and vacuous demands, observable through a demand in an `Abort`-using body. T5 waits on
 §16's measurement, and T6 on `List` carrying its elements' meta.
 
 The probes behind §9 used a throwaway `ScratchProbeTest` in `jvm/test`, over `DerivedMetaTransferIntegrationTest`'s

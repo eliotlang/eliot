@@ -1,5 +1,6 @@
 package com.vanillasource.eliot.eliotc.jvm.classgen.asm
 
+import com.vanillasource.eliot.eliotc.core.processor.MetaConstructorDesugarer
 import com.vanillasource.eliot.eliotc.module.fact.{ModuleName, ValueFQN}
 import com.vanillasource.eliot.eliotc.module.fact.ModuleName.defaultSystemPackage
 import com.vanillasource.eliot.eliotc.monomorphize.fact.GroundValue
@@ -81,20 +82,27 @@ object IntRepresentation {
     *     input), which is just the both-endpoints-unbounded case of the next one;
     *   - a **half-open** interval, `Interval(Bounded(lo), Unbounded)` or its mirror — a value bounded on one side only,
     *     which no fixed width contains however tight the bounded side is;
-    *   - a future domain, or a malformed meta.
+    *   - a future domain, or a malformed meta. A domain is recognised by its meta structure's name, `Int$Meta`, never
+    *     by shape: a `String`'s size meta has exactly the shape of an `Int`'s range.
     *
     * A stated top and an absent meta therefore agree here; they differ only in what the meta channel itself may
     * conclude (docs/meta.md §2.1).
     */
   def intervalBounds(meta: GroundValue): Option[(BigInt, BigInt)] =
     meta match {
-      case GroundValue.Structure(_, Seq(GroundValue.Structure(_, Seq(lo, hi), _)), _) =>
+      case GroundValue.Structure(fqn, Seq(GroundValue.Structure(_, Seq(lo, hi), _)), _) if isIntMeta(fqn) =>
         (boundedBigInt(lo), boundedBigInt(hi)) match {
           case (Some(a), Some(b)) => Some((a, b))
           case _                  => None
         }
       case _ => None
     }
+
+  /** The meta structure of the tracked `Int`, `Int$Meta` in `eliot.lang.Int`. The qualifier is ignored: a constructed
+    * structure's head may carry either the type or the value namespace.
+    */
+  private def isIntMeta(fqn: ValueFQN): Boolean =
+    fqn.moduleName == intModuleName && fqn.name.name == "Int" + MetaConstructorDesugarer.metaTypeSuffix
 
   /** The big integer inside a `Bounded(Direct(n))` endpoint, or [[None]] for an `Unbounded` one (a nullary structure,
     * so it never matches the single-argument shape) or any other value.

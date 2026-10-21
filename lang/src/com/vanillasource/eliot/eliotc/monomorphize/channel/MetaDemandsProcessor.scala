@@ -4,7 +4,6 @@ import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.feedback.Logging
 import com.vanillasource.eliot.eliotc.module.fact.{UnifiedModuleNames, ValueFQN}
 import com.vanillasource.eliot.eliotc.monomorphize.channel.MetaDemands.{Knowledge, Violation}
-import com.vanillasource.eliot.eliotc.monomorphize.domain.SemValue
 import com.vanillasource.eliot.eliotc.monomorphize.eval.Evaluator
 import com.vanillasource.eliot.eliotc.monomorphize.fact.{
   GroundValue,
@@ -310,8 +309,8 @@ class MetaDemandsProcessor
 
   /** Reduce a callee's `^Where` companion over the arguments' metas, at the callee's own type arguments followed by the
     * meta type of each parameter's type ([[MetaInterpreter.companionTypeArguments]]). A parameter whose meta type is
-    * `Unit` carries nothing to know and is passed as a placeholder; every other argument's meta must be known, since ⊤
-    * cannot discharge a demand. A code argument is read as what its code yields.
+    * `Unit` is passed as `unit`, its known meta; every other argument's meta must be known, since a meta that is not
+    * computed cannot discharge a demand. A code argument is read as what its code yields.
     */
   private def demandPrecondition(
       scope: Scope,
@@ -328,9 +327,9 @@ class MetaDemandsProcessor
           val read =
             metaTypes.zip(args).map((metaType, arg) => Option.when(metaType != MetaInterpreter.unitType)(arg.yields))
           decide(scope, read.flatten) { dependsOn =>
-            read.traverse {
-              case None       => Some(SemValue.VType)
-              case Some(info) => info.meta.map(Evaluator.groundToSem)
+            metaTypes.zip(read).traverse {
+              case (metaType, None) => Some(MetaInterpreter.companionArgument(metaType, None))
+              case (_, Some(info))  => info.meta.map(Evaluator.groundToSem)
             } match {
               case None            =>
                 Seq(

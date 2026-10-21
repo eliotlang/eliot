@@ -376,7 +376,7 @@ contain `data` (a chosen representation), a native leaf, or any representation-d
   bug above). **Metas are total: every value has one** — a bodied value's is calculated, a native's is stated
   (`docs/meta.md` §1). A *not computed* meta (`None`, ⊤ in older comments) is never a meta value: it is a gap the
   interpretation has not closed or its step budget, fail-safe at every demand, and the remaining gaps are listed in
-  `docs/meta.md` §8. Part II closes them, every decision taken 2026-10-21 and nothing built yet (next: T1): R2's type-parameter exemption is **reversed** (decided
+  `docs/meta.md` §8. Part II closes them, every decision taken 2026-10-21, T1 (gap mechanics) built, next T2 (⊥): R2's type-parameter exemption is **reversed** (decided
   2026-10-20 — every leaf states, e.g. `exitInternal` `{never}`); what reaches a native through a frame, a cell or a
   loop is followed (a loop is a fixpoint the domain's widening makes finite); the interpretation gains ⊥ — "does
   not return", a fact about control and not a special value; and `data`,
