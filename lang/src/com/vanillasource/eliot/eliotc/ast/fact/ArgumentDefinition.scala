@@ -28,8 +28,9 @@ import Parser.*
   *   the value it holds (§4.5). Empty for an ordinary parameter. Consumed at the core boundary by `MetaParameterDesugarer`, which emits the parameter's statement
   *   companion from it, and never part of [[signatureEquality]], so the layer rule for a return brace applies unchanged.
   * @param handed
-  *   A code parameter's **arrow-domain braces** — `{body}` in `onValue uses *: A {body} => R` — each stating what the
-  *   definition hands its code as one argument when it runs it (`docs/meta.md` §14). Empty for every other parameter.
+  *   A function-typed parameter's **arrow-domain braces** — `{body}` in `onValue uses *: A {body} => R` — each stating
+  *   what the definition hands its code, or the function value, as one argument when it applies it (`docs/meta.md`
+  *   §14). Empty for every other parameter.
   *   Consumed at the core boundary by `MetaParameterDesugarer`, which emits a handed statement from each, and never part
   *   of [[signatureEquality]].
   */
@@ -44,8 +45,8 @@ case class ArgumentDefinition(
 
 object ArgumentDefinition {
 
-  /** The brace after the domain of the `argument`-th arrow of a code parameter's type: `brace` states what the
-    * definition hands the code as that argument, of type `domain`.
+  /** The brace after the domain of the `argument`-th arrow of a parameter's type: `brace` states what the definition
+    * hands the code or function there as that argument, of type `domain`.
     */
   case class Handed(argument: Int, domain: Sourced[Expression], brace: Seq[Sourced[Expression]])
 
@@ -102,8 +103,7 @@ object ArgumentDefinition {
     */
   val parameter: Parser[Sourced[Token], ArgumentDefinition] = for {
     name     <- acceptIf(isIdentifier, "argument name")
-    argument <- clauseRest(name.map(_.content)) or
-                  plainRest(name.map(_.content), Expression.typeRunParser, metaBrace = true)
+    argument <- clauseRest(name.map(_.content)) or valueRest(name.map(_.content))
   } yield argument
 
   /** A code parameter's type may carry a meta brace after an arrow's domain, `onValue uses *: A {body} => R`
@@ -113,20 +113,31 @@ object ArgumentDefinition {
     clause <- usesClause
     _      <- symbol(":")
     run    <- sourced(Expression.handedTypeRunParser)
-  } yield {
-    val atoms = run.value.map(_._1)
-    val typed = run.as(atoms match {
+  } yield ArgumentDefinition(
+    name,
+    clause.applyTo(typeOf(run)),
+    closedRow = !clause.open,
+    openRow = clause.open,
+    handed = handedBraces(run.value)
+  )
+
+  /** A value parameter's type, which may carry a meta brace after an arrow's domain as a code parameter's may — the
+    * definition applies a function value as it runs code, so what it hands one is the same statement
+    * (`step: B {looped(initial, step)} => String => B`) — and a meta brace after the whole type.
+    */
+  private def valueRest(name: Sourced[String]): Parser[Sourced[Token], ArgumentDefinition] = for {
+    _    <- symbol(":")
+    run  <- sourced(Expression.handedTypeRunParser)
+    meta <- metaBraceParser
+    _    <- slotWith
+  } yield ArgumentDefinition(name, typeOf(run), meta = meta, handed = handedBraces(run.value))
+
+  /** The type a run of parts spells, its braces left out. */
+  private def typeOf(run: Sourced[Seq[(Sourced[Expression], Seq[Sourced[Expression]])]]): Sourced[Expression] =
+    run.as(run.value.map(_._1) match {
       case Seq(single) => single.value
       case parts       => FlatExpression(parts)
     })
-    ArgumentDefinition(
-      name,
-      clause.applyTo(typed),
-      closedRow = !clause.open,
-      openRow = clause.open,
-      handed = handedBraces(run.value)
-    )
-  }
 
   /** Each brace of a run, with the index of the arrow whose domain it follows and that domain: the parts since the
     * previous arrow. The parser only accepts a brace that an arrow follows.

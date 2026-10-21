@@ -1,3 +1,5 @@
+import eliot.compiler.Meta
+
 type List[A]
 
 /**
@@ -11,5 +13,9 @@ def foldLeft[A, B](initial: B, combine uses *: A => B => B, list: List[A]) uses 
  * The list-first fold primitive behind `foldLeft`. `private` so user code folds only through the dot-chainable
  * `foldLeft`; kept list-first (and thus always called fully applied) because the backend emits it as a single erased
  * generic native, which cannot be partially applied. Implemented by the backend.
+ *
+ * Its accumulator is a loop's: `initial`, then whatever `combine` yields, once per element. `combine` is handed it as
+ * its second argument and the call returns it. What each element is, a `List` does not carry yet.
  */
-private def foldLeftInternal[A, B](list: List[A], initial: B, combine uses *: A => B => B) uses *: B
+private def foldLeftInternal[A, B](list: List[A], initial: B,
+                                   combine uses *: A => B {looped(initial, combine)} => B) uses *: B {looped(initial, combine)}

@@ -4,6 +4,7 @@ import com.vanillasource.eliot.eliotc.jvm.classgen.asm.{ClassGenerator, JvmIdent
 import com.vanillasource.eliot.eliotc.jvm.classgen.asm.NativeType
 import com.vanillasource.eliot.eliotc.jvm.classgen.asm.NativeType.{
   systemAnyValue,
+  systemCollectionType,
   systemFunctionValue,
   systemLangType
 }
@@ -19,8 +20,11 @@ import org.objectweb.asm.{Label, MethodVisitor}
   * The guiding constraint: a native never constructs an Eliot `data` value in bytecode. So the `Path` inspectors return
   * a nullable and the Eliot wrappers build the `Option` (via [[isNull]]); the impure operations catch their exception
   * and return a two-slot `Object[]` result holder (error message at index 0, value at index 1 — see [[NativeType]]'s
-  * `IoResult` mapping) which the Eliot instance reflects into `Throw[IoError]`. The one call *into* Eliot code is the
-  * fold step, applied exactly as `List.foldLeftInternal` applies its combine.
+  * `IoResult` mapping) which the Eliot instance reflects into `Throw[IoError]`, reading the value back through a typed
+  * reader per type it holds. The folds hold no value: they hand their accumulator to one continuation and an error's
+  * message to another ([[continued]]), so their result is the loop's accumulator itself (`docs/meta.md` §11.3). The
+  * calls *into* Eliot code are the fold step, applied exactly as `List.foldLeftInternal` applies its combine, and the
+  * continuations.
   */
 object FileNatives {
 
@@ -33,6 +37,7 @@ object FileNatives {
   private val ioResultType: ValueFQN = NativeType.systemFileType("File", "IoResult")
   private val stringType: ValueFQN   = systemLangType("String")
   private val boolType: ValueFQN     = systemLangType("Bool")
+  private val listType: ValueFQN     = systemCollectionType("List")
 
   // Internal JVM class names used across the natives.
   private val Files       = "java/nio/file/Files"
@@ -61,11 +66,8 @@ object FileNatives {
   val genericNativeSignatures: Map[ValueFQN, GenericNativeSignature] = Map(
     pathFqn("isNull")                 -> GenericNativeSignature(Seq(systemAnyValue), boolType),
     fileFqn("isNull")                 -> GenericNativeSignature(Seq(systemAnyValue), boolType),
-    fileFqn("resultValue")            -> GenericNativeSignature(Seq(ioResultType), systemAnyValue),
-    fileFqn("foldLinesInternal")      ->
-      GenericNativeSignature(Seq(systemAnyValue, systemFunctionValue, pathType), ioResultType),
-    fileFqn("foldCodePointsInternal") ->
-      GenericNativeSignature(Seq(systemAnyValue, systemFunctionValue, pathType), ioResultType)
+    fileFqn("foldLinesInternal")      -> foldSignature,
+    fileFqn("foldCodePointsInternal") -> foldSignature
   )
 
   /** The leaf natives keyed by their `Default`-qualified FQN, folded into [[NativeImplementation.implementations]]. */
@@ -89,9 +91,12 @@ object FileNatives {
     entry(fileFqn("walkInternal"), Seq(pathType), ioResultType, impure = true)(wrap(1)(walk)),
     entry(fileFqn("createDirectoriesInternal"), Seq(pathType), ioResultType, impure = true)(wrap(1)(createDirs)),
     entry(fileFqn("deleteInternal"), Seq(pathType), ioResultType, impure = true)(wrap(1)(delete)),
-    genericEntry(fileFqn("foldLinesInternal"), impure = true)(wrap(3)(foldLines)),
-    genericEntry(fileFqn("foldCodePointsInternal"), impure = true)(wrap(3)(foldCodePoints)),
-    genericEntry(fileFqn("resultValue"))(resultValue),
+    genericEntry(fileFqn("foldLinesInternal"), impure = true)(continued(foldLines)),
+    genericEntry(fileFqn("foldCodePointsInternal"), impure = true)(continued(foldCodePoints)),
+    entry(fileFqn("resultString"), Seq(ioResultType), stringType)(resultValue(JString)),
+    entry(fileFqn("resultBool"), Seq(ioResultType), boolType)(resultValue(JBoolean)),
+    entry(fileFqn("resultStrings"), Seq(ioResultType), listType)(resultValue(JList)),
+    entry(fileFqn("resultPaths"), Seq(ioResultType), listType)(resultValue(JList)),
     entry(fileFqn("resultErrorMessage"), Seq(ioResultType), stringType)(resultErrorMessage),
     genericEntry(fileFqn("isNull"))(isNull)
   )
@@ -104,6 +109,13 @@ object FileNatives {
     ("Eq", "equals", "Path", pathEquals),
     ("Show", "show", "Path", pathShow)
   )
+
+  /** A fold's erased signature: `(initial, step, path, onValue, onError)` to whatever its continuations return. */
+  private def foldSignature: GenericNativeSignature =
+    GenericNativeSignature(
+      Seq(systemAnyValue, systemFunctionValue, pathType, systemFunctionValue, systemFunctionValue),
+      systemAnyValue
+    )
 
   // ------------------------------------------------------------------------------------------------------------------
   // Registration helpers
@@ -139,11 +151,13 @@ object FileNatives {
   // Holder helpers (pure)
   // ------------------------------------------------------------------------------------------------------------------
 
-  private def resultValue(mv: MethodVisitor): Unit = {
+  /** The value slot of a result holder, as the class `valueClass` the native that filled it put there. */
+  private def resultValue(valueClass: String)(mv: MethodVisitor): Unit = {
     mv.visitVarInsn(ALOAD, 0)
     mv.visitTypeInsn(CHECKCAST, ObjectArray)
     mv.visitInsn(ICONST_1)
     mv.visitInsn(AALOAD)
+    mv.visitTypeInsn(CHECKCAST, valueClass)
   }
 
   private def resultErrorMessage(mv: MethodVisitor): Unit = {
@@ -473,6 +487,41 @@ object FileNatives {
           mv.visitMethodInsn(INVOKEVIRTUAL, JObject, "toString", s"()L$JString;", false)
         }
       }
+  }
+
+  // ------------------------------------------------------------------------------------------------------------------
+  // Fold continuations
+  // ------------------------------------------------------------------------------------------------------------------
+
+  /** Run a fold's loop (which leaves the accumulator on the stack, and may use local slots from its second argument
+    * upward) inside a try/catch, then return `onValue.apply(accumulator)`, or `onError.apply(String.valueOf(exception))`
+    * when the loop threw. Neither continuation runs inside the try, so whatever one of them throws — an Eliot `raise`
+    * leaving through its frame — passes through. Parameters: `0` initial, `1` step, `2` path, `3` onValue, `4` onError.
+    */
+  private def continued(loop: (MethodVisitor, Int) => Unit): MethodVisitor => Unit = { mv =>
+    val accumulator = 5
+    val ex          = 6
+    val free        = 7
+    val tryStart    = new Label()
+    val tryEnd      = new Label()
+    val handler     = new Label()
+    val end         = new Label()
+    mv.visitTryCatchBlock(tryStart, tryEnd, handler, "java/lang/Exception")
+    mv.visitLabel(tryStart)
+    loop(mv, free)
+    mv.visitVarInsn(ASTORE, accumulator)
+    mv.visitLabel(tryEnd)
+    mv.visitVarInsn(ALOAD, 3)
+    mv.visitVarInsn(ALOAD, accumulator)
+    mv.visitMethodInsn(INVOKEINTERFACE, JFunction, "apply", s"(L$JObject;)L$JObject;", true)
+    mv.visitJumpInsn(GOTO, end)
+    mv.visitLabel(handler)
+    mv.visitVarInsn(ASTORE, ex)
+    mv.visitVarInsn(ALOAD, 4)
+    mv.visitVarInsn(ALOAD, ex)
+    mv.visitMethodInsn(INVOKESTATIC, JString, "valueOf", s"(L$JObject;)L$JString;", false)
+    mv.visitMethodInsn(INVOKEINTERFACE, JFunction, "apply", s"(L$JObject;)L$JObject;", true)
+    mv.visitLabel(end)
   }
 
   // ------------------------------------------------------------------------------------------------------------------

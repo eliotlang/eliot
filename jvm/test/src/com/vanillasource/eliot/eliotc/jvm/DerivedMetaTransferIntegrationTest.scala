@@ -270,6 +270,85 @@ class DerivedMetaTransferIntegrationTest extends FullIntegrationTest {
     rejects(raising.replace("STATE", "200"), "runStateToFinalState(0, catch(raising, (e: String) -> 1))")
   }
 
+  // A loop's accumulator is its fixpoint (`docs/meta.md` §11.2): the code a loop runs is run from its initial accumulator
+  // until nothing it changes changes any more — joined after the first run, widened after every later one, so an `Int`
+  // that keeps moving opens at once — and the call is what the loop may end with, after any number of runs. What a
+  // `List`'s elements are it does not carry yet (T6), so these loops ignore their element.
+  private def looping(definitions: String, expression: String, effects: String = "Console") =
+    "import eliot.collection.List\n" + useByte + definitions +
+      "def two: List[String] = append(append(empty, \"a\"), \"b\")\n" +
+      s"def main uses $effects: Unit = printLine(show(useByte($expression)))"
+
+  private val notSatisfied = "precondition of 'Test::useByte' is not satisfied"
+
+  "a loop" should "be what every run yields when that is the same" in {
+    compileAndRun(looping("", "foldLeft(5, (e: String) -> (acc: Int) -> 7, two)")).asserting(_ shouldBe "7")
+  }
+
+  it should "be widened when what a run yields keeps growing, since how many runs there are is not known" in {
+    compileForErrors(looping("", "foldLeft(5, (e: String) -> (acc: Int) -> add(acc, 1), two)"))
+      .asserting(_ should include(notSatisfied))
+  }
+
+  it should "join what each run writes into a cell" in {
+    compileAndRun(looping("", "runStateToFinalState(0, foldLeft(unit, (e: String) -> (u: Unit) -> putState(5), two))"))
+      .asserting(_ shouldBe "5")
+  }
+
+  it should "widen a cell each run writes more into" in {
+    compileForErrors(
+      looping("", "runStateToFinalState(0, foldLeft(unit, (e: String) -> (u: Unit) -> putState(add(state, 1)), two))")
+    ).asserting(_ should include(notSatisfied))
+  }
+
+  // An endless loop does not return, so a frame is the only way out of it, and what leaves through the frame is
+  // collected over every run: each starts with the cells the run before it left.
+  private val ticking =
+    """|def tick(stop: Bool) uses State[Int], Throw[Int]: Unit = {
+       |  putState(add(state, STEP))
+       |  fold(stop, raise(state), unit)
+       |}
+       |def ticks(stop: Bool) uses State[Int], Throw[Int], Inf: Int = {
+       |  forever(tick(stop))
+       |  0
+       |}
+       |""".stripMargin
+
+  "an endless loop" should "hand a frame what every run left through it" in {
+    compileAndRun(
+      looping(ticking.replace("STEP", "0"), "runStateToValue(0, catch(ticks(true), (e: Int) -> e))", "Console, Inf")
+    ).asserting(_ shouldBe "0")
+  }
+
+  it should "hand a frame what a later run left through it, after the runs before it wrote a cell" in {
+    compileForErrors(
+      looping(ticking.replace("STEP", "1"), "runStateToValue(0, catch(ticks(true), (e: Int) -> e))", "Console, Inf")
+    ).asserting(_ should include(notSatisfied))
+  }
+
+  // A file fold's accumulator is its loop's too, now that the fold returns it rather than a holder of any type
+  // (§11.3): a line is a JVM `String`, so a step yielding its length reaches the representation's limit. Its error path
+  // raises, so it adds nothing. The demand sits in the reading def, so it is checked whether or not the file exists.
+  private def folding(step: String) =
+    s"""|import eliot.effect.Console
+        |import eliot.file.Path
+        |import eliot.file.File
+        |def withinByte(i: Interval[BigInteger]): Bool = rangeWithin[0, 127](i)
+        |def useByte(x: Int) where withinByte(range(x)): Int = x
+        |def lines(p: Path) uses FileSystem, Throw[IoError]: Int =
+        |  useByte(foldLines(5, (acc: Int) -> (line: String) -> $step, p))
+        |def main uses Console, FileSystem: Unit =
+        |  printLine(show(catch(lines(path("/nonexistent/eliot")), (e: IoError) -> 6)))
+        |""".stripMargin
+
+  "a file fold" should "be its loop's accumulator" in {
+    compileAndRun(folding("7")).asserting(_ shouldBe "6")
+  }
+
+  it should "reach what a line's size may be" in {
+    compileForErrors(folding("length(line)")).asserting(_ should include(notSatisfied))
+  }
+
   // A call one of whose arguments does not return is never made, so what it demands is vacuous there (§12, decision C).
   "a demand on a call that is never made" should "not be checked" in {
     compileAndRun(aborting("useByte(add(1000, abort))", "g(true) else 3")).asserting(_ shouldBe "3")

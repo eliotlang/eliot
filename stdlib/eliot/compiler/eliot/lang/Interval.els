@@ -28,12 +28,17 @@ def rangeWithin[Lo: BigInteger, Hi: BigInteger](i: Interval[BigInteger]): Bool =
  * lower limit" and any start is again no lower limit, and the mirror holds at the end — so joining a half-open range
  * with a closed one keeps the half that is still bounded: `join([0, ∞), [2, 5])` is `[0, ∞)`.
  *
+ * Its `widen` opens each endpoint that moved: an endpoint can only move once, to unbounded, so a loop's range is stable
+ * after at most two widenings. `widen([0, 0], [0, 1])` is `[0, ∞)`, and `widen([0, 5], [0, 5])` stays `[0, 5]`.
+ *
  * A compiler-pool-only instance, exercised at `match`/`if` branch merges (the auto-derived `Meta[Int$Meta]` join
  * dispatches to it on the range slot).
  */
 implement[T ~ Compare[T]] Meta[Interval[T]] {
    def join(a: Interval[T], b: Interval[T]): Interval[T] =
       Interval(minBound(start(a), start(b)), maxBound(end(a), end(b)))
+   def widen(previous: Interval[T], next: Interval[T]): Interval[T] =
+      Interval(lowered(start(previous), start(next)), raised(end(previous), end(next)))
 }
 
 /**
@@ -63,5 +68,27 @@ implement[T ~ Numeric[T] & Compare[T]] Numeric[Interval[T]] {
       val c21 = multiply(end(a), start(b))
       val c22 = multiply(end(a), end(b))
       Interval(minBound(minBound(minBound(c11, c12), c21), c22), maxBound(maxBound(maxBound(c11, c12), c21), c22))
+   }
+}
+
+/**
+ * The start `previous` widens to when `next` follows it: `previous` while `next` is not below it, else unbounded.
+ */
+private def lowered[T ~ Compare](previous: Bound[T], next: Bound[T]): Bound[T] = previous match {
+   case Unbounded -> Unbounded
+   case Bounded(x) -> next match {
+      case Unbounded -> Unbounded
+      case Bounded(y) -> fold(lessThanOrEqual(x, y), Bounded(x), Unbounded)
+   }
+}
+
+/**
+ * The end `previous` widens to when `next` follows it: `previous` while `next` is not above it, else unbounded.
+ */
+private def raised[T ~ Compare](previous: Bound[T], next: Bound[T]): Bound[T] = previous match {
+   case Unbounded -> Unbounded
+   case Bounded(x) -> next match {
+      case Unbounded -> Unbounded
+      case Bounded(y) -> fold(lessThanOrEqual(y, x), Bounded(x), Unbounded)
    }
 }

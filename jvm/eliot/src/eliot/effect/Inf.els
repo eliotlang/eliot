@@ -1,3 +1,5 @@
+import eliot.compiler.Meta
+
 // Merge copy of the base declaration so the implementation below can resolve it (name resolution is per-file). The
 // merge verifies this copy agrees with the abstract declaration in the stdlib layer, which carries the documentation.
 effect Inf {
@@ -15,6 +17,7 @@ implement standardInf: Inf {
 
 /**
  * The single non-terminating operation: invokes a suspended computation endlessly. `private` so divergence is
- * reachable only through `forever`, which uses `Inf`. Implemented by the backend as an unbounded loop.
+ * reachable only through `forever`, which uses `Inf`. Implemented by the backend as an unbounded loop, which control
+ * leaves only through a frame.
  */
-private def foreverInternal(step uses *: Unit) uses *: Unit
+private def foreverInternal(step uses *: Unit) uses *: Unit {endless(step)}

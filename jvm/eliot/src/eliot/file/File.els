@@ -27,8 +27,9 @@ def ioError(message: String): IoError = IoError(message)
 
 /**
  * The opaque result of a leaf file native: either an error message or a value, kept as a two-slot native holder so a
- * native never has to construct an Eliot `data` value in bytecode. Read back with `resultErrorMessage`/`resultValue`
- * and reflected into `Throw[IoError]` by `raiseError` below.
+ * native never has to construct an Eliot `data` value in bytecode. Read back with `resultErrorMessage` and the typed
+ * reader of what the native put there (`resultString`, `resultBool`, …), and reflected into `Throw[IoError]` by
+ * `raiseError` below.
  */
 type IoResult
 
@@ -44,53 +45,47 @@ implement standardFileSystem: FileSystem {
    def readFile(path: Path) uses Throw[IoError]: String = {
       val r = readFileInternal(path)
       raiseError(r)
-      resultValue(r)
+      resultString(r)
    }
 
    def writeFile(content: String, path: Path) uses Throw[IoError]: Unit = raiseError(writeFileInternal(content, path))
 
    def appendFile(content: String, path: Path) uses Throw[IoError]: Unit = raiseError(appendFileInternal(content, path))
 
-   def foldLines[B](initial: B, step: B => String => B, path: Path) uses Throw[IoError]: B = {
-      val r = foldLinesInternal(initial, step, path)
-      raiseError(r)
-      resultValue(r)
-   }
+   def foldLines[B](initial: B, step: B => String => B, path: Path) uses Throw[IoError]: B =
+      foldLinesInternal(initial, step, path, acc -> acc, message -> raise(IoError(message)))
 
-   def foldCodePoints[B](initial: B, step: B => Int => B, path: Path) uses Throw[IoError]: B = {
-      val r = foldCodePointsInternal(initial, step, path)
-      raiseError(r)
-      resultValue(r)
-   }
+   def foldCodePoints[B](initial: B, step: B => Int => B, path: Path) uses Throw[IoError]: B =
+      foldCodePointsInternal(initial, step, path, acc -> acc, message -> raise(IoError(message)))
 
    def readLines(path: Path) uses Throw[IoError]: List[String] = {
       val r = readLinesInternal(path)
       raiseError(r)
-      resultValue(r)
+      resultStrings(r)
    }
 
    def exists(path: Path) uses Throw[IoError]: Bool = {
       val r = existsInternal(path)
       raiseError(r)
-      resultValue(r)
+      resultBool(r)
    }
 
    def isDirectory(path: Path) uses Throw[IoError]: Bool = {
       val r = isDirectoryInternal(path)
       raiseError(r)
-      resultValue(r)
+      resultBool(r)
    }
 
    def listDirectory(path: Path) uses Throw[IoError]: List[Path] = {
       val r = listDirectoryInternal(path)
       raiseError(r)
-      resultValue(r)
+      resultPaths(r)
    }
 
    def walk(path: Path) uses Throw[IoError]: List[Path] = {
       val r = walkInternal(path)
       raiseError(r)
-      resultValue(r)
+      resultPaths(r)
    }
 
    def createDirectories(path: Path) uses Throw[IoError]: Unit = raiseError(createDirectoriesInternal(path))
@@ -163,20 +158,59 @@ private def deleteInternal(path: Path): IoResult
 
 /**
  * Fold over the lines of `path` (`Files.newBufferedReader` + `readLine` loop), calling `step(acc)(line)` per line, in
- * constant space; the whole loop is wrapped so an I/O error becomes a result holder. Implemented by the backend.
+ * constant space, then hand the accumulator to `onValue`; an I/O error anywhere hands its message to `onError` instead.
+ * Implemented by the backend.
+ *
+ * The accumulator is a loop's: `initial`, then whatever `step` yields, once per line. A line, like the message, is a
+ * JVM `String`, so nothing narrower than its representation limit is true of its size. The primitives are named by
+ * their module: importing it would collide with `eliot.collection.List`'s `joined`.
  */
-private def foldLinesInternal[B](initial: B, step: B => String => B, path: Path): IoResult
+private def foldLinesInternal[B, R](initial: B,
+                                    step: B {eliot.compiler.Meta::looped(initial, step)} =>
+                                          String {closed(0, 2147483647)} => B,
+                                    path: Path,
+                                    onValue uses *: B {eliot.compiler.Meta::looped(initial, step)} => R,
+                                    onError uses *: String {closed(0, 2147483647)} => R)
+   uses *: R {eliot.compiler.Meta::joined(onValue, onError)}
 
 /**
- * Fold over the Unicode code points of `path`, calling `step(acc)(codePoint)` per code point. Implemented by the
- * backend.
+ * Fold over the Unicode code points of `path`, calling `step(acc)(codePoint)` per code point, then hand the accumulator
+ * to `onValue`, or an I/O error's message to `onError`. Implemented by the backend.
+ *
+ * A code point is at most `0x10FFFF`.
  */
-private def foldCodePointsInternal[B](initial: B, step: B => Int => B, path: Path): IoResult
+private def foldCodePointsInternal[B, R](initial: B,
+                                         step: B {eliot.compiler.Meta::looped(initial, step)} =>
+                                               Int {closed(0, 1114111)} => B,
+                                         path: Path,
+                                         onValue uses *: B {eliot.compiler.Meta::looped(initial, step)} => R,
+                                         onError uses *: String {closed(0, 2147483647)} => R)
+   uses *: R {eliot.compiler.Meta::joined(onValue, onError)}
 
 /**
- * The value slot of a result holder (`null` when it holds an error). Implemented by the backend.
+ * The value slot of a result holder that holds a `String` (`readFileInternal`'s), `null` when it holds an error.
+ * Implemented by the backend.
+ *
+ * The stated size is the JVM's `String` ceiling: a file's content is whatever the file holds.
  */
-private def resultValue[A](r: IoResult): A
+private def resultString(r: IoResult): String {closed(0, 2147483647)}
+
+/**
+ * The value slot of a result holder that holds a `Bool` (`existsInternal`'s, `isDirectoryInternal`'s). Implemented by
+ * the backend.
+ */
+private def resultBool(r: IoResult): Bool
+
+/**
+ * The value slot of a result holder that holds a `List[String]` (`readLinesInternal`'s). Implemented by the backend.
+ */
+private def resultStrings(r: IoResult): List[String]
+
+/**
+ * The value slot of a result holder that holds a `List[Path]` (`listDirectoryInternal`'s, `walkInternal`'s).
+ * Implemented by the backend.
+ */
+private def resultPaths(r: IoResult): List[Path]
 
 /**
  * The error-message slot of a result holder (`null` when it holds a value). Implemented by the backend.

@@ -337,7 +337,7 @@ object Expression {
     */
   lazy val typeRunParser: Parser[Sourced[Token], Expression] = typeRunOf(typeRunAtom)
 
-  /** [[typeRunParser]] for a code parameter's type, whose arrow domains may each carry a **meta brace**
+  /** [[typeRunParser]] for a parameter's type, whose arrow domains may each carry a **meta brace**
     * (`onValue uses *: A {body} => R`, `docs/meta.md` §14): each part of the run with the brace after it, which only a
     * part an arrow `=>` follows may have. Anywhere else a brace ends the run, as in every type position.
     */

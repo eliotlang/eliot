@@ -56,23 +56,24 @@ object MetaConstructorDesugarer {
     )
   }
 
-  /** The auto-derived `Meta[<Name>$Meta]` **instance** — the lattice join over the type's meta structure (Step 1 of
-    * `docs/generic-refinement-merges.md`). A *user* declares `Meta` only for their own domain (`Meta[Interval[T]]`);
-    * the compiler derives the matching instance for the compound *meta structure* `Int$Meta` field-wise, so `fold`'s
-    * generic `^Meta` companion (`join(whenTrue, whenFalse)`, reduced by the channel at the meta type args) has a
-    * `Meta[Int$Meta]` to reduce through:
+  /** The auto-derived `Meta[<Name>$Meta]` **instance** — the lattice join and widening over the type's meta structure
+    * (Step 1 of `docs/generic-refinement-merges.md`). A *user* declares `Meta` only for their own domain
+    * (`Meta[Interval[T]]`); the compiler derives the matching instance for the compound *meta structure* `Int$Meta`
+    * field-wise, so `fold`'s generic `^Meta` companion (`join(whenTrue, whenFalse)`, reduced by the channel at the meta
+    * type args) has a `Meta[Int$Meta]` to reduce through:
     *
     * {{{
     *   implement Meta[Int$Meta] {
     *     def join(a: Int$Meta, b: Int$Meta): Int$Meta = Int$Meta(join(range(a), range(b)))
+    *     def widen(a: Int$Meta, b: Int$Meta): Int$Meta = Int$Meta(widen(range(a), range(b)))
     *   }
     * }}}
     *
-    * Each slot is joined by the `Meta` ability's own `join`, dispatched on the slot's domain (`range(a) : Interval[..]`
-    * ⤳ the `Meta[Interval[T]]` instance). The compound join thus routes through the domain's *instance*, not a
-    * hand-copied plain function: the refinement channel's post-monomorphize executor links each instance at its own
-    * monomorphization (`docs/refinement-channel-follow-ups.md`), so a transitively-reached Eliot-body instance
-    * dispatches. The result is rewrapped in the meta *constructor* `Int$Meta(..)`.
+    * Each slot is joined (widened) by the `Meta` ability's own `join` (`widen`), dispatched on the slot's domain
+    * (`range(a) : Interval[..]` ⤳ the `Meta[Interval[T]]` instance). The compound join thus routes through the domain's
+    * *instance*, not a hand-copied plain function: the refinement channel's post-monomorphize executor links each
+    * instance at its own monomorphization (`docs/refinement-channel-follow-ups.md`), so a transitively-reached
+    * Eliot-body instance dispatches. The result is rewrapped in the meta *constructor* `Int$Meta(..)`.
     *
     * The marker/method shapes mirror [[DataDefinitionDesugarer.createPatternMatchImpl]] and the surface `implement`
     * desugar ([[com.vanillasource.eliot.eliotc.ast.fact.ImplementBlock]]): a body-less marker whose sole arg is the
@@ -85,8 +86,21 @@ object MetaConstructorDesugarer {
     val metaTypeName  = definition.name.map(_.name + metaTypeSuffix)
     val metaTypeRef   = app(metaTypeName)
     val implQualifier = Qualifier.AbilityImplementation("Meta", metaTypeName.value, None)
-    val perSlotJoins  = definition.metaSlots.traverse(slotJoin)
-    perSlotJoins.toSeq.flatMap { joins =>
+    val perSlotJoins  = definition.metaSlots.traverse(slotJoin(_, "join"))
+    val perSlotWidens = definition.metaSlots.traverse(slotJoin(_, "widen"))
+    (perSlotJoins, perSlotWidens).tupled.toSeq.flatMap { (joins, widens) =>
+      def method(name: String, slots: Seq[Sourced[SourceExpression]]): FunctionDefinition =
+        FunctionDefinition(
+          metaTypeName.as(QualifiedName(name, implQualifier)),
+          Seq.empty,
+          Seq(
+            ArgumentDefinition(metaTypeName.as("a"), metaTypeRef),
+            ArgumentDefinition(metaTypeName.as("b"), metaTypeRef)
+          ),
+          metaTypeRef,
+          Some(app(metaTypeName, slots)),
+          visibility = definition.visibility
+        )
       val marker = FunctionDefinition(
         metaTypeName.as(QualifiedName("Meta", implQualifier)),
         Seq.empty,
@@ -95,29 +109,18 @@ object MetaConstructorDesugarer {
         None,
         visibility = definition.visibility
       )
-      val join   = FunctionDefinition(
-        metaTypeName.as(QualifiedName("join", implQualifier)),
-        Seq.empty,
-        Seq(
-          ArgumentDefinition(metaTypeName.as("a"), metaTypeRef),
-          ArgumentDefinition(metaTypeName.as("b"), metaTypeRef)
-        ),
-        metaTypeRef,
-        Some(app(metaTypeName, joins)),
-        visibility = definition.visibility
-      )
-      Seq(marker -> RoleHint.NoHint, join -> RoleHint.NoHint)
+      Seq(marker, method("join", joins), method("widen", widens)).map(_ -> RoleHint.NoHint)
     }
   }
 
-  /** The per-slot join expression `join(<slot>(a), <slot>(b))` — e.g. `join(range(a), range(b))`, dispatched by the
-    * slot's domain type to that domain's `Meta` instance — or `None` when the slot's domain head is not a simple type
-    * application (see [[metaJoinInstance]]).
+  /** The per-slot expression `<method>(<slot>(a), <slot>(b))` of the `Meta` method `method` — e.g. `join(range(a),
+    * range(b))`, dispatched by the slot's domain type to that domain's `Meta` instance — or `None` when the slot's domain
+    * head is not a simple type application (see [[metaJoinInstance]]).
     */
-  private def slotJoin(slot: ArgumentDefinition): Option[Sourced[SourceExpression]] =
+  private def slotJoin(slot: ArgumentDefinition, method: String): Option[Sourced[SourceExpression]] =
     slot.typeExpression.value match {
       case SourceExpression.FunctionApplication(_, domainHead, _, _) =>
-        Some(app(domainHead.as("join"), Seq(project(slot.name, "a"), project(slot.name, "b"))))
+        Some(app(domainHead.as(method), Seq(project(slot.name, "a"), project(slot.name, "b"))))
       case _                                                         => None
     }
 

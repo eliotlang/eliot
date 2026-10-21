@@ -737,6 +737,18 @@ class CoreProcessorTest extends ProcessorTest(Tokenizer(), ASTParser(), CoreProc
     )
   }
 
+  it should "write a statement for a value parameter's arrow domain as for a code parameter's" in {
+    namedValues("def f[B](initial: B, step: B {looped(initial, step)} => Foo => B): B").asserting(
+      _.map(_.qualifiedName.value.name).filter(_.contains("$Handed$")) shouldBe Seq("f$Handed$step$0")
+    )
+  }
+
+  it should "be refused on a value parameter of a definition with a body" in {
+    errorsOf("def f[B](initial: B, step: B {g} => B): B = step(initial)").asserting(
+      _ shouldBe Seq("A definition with a body cannot state what it hands its code; only a body-less definition states it.")
+    )
+  }
+
   "where clause (bounds Step 4c)" should "keep an integer literal in the predicate a compile-time BigInteger" in {
     namedValue("def f(a: Foo) where g(0): Foo", QualifiedName("f$Where", M)).asserting { nv =>
       nv.runtimeStructure shouldBe Some(Lambda("a", Empty, App(Ref("g"), IntLit("0"))))

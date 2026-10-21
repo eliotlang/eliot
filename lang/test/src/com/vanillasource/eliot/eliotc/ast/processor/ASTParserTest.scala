@@ -795,6 +795,19 @@ class ASTParserTest extends ProcessorTest(new Tokenizer(), new ASTParser()) {
     )
   }
 
+  it should "leave a meta brace after a value parameter's arrow domain to that parameter, beside its meta brace" in {
+    runEngineForHandedMetas("def f(s: B {looped(i, s)} => String => B, b: Int {byte}): B").asserting(
+      _ shouldBe Seq(("s", Seq((0, "B", Seq("looped(i, s)")))), ("b", Seq.empty))
+    )
+  }
+
+  it should "leave the arrows of a value parameter's type without its braces" in {
+    runEngineForFunctionArgTypes("def f(s: B {looped(i, s)} => B): B").asserting(
+      _.collect { case ("f", Expression.FlatExpression(parts)) => parts.map(_.value.render) } shouldBe
+        Seq(Seq("B", "=>", "B"))
+    )
+  }
+
   private def runEngine(source: String): IO[Map[CompilerFactKey[?], CompilerFact]] =
     runGenerator(source, SourceAST.Key(file)).map(_._2)
 

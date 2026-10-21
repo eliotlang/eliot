@@ -10,7 +10,7 @@ import com.vanillasource.eliot.eliotc.processor.CompilerIO.*
 import scala.annotation.tailrec
 
 /** What a meta companion states, read from its resolved body: which of its stating value's parameters the statement
-  * reads, and whether it is a **frame or cell statement** (`docs/meta.md` §11.1, §14).
+  * reads, and whether it is a **frame, cell or loop statement** (`docs/meta.md` §11, §14).
   *
   * A frame or cell statement is a brace that is one application of a primitive of `eliot.compiler.Meta` to the stating
   * value's parameters — `{exit(frame, err)}`, `{content(cell)}`, `{exited(body)}`. Its arguments are frames, cells and
@@ -38,7 +38,7 @@ case class MetaStatement(
 
 object MetaStatement {
 
-  /** A frame or cell primitive, over the positions of the parameters it is applied to. */
+  /** A frame, cell or loop primitive, over the positions of the parameters it is applied to. */
   enum Primitive {
 
     /** `frame`: a fresh frame of the stating call, handed to its code. */
@@ -61,6 +61,14 @@ object MetaStatement {
 
     /** `store(cell, value)`: `cell` holds `value` from now on. */
     case Store(cell: Int, value: Int)
+
+    /** `looped(initial, code)`: the accumulator of a loop starting at `initial` and going on with what each run of `code`
+      * yields, for any number of runs (`docs/meta.md` §11.2).
+      */
+    case Looped(initial: Int, code: Int)
+
+    /** `endless(code)`: `code` runs again and again, each run where the last one ended, and the call does not return. */
+    case Endless(code: Int)
 
     /** `built`: the call is the value its callee, a `data` constructor, built from its arguments. */
     case Built
@@ -147,6 +155,8 @@ object MetaStatement {
           case (Some("stored"), Seq(code))             => position(code).map(Primitive.Stored(_))
           case (Some("content"), Seq(cell))            => position(cell).map(Primitive.Content(_))
           case (Some("store"), Seq(cell, value))       => (position(cell), position(value)).mapN(Primitive.Store(_, _))
+          case (Some("looped"), Seq(initial, code))    => (position(initial), position(code)).mapN(Primitive.Looped(_, _))
+          case (Some("endless"), Seq(code))            => position(code).map(Primitive.Endless(_))
           case (Some("built"), Seq())                  => Some(Primitive.Built)
           case (Some("fieldOf"), Seq(value, built))    => (position(value), constructor(built)).mapN(Primitive.FieldOf(_, _))
           case (Some("fieldOr"), Seq(value, built, _)) => (position(value), constructor(built)).mapN(Primitive.FieldOr(_, _))
@@ -182,7 +192,10 @@ object MetaStatement {
     Set(WellKnownTypes.metaJoinedFQN, WellKnownTypes.metaJoinFQN)
 
   private val primitiveNames: Map[ValueFQN, String] =
-    Seq("frame", "cell", "exit", "exited", "stored", "content", "store", "built", "fieldOf", "fieldOr")
+    Seq(
+      "frame", "cell", "exit", "exited", "stored", "content", "store", "looped", "endless", "built", "fieldOf",
+      "fieldOr"
+    )
       .map(name => WellKnownTypes.metaPrimitiveFQN(name) -> name)
       .toMap
 }

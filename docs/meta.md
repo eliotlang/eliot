@@ -1,14 +1,14 @@
 # Meta — the refinement channel
 
 Status (2026-10-21): **two domains shipped, R2 and R3 armed, the interpretation and in-context demands built** (Part I).
-**Completing totality is designed and decided, and not yet built** (Part II):
+**Completing totality is designed and decided, and partly built** (Part II):
 - every leaf states its meta, type-parameter results included;
 - what reaches a native through a frame, a cell or a loop is followed by the interpretation;
 - a value that is never produced is ⊥;
 - a `data` value carries the metas of its fields.
 
-Of Part II, T1 (the gap mechanics), T2 (⊥) and T3 (frames and cells) are built (§17). Where the work stopped, and how
-to continue it, is §18.1.
+Of Part II, T1 (the gap mechanics), T2 (⊥), T3 (frames and cells) and T4 (loops) are built (§17). Where the work
+stopped, and how to continue it, is §18.1.
 
 This document replaces three: `total-meta-transfers.md` (the rules and the interpretation), `string-length-meta.md`
 (the `String` size domain) and `structural-meta.md` (the P6 design). Their full text is at `2a66009a`, and §21 maps
@@ -176,7 +176,8 @@ carries no meta is reported at the leaf.
 *Shipped with one exemption, reversed in Part II (§10):* a leaf whose result head is a **type parameter**
 (`exitInternal[K, A]: A`, `foldLeftInternal[A, B]: B`) is not checked, on the grounds that it forwards a meta rather
 than originating one. That is false for most of them, and those leaves are where the remaining not-computed metas
-come from.
+came from. Every one §10 lists states since T4; removing the exemption finds one more, the generated `typeMatch[R]`
+(§10).
 
 **R3: a bodied value derives, and may not state.** A brace on a value with an Eliot body is an error, read after the
 layer merge (`MonomorphicValue.runtime`). That makes a brace in one layer over a body in another the same check as
@@ -217,7 +218,8 @@ report a hundred spurious errors.
   (`parseIntInternal`'s `whole`), or the representation's limit when the bound is a representation fact. A bound that
   would hang the compiler is worse than a wide one.
 - **An unbounded loop never reaches the interpretation.** A leaf is *summarized* by its statement and never executed,
-  whatever it returns. So a native's loop (`foreverInternal`) is invisible to the interpretation by construction. A
+  whatever it returns. So a native's loop (`foreverInternal`) is never run: it states `{endless(step)}`, and what the
+  interpretation iterates is the step it is handed, to a fixpoint the domain's widening makes finite (§11.2). A
   blocking read can be honestly `uses Inf` and honestly bounded (an ADC's `0 .. 1023`); nothing forbids stating it.
 
 ### 3.3 The positions a meta is stated at
@@ -378,6 +380,8 @@ real monomorphized body:
   any of whose value arguments is ⊥ is ⊥, and a stated transfer reads a ⊥ yield as a sibling of the same meta type.
 - **Frames and cells** (§11.1) are followed through the one call that made them: the interpretation threads a store of
   them through every step, in Eliot's strict evaluation order, and code a native runs is followed run by run (§14).
+- **A loop** (§11.2) is the fixpoint of its code: a native states it (`looped`, `endless`), and the interpretation runs
+  the code from the loop's initial accumulator until neither the accumulator nor any cell changes.
 - **A value a `data` constructor built** is held with its fields as the interpretation holds them, and a `match` on it
   runs only the arm its constructor selects. Both are generated statements (§13.4), so the channel names no
   constructor and no eliminator. Within one interpretation that makes a field read exact; across a boundary the
@@ -415,8 +419,9 @@ join their arms. When a handled statement exists (§4.5), the handler is applied
 
 ### 5.3 Budget, gate, memo
 
-- **The budget is a step count**, `interpretationBudget = 256` per call node, threaded through depth *and* fan-out
-  together. A hard count bounds a diamond-shaped call DAG absolutely, and a cache would not: distinct argument metas
+- **The budget is a step count**, `interpretationBudget = 1024` per call node, threaded through depth *and* fan-out
+  together. It was 256 until T4: a loop runs its code up to about four times, and `forever` over a `putState` and a
+  `raise` took more than 256 steps. Four times as many changed no example's jar or compile time. A hard count bounds a diamond-shaped call DAG absolutely, and a cache would not: distinct argument metas
   defeat its key. Today, when the budget runs out, the node is left with no meta, and a demand on it fails. That is
   never a wrong answer, but it is a gap (§1). Part II makes the budget a compiler limit: running out of it is an error
   naming the call, never a value handed on (decision I, §18).
@@ -428,10 +433,10 @@ join their arms. When a handled statement exists (§4.5), the handler is applied
 - **There is no memo.** A memo on `(vfqn, typeArgs, argMetas)` is the prepared answer if the budget or the clock is
   ever observed to bind. Measure it with `--statistics`, diffing a run with and without the flag, since the flag
   itself inflates a build by about 20%. P5's contexts are already such a memo, for demands (§6).
-- **A loop's meta is a fixpoint** (Part II §11.2). A loop lives in a native, which states it through one primitive
-  of the transfer language recognised by name, because the channel names no leaf. *Finite* is not *computable at
-  compile time*: `readLines`' size is truthfully `0 .. 2³¹−1`. So the iteration count is never run out; the domain's
-  widening makes the fixpoint finite.
+- **A loop's meta is a fixpoint** (§11.2, built in T4). A loop lives in a native, which states it through a primitive
+  of the transfer language recognised by name (`looped`, `endless`), because the channel names no leaf. *Finite* is
+  not *computable at compile time*: `readLines`' size is truthfully `0 .. 2³¹−1`. So the iteration count is never run
+  out; the domain's widening makes the fixpoint finite.
 
 ## 6. Demands are checked in context (P5)
 
@@ -524,14 +529,12 @@ Each of these is a gap: fail-safe at every demand, and pinned by a test that cha
 |---|---|---|
 | a field read out of a `data` value the interpretation did not build | `useByte(orZero(Some(7)))`: `Some(7)` is a separate call node, so its value reaches `orZero` as a meta, and an `Option`'s is `Unit` | structural meta (§13) |
 | the join of two constructed values | `catch(fold(c, 5, raise("x")), e -> 6)`: the escape's result is a `Left` or a `Right` | structural meta (§13) |
-| what a loop produces or hands its code | `foldLines`, a cell written inside `forever` | §11.2 (T4) |
-| a holder that returns any type | `resultValue[A](r: IoResult): A` | decomposing it in the jvm layer (§11.3) |
 | the elements of a `List` | `foldLeft`'s `combine` is handed an element with no meta | `List` carrying its elements' meta (§13.3) |
 | hence `if … else` | `else` reads its result back out of an `Option` built by an escape | all of the above (§15) |
 | a demand on a closure the walk cannot see applied | `applyTo(y -> useByte(y), 10)`; `useByte(f(x))` with `f` a parameter | a context that can carry a closure (a fact key holding a body and an environment), when a program needs it |
 | the step budget | a deep or wide derived DAG | a memo when observed, and exhaustion reported as an error (§5.3) |
 
-The first six rows are not separate defects. Each is a leaf that does not define its meta, or a structure that
+The first four rows are not separate defects. Each is a leaf that does not define its meta, or a structure that
 cannot carry one, which is what Part II finds.
 
 The `eliot-code` skill tells users what a range is derived through and what is not computed today. It was probed
@@ -594,17 +597,20 @@ with a type-parameter result and what each must define:
 | `escapeInternal[K, A, R](body, onExit, onValue): R` (Abort, Throw) | `{joined(onExit, onValue)}`, **stated since T3**. It hands `body` a fresh frame, `onValue` what `body` yields, and `onExit` what `body`'s exits gave the frame, which is ⊥ when nothing exits (§11.1, §14). |
 | `withCellInternal[S, A, R](initial, body, combine): R` (State, Writer, Dep) | `{combine}`, **stated since T3**. It hands `body` a fresh cell holding `initial`, and `combine` what `body` yields and the cell's content when `body` returns (§11.1). |
 | `readCellInternal[S](cell): S` (State, Writer, Dep) | `{content(cell)}`, **stated since T3**: the cell's content where it is read (§11.1) |
-| `foldLeftInternal[A, B](list, initial, combine): B` | the loop's fixpoint from `initial` (§11.2), handing `combine` the meta of the list's elements, which `List` does not carry yet (§13.3) |
-| `foldLinesInternal`, `foldCodePointsInternal` (File) | the loop's fixpoint (§11.2), once their holder is decomposed (§11.3), handing the step `{closed(0, 2147483647)}` per line and `{closed(0, 1114111)}` per code point |
-| `resultValue[A](r: IoResult): A` (File) | none can be honest: it returns its holder's content as any `A`. Decomposed away (§11.3). |
+| `foldLeftInternal[A, B](list, initial, combine): B` | `{looped(initial, combine)}`, **stated since T4**, the loop's fixpoint from `initial`, which it hands `combine` too (§11.2). The element it hands `combine` is stated once `List` carries its elements' meta (§13.3). |
+| `foldLinesInternal`, `foldCodePointsInternal` (File) | `{joined(onValue, onError)}`, **stated since T4**, once their holder was decomposed (§11.3): `onValue` is handed the loop's fixpoint, the step `{closed(0, 2147483647)}` per line and `{closed(0, 1114111)}` per code point |
+| `resultValue[A](r: IoResult): A` (File) | none can be honest: it returned its holder's content as any `A`. **Decomposed away in T4** (§11.3). |
 | `Bool::fold[A]` | already `{join(whenTrue, whenFalse)}` |
 
-`foreverInternal` returns `Unit`, so R2 asks nothing of it, but it may state `{never}`: it returns only by an exit. Its
-step's writes and exits are a loop (§11.2).
+`foreverInternal` returns `Unit`, so R2 asks nothing of it, but it states `{endless(step)}` since T4: its step runs
+again and again, and it returns only by an exit (§11.2).
 
 The armed check is the proof of the table. Removing the exemption compiles the tree and the examples, and any leaf
-the table missed is an error naming it. It can be removed only once the last row can state, which is
-`foldLeftInternal`, waiting on `List` (§17).
+the table missed is an error naming it. It was to wait on `foldLeftInternal`, waiting on `List` (§17), but
+`foldLeftInternal` states since T4. **Tried after T4, the check found a leaf the table missed**: the data desugarer's
+`typeMatch[R]`, the body-less member of every `data`'s type-level match implementation, which the backend generates
+and which reaches codegen at `R = String` (`ExamplesIntegrationTest3`, "match on type-level values"). It was put back,
+and stating `typeMatch` is now what removing the exemption waits on (T6).
 
 ## 11. What reaches a native through a frame, a cell or a loop
 
@@ -675,6 +681,30 @@ preferred. That is a precision choice for later.
 This reverses the recommendation the open "budget, not widening" decision carried (§19). A budget that ran out would
 have to hand on a missing meta, and the process has none.
 
+**Built in T4 (2026-10-21).** `widen(previous, next)` is a second method of `ability Meta`, beside `join`, so a domain
+cannot forget it; `Unit` widens to `previous`, an interval opens each endpoint `next` moved past (`lowered`/`raised`
+in the compiler overlay), and the derived `Meta[Int$Meta]` widens field-wise as it joins. The channel reaches it
+through `eliot.compiler.Meta::widened(previous, next)`, which is `widen(previous, join(previous, next))`. A native
+states its loop with two primitives of `eliot.compiler.Meta`, recognised by name as the frame and cell ones are:
+
+```eliot
+private def foldLeftInternal[A, B](list: List[A], initial: B,
+                                   combine uses *: A => B {looped(initial, combine)} => B) uses *: B {looped(initial, combine)}
+private def foreverInternal(step uses *: Unit) uses *: Unit {endless(step)}
+```
+
+`looped(initial, code)` is the loop's accumulator: on the domain `code` is handed it in, on the result, and on whatever
+else is handed what the loop ended with (a file fold's `onValue`). `endless(code)` says `code` runs again and again and
+the call does not return. `MetaInterpreter.runCode` runs a loop's code from the call, handed the accumulator so far,
+until neither the accumulator nor any cell changes. What a run yields and the cells it ends with are **joined** into
+the next run's after the first run and **widened** after every later one: the delay keeps a step that yields a
+constant exact (`foldLeft(5, e -> acc -> 7, list)` is `[5, 7]`, not `[5, ∞)`), and an interval is stable after at most
+two widenings. A run that does not return continues nothing, but its exits are kept, each with the loop-start cells as
+they were. An accumulator that is a constructed value or a closure, changing from run to run, is not computed until
+structural meta (T5). A loop whose code is handed a frame or a cell of its own is not followed. Proven in
+`DerivedMetaTransferIntegrationTest` (a constant step, a growing one, a cell written per run, `forever` over a cell and
+a frame). All 47 examples byte-identical.
+
 ### 11.3 A holder that returns any type is decomposed
 
 `resultValue[A](r: IoResult): A` returns its holder's content as whatever `A` its caller names. Nothing relates `A`
@@ -686,7 +716,29 @@ declarations:
 - a generic fold returns its accumulator itself and takes its error path as code, so its result is the loop's
   fixpoint joined with what the error path yields, which is ⊥ when the path raises.
 
-That is a platform decomposition written in Eliot, over smaller leaves, and it needs no compiler change.
+That is a platform decomposition written in Eliot, over smaller leaves.
+
+**Built in T4 (2026-10-21), with one compiler change the design did not foresee.** `resultValue` is gone: the jvm
+`FileSystem` reads a holder through `resultString` (stating the JVM `String` ceiling), `resultBool`, `resultStrings`
+and `resultPaths`, each emitted with a cast to what its native put there. The folds take two continuations, as the
+escape does, and the backend calls neither inside its `try`:
+
+```eliot
+private def foldLinesInternal[B, R](initial: B,
+                                    step: B {looped(initial, step)} => String {closed(0, 2147483647)} => B,
+                                    path: Path,
+                                    onValue uses *: B {looped(initial, step)} => R,
+                                    onError uses *: String {closed(0, 2147483647)} => R)
+   uses *: R {joined(onValue, onError)}
+```
+
+`foldLines` passes `acc -> acc` and `message -> raise(IoError(message))`, so its result is the loop's fixpoint and the
+error path adds ⊥. (`File.els` spells the primitives `eliot.compiler.Meta::looped`: importing the module would collide
+with `eliot.collection.List`'s `joined`.) The step stays a **value** parameter, as `FileSystem` declares it. Code may write a cell, so were
+the step code, `onError` would honestly start after any number of its runs, which no statement can say; a value cannot,
+so `onError` starting at the call is true. So the arrow-domain brace (§14), until now on a code parameter only, is
+accepted on a function-typed value parameter too: the definition applies a function value as it runs code, and what
+it hands it is the same statement. The parser change is that, and nothing else.
 
 ## 12. ⊥: a value that is never produced
 
@@ -938,7 +990,9 @@ makes reading it so sound. Where two are live the statement is reduced over thei
 The arrow-domain grammar slot is free: a brace *before* a type is the rejected row spelling, and one *after* a
 parameter's type is §4.4's. It desugars to a handed companion (`escapeInternal$Handed$onValue$0`) named as the data
 desugarer names one, which reads parameters (`MetaParameterDesugarer.arrowStatement`). It is accepted on a body-less
-def only: a body hands what it computes, so a brace on one is an error at the brace (R3).
+def only: a body hands what it computes, so a brace on one is an error at the brace (R3). Since T4 it is accepted on a
+function-typed **value** parameter as well (`step: B {looped(initial, step)} => String => B`, §11.3): the callee
+supplies what it applies a function value to exactly as it supplies what it runs code with.
 
 **Declined (decision F): reshaping the escape primitive** to `escape(body: Frame => R, onExit: K => R)`, so
 its transfer is a plain join and nothing is handed. It would need nothing new here, but `docs/effects.md` §3.4 fixes
@@ -976,7 +1030,8 @@ slot.
   bodies whose root defers, but that bound is not measured.
 - **The interpretation carries state, and computes fixpoints.** Following a frame or a cell (§11.1) threads their
   contents through one call's interpretation. A loop (§11.2) iterates its step until the domain's widening is stable,
-  which for an interval is a few steps per endpoint.
+  which for an interval is a few steps per endpoint. Measured in T4 on a cold sweep of every example: 3 min 55 s
+  before, 3 min 58 s after, with the budget at 1024 (§5.3), and every jar byte-identical.
 - **Generated values.** Per data type, the desugar generates a meta structure, a record per constructor with fields,
   a join instance, a `$Fields`, a transfer per constructor, and a handed transfer per handler argument. Each record is
   itself desugared (type, constructor, accessors, eliminators). This is compiler-pool and demand-driven, but every cold
@@ -1009,15 +1064,19 @@ cache once kept a stale companion across a change and hid a brace that did not e
   handed what was raised, one nothing exits to not run); `catch` and `if … else` over a body that may both return and
   exit wait on T5's structural join, pinned as a gap there.
 - **T4: loops and the holder** (§11.2, §11.3). The fixpoint primitive and `Meta`'s widening, with an interval's; the
-  file folds and `resultValue` decomposed in the jvm layer.
+  file folds and `resultValue` decomposed in the jvm layer. **Built 2026-10-21**, byte-identical across all 47
+  examples. Beyond the plan, it took a parser change (the arrow-domain brace on a value parameter, §11.3), a budget
+  four times as large (§5.3), and a join before the first widening, which keeps a constant step exact (§11.2).
+  `foldLeftInternal` states its accumulator, which was T6's.
 - **T5: structural meta** (§13). `Reach`, the structures, records, join instances and `$Fields`; the recursive groups
   and their folded summaries; constructor and handed transfers; `metaConstructorOf` for a generic meta type; the overlay
   agreement check. This flips `DerivedMetaTransferIntegrationTest`'s field-read case and makes `if … else` an
   accept/reject pair, and it adds `Pair`, `Either`, a user record, a user tree and `pick(B)`'s pruning. Jars change
   wherever an `Int` is read out of a `data`. **Gated on §16's measurement**, which also decides the memo, and with it
   the budget becoming a reported limit (decision I).
-- **T6: `List` carries its elements.** The parametric slot (§13.3), with the size domain. `foldLeftInternal` states,
-  and R2's exemption is removed: the last runtime leaf now states.
+- **T6: `List` carries its elements.** The parametric slot (§13.3), with the size domain. `foldLeftInternal` hands
+  `combine` its element's meta, `typeMatch[R]` states (§10), and R2's exemption is removed: the last runtime leaf now
+  states.
 - **T7: the record.** This document's status, CLAUDE.md's refinement-channel paragraph, and `eliot-code`'s list of
   what is not computed today.
 
@@ -1067,15 +1126,14 @@ cache once kept a stale companion across a change and hid a brace that did not e
 
 ### 18.1 Where this was left (2026-10-21)
 
-Of Part II, T1, T2 and T3 are built (2026-10-21) and the rest is a design. Every decision in §18 is
+Of Part II, T1 to T4 are built (2026-10-21) and the rest is a design. Every decision in §18 is
 taken: B on 2026-10-21 after the question whether ⊥ is a special value (it is not), then A and C–I as recommended.
-T3 settled the frame and cell primitives' spelling (§14); one spelling is left to the stage that builds it, and is not
-a decision: how D's `widen` sits beside `join` on `Meta`, in T4.
+T3 settled the frame and cell primitives' spelling (§14), and T4 the loop's: `looped` and `endless`, and `widen` as a
+second method of `ability Meta` (§11.2).
 
-To continue: **start T4** (§17): a loop's fixpoint, with `Meta`'s widening and an interval's, and the file folds and
-`resultValue` decomposed in the jvm layer. A loop's step is code a native runs an unknown number of times, so it is a
-run (§11.1) iterated until the domain's widening is stable, and a cell written in it joins over the iterations. T5 waits
-on §16's measurement, and T6 on `List` carrying its elements' meta.
+To continue: **T5** (§17), structural meta, is gated on §16's measurement, which decides the memo and with it the
+budget becoming a reported limit (decision I). T6 waits on `List` carrying its elements' meta, and on stating the
+generated `typeMatch[R]`, which removing R2's exemption found (§10). The `Unit` cleanup below needs neither.
 
 **The `Unit` question (2026-10-21).** Robert: a type declaring no meta gets `Unit` implicitly, and *"the rest of the
 machinery should not know that this was 'default'"*. T3 removed two places that knew: §5.3's type gate (a call

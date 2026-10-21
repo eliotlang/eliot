@@ -9,4 +9,5 @@ def unit: Unit
  */
 implement Meta[Unit] {
    def join(a: Unit, b: Unit): Unit = a
+   def widen(previous: Unit, next: Unit): Unit = previous
 }

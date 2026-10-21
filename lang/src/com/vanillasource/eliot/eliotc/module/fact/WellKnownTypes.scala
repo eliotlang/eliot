@@ -191,6 +191,12 @@ object WellKnownTypes {
   val metaJoinedFQN: ValueFQN =
     ValueFQN(ModuleName(compilerPackage, "Meta"), QualifiedName("joined", Qualifier.Default))
 
+  /** `eliot.compiler.Meta::widened[D ~ Meta](previous: D, next: D): D` — a loop's accumulator after one more iteration
+    * produced `next` (`docs/meta.md` §11.2), through the meta type's own instance's `widen`.
+    */
+  val metaWidenedFQN: ValueFQN =
+    ValueFQN(ModuleName(compilerPackage, "Meta"), QualifiedName("widened", Qualifier.Default))
+
   /** `eliot.compiler.Meta::never[D]: D` — what a call that does not return states of its result (`docs/meta.md`
     * §12). The refinement channel recognises a stated transfer reducing to it as ⊥, never as a meta.
     */
@@ -203,9 +209,10 @@ object WellKnownTypes {
   val metaJoinFQN: ValueFQN =
     ValueFQN(ModuleName(compilerPackage, "Meta"), QualifiedName("join", Qualifier.Ability("Meta")))
 
-  /** The frame and cell primitives of `eliot.compiler.Meta` (`docs/meta.md` §11.1, §14), by name: `frame`, `cell`,
-    * `exit`, `exited`, `stored`, `content` and `store`. The refinement channel recognises a statement that is one
-    * application of one of them to the stating value's parameters, and follows the frame or cell it names.
+  /** The frame, cell and loop primitives of `eliot.compiler.Meta` (`docs/meta.md` §11, §14), by name: `frame`, `cell`,
+    * `exit`, `exited`, `stored`, `content`, `store`, `looped` and `endless`. The refinement channel recognises a
+    * statement that is one application of one of them to the stating value's parameters, and follows the frame, cell or
+    * loop it names.
     */
   def metaPrimitiveFQN(name: String): ValueFQN =
     ValueFQN(ModuleName(compilerPackage, "Meta"), QualifiedName(name, Qualifier.Default))

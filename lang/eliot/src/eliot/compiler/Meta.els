@@ -20,6 +20,9 @@
  *    // Equal signs stay; any disagreement widens to AnySign — the least precise
  *    // sign that still covers both possibilities.
  *    def join(a: Sign, b: Sign): Sign = if(a == b) a else AnySign
+ *
+ *    // Sign has four values, so joining reaches a stable sign in a few steps by itself.
+ *    def widen(previous: Sign, next: Sign): Sign = join(previous, next)
  * }
  * ```
  */
@@ -34,6 +37,18 @@ ability Meta[D] {
     * a disagreement widens to `AnySign`.
     */
    def join(a: D, b: D): D
+
+   /**
+    * Cover `next`, as `join` does, in a way that cannot grow forever: applied again and again to
+    * what it returned, it stops changing after finitely many steps.
+    *
+    * Called where a loop runs code an unknown number of times. The compiler follows the loop one
+    * iteration at a time, and each iteration may widen what the previous one knew, so it asks
+    * this instead of `join` to know the loop is done. An `Int`'s range opens each endpoint that
+    * moved: a counter starting at `[0, 0]` becomes `[0, 1]` after one step, which widens to "at
+    * least `0`" at once. A meta-information with finitely many values widens by joining.
+    */
+   def widen(previous: D, next: D): D
 }
 
 /**
@@ -43,6 +58,12 @@ ability Meta[D] {
  * argument's meta fits when joining it into the stated one leaves the stated one unchanged.
  */
 def joined[D ~ Meta](a: D, b: D): D = join(a, b)
+
+/**
+ * `widen(previous, join(previous, next))`, at a meta-information the compiler holds only as a type
+ * argument: what a loop's accumulator is after one more iteration produced `next`.
+ */
+def widened[D ~ Meta](previous: D, next: D): D = widen(previous, join(previous, next))
 
 /**
  * The meta-information of a value that is never produced: the call stating it does not return.
@@ -128,6 +149,32 @@ def content[C, D](cell: C): D
  * ```
  */
 def store[C, S, D](cell: C, value: S): D
+
+/**
+ * The accumulator of a loop: `initial`, then what each run of `code` yields, run after run, for
+ * any number of runs, none included. Stated on the argument `code` is handed its accumulator in,
+ * on the result, and on whatever is handed the accumulator the loop ended with.
+ *
+ * The compiler follows the loop until the accumulator, and every cell the code writes, stops
+ * changing, widening each iteration into the last (`widen`), so it does not need to know how many
+ * times the loop runs.
+ *
+ * ```eliot
+ * private def foldLeftInternal[A, B](list: List[A], initial: B,
+ *                                    combine uses *: A => B {looped(initial, combine)} => B) uses *: B {looped(initial, combine)}
+ * ```
+ */
+def looped[B, C, D](initial: B, code: C): D
+
+/**
+ * `code` runs again and again, each run where the last one ended, and the call stating it does
+ * not return: control leaves it only through a frame.
+ *
+ * ```eliot
+ * private def foreverInternal(step uses *: Unit) uses *: Unit {endless(step)}
+ * ```
+ */
+def endless[C, D](code: C): D
 
 /**
  * What a call of a `data` constructor is: the value it built from its arguments. The compiler

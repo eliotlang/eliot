@@ -54,9 +54,9 @@ import scala.annotation.tailrec
   * demands its preconditions: those are checked per context by [[MetaDemandsProcessor]], which asks this object what
   * each argument's meta is.
   *
-  * **Termination is the recursion gate's** (§1): user code cannot express recursion, so the derivation walks a DAG
-  * and needs no fixpoint, no widening and no ascending-chain condition. The [[interpretationBudget]] is therefore not
-  * what makes this terminate — it is the §5.3 fail-safe against *cost*: a diamond-shaped call DAG re-interpreted per
+  * **Termination is the recursion gate's** (§1): user code cannot express recursion, so the derivation walks a DAG.
+  * Every loop lives in a native, which states it (`looped`, `endless`), and its fixpoint is made finite by the meta
+  * type's own widening (§11.2). The [[interpretationBudget]] is therefore not what makes this terminate — it is the §5.3 fail-safe against *cost*: a diamond-shaped call DAG re-interpreted per
   * path is exponential even though each path is acyclic. The budget is a step count threaded through the whole
   * derivation of one call node, and exhausting it yields **absence**, which is sound ("I know nothing" is always true)
   * and never a wrong answer.
@@ -68,8 +68,8 @@ import scala.annotation.tailrec
   * closure — a companion is Eliot over metas — so a code argument reaches it as what its code **yields**, the same
   * reading its payload signature gives a code parameter's meta type: `fold(c, 10, 20)` joins `[10, 10]` and `[20, 20]`.
   * A handler a native runs is applied to what the native **states** it hands it ([[handedMetas]]) — the `match`
-  * eliminator's braced fields — and to ⊤ elsewhere, so a native applying a function argument with nothing stated
-  * (`foldLeft`) reaches what it hands only as ⊤.
+  * eliminator's braced fields, `foldLeftInternal`'s accumulator — and to ⊤ where it states nothing, as of a list's
+  * element until a `List` carries its elements' meta.
   */
 object MetaInterpreter {
 
@@ -216,8 +216,12 @@ object MetaInterpreter {
     * reset). Exhaustion yields absence, never a wrong answer, so the only thing a small budget costs is precision on a
     * deep call DAG. Memoization on `(vfqn, typeArgs, argMetas)` (§5.3) is the precision follow-on if this is ever
     * observed to bind in practice; a hard step count is the stronger guarantee of the two and is what must be here.
+    *
+    * It was 256 until loops (T4): a loop runs its code up to about four times — joined, widened, and once more to see
+    * it stable — and an endless loop around a cell and a frame (`forever` over `putState` and `raise`) took more than
+    * 256 steps. Four times as many changed no example's jar and no example's compile time.
     */
-  private val interpretationBudget: Int = 256
+  private val interpretationBudget: Int = 1024
 
   /** The meta of an ordinary call: the callee **states** its transfer (a native leaf — reduce the companion), or it
     * **derives** one from its body (everything else — interpret it). `resultType` is the *call node's* own ground type,
@@ -469,7 +473,8 @@ object MetaInterpreter {
 
   /** A stated transfer over the call's arguments. The code the callee runs is followed run by run ([[runCode]]), each
     * run handed what the callee states it hands it, and the transfer reads each as what it yields: a companion is Eliot
-    * over metas and cannot apply a closure. A frame or cell statement is followed rather than reduced ([[follow]]).
+    * over metas and cannot apply a closure. A frame or cell statement is followed rather than reduced ([[follow]]), and
+    * a loop statement is its loop's accumulator, or ⊥ for an endless one (`docs/meta.md` §11.2).
     *
     * A statement that is the join of parameters is exact where all of them but one are ⊥: it is that one, whatever the
     * interpretation holds of it, so a value built in the one arm that returns passes through whole. Every such statement
@@ -485,16 +490,30 @@ object MetaInterpreter {
   ): CompilerIO[(Run, Value)] = {
     val companion = RefinementChannelProcessor.metaCompanionFqn(callee)
     MetaStatement.of(companion).flatMap { statement =>
+      def metaTypes: CompilerIO[Seq[GroundValue]] =
+        companionTypeArguments(callee, companion, typeArguments, arguments.size, withResult = false)
+          .map(_.getOrElse(Seq.empty))
       statement.primitive match {
-        case Some(primitive) =>
+        case Some(MetaStatement.Primitive.Looped(_, code)) =>
+          metaTypes.flatMap(types =>
+            runCode(callee, typeArguments, arguments, types, statement.primitive, run).map((after, values) =>
+              (after, values.lift(code).getOrElse(Value.unknown))
+            )
+          )
+        case Some(MetaStatement.Primitive.Endless(_))      =>
+          metaTypes.flatMap(types =>
+            runCode(callee, typeArguments, arguments, types, statement.primitive, run).map((after, _) =>
+              (after, Value.Never)
+            )
+          )
+        case Some(primitive)                               =>
           follow(callee, statement, primitive, arguments, run).map((after, value) =>
             (after.unfollowed(arguments.filter(isCode)), value)
           )
-        case None            =>
-          companionTypeArguments(callee, companion, typeArguments, arguments.size, withResult = false)
-            .map(_.getOrElse(Seq.empty))
+        case None                                          =>
+          metaTypes
             .flatMap { metaTypes =>
-              runCode(callee, typeArguments, arguments, metaTypes, run).flatMap { (after, values) =>
+              runCode(callee, typeArguments, arguments, metaTypes, None, run).flatMap { (after, values) =>
                 statement.joins.map(_.filter(index => values.lift(index).exists(_ != Value.Never))) match {
                   case Some(Seq(only)) => (after, values(only)).pure[CompilerIO]
                   case Some(Seq())     => (after, Value.Never).pure[CompilerIO]
@@ -570,8 +589,9 @@ object MetaInterpreter {
   /** The runs made so far of a call's code arguments, by position, and the interpretation's progress after them. */
   private case class Runs(made: Map[Int, CodeRun], budget: Int, fresh: Int)
 
-  /** Follow every code argument of a stated call, each run once (`docs/meta.md` §11.1, §14), and answer the call's
-    * argument values with each code argument replaced by what its run yields.
+  /** Follow every code argument of a stated call, each run once (`docs/meta.md` §11.1, §14), or a loop's code until the
+    * loop is stable (§11.2), and answer the call's argument values with each code argument replaced by what its run
+    * yields, a loop's code by its loop's accumulator.
     *
     * A run is handed, per argument of its code, what the callee's handed statement says: a fresh frame or cell, what
     * another run's exits carried or its cell held, or a meta reduced over the arguments, a code argument read as what its
@@ -579,18 +599,31 @@ object MetaInterpreter {
     * made at all when it is handed ⊥: a handler whose frame nothing left through. Every other run starts at the call,
     * and those are the callee's alternatives, one of which runs: `fold`'s arms, an eliminator's. The store after the
     * call joins what the runs no other run continues end with.
+    *
+    * A code argument a loop statement names, `looped(initial, code)` or `endless(code)` on the result (`result`) or on
+    * what some code is handed, is the loop's: it is not one of the alternatives but runs again and again from the call
+    * ([[loop]]), and what reads `looped` reads the accumulator the loop may end with.
     */
   private def runCode(
       callee: ValueFQN,
       typeArguments: Seq[GroundValue],
       arguments: Seq[Value],
       metaTypes: Seq[GroundValue],
+      result: Option[MetaStatement.Primitive],
       run: Run
   ): CompilerIO[(Run, Seq[Value])] = {
     val code = arguments.indices.filter(index => isCode(arguments(index))).toList
     if (code.isEmpty) (run, arguments).pure[CompilerIO]
     else
       handedStatementsOf(callee).flatMap { statements =>
+        // The code each loop runs, with the position of the loop's initial accumulator (none for an endless one).
+        val loops: Map[Int, Option[Int]] =
+          (result.toSeq ++ statements.values.flatMap(_._2.primitive)).collect {
+            case MetaStatement.Primitive.Looped(initial, code) => code -> Some(initial)
+            case MetaStatement.Primitive.Endless(code)         => code -> None
+          }.toMap
+
+
         def ensure(position: Int, runs: Runs, visiting: Set[Int]): CompilerIO[Runs] =
           if (runs.made.contains(position) || visiting.contains(position)) runs.pure[CompilerIO]
           else {
@@ -599,7 +632,7 @@ object MetaInterpreter {
             val domains      = peel(functionType, functionType.functionArity).map(_._1).getOrElse(Seq.empty)
             val handed       = domains.indices.map(argument => statements.get((position, argument)).map(_._2))
             handed.flatten
-              .flatMap(readsRuns)
+              .flatMap(readsRuns(_, position))
               .filter(other => other != position && code.contains(other))
               .distinct
               .toList
@@ -614,7 +647,8 @@ object MetaInterpreter {
             handed: Seq[Option[MetaStatement]],
             runs: Runs
         ): CompilerIO[Runs] =
-          starts(handed.flatten, runs) match {
+          if (loops.contains(position)) loop(position, closure, domains, handed, runs)
+          else starts(handed.flatten, position, runs) match {
             case Some(start) =>
               val from = startStore(start, runs)
               from.flatMap { store =>
@@ -630,9 +664,10 @@ object MetaInterpreter {
                         .map((id, content) => (s: Store) => s.withCell(id, content))
                     ).flatten.foldLeft(store)((s, add) => add(s))
                     val handedTo = values.map {
-                      case Handed.Is(value)  => value
-                      case Handed.NewFrame   => Value.Frame(frame.get)
-                      case Handed.NewCell(_) => Value.Cell(cell.get)
+                      case Handed.Is(value)   => value
+                      case Handed.NewFrame    => Value.Frame(frame.get)
+                      case Handed.NewCell(_)  => Value.Cell(cell.get)
+                      case Handed.Accumulator => Value.unknown
                     }
                     applyValue(closure, handedTo, functionType(closure).deepReturnType, Run(runs.budget, runs.fresh + 2, prepared))
                       .map { (after, yields) =>
@@ -654,6 +689,62 @@ object MetaInterpreter {
                 .pure[CompilerIO]
           }
 
+        // A loop's code, run from the call until neither the accumulator nor any cell changes (`docs/meta.md` §11.2):
+        // each run is handed the accumulator so far, and what it yields and the cells it ends with are joined into the
+        // accumulator and the cells the next run starts with after the first run, which keeps a step yielding a
+        // constant exact, and widened into them after every later run, which makes the loop stop. A run that does not
+        // return continues nothing, but its exits are kept, each with the cells it left with. The loop may stop after
+        // any number of runs, none included, so it ends with the stable cells and accumulator. A loop that cannot be
+        // followed — its code is handed a frame or a cell of its own — is not.
+        def loop(
+            position: Int,
+            closure: Value.Closure,
+            domains: Seq[GroundValue],
+            handed: Seq[Option[MetaStatement]],
+            runs: Runs
+        ): CompilerIO[Runs] = {
+          val initial  = loops(position)
+          val start    = initial.fold[Value](Value.unknown)(index => arguments.lift(index).getOrElse(Value.unknown))
+          val accType  = initial.flatMap(metaTypes.lift)
+          val alive    = run.store.cells.keySet
+          val returned = functionType(closure).deepReturnType
+          def ended(yields: Value, end: Store, budget: Int, fresh: Int): Runs =
+            Runs(runs.made + (position -> CodeRun(yields, end, Seq.empty, None, Start.AtCall)), budget, fresh)
+          def iterate(acc: Value, store: Store, budget: Int, fresh: Int, values: Seq[Handed], first: Boolean)
+              : CompilerIO[Runs] = {
+            val handedTo = values.map {
+              case Handed.Is(value)   => value
+              case Handed.Accumulator => acc
+              case _                  => Value.unknown
+            }
+            applyValue(closure, handedTo, returned, Run(budget, fresh, store)).flatMap { (after, yields) =>
+              val frames = after.store.frames.view
+                .mapValues(_.map(exit => exit.copy(cells = exit.cells.view.filterKeys(alive.contains).toMap)).distinct)
+                .toMap
+              val next   =
+                if (yields == Value.Never) (acc, store.cells).pure[CompilerIO]
+                else
+                  (
+                    if (initial.isEmpty) acc.pure[CompilerIO] else widenValue(acc, yields, accType, !first),
+                    widenCells(store.cells, after.store.cells, !first)
+                  ).tupled
+              next.flatMap { (nextAcc, cells) =>
+                val nextStore = Store(cells, frames)
+                if ((nextAcc == acc && nextStore == store) || after.budget <= 0)
+                  ended(initial.fold(Value.Never)(_ => nextAcc), nextStore, after.budget, after.fresh).pure[CompilerIO]
+                else iterate(nextAcc, nextStore, after.budget, after.fresh, values, first = false)
+              }
+            }
+          }
+          handedValues(position, domains, handed, runs).flatMap { values =>
+            if (values.contains(Handed.Is(Value.Never)))
+              ended(initial.fold(Value.Never)(_ => start), run.store, runs.budget, runs.fresh).pure[CompilerIO]
+            else if (values.exists(value => value == Handed.NewFrame || value.isInstanceOf[Handed.NewCell]))
+              ended(Value.unknown, run.store.tainted, runs.budget, runs.fresh).pure[CompilerIO]
+            else iterate(start, run.store, runs.budget, runs.fresh, values, first = true)
+          }
+        }
+
         def handedValues(
             position: Int,
             domains: Seq[GroundValue],
@@ -664,13 +755,14 @@ object MetaInterpreter {
             statements.get((position, argument)) match {
               case None                         => (Handed.Is(Value.unknown): Handed).pure[CompilerIO]
               case Some((companion, statement)) =>
-                handedValue(companion, statement, argument, domains(argument), runs)
+                handedValue(companion, statement, position, argument, domains(argument), runs)
             }
           }.map(_.toSeq)
 
         def handedValue(
             companion: ValueFQN,
             statement: MetaStatement,
+            position: Int,
             argument: Int,
             domain: GroundValue,
             runs: Runs
@@ -710,6 +802,10 @@ object MetaInterpreter {
                 case Some(made)                               => Handed.Is(Value.Meta(made.content.flatMap(_.meta)))
                 case None                                     => Handed.Is(Value.unknown)
               }: Handed).pure[CompilerIO]
+            case Some(MetaStatement.Primitive.Looped(_, other)) if other == position =>
+              (Handed.Accumulator: Handed).pure[CompilerIO]
+            case Some(MetaStatement.Primitive.Looped(_, other)) =>
+              (Handed.Is(runs.made.get(other).fold(Value.unknown)(_.yields)): Handed).pure[CompilerIO]
             case Some(_)                                     => (Handed.Is(Value.unknown): Handed).pure[CompilerIO]
             case None                                        =>
               val read = statement.reads.toSeq.map(index => index -> valueOf(index, runs))
@@ -739,13 +835,15 @@ object MetaInterpreter {
         def valueOf(index: Int, runs: Runs): Value =
           runs.made.get(index).fold(arguments.lift(index).getOrElse(Value.unknown))(_.yields)
 
-        def starts(handed: Seq[MetaStatement], runs: Runs): Option[Start] =
+        def starts(handed: Seq[MetaStatement], position: Int, runs: Runs): Option[Start] =
           handed.flatMap { statement =>
             statement.primitive match {
-              case Some(MetaStatement.Primitive.Exited(other)) => Seq(Start.AfterExitsOf(other))
-              case Some(MetaStatement.Primitive.Stored(other)) => Seq(Start.AfterReturnOf(other))
-              case Some(_)                                     => Seq.empty
-              case None                                        =>
+              case Some(MetaStatement.Primitive.Exited(other))    => Seq(Start.AfterExitsOf(other))
+              case Some(MetaStatement.Primitive.Stored(other))    => Seq(Start.AfterReturnOf(other))
+              case Some(MetaStatement.Primitive.Looped(_, other)) =>
+                Seq(other).filter(_ != position).map(Start.AfterReturnOf(_))
+              case Some(_)                                        => Seq.empty
+              case None                                           =>
                 statement.reads.toSeq.filter(runs.made.contains).map(Start.AfterReturnOf(_))
             }
           }.distinct match {
@@ -782,20 +880,74 @@ object MetaInterpreter {
       }
   }
 
-  /** What a callee hands one argument of a run of code: a value, or a frame or cell to make for the run. */
+  /** What a callee hands one argument of a run of code: a value, a frame or cell to make for the run, or the
+    * accumulator of the loop the run is an iteration of.
+    */
   private enum Handed {
     case Is(value: Value)
     case NewFrame
     case NewCell(content: Store.Content)
+    case Accumulator
   }
 
-  /** The runs of code a handed statement continues: the code whose exits or cell it reads, or whose yield. */
-  private def readsRuns(statement: MetaStatement): Seq[Int] = statement.primitive match {
-    case Some(MetaStatement.Primitive.Exited(other)) => Seq(other)
-    case Some(MetaStatement.Primitive.Stored(other)) => Seq(other)
-    case Some(_)                                     => Seq.empty
-    case None                                        => statement.reads.toSeq
+  /** The runs of code a handed statement, about the code at `position`, continues: the code whose exits or cell it
+    * reads, whose yield, or the loop whose accumulator it is handed when that loop is not its own.
+    */
+  private def readsRuns(statement: MetaStatement, position: Int): Seq[Int] = statement.primitive match {
+    case Some(MetaStatement.Primitive.Exited(other))     => Seq(other)
+    case Some(MetaStatement.Primitive.Stored(other))     => Seq(other)
+    case Some(MetaStatement.Primitive.Looped(_, other)) => Seq(other).filter(_ != position)
+    case Some(_)                                         => Seq.empty
+    case None                                            => statement.reads.toSeq
   }
+
+  /** A loop's accumulator after one more run yielded `next` (`docs/meta.md` §11.2): unchanged when `next` is the same
+    * value, else the two metas joined, or `widening` widened, by the meta type's own instance at `metaType`. Any other
+    * pair is not computed: a constructed value or a closure that changes from run to run is followed only once structural
+    * meta exists (T5).
+    */
+  private def widenValue(previous: Value, next: Value, metaType: Option[GroundValue], widening: Boolean)
+      : CompilerIO[Value] =
+    (previous, next, metaType) match {
+      case _ if previous == next                                         => previous.pure[CompilerIO]
+      case (Value.Meta(Some(before)), Value.Meta(Some(after)), Some(tpe)) =>
+        widened(before, after, tpe, widening).map(Value.Meta(_))
+      case _                                                             => Value.unknown.pure[CompilerIO]
+    }
+
+  /** The cells a loop's next run starts with: each of `previous`'s, joined with, or `widening` widened by, what the last
+    * run left in it.
+    */
+  private def widenCells(
+      previous: Map[Int, Store.Content],
+      next: Map[Int, Store.Content],
+      widening: Boolean
+  ): CompilerIO[Map[Int, Store.Content]] =
+    previous.toList
+      .traverse { (id, before) =>
+        (before.meta, next.get(id).flatMap(_.meta), before.metaType) match {
+          case (Some(was), Some(is), _) if was == is          => (id -> before).pure[CompilerIO]
+          case (Some(was), Some(is), Some(tpe))               =>
+            widened(was, is, tpe, widening).map(meta => id -> before.copy(meta = meta))
+          case _                                              => (id -> before.copy(meta = None)).pure[CompilerIO]
+        }
+      }
+      .map(_.toMap)
+
+  /** `previous` joined with `next`, or `widening` widened by it: `eliot.compiler.Meta::joined` or `widened` at
+    * `metaType`.
+    */
+  private def widened(
+      previous: GroundValue,
+      next: GroundValue,
+      metaType: GroundValue,
+      widening: Boolean
+  ): CompilerIO[Option[GroundValue]] =
+    EscalatingReducer.reduceApplied(
+      if (widening) WellKnownTypes.metaWidenedFQN else WellKnownTypes.metaJoinedFQN,
+      Seq(metaType),
+      Seq(previous, next).map(Evaluator.groundToSem)
+    )
 
   private def functionType(closure: Value.Closure): GroundValue = closure.node.value.expressionType
 
