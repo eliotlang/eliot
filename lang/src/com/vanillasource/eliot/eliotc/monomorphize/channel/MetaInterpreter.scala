@@ -100,12 +100,13 @@ object MetaInterpreter {
       */
     case Data(constructor: ValueFQN, fields: Seq[Value])
 
-    /** The meta this value is known to have: none is known of a closure, a frame, a cell or a constructed value, whose
-      * types carry no meta, and ⊥ is never materialised.
+    /** The meta this value is known to have. A closure, a frame, a cell and a constructed value have types declaring
+      * no meta, so theirs is the implicit default's ([[untrackedMeta]]); ⊥ is never materialised.
       */
     def known: Option[GroundValue] = this match {
       case Meta(meta) => meta
-      case _          => None
+      case Never      => None
+      case _          => Some(untrackedMeta)
     }
   }
 
@@ -995,9 +996,9 @@ object MetaInterpreter {
   }
 
   /** Derive a bodied callee's meta by interpreting its body under the caller's arguments. A callee that cannot be read
-    * — **no body on this track** (a leaf that states nothing, which R2 has already made a compile error for a
-    * meta-carrying return, or a value whose monomorphization failed upstream), or **not saturated** (a partial
-    * application is a function value, whose type carries no meta) — is not followed ([[Run.unfollowed]]).
+    * — **no body on this track** (a leaf that states nothing, or a value whose monomorphization failed upstream), or
+    * **not saturated** (a partial application is a function value) — is not followed ([[Run.unfollowed]]). A leaf
+    * stating nothing states the implicit default ([[implicitStatement]]).
     *
     * An over-application applies the callee's *result* to the remaining arguments, which is a closure its body returned.
     */
@@ -1011,13 +1012,15 @@ object MetaInterpreter {
     if (run.budget <= 0) run.exhausted.pure[CompilerIO]
     else
       getFactIfProduced(MonomorphicValue.Key(callee, typeArguments)).flatMap {
-        case Some(mv) if mv.naturalArity.exists(_ <= arguments.size) =>
-          mv.runtime match {
-            case Some(body) =>
+        case Some(mv) =>
+          (mv.runtime, mv.naturalArity) match {
+            case (Some(body), Some(arity)) if arity <= arguments.size =>
               applyLambda(body.as(MonomorphicExpression(mv.signature, body.value)), Map.empty, arguments, resultType, run.spent)
-            case None       => (run.unfollowed(arguments), Value.unknown).pure[CompilerIO]
+            case (None, _)                                           =>
+              implicitStatement(resultType).map(meta => (run.unfollowed(arguments), Value.Meta(meta)))
+            case _                                                   => (run.unfollowed(arguments), Value.unknown).pure[CompilerIO]
           }
-        case _                                                       => (run.unfollowed(arguments), Value.unknown).pure[CompilerIO]
+        case None     => (run.unfollowed(arguments), Value.unknown).pure[CompilerIO]
       }
 
   /** Interpret one node of a body: what is known of its value, and the interpretation's progress after it. Bottom-up and
@@ -1156,13 +1159,13 @@ object MetaInterpreter {
   private def isFunction(node: Sourced[MonomorphicExpression]): Boolean =
     node.value.expressionType.asFunctionType.isDefined
 
-  /** A finished interpretation's value, as a caller outside it reads one: its meta, or ⊥. A closure left unapplied is a
-    * function value, whose type carries no meta, and a frame, a cell and a constructed value are the interpretation's
-    * own, gone with the call that made them.
+  /** A finished interpretation's value, as a caller outside it reads one: its meta, or ⊥. A closure, a frame, a cell
+    * and a constructed value are the interpretation's own, gone with the call that made them, so only their meta is
+    * left.
     */
   private def settled(value: Value): Value = value match {
-    case _: Value.Meta | Value.Never => value
-    case _                           => Value.unknown
+    case Value.Never => value
+    case other       => Value.Meta(other.known)
   }
 
   /** Whether this callee **states** its transfer — a cached [[UnifiedModuleNames]] membership test for its `^Meta`
@@ -1195,7 +1198,7 @@ object MetaInterpreter {
     val companion = RefinementChannelProcessor.metaCompanionFqn(callee)
     companionTypeArguments(callee, companion, calleeTypeArgs, argMetas.size, withResult = true).flatMap {
       case Some(metaTypes) =>
-        val arguments = metaTypes.zip(argMetas).map(companionArgument)
+        val arguments = argMetas.map(companionArgument)
         def reduce(typeArguments: Seq[GroundValue], leading: Seq[SemValue]): CompilerIO[Option[GroundValue]] =
           EscalatingReducer
             .reduceApplied(companion, typeArguments, leading ++ arguments)
@@ -1212,15 +1215,11 @@ object MetaInterpreter {
     }
   }
 
-  /** What a companion is passed for an argument of meta type `metaType`: its meta when computed; `unit` when its meta
-    * type is `Unit`, since that meta is known (§1); otherwise [[notComputed]], never a value that could quote.
+  /** What a companion is passed for an argument: its meta when computed, otherwise [[notComputed]], never a value that
+    * could quote.
     */
-  private[channel] def companionArgument(metaType: GroundValue, meta: Option[GroundValue]): SemValue =
-    meta match {
-      case Some(gv)                    => Evaluator.groundToSem(gv)
-      case None if metaType == unitType => unitMeta
-      case None                        => notComputed
-    }
+  private[channel] def companionArgument(meta: Option[GroundValue]): SemValue =
+    meta.fold(notComputed)(Evaluator.groundToSem)
 
   /** The argument a companion is passed for a meta that is not computed (`docs/meta.md` §13.5): a dedicated neutral that
     * never quotes, so a result holding it, projected or stored, is not computed either.
@@ -1229,15 +1228,20 @@ object MetaInterpreter {
     SemValue.VNeutral(SemValue.NeutralHead.Reserved(SemValue.NeutralHead.Marker.NotComputed), SemValue.Spine.SNil)
 
   /** The meta *value* constructor of `metaType`, as a ground reference typed by its own signature (a function from the
-    * slots to the meta type) — or `None` for a meta type that declares no structure (`Unit`). It is the value
-    * constructor [[MetaConstructorDesugarer]] declares beside the meta type, of the same name.
+    * slots to the meta type) — or `None` for a meta type with no slots to construct it from. It is the value
+    * constructor [[MetaConstructorDesugarer]] declares beside a meta structure, of the same name, so a meta type without
+    * one has no slots.
     */
   private def metaConstructorOf(metaType: GroundValue): CompilerIO[Option[GroundValue.Structure]] = metaType match {
-    case GroundValue.Structure(fqn, Seq(), _) if metaType != unitType =>
+    case GroundValue.Structure(fqn, Seq(), _) =>
       val constructor = ValueFQN(fqn.moduleName, QualifiedName(fqn.name.name, Qualifier.Default))
-      getFactOrAbort(CompilerMonomorphicValue.Key(constructor, Seq.empty))
-        .map(cmv => GroundValue.Structure(constructor, Seq.empty, cmv.signature).some)
-    case _                                                            => none[GroundValue.Structure].pure[CompilerIO]
+      getFactOrAbort(UnifiedModuleNames.Key(fqn.moduleName, Platform.Compiler)).flatMap { names =>
+        if (names.names.contains(constructor.name))
+          getFactOrAbort(CompilerMonomorphicValue.Key(constructor, Seq.empty))
+            .map(cmv => GroundValue.Structure(constructor, Seq.empty, cmv.signature).some)
+        else none[GroundValue.Structure].pure[CompilerIO]
+      }
+    case _                                    => none[GroundValue.Structure].pure[CompilerIO]
   }
 
   /** The meta types a companion of `callee` is instantiated at after the callee's own type arguments — one per parameter
@@ -1305,7 +1309,7 @@ object MetaInterpreter {
     else functionType.asFunctionType.flatMap((parameter, rest) => peel(rest, count - 1).map((ps, r) => (parameter +: ps, r)))
 
   /** The **meta type** of a base type — its `$Meta` meta structure if the type declares one (a slotted type like `Int`
-    * ⤳ `Int$Meta`), else the trivial [[unitType]] (an untracked type carries no refinement, so its meta is `Unit`).
+    * ⤳ `Int$Meta`), else the implicit default's [[unitType]] (an untracked type carries no refinement).
     * This is the total-meta rule of R1: a generic `^Meta` companion reduced at these always lands on a real `Meta`
     * instance (`Meta[Int$Meta]` or `Meta[Unit]`). A non-structure type argument is left unchanged.
     */
@@ -1337,15 +1341,23 @@ object MetaInterpreter {
   private val bigIntType: GroundValue =
     GroundValue.Structure(WellKnownTypes.bigIntFQN, Seq.empty, GroundValue.Type)
 
+  /** What a leaf stating nothing states of a call returning `resultType`: the implicit default when that type declares
+    * no meta, and nothing otherwise — R2 makes a leaf returning a meta-carrying type state, so a leaf left here is one R2
+    * exempts, whose meta is not computed.
+    */
+  private def implicitStatement(resultType: GroundValue): CompilerIO[Option[GroundValue]] =
+    carriesMeta(resultType).map(carries => Option.unless(carries)(untrackedMeta))
+
   private val unitModule: ModuleName = ModuleName(ModuleName.defaultSystemPackage, "Unit")
 
-  /** `Unit` — the meta type of every untracked (slotless) type. Its trivial `Meta[Unit]` instance is the do-nothing
-    * join, so a merge over untracked arms reduces cleanly to no refinement (⊤).
+  /** **The implicit default** (`docs/meta.md` §1): a type declaring no meta has the meta type `Unit`, and every value of
+    * it the meta `unit`. These two are the only place the channel knows `Unit`; everything else reads them as an
+    * ordinary meta type and an ordinary meta.
     */
-  private[channel] val unitType: GroundValue =
+  private val unitType: GroundValue =
     GroundValue.Structure(ValueFQN(unitModule, QualifiedName("Unit", Qualifier.Type)), Seq.empty, GroundValue.Type)
 
-  /** `unit`, the meta of every value whose type carries none. */
-  private val unitMeta: SemValue =
-    Evaluator.groundToSem(GroundValue.Structure(WellKnownTypes.unitValueFQN, Seq.empty, unitType))
+  /** The meta of every value whose type declares none: `unit`, of the implicit default's meta type ([[unitType]]). */
+  private[channel] val untrackedMeta: GroundValue =
+    GroundValue.Structure(WellKnownTypes.unitValueFQN, Seq.empty, unitType)
 }

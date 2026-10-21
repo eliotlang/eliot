@@ -273,9 +273,13 @@ def add(a: Int, b: Int): Int {a.range + b.range}
   leaf returning an alias of `Int` states the same meta as on `Int`. A structure-producing brace (a bare
   type-parameter result, such as `fold`'s `{join(whenTrue, whenFalse)}`) takes none. The channel tells the two apart
   by the companion's leading parameter.
-- **A `Unit` meta is known**: an argument whose meta type is `Unit` is passed as `unit`, to a transfer and to a
-  `where` alike. An argument whose meta is not computed is passed as a dedicated neutral that never reads back, so a
-  companion that projects it or stores it produces no meta (§13.5).
+- **A `Unit` meta is known**, because it is produced as `unit` where its value is: a value whose type declares no meta
+  has the meta `unit`, whether a constructor built it, it is a function value, a frame or a cell, a leaf stating
+  nothing returned it (the leaf's implicit statement), or it is a parameter of a root context (§6). So it reaches a
+  transfer and a `where` as any other known meta does. The implicit default is the only place that knows `Unit`
+  (`MetaInterpreter.metaTypeOf` and `untrackedMeta`); a consumer never asks whether a meta type is `Unit`. An argument
+  whose meta is not computed is passed as a dedicated neutral that never reads back, so a companion that projects it
+  or stores it produces no meta (§13.5).
 
 ### 4.2 A companion's identity is its callee's
 
@@ -1135,15 +1139,17 @@ To continue: **T5** (§17), structural meta, is gated on §16's measurement, whi
 budget becoming a reported limit (decision I). T6 waits on `List` carrying its elements' meta, and on stating the
 generated `typeMatch[R]`, which removing R2's exemption found (§10). The `Unit` cleanup below needs neither.
 
-**The `Unit` question (2026-10-21).** Robert: a type declaring no meta gets `Unit` implicitly, and *"the rest of the
-machinery should not know that this was 'default'"*. T3 removed two places that knew: §5.3's type gate (a call
-returning a type with no meta was not interpreted) and the stated path's shortcut (a code argument of meta type `Unit`
-was not run). Four remain, each a patch over a `Unit`-typed value read back as not computed instead of `unit`:
-`MetaInterpreter.companionArgument`'s `Unit` arm, `MetaDemandsProcessor.demandPrecondition`'s `metaType != unitType`,
-`MetaDemands.rootOf` counting a parameter of a type with no meta as `Unknown` rather than known, and
-`metaConstructorOf`'s `!= unitType` (which is a question about slots, and can be asked as one). Closing them is to give
-a `Unit`-typed value its meta, `unit`, where it is produced: a leaf stating nothing over such a result, and a parameter
-in a root context.
+**The `Unit` question (2026-10-21), closed the same day.** Robert: a type declaring no meta gets `Unit` implicitly, and
+*"the rest of the machinery should not know that this was 'default'"*. T3 removed two places that knew: §5.3's type
+gate (a call returning a type with no meta was not interpreted) and the stated path's shortcut (a code argument of meta
+type `Unit` was not run). The other four were patches over a `Unit`-typed value read back as not computed instead of
+`unit`, and are gone: `companionArgument`'s `Unit` arm, `demandPrecondition` skipping a `Unit` argument,
+`MetaDemands.rootOf` counting a parameter of a type with no meta as `Unknown`, and `metaConstructorOf`'s `!= unitType`,
+which now asks the question about slots it was (does the meta type have a constructor). What replaced them is the
+value produced where it is (§4.1): a constructed value, a function value, a frame and a cell know `unit`; a leaf
+stating nothing states it implicitly over a result whose type declares no meta; a root context knows it of such a
+parameter, and a context other than the root takes the root's entry wherever the root is not symbolic, so contexts
+still vary only where a meta is tracked. Every jar is byte-identical.
 
 The probes behind §9 used a throwaway `ScratchProbeTest` in `jvm/test`, over `DerivedMetaTransferIntegrationTest`'s
 `useByte` harness, with `compileForErrors` printing each verdict. Its proofs were run with

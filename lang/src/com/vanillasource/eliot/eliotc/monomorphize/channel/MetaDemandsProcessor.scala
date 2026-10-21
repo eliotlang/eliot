@@ -135,16 +135,17 @@ class MetaDemandsProcessor
         walk(scope, node, env)
     }
 
-  /** What the walk knows of a parameter the context describes. An [[Knowledge.Unknown]] entry at a position whose type
-    * carries no meta is the same in every context, so nothing depends on it.
+  /** What the walk knows of a parameter the context describes. An entry the root context has too is decided the same
+    * there, so nothing depends on it.
     */
-  private def parameterInfo(scope: Scope, entry: Knowledge, root: Knowledge, position: Int): Info =
+  private def parameterInfo(scope: Scope, entry: Knowledge, root: Knowledge, position: Int): Info = {
+    val dependsOn = if (entry == root) Set.empty[Int] else scope.supplied(position)
     entry match {
       case Knowledge.Symbolic    => Info(None, symbolic = true, Set.empty)
-      case Knowledge.Known(meta) => Info(Some(meta), symbolic = false, scope.supplied(position))
-      case Knowledge.Unknown     =>
-        Info(None, symbolic = false, if (root == Knowledge.Unknown) Set.empty else scope.supplied(position))
+      case Knowledge.Known(meta) => Info(Some(meta), symbolic = false, dependsOn)
+      case Knowledge.Unknown     => Info(None, symbolic = false, dependsOn)
     }
+  }
 
   private def walk(scope: Scope, node: Sourced[MonomorphicExpression], env: Env): CompilerIO[Walked] =
     node.value.expression match {
@@ -242,12 +243,13 @@ class MetaDemandsProcessor
       case _                                                                    => walk(scope, node, env)
     }
 
-  /** What is known of a function value written in `env`: no meta of its own, but whatever a callee applying it may read
-    * — symbolic, and dependent on the context's positions, as the parameters it captures are.
+  /** What is known of a function value written in `env`: the meta of a function value, which its type declares none of,
+    * but whatever a callee applying it may read — symbolic, and dependent on the context's positions, as the parameters
+    * it captures are.
     */
   private def captured(node: Sourced[MonomorphicExpression], env: Env): Info = {
     val infos = freeParameters(node.value.expression).toSeq.flatMap(env.get)
-    Info(None, infos.exists(_.symbolic), infos.flatMap(_.dependsOn).toSet)
+    Info(Some(MetaInterpreter.untrackedMeta), infos.exists(_.symbolic), infos.flatMap(_.dependsOn).toSet)
   }
 
   /** The parameters an expression reads that it does not bind itself. */
@@ -314,9 +316,9 @@ class MetaDemandsProcessor
     }
 
   /** Reduce a callee's `^Where` companion over the arguments' metas, at the callee's own type arguments followed by the
-    * meta type of each parameter's type ([[MetaInterpreter.companionTypeArguments]]). A parameter whose meta type is
-    * `Unit` is passed as `unit`, its known meta; every other argument's meta must be known, since a meta that is not
-    * computed cannot discharge a demand. A code argument is read as what its code yields.
+    * meta type of each parameter's type ([[MetaInterpreter.companionTypeArguments]]). Every argument's meta must be
+    * known, since a meta that is not computed cannot discharge a demand. A code argument is read as what its code
+    * yields.
     */
   private def demandPrecondition(
       scope: Scope,
@@ -330,13 +332,9 @@ class MetaDemandsProcessor
       .flatMap {
         case None            => Walked.violating(scope, cannotEvaluate(callNode, callee)).pure[CompilerIO]
         case Some(metaTypes) =>
-          val read =
-            metaTypes.zip(args).map((metaType, arg) => Option.when(metaType != MetaInterpreter.unitType)(arg.yields))
-          decide(scope, read.flatten) { dependsOn =>
-            metaTypes.zip(read).traverse {
-              case (metaType, None) => Some(MetaInterpreter.companionArgument(metaType, None))
-              case (_, Some(info))  => info.meta.map(Evaluator.groundToSem)
-            } match {
+          val read = args.map(_.yields)
+          decide(scope, read) { dependsOn =>
+            read.traverse(_.meta.map(Evaluator.groundToSem)) match {
               case None            =>
                 Seq(
                   Violation(
@@ -465,8 +463,9 @@ class MetaDemandsProcessor
       else evaluate(dependsOn.toSeq.sorted).map(violations => Walked.nothing.copy(violations = violations))
     }
 
-  /** The demands inside a bodied callee's body, in the context this call makes: the callee's parameters as its
-    * arguments are known, those it does not apply unknown. Asked only of a callee whose root context defers — any other
+  /** The demands inside a bodied callee's body, in the context this call makes: the callee's symbolic parameters as its
+    * arguments are known, those it does not apply unknown, and every other as its root context knows it, which is the
+    * same in every context. Asked only of a callee whose root context defers — any other
     * decides every demand of its body the same in every context, and reports it there.
     *
     * What that context violates is lifted to this call ([[lift]]). A context identical to the callee's root is this
@@ -485,8 +484,8 @@ class MetaDemandsProcessor
           getFactIfProduced(root).flatMap {
             case Some(rootDemands) if rootDemands.deferred =>
               val context = root.context.zipWithIndex.map {
-                case (Knowledge.Unknown, _) => Knowledge.Unknown
-                case (_, position)          => args.lift(position).fold(Knowledge.Unknown)(_.knowledge)
+                case (Knowledge.Symbolic, position) => args.lift(position).fold(Knowledge.Unknown)(_.knowledge)
+                case (decided, _)                   => decided
               }
               if (context == root.context) Walked.nothing.copy(deferred = true).pure[CompilerIO]
               else

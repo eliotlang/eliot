@@ -48,7 +48,7 @@ object MetaDemands {
     /** The caller's argument has this meta. */
     case Known(meta: GroundValue)
 
-    /** Nothing is known of it: the caller could not pin it, or its type carries no meta (always so for a handle). */
+    /** Nothing is known of it: the caller could not pin it. */
     case Unknown
 
     /** It is the walked body's own parameter, decided by whoever calls it — the root context's meta-carrying
@@ -69,12 +69,17 @@ object MetaDemands {
   }
 
   /** The root context of `mv`: one entry per leading parameter of its body, [[Knowledge.Symbolic]] where its type
-    * carries meta and [[Knowledge.Unknown]] where it does not. A body-less value has none.
+    * carries meta, and known where it does not, since every value of such a type has the implicit default's meta
+    * ([[MetaInterpreter.untrackedMeta]]). A body-less value has none.
     */
   def rootOf(mv: MonomorphicValue): CompilerIO[Key] =
     mv.runtime
       .fold(Seq.empty)(body => parameterTypes(body.value))
-      .traverse(tpe => MetaInterpreter.carriesMeta(tpe).map(if (_) Knowledge.Symbolic else Knowledge.Unknown))
+      .traverse(tpe =>
+        MetaInterpreter
+          .carriesMeta(tpe)
+          .map(if (_) Knowledge.Symbolic else Knowledge.Known(MetaInterpreter.untrackedMeta))
+      )
       .map(Key(mv.vfqn, mv.typeArguments, _))
 
   /** The parameter types of a body's leading lambdas — its parameters, as [[MonomorphicValue.naturalArity]] counts
