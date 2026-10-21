@@ -23,7 +23,8 @@ their section numbers, which older commits and notes cite, to this one.
 biggest. A **top** exists only where a domain has one in its own value type, such as `whole` for an interval: a value
 of that domain like any other. Neither the machinery nor `ability Meta` has a top. Today's implementation still
 produces a *not computed* result in a few places (spelled `None` in the code, and ⊤ in older text and comments).
-That is not a meta. Each place is a gap to close (§8), not part of the design.
+That is not a meta. Each place is a gap to close (§8), not part of the design. ⊥ (§12) is not one either: it says
+that a call does not return, a fact about control, and no companion or domain ever sees it.
 
 ---
 
@@ -654,7 +655,7 @@ That is a platform decomposition written in Eliot, over smaller leaves, and it n
 
 ## 12. ⊥: a value that is never produced
 
-**Pending decision B; recommended.** The interpretation's `Value` gains **`Never`**: *evaluating this does not
+**Decided 2026-10-21 (decision B).** The interpretation's `Value` gains **`Never`**: *evaluating this does not
 produce a value.* It is the identity of every join. It is not a value in any domain. It is the interpretation's own
 form, and no companion ever receives it.
 
@@ -943,14 +944,20 @@ cache once kept a stale companion across a change and hid a brace that did not e
 - *A structural meta has no unknown field* (§13.5). It dissolves the earlier "all-or-nothing knowledge per
   construction" and its deferred per-field unknown, both of which assumed an unknown argument was a meta.
 
+**Decided 2026-10-21:**
+
+- **B. The interpretation gains ⊥** (§12): `{never}` at the exits, strictness, same-meta-type substitution, and
+  monotonicity as an obligation on statements. ⊥ says *this call does not return*: a fact about control, which every
+  join absorbs. It is never a placeholder for a missing meta, no companion receives it, and no domain contains it, so
+  the rule that the process has no special values stands. Accepted as the way to the rest of Part II (Robert: *"I
+  accept, if this is the way to get to the other features"*): the alternative, an empty result type on every exit
+  primitive, is declined in §20, and without ⊥ neither `if … else` (`fold(c, 5, abort)` is `[5, 5]`) nor a pruned
+  `match` arm (§15) derives.
+
 **Pending, each recommended:**
 
 - **A. Frames and cells are followed** (§11.1): the interpretation threads what reaches a frame and a cell through the
   one call that made it, and the natives state it through name-recognised primitives (§14).
-- **B. The interpretation gains ⊥** (§12): `{never}` at the exits, strictness, same-meta-type substitution, and
-  monotonicity as an obligation on statements. ⊥ says *this call does not return*: a fact about control, which every
-  join absorbs. It is not a marker for a missing meta, but it is the one form the process adds, so it is listed for
-  your call.
 - **C. A demand an unreached path holds is vacuous** in that context (§12), rather than checked with unknown binders.
 - **D. A loop's meta is its fixpoint, which the domain's widening makes finite** (§11.2): `Meta` gains `widen` beside
   `join`, an operation and no value. This reverses the earlier open recommendation of a budget for iteration.
@@ -971,26 +978,17 @@ cache once kept a stale companion across a change and hid a brace that did not e
 - **An interval intersection**, which `substring`'s index ceiling waits on (§2.2).
 - **A meta-accessor namespace** (`Qualifier.Meta` for slot accessors), owed to `List` (§2.2).
 
-### 18.1 Where this was left (2026-10-20)
+### 18.1 Where this was left (2026-10-21)
 
-Part II is a design, and no code for it exists. Part I matches the tree at `336992f4`. The work stopped on one
-question to Robert:
-
-> **Is ⊥ a special value?** Decision B gives the interpretation `Value.Never`. It means *this call does not return*:
-> a fact about control, which every join absorbs, and never a placeholder for a missing meta. `if … else` needs it,
-> because `fold(c, 5, abort)` should be `[5, 5]`, not unknown. The only other encoding is an empty type
-> (`exitInternal: K => Nothing`), which §20 declines because it changes every exit primitive's signature on both
-> tracks. Does ⊥ fit the rule that the process has no special values, or does it fall under it?
+Part II is a design, and no code for it exists. Part I matches the tree at `336992f4`. The open question of
+2026-10-20, whether ⊥ is a special value, is answered: it is not, and decision B is taken (§18).
 
 To continue:
 
-1. **Answer B.** If ⊥ is out, §12, the traces in §15 that prune an arm or absorb an exit, and T2 need another way to
-   say that a call does not return. That way must not add a value to the process. Record the answer here, and as a
-   reversal wherever it overturns text.
-2. **Decide A, C–I.** Each is recommended. A records only the shape; the spelling of the frame and cell primitives
+1. **Decide A, C–I.** Each is recommended. A records only the shape; the spelling of the frame and cell primitives
    (`exited`, `stored`, `content`, `store`, §14) is still open, and so is how D's `widen` sits beside `join` on `Meta`.
-3. **Start T1** (§17), which is expected to be byte-identical. T5 waits on §16's measurement, and T6 on `List`
-   carrying its elements' meta.
+2. **Start T1** (§17), which is expected to be byte-identical. T2 (⊥) can follow it, since B is decided and C is
+   the only decision T2 also carries. T5 waits on §16's measurement, and T6 on `List` carrying its elements' meta.
 
 The probes behind §9 used a throwaway `ScratchProbeTest` in `jvm/test`, over `DerivedMetaTransferIntegrationTest`'s
 `useByte` harness, with `compileForErrors` printing each verdict. Its proofs were run with
