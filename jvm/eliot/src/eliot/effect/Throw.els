@@ -42,10 +42,11 @@ type ThrowFrame[K]
  * one half of Landin's knot, and the recursion gate (`termination/PurityGuardTest`) exists to keep the other half out.
  * Implemented by the backend. It gives no effect: what runs on the frame is the `with` its caller writes.
  */
-private def escapeInternal[K, A, R](body uses *: ThrowFrame[K] => A, onExit uses *: K => R, onValue uses *: A => R) uses *: R
+private def escapeInternal[K, A, R](body uses *: ThrowFrame[K] {frame} => A, onExit uses *: K {exited(body)} => R,
+                                    onValue uses *: A {body} => R) uses *: R {joined(onExit, onValue)}
 
 /**
  * Leave through `frame`, carrying `err`. Control does not return, so the result stands in for a value of any type, and
  * that is what it states (`{never}`). Implemented by the backend.
  */
-private def exitInternal[K, A](frame: ThrowFrame[K], err: K): A {never}
+private def exitInternal[K, A](frame: ThrowFrame[K], err: K): A {exit(frame, err)}

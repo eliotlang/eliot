@@ -3,7 +3,7 @@ package com.vanillasource.eliot.eliotc.core.processor
 import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.ast.fact.{ArgumentDefinition, FunctionDefinition, Expression as SourceExpression}
 import com.vanillasource.eliot.eliotc.core.fact.RoleHint
-import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, Qualifier}
+import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, Qualifier, WellKnownTypes}
 import com.vanillasource.eliot.eliotc.source.content.Sourced
 
 /** Desugars a parameter's **meta brace** into its **statement companion** (`docs/meta.md` §4.4) — the
@@ -65,44 +65,128 @@ object MetaParameterDesugarer {
         rest.drop(separator + 1).toIntOption.filter(_ => separator > 0).map(rest.take(separator) -> _)
       }
 
-  /** A **handed** statement (`docs/meta.md` §4.5): the meta of the `argument`-th value the body-less
-    * `definition` hands its code parameter `parameter` when it runs it — a supplier the compiler cannot see, so stated.
-    * Its shape is a parameter statement's, with one more binder, typing what it states: the meta type of that argument,
-    * which the channel reads off the code argument's own function type.
+  /** What the `match` eliminator `definition` hands argument `argument` of its handler `parameter`
+    * (`docs/meta.md` §4.5, §11.1) — a supplier the compiler cannot see, so stated, by the data desugarer only. The
+    * handler runs for `constructor`, so it is handed that field of the eliminator's `scrutinee` when `constructor` built
+    * it, and nothing when another one did: the handler does not run. A braced field adds what is handed where it is not
+    * known what built the value, its brace: the constructor proved it.
     *
     * {{{
     *   data Pixel(r: Int {byte}, g: Int)
     *     ⟶  handleCases$Handed$case0$0[R, Meta$value, Meta$case0, Meta$, Constructor$](
-    *           constructor$: Constructor$, value$: Meta$value, case0$: Meta$case0): Meta$ = constructor$(byte)
+    *           constructor$: Constructor$, value: Meta$value, case0: Meta$case0): Meta$ =
+    *              fieldOr(value, Pixel, constructor$(byte))
+    *         handleCases$Handed$case0$1[R, Meta$value, Meta$case0, Meta$](value: Meta$value, case0: Meta$case0): Meta$ =
+    *              fieldOf(value, Pixel)
     * }}}
-    *
-    * Only [[DataDefinitionDesugarer]] writes one, for a braced field: the `match` eliminator hands each handler its
-    * constructor's fields, and the constructor proved each brace when the value was built.
     */
-  def handedStatement(
+  def fieldStatement(
       definition: FunctionDefinition,
+      scrutinee: Sourced[String],
       parameter: Sourced[String],
       argument: Int,
+      constructor: Sourced[SourceExpression],
       brace: Seq[Sourced[SourceExpression]]
   ): FunctionDefinition = {
-    val (metaBinders, placeholders) = MetaCompanionLayout.statementParameters(definition)
-    val constructor                 = parameter.as(MetaCompanionLayout.constructorParameterName)
-    val handedBinder                = MetaCompanionLayout.typeBinder(parameter.as(MetaCompanionLayout.resultBinderName))
-    val constructorBinder           =
-      MetaCompanionLayout.typeBinder(parameter.as(MetaCompanionLayout.constructorBinderName))
-    FunctionDefinition(
-      definition.name.map(handedName(_, parameter.value, argument)),
-      MetaCompanionLayout.ownBinders(definition) ++ metaBinders :+ handedBinder :+ constructorBinder,
-      ArgumentDefinition(constructor, MetaCompanionLayout.typeReference(constructorBinder.name)) +: placeholders,
-      MetaCompanionLayout.typeReference(handedBinder.name),
-      Some(parameter.as(SourceExpression.FunctionApplication(None, constructor, None, brace))),
-      visibility = definition.visibility
-    )
+    val (metaBinders, parameters) = MetaCompanionLayout.metaParameters(definition)
+    val handedBinder              = MetaCompanionLayout.typeBinder(parameter.as(MetaCompanionLayout.resultBinderName))
+    val value                     = scrutinee.as(SourceExpression.FunctionApplication(None, scrutinee, None, Seq.empty))
+    val name                      = definition.name.map(handedName(_, parameter.value, argument))
+    val own                       = MetaCompanionLayout.ownBinders(definition)
+    val result                    = MetaCompanionLayout.typeReference(handedBinder.name)
+    if (brace.isEmpty)
+      FunctionDefinition(
+        name,
+        own ++ metaBinders :+ handedBinder,
+        parameters,
+        result,
+        Some(parameter.as(metaPrimitive(parameter, "fieldOf", Seq(value, constructor)))),
+        visibility = definition.visibility
+      )
+    else {
+      val constructorParameter = parameter.as(MetaCompanionLayout.constructorParameterName)
+      val constructorBinder    =
+        MetaCompanionLayout.typeBinder(parameter.as(MetaCompanionLayout.constructorBinderName))
+      val stated               =
+        parameter.as(SourceExpression.FunctionApplication(None, constructorParameter, None, brace))
+      FunctionDefinition(
+        name,
+        own ++ metaBinders :+ handedBinder :+ constructorBinder,
+        ArgumentDefinition(constructorParameter, MetaCompanionLayout.typeReference(constructorBinder.name)) +: parameters,
+        result,
+        Some(parameter.as(metaPrimitive(parameter, "fieldOr", Seq(value, constructor, stated)))),
+        visibility = definition.visibility
+      )
+    }
   }
 
-  /** One statement companion per parameter of `definition` carrying a meta brace, or empty (every ordinary def). */
+  /** A primitive of `eliot.compiler.Meta` applied to `arguments`, named by its module so no import is needed. */
+  private def metaPrimitive(
+      at: Sourced[?],
+      name: String,
+      arguments: Seq[Sourced[SourceExpression]]
+  ): SourceExpression =
+    SourceExpression.FunctionApplication(
+      Some(at.as(WellKnownTypes.metaPrimitiveFQN(name).moduleName.show)),
+      at.as(name),
+      None,
+      arguments
+    )
+
+  /** The handed statement an **arrow-domain brace** writes (`docs/meta.md` §14): what a body-less `definition` hands its
+    * code parameter as one argument, stated by the definition itself rather than by the data desugarer. It has a handed
+    * statement's name and binders, but its brace may read the definition's parameters, each as its meta — a code
+    * parameter as what its code yields — and a brace on a domain the definition's own type parameter names is the meta
+    * itself, as a return brace on such a result is ([[MetaTransferDesugarer]]):
+    *
+    * {{{
+    *   private def escapeInternal[K, A, R](body uses *: Frame[K] => A, onExit uses *: K => R, onValue uses *: A {body} => R) uses *: R
+    *     ⟶  escapeInternal$Handed$onValue$0[K, A, R, Meta$body, Meta$onExit, Meta$onValue, Meta$](
+    *           body: Meta$body, onExit: Meta$onExit, onValue: Meta$onValue): Meta$ = body
+    * }}}
+    */
+  def arrowStatement(
+      definition: FunctionDefinition,
+      parameter: Sourced[String],
+      handed: ArgumentDefinition.Handed
+  ): FunctionDefinition = {
+    val (metaBinders, parameters) = MetaCompanionLayout.metaParameters(definition)
+    val handedBinder              = MetaCompanionLayout.typeBinder(parameter.as(MetaCompanionLayout.resultBinderName))
+    val name                      = definition.name.map(handedName(_, parameter.value, handed.argument))
+    val own                       = MetaCompanionLayout.ownBinders(definition)
+    val result                    = MetaCompanionLayout.typeReference(handedBinder.name)
+    handed.domain.value match {
+      case SourceExpression.FunctionApplication(None, typeName, _, Seq())
+          if handed.brace.size == 1 && definition.genericParameters.exists(_.name.value == typeName.value) =>
+        FunctionDefinition(
+          name,
+          own ++ metaBinders :+ handedBinder,
+          parameters,
+          result,
+          Some(handed.brace.head),
+          visibility = definition.visibility
+        )
+      case _ =>
+        val constructor       = parameter.as(MetaCompanionLayout.constructorParameterName)
+        val constructorBinder =
+          MetaCompanionLayout.typeBinder(parameter.as(MetaCompanionLayout.constructorBinderName))
+        FunctionDefinition(
+          name,
+          own ++ metaBinders :+ handedBinder :+ constructorBinder,
+          ArgumentDefinition(constructor, MetaCompanionLayout.typeReference(constructorBinder.name)) +: parameters,
+          result,
+          Some(parameter.as(SourceExpression.FunctionApplication(None, constructor, None, handed.brace))),
+          visibility = definition.visibility
+        )
+    }
+  }
+
+  /** One statement companion per parameter of `definition` carrying a meta brace, and one handed statement per arrow-domain
+    * brace of its code parameters, or empty (every ordinary def).
+    */
   def desugar(definition: FunctionDefinition): Seq[(FunctionDefinition, RoleHint)] =
-    definition.args.filter(_.meta.nonEmpty).map(statementCompanion(definition, _) -> RoleHint.NoHint)
+    definition.args.filter(_.meta.nonEmpty).map(statementCompanion(definition, _) -> RoleHint.NoHint) ++
+      definition.args.flatMap(arg => arg.handed.map(arrowStatement(definition, arg.name, _) -> RoleHint.NoHint))
 
   private def statementCompanion(f: FunctionDefinition, parameter: ArgumentDefinition): FunctionDefinition = {
     val (metaBinders, placeholders) = MetaCompanionLayout.statementParameters(f)

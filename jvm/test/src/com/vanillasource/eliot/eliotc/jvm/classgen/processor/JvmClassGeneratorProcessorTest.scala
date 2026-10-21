@@ -60,6 +60,12 @@ class JvmClassGeneratorProcessorTest extends AsyncFlatSpec with AsyncIOSpec with
                      ModuleName(ModuleName.defaultSystemPackage, "Bool")     -> "type Bool\ndef true: Bool\ndef false: Bool",
                      ModuleName(ModuleName.defaultSystemPackage, "Implementation") -> "type Inferred\ntype Handed = Type",
                      ModuleName(ModuleName.defaultSystemPackage, "PatternMatch") -> "ability PatternMatch[T]",
+                     // Every constructor states `{built}` and every `match` eliminator hands `fieldOf`/`fieldOr`
+                     // (`docs/meta.md` §13.4), naming these by their module, as `Meta.els` declares them.
+                     ModuleName(ModuleName.compilerPackage, "Meta")              -> (
+                       "def built[D]: D\ndef fieldOf[V, C, D](value: V, constructor: C): D\n" +
+                         "def fieldOr[V, C, D](value: V, constructor: C, otherwise: D): D = otherwise"
+                     ),
                      ModuleName(ModuleName.defaultSystemPackage, "TypeMatch")    -> "ability TypeMatch[T] {\ntype Fields[R]\ndef typeMatch[R](value: Type, matched: Fields[R], notMatched: Function[Unit, R]): R\n}"
                    ).traverse { (moduleName, content) =>
                      val path    = moduleName.toPath

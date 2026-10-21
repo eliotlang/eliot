@@ -337,6 +337,24 @@ object Expression {
     */
   lazy val typeRunParser: Parser[Sourced[Token], Expression] = typeRunOf(typeRunAtom)
 
+  /** [[typeRunParser]] for a code parameter's type, whose arrow domains may each carry a **meta brace**
+    * (`onValue uses *: A {body} => R`, `docs/meta.md` §14): each part of the run with the brace after it, which only a
+    * part an arrow `=>` follows may have. Anywhere else a brace ends the run, as in every type position.
+    */
+  lazy val handedTypeRunParser: Parser[Sourced[Token], Seq[(Sourced[Expression], Seq[Sourced[Expression]])]] =
+    (for {
+      atom  <- sourced(typeRunAtom)
+      brace <- domainBrace
+    } yield (atom, brace)).atLeastOnce()
+
+  /** A meta brace an arrow follows, or nothing, consuming nothing. */
+  private lazy val domainBrace: Parser[Sourced[Token], Seq[Sourced[Expression]]] =
+    bracketedCommaSeparatedItems("{", sourced(fullParser), "}")
+      .followedBy(symbol("=>"))
+      .atomic()
+      .optional()
+      .map(_.getOrElse(Seq.empty))
+
   /** [[typeRunParser]] for a `data` field's type (and a meta slot's, which shares the binder), refusing a row with the
     * reason a field has none rather than with a `uses` clause it cannot take.
     */

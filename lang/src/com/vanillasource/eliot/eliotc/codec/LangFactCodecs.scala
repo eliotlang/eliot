@@ -316,6 +316,8 @@ object LangFactCodecs {
       : FactCodec[com.vanillasource.eliot.eliotc.saturate.fact.SaturatedValue.Key] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_ast_fact_AST: FactCodec[com.vanillasource.eliot.eliotc.ast.fact.AST]     =
     FactCodec.derived
+  given codec_com_vanillasource_eliot_eliotc_ast_fact_ArgumentDefinition_Handed
+      : FactCodec[com.vanillasource.eliot.eliotc.ast.fact.ArgumentDefinition.Handed] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_ast_fact_ArgumentDefinition
       : FactCodec[com.vanillasource.eliot.eliotc.ast.fact.ArgumentDefinition] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_ast_fact_DataConstructor

@@ -82,7 +82,10 @@ object MetaCompanionLayout {
 
   /** The payload signature of `definition` when it has a companion — a `where` or a transfer brace — else empty. */
   def desugar(definition: FunctionDefinition): Seq[(FunctionDefinition, RoleHint)] =
-    if (definition.whereClause.isEmpty && definition.returnMeta.isEmpty && definition.args.forall(_.meta.isEmpty))
+    if (
+      definition.whereClause.isEmpty && definition.returnMeta.isEmpty &&
+      definition.args.forall(arg => arg.meta.isEmpty && arg.handed.isEmpty)
+    )
       Seq.empty
     else Seq(payloadSignature(definition) -> RoleHint.NoHint)
 

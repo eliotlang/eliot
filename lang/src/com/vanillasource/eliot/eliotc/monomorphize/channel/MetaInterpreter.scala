@@ -89,7 +89,20 @@ object MetaInterpreter {
       */
     case Never
 
-    /** The meta this value is known to have: a closure's type carries none, and ⊥ is never materialised. */
+    /** A frame of the call being interpreted (`docs/meta.md` §11.1), by its identity in the [[Store]]. */
+    case Frame(id: Int)
+
+    /** A cell of the call being interpreted, by its identity in the [[Store]]. */
+    case Cell(id: Int)
+
+    /** A value a `data` constructor built, with its fields as the interpretation holds them: what a `match` on it reads,
+      * which is how a frame or a cell reaches the code using it, as a field of a handle.
+      */
+    case Data(constructor: ValueFQN, fields: Seq[Value])
+
+    /** The meta this value is known to have: none is known of a closure, a frame, a cell or a constructed value, whose
+      * types carry no meta, and ⊥ is never materialised.
+      */
     def known: Option[GroundValue] = this match {
       case Meta(meta) => meta
       case _          => None
@@ -106,6 +119,97 @@ object MetaInterpreter {
     * readable in its body (see [[bindParameters]], the only place bindings are added).
     */
   type Env = Map[String, Value]
+
+  /** The frames and cells alive in a call being interpreted (`docs/meta.md` §11.1), each by an identity local to the
+    * interpretation. A frame and a cell are made by one call of their native, handed to that call's code and gone when
+    * it returns; they are private and second-class, so nothing else ever holds one. A cell holds its content, and a
+    * frame every exit made through it so far, with the cells as they were when it was made.
+    */
+  case class Store(cells: Map[Int, Store.Content], frames: Map[Int, Seq[Store.Exit]]) {
+    def withFrame(id: Int): Store = copy(frames = frames + (id -> Seq.empty))
+
+    def withCell(id: Int, content: Store.Content): Store = copy(cells = cells + (id -> content))
+
+    /** The store once the call that made `frame` and `cell` returned. */
+    def without(frame: Option[Int], cell: Option[Int]): Store = Store(cells -- cell, frames -- frame)
+
+    /** `frame` was left through, carrying `carried`. */
+    def received(frame: Int, carried: Option[GroundValue]): Store =
+      copy(frames = frames.updated(frame, frames(frame) :+ Store.Exit(carried, cells)))
+
+    /** `cell` holds `meta` from now on. */
+    def written(cell: Int, meta: Option[GroundValue]): Store =
+      copy(cells = cells.updated(cell, cells(cell).copy(meta = meta)))
+
+    /** The store after code the interpretation did not follow, which may have written any cell and left through any
+      * frame it could reach: every content and whatever left is not computed, never a guess.
+      */
+    def tainted: Store = {
+      val unknown = cells.view.mapValues(_.copy(meta = None)).toMap
+      Store(unknown, frames.view.mapValues(_ :+ Store.Exit(None, unknown)).toMap)
+    }
+
+    def isEmpty: Boolean = cells.isEmpty && frames.isEmpty
+  }
+
+  object Store {
+
+    /** What a cell holds: the meta of its content, of meta type `metaType`. */
+    case class Content(meta: Option[GroundValue], metaType: Option[GroundValue])
+
+    /** An exit through a frame: what it carried, and the cells as they were. */
+    case class Exit(carried: Option[GroundValue], cells: Map[Int, Content])
+
+    val empty: Store = Store(Map.empty, Map.empty)
+
+    /** The cells every one of `all` holds, each the join of its contents. */
+    def joinCells(all: Seq[Map[Int, Content]]): CompilerIO[Map[Int, Content]] =
+      all.headOption.fold(Map.empty[Int, Content].pure[CompilerIO]) { first =>
+        first.keys.toList
+          .filter(id => all.forall(_.contains(id)))
+          .traverse { id =>
+            val contents = all.map(_(id))
+            joinAll(contents.map(_.meta), first(id).metaType).map(meta => id -> Content(meta, first(id).metaType))
+          }
+          .map(_.toMap)
+      }
+
+    /** The store after a call whose code ended as `ends`, each flagged by whether it returned: the cells are the join
+      * of those the returning ends hold, since control continues from one of them, and the frames hold every exit any
+      * of them made. Where none returned the call does not either, and its cells are those at the call, `atCall`.
+      */
+    def joined(ends: Seq[(Store, Boolean)], atCall: Store): CompilerIO[Store] = {
+      val frames = ends.flatMap(_._1.frames.toSeq).foldLeft(Map.empty[Int, Seq[Exit]]) { case (all, (id, exits)) =>
+        all.updated(id, (all.getOrElse(id, Seq.empty) ++ exits).distinct)
+      }
+      val live   = ends.filter(_._2).map(_._1.cells)
+      (if (live.isEmpty) atCall.cells.pure[CompilerIO] else joinCells(live)).map(Store(_, frames))
+    }
+  }
+
+  /** The interpretation's progress: the steps left of its budget, the next identity to give a frame or a cell, and the
+    * frames and cells alive.
+    */
+  private case class Run(budget: Int, fresh: Int, store: Store) {
+    def spent: Run = copy(budget = budget - 1)
+
+    /** The budget is spent, so nothing more is followed: any cell may be written and any frame left through. */
+    def exhausted: (Run, Value) = (copy(budget = 0, store = store.tainted), Value.unknown)
+
+    /** Code the interpretation does not follow was handed `arguments`, so whatever frame or cell they hold may have
+      * been reached.
+      */
+    def unfollowed(arguments: Seq[Value]): Run =
+      if (!store.isEmpty && arguments.exists(holdsState)) copy(store = store.tainted) else this
+  }
+
+  /** Whether a value holds a frame or a cell: is one, has one in a field, or captured one. */
+  private def holdsState(value: Value): Boolean = value match {
+    case _: Value.Frame | _: Value.Cell => true
+    case Value.Data(_, fields)          => fields.exists(holdsState)
+    case Value.Closure(_, env)          => env.values.exists(holdsState)
+    case _                              => false
+  }
 
   /** The §5.3 cost fail-safe: the number of interpretation steps one call node's derivation may spend, across depth
     * *and* fan-out together (each node visited costs one, and the budget is threaded through siblings rather than
@@ -127,7 +231,8 @@ object MetaInterpreter {
       resultType: GroundValue,
       arguments: Seq[Value]
   ): CompilerIO[Value] =
-    metaOf(callee, typeArguments, resultType, arguments, interpretationBudget).map((_, value) => settled(value))
+    metaOf(callee, typeArguments, resultType, arguments, Run(interpretationBudget, 0, Store.empty))
+      .map((_, value) => settled(value))
 
   /** What a walk hands the interpretation for an argument it walked: a function-typed `node` is a closure over
     * `captured`, what the walk knows of the parameters in scope; any other node is the `value` the walk computed for it.
@@ -230,12 +335,14 @@ object MetaInterpreter {
       case None                  => (Stated.Unknown: Stated).pure[CompilerIO]
     }
 
-  /** What a body-less `callee` hands the code argument at parameter `position` when it runs it: per argument of that
-    * code's `functionType`, the meta a **handed** statement states of it, or ⊤ where none does
-    * ([[MetaParameterDesugarer.handedStatement]], `docs/meta.md` §4.5). The supplier is the callee, which
-    * the compiler cannot see, so the statement is axiomatic — the `match` eliminator's, for a braced field, holds because
-    * the constructor proved it. Each is reduced as a parameter statement is, plus the meta type of the argument it states,
-    * read off `functionType`, so a generic field is stated at its instantiation.
+  /** What a body-less `callee` hands the code argument at parameter `position` when it runs it, as far as it can be
+    * read without running anything: per argument of that code's `functionType`, the meta a **handed** statement states
+    * of it, or ⊤ where none does ([[MetaParameterDesugarer.handedStatement]], `docs/meta.md` §4.5). The supplier is the
+    * callee, which the compiler cannot see, so the statement is axiomatic — the `match` eliminator's, for a braced field,
+    * holds because the constructor proved it. Each is reduced as a parameter statement is, plus the meta type of the
+    * argument it states, read off `functionType`, so a generic field is stated at its instantiation. A statement about
+    * a frame, a cell or a run (§14), or a field of a value the interpretation built (§11.1), says something only where
+    * the interpretation follows the call ([[runCode]]); here it is ⊤, except a braced field's, which is its brace.
     */
   def handedMetas(
       callee: ValueFQN,
@@ -244,51 +351,80 @@ object MetaInterpreter {
       functionType: GroundValue
   ): CompilerIO[Seq[Option[GroundValue]]] = {
     val domains = peel(functionType, functionType.functionArity).map(_._1).getOrElse(Seq.empty)
-    getFactOrAbort(UnifiedModuleNames.Key(callee.moduleName, Platform.Compiler)).flatMap { names =>
-      names.names.keys.toSeq
-        .flatMap(name => MetaParameterDesugarer.handedArgument(callee.name, name).map(ValueFQN(callee.moduleName, name) -> _))
-        .flatTraverse { case (companion, (parameter, argument)) =>
-          companionParameters(companion).map { names =>
-            val placeholders = names.filter(_ =!= MetaCompanionLayout.constructorParameterName)
-            Option
-              .when(placeholders.indexOf(MetaCompanionLayout.placeholderName(parameter)) === position)(
-                (companion, argument, placeholders.size)
+    handedStatementsOf(callee).flatMap { statements =>
+      domains.indices.toList
+        .traverse { argument =>
+          statements.get((position, argument)) match {
+            case Some((companion, statement)) if reducible(statement) =>
+              handedMeta(
+                callee,
+                calleeTypeArgs,
+                companion,
+                statement.parameters.size,
+                domains(argument),
+                Seq.fill(statement.parameters.size)(notComputed)
               )
-              .toSeq
+            case _                                                   =>
+              none[GroundValue].pure[CompilerIO]
           }
         }
-        .flatMap { handed =>
-          domains.indices.toList.traverse { argument =>
-            handed.find(_._2 === argument) match {
-              case Some((companion, _, arity)) => handedMeta(callee, calleeTypeArgs, companion, arity, domains(argument))
-              case None                        => none[GroundValue].pure[CompilerIO]
-            }
-          }.map(_.toSeq)
-        }
+        .map(_.toSeq)
     }
   }
 
+  /** Whether a handed statement says anything reduced on its own: one about frames, cells or a run says it only of a
+    * run, while a braced field's `fieldOr` reduces to its brace.
+    */
+  private def reducible(statement: MetaStatement): Boolean = statement.primitive match {
+    case None | Some(_: MetaStatement.Primitive.FieldOr) => true
+    case _                                               => false
+  }
+
+  /** The handed statements of `callee`, by the position of the code parameter they are about and the index of the
+    * argument they state, each with its companion and what it states.
+    */
+  private def handedStatementsOf(callee: ValueFQN): CompilerIO[Map[(Int, Int), (ValueFQN, MetaStatement)]] =
+    getFactOrAbort(UnifiedModuleNames.Key(callee.moduleName, Platform.Compiler)).flatMap { names =>
+      names.names.keys.toSeq
+        .flatMap(name => MetaParameterDesugarer.handedArgument(callee.name, name).map(ValueFQN(callee.moduleName, name) -> _))
+        .traverse { case (companion, (parameter, argument)) =>
+          MetaStatement.of(companion).map { statement =>
+            val position = statement.parameters.indexWhere(name =>
+              name == parameter || name == MetaCompanionLayout.placeholderName(parameter)
+            )
+            (position, argument) -> (companion, statement)
+          }
+        }
+        .map(_.filter(_._1._1 >= 0).toMap)
+    }
+
+  /** Reduce a handed statement over `arguments`, what it is passed for the callee's parameters, at the meta type of the
+    * argument it states. A slot-producing statement takes that type's meta constructor first, which a type carrying no
+    * meta does not have.
+    */
   private def handedMeta(
       callee: ValueFQN,
       calleeTypeArgs: Seq[GroundValue],
       companion: ValueFQN,
       arity: Int,
-      argumentType: GroundValue
+      argumentType: GroundValue,
+      arguments: Seq[SemValue]
   ): CompilerIO[Option[GroundValue]] =
     payloadTypes(callee, calleeTypeArgs, arity).flatMap {
       case Some((parameters, _)) =>
         (parameters.traverse(metaTypeOf), metaTypeOf(argumentType)).flatMapN { (metaTypes, handedType) =>
-          metaConstructorOf(handedType).flatMap {
-            case Some(constructor) =>
-              EscalatingReducer
-                .reduceApplied(
-                  companion,
-                  calleeTypeArgs ++ metaTypes :+ handedType :+ constructor.valueType,
-                  Evaluator.groundToSem(constructor) +: Seq.fill(arity)(notComputed)
-                )
-                .map(_.collect { case meta: GroundValue.Structure => meta })
-            case None              => none[GroundValue].pure[CompilerIO]
-          }
+          def reduce(typeArguments: Seq[GroundValue], leading: Seq[SemValue]): CompilerIO[Option[GroundValue]] =
+            EscalatingReducer
+              .reduceApplied(companion, calleeTypeArgs ++ metaTypes ++ typeArguments, leading ++ arguments)
+              .map(_.collect { case meta: GroundValue.Structure => meta })
+          takesConstructor(companion).ifM(
+            metaConstructorOf(handedType).flatMap {
+              case Some(constructor) =>
+                reduce(Seq(handedType, constructor.valueType), Seq(Evaluator.groundToSem(constructor)))
+              case None              => none[GroundValue].pure[CompilerIO]
+            },
+            reduce(Seq(handedType), Seq.empty)
+          )
         }
       case None                  => none[GroundValue].pure[CompilerIO]
     }
@@ -322,49 +458,360 @@ object MetaInterpreter {
       typeArguments: Seq[GroundValue],
       resultType: GroundValue,
       arguments: Seq[Value],
-      budget: Int
-  ): CompilerIO[(Int, Value)] =
-    if (arguments.contains(Value.Never)) (budget, Value.Never).pure[CompilerIO]
+      run: Run
+  ): CompilerIO[(Run, Value)] =
+    if (arguments.contains(Value.Never)) (run, Value.Never).pure[CompilerIO]
     else
       declaresTransfer(callee).ifM(
-        stated(callee, typeArguments, arguments, budget),
-        derive(callee, typeArguments, resultType, arguments, budget)
+        stated(callee, typeArguments, arguments, run),
+        derive(callee, typeArguments, resultType, arguments, run)
       )
 
-  /** A stated transfer over the call's arguments. A companion is Eliot over metas and cannot apply a closure, so a
-    * function-typed argument is passed as what it **yields** ([[yieldOf]]) where the companion reads a meta for it — a
-    * code parameter, whose payload type is what its code yields — and as `unit` where it reads none.
+  /** A stated transfer over the call's arguments. The code the callee runs is followed run by run ([[runCode]]), each
+    * run handed what the callee states it hands it, and the transfer reads each as what it yields: a companion is Eliot
+    * over metas and cannot apply a closure. A frame or cell statement is followed rather than reduced ([[follow]]).
     *
-    * A yield may be ⊥, which no companion receives ([[withoutNever]]); a companion reducing to `never` is ⊥ itself
-    * ([[fromReduced]]).
+    * A statement that is the join of parameters is exact where all of them but one are ⊥: it is that one, whatever the
+    * interpretation holds of it, so a value built in the one arm that returns passes through whole. Every such statement
+    * in the tree says that its callee's result is one of those values: `fold`'s, the eliminators', the escape's and the
+    * cell's. Otherwise a yield may be ⊥, which no companion receives ([[withoutNever]]), and a companion reducing to
+    * `never` is ⊥ itself ([[fromReduced]]).
     */
   private def stated(
       callee: ValueFQN,
       typeArguments: Seq[GroundValue],
       arguments: Seq[Value],
-      budget: Int
-  ): CompilerIO[(Int, Value)] =
-    companionTypeArguments(callee, RefinementChannelProcessor.metaCompanionFqn(callee), typeArguments, arguments.size, withResult = false)
-      .map(_.getOrElse(Seq.empty))
-      .flatMap { metaTypes =>
-        arguments.zipWithIndex
-          .foldLeftM((budget, Seq.empty[Value])) { case ((left, values), (argument, index)) =>
-            argument match {
-              case closure: Value.Closure if metaTypes.lift(index).exists(_ != unitType) =>
-                handedMetas(callee, typeArguments, index, closure.node.value.expressionType)
-                  .flatMap(handed => yieldOf(closure, handed, left))
-                  .map((remaining, value) => (remaining, values :+ value))
-              case _: Value.Closure                                                      => (left, values :+ Value.unknown).pure[CompilerIO]
-              case value                                                                 => (left, values :+ value).pure[CompilerIO]
+      run: Run
+  ): CompilerIO[(Run, Value)] = {
+    val companion = RefinementChannelProcessor.metaCompanionFqn(callee)
+    MetaStatement.of(companion).flatMap { statement =>
+      statement.primitive match {
+        case Some(primitive) =>
+          follow(callee, statement, primitive, arguments, run).map((after, value) =>
+            (after.unfollowed(arguments.filter(isCode)), value)
+          )
+        case None            =>
+          companionTypeArguments(callee, companion, typeArguments, arguments.size, withResult = false)
+            .map(_.getOrElse(Seq.empty))
+            .flatMap { metaTypes =>
+              runCode(callee, typeArguments, arguments, metaTypes, run).flatMap { (after, values) =>
+                statement.joins.map(_.filter(index => values.lift(index).exists(_ != Value.Never))) match {
+                  case Some(Seq(only)) => (after, values(only)).pure[CompilerIO]
+                  case Some(Seq())     => (after, Value.Never).pure[CompilerIO]
+                  case _               =>
+                    withoutNever(values, metaTypes, arguments.map(isCode)) match {
+                      case Some(metas) =>
+                        reduceTransfer(callee, typeArguments, metas).map(meta => (after, fromReduced(meta)))
+                      case None        => (after, Value.Never).pure[CompilerIO]
+                    }
+                }
+              }
             }
+      }
+    }
+  }
+
+  /** A frame or cell statement on a callee's result (`docs/meta.md` §11.1): leaving through a frame, reading a cell,
+    * writing one, or building a value. One the interpretation cannot place — a frame or cell it does not hold — is
+    * followed as unknown, so every frame may have been left through and every cell written ([[Store.tainted]]).
+    */
+  private def follow(
+      callee: ValueFQN,
+      statement: MetaStatement,
+      primitive: MetaStatement.Primitive,
+      arguments: Seq[Value],
+      run: Run
+  ): CompilerIO[(Run, Value)] =
+    primitive match {
+      case MetaStatement.Primitive.Built if arguments.size == statement.parameters.size =>
+        (run, Value.Data(callee, arguments)).pure[CompilerIO]
+      case MetaStatement.Primitive.Exit(frame, carried) =>
+        (arguments.lift(frame), arguments.lift(carried)) match {
+          case (Some(Value.Frame(id)), Some(value)) if run.store.frames.contains(id) =>
+            (run.copy(store = run.store.received(id, value.known)), Value.Never).pure[CompilerIO]
+          case _                                                                      =>
+            (run.copy(store = run.store.tainted), Value.Never).pure[CompilerIO]
+        }
+      case MetaStatement.Primitive.Content(cell)        =>
+        arguments.lift(cell) match {
+          case Some(Value.Cell(id)) if run.store.cells.contains(id) =>
+            (run, Value.Meta(run.store.cells(id).meta)).pure[CompilerIO]
+          case _                                                     => (run, Value.unknown).pure[CompilerIO]
+        }
+      case MetaStatement.Primitive.Store(cell, value)   =>
+        (arguments.lift(cell), arguments.lift(value)) match {
+          case (Some(Value.Cell(id)), Some(written)) if run.store.cells.contains(id) =>
+            (run.copy(store = run.store.written(id, written.known)), Value.unknown).pure[CompilerIO]
+          case _                                                                      =>
+            (run.copy(store = run.store.tainted), Value.unknown).pure[CompilerIO]
+        }
+      case _                                            => (run, Value.unknown).pure[CompilerIO]
+    }
+
+  /** One run of a code argument by the callee running it (`docs/meta.md` §11.1, §14): what it yields; the store it ends
+    * with, whose frames hold every exit made on the way even when it does not return; what left through the frame the
+    * callee made for it, and what the cell it made for it held when it returned; and where it started.
+    */
+  private case class CodeRun(
+      yields: Value,
+      end: Store,
+      exits: Seq[Store.Exit],
+      content: Option[Store.Content],
+      start: Start
+  )
+
+  /** Where a run of code starts: where the callee was called, after another run returned, or after its exits. */
+  private enum Start {
+    case AtCall
+    case AfterReturnOf(code: Int)
+    case AfterExitsOf(code: Int)
+  }
+
+  /** The runs made so far of a call's code arguments, by position, and the interpretation's progress after them. */
+  private case class Runs(made: Map[Int, CodeRun], budget: Int, fresh: Int)
+
+  /** Follow every code argument of a stated call, each run once (`docs/meta.md` §11.1, §14), and answer the call's
+    * argument values with each code argument replaced by what its run yields.
+    *
+    * A run is handed, per argument of its code, what the callee's handed statement says: a fresh frame or cell, what
+    * another run's exits carried or its cell held, or a meta reduced over the arguments, a code argument read as what its
+    * run yields. A run reading another starts where that one left off, after its return or after its exits, and is not
+    * made at all when it is handed ⊥: a handler whose frame nothing left through. Every other run starts at the call,
+    * and those are the callee's alternatives, one of which runs: `fold`'s arms, an eliminator's. The store after the
+    * call joins what the runs no other run continues end with.
+    */
+  private def runCode(
+      callee: ValueFQN,
+      typeArguments: Seq[GroundValue],
+      arguments: Seq[Value],
+      metaTypes: Seq[GroundValue],
+      run: Run
+  ): CompilerIO[(Run, Seq[Value])] = {
+    val code = arguments.indices.filter(index => isCode(arguments(index))).toList
+    if (code.isEmpty) (run, arguments).pure[CompilerIO]
+    else
+      handedStatementsOf(callee).flatMap { statements =>
+        def ensure(position: Int, runs: Runs, visiting: Set[Int]): CompilerIO[Runs] =
+          if (runs.made.contains(position) || visiting.contains(position)) runs.pure[CompilerIO]
+          else {
+            val closure      = arguments(position).asInstanceOf[Value.Closure]
+            val functionType = closure.node.value.expressionType
+            val domains      = peel(functionType, functionType.functionArity).map(_._1).getOrElse(Seq.empty)
+            val handed       = domains.indices.map(argument => statements.get((position, argument)).map(_._2))
+            handed.flatten
+              .flatMap(readsRuns)
+              .filter(other => other != position && code.contains(other))
+              .distinct
+              .toList
+              .foldLeftM(runs)((before, other) => ensure(other, before, visiting + position))
+              .flatMap(ready => made(position, closure, domains, handed, ready))
           }
-          .flatMap { (left, values) =>
-            withoutNever(values, metaTypes, arguments.map(_.isInstanceOf[Value.Closure])) match {
-              case Some(metas) => reduceTransfer(callee, typeArguments, metas).map(meta => (left, fromReduced(meta)))
-              case None        => (left, Value.Never).pure[CompilerIO]
+
+        def made(
+            position: Int,
+            closure: Value.Closure,
+            domains: Seq[GroundValue],
+            handed: Seq[Option[MetaStatement]],
+            runs: Runs
+        ): CompilerIO[Runs] =
+          starts(handed.flatten, runs) match {
+            case Some(start) =>
+              val from = startStore(start, runs)
+              from.flatMap { store =>
+                handedValues(position, domains, handed, runs).flatMap { values =>
+                  if (values.contains(Handed.Is(Value.Never)))
+                    runs.copy(made = runs.made + (position -> CodeRun(Value.Never, store, Seq.empty, None, start))).pure[CompilerIO]
+                  else {
+                    val frame    = Option.when(values.contains(Handed.NewFrame))(runs.fresh)
+                    val cell     = values.collectFirst { case Handed.NewCell(content) => content }.map(_ => runs.fresh + 1)
+                    val prepared = Seq(
+                      frame.map(id => (s: Store) => s.withFrame(id)),
+                      cell.zip(values.collectFirst { case Handed.NewCell(content) => content })
+                        .map((id, content) => (s: Store) => s.withCell(id, content))
+                    ).flatten.foldLeft(store)((s, add) => add(s))
+                    val handedTo = values.map {
+                      case Handed.Is(value)  => value
+                      case Handed.NewFrame   => Value.Frame(frame.get)
+                      case Handed.NewCell(_) => Value.Cell(cell.get)
+                    }
+                    applyValue(closure, handedTo, functionType(closure).deepReturnType, Run(runs.budget, runs.fresh + 2, prepared))
+                      .map { (after, yields) =>
+                        val codeRun = CodeRun(
+                          yields,
+                          after.store.without(frame, cell),
+                          frame.fold(Seq.empty)(id => after.store.frames.getOrElse(id, Seq.empty)),
+                          cell.flatMap(after.store.cells.get),
+                          start
+                        )
+                        Runs(runs.made + (position -> codeRun), after.budget, after.fresh)
+                      }
+                  }
+                }
+              }
+            case None        =>
+              // A run reading two others continues neither: it is not followed.
+              runs.copy(made = runs.made + (position -> CodeRun(Value.unknown, run.store.tainted, Seq.empty, None, Start.AtCall)))
+                .pure[CompilerIO]
+          }
+
+        def handedValues(
+            position: Int,
+            domains: Seq[GroundValue],
+            handed: Seq[Option[MetaStatement]],
+            runs: Runs
+        ): CompilerIO[Seq[Handed]] =
+          domains.indices.toList.traverse { argument =>
+            statements.get((position, argument)) match {
+              case None                         => (Handed.Is(Value.unknown): Handed).pure[CompilerIO]
+              case Some((companion, statement)) =>
+                handedValue(companion, statement, argument, domains(argument), runs)
+            }
+          }.map(_.toSeq)
+
+        def handedValue(
+            companion: ValueFQN,
+            statement: MetaStatement,
+            argument: Int,
+            domain: GroundValue,
+            runs: Runs
+        ): CompilerIO[Handed] =
+          statement.primitive match {
+            case Some(MetaStatement.Primitive.FieldOf(value, constructor)) =>
+              (fieldOf(value, constructor, argument).getOrElse(Handed.Is(Value.unknown)): Handed).pure[CompilerIO]
+            case Some(MetaStatement.Primitive.FieldOr(value, constructor)) =>
+              fieldOf(value, constructor, argument) match {
+                case Some(handed) => handed.pure[CompilerIO]
+                case None         =>
+                  handedMeta(
+                    callee,
+                    typeArguments,
+                    companion,
+                    statement.parameters.size,
+                    domain,
+                    Seq.fill(statement.parameters.size)(notComputed)
+                  ).map(meta => Handed.Is(Value.Meta(meta)))
+              }
+            case Some(MetaStatement.Primitive.Frame)         => (Handed.NewFrame: Handed).pure[CompilerIO]
+            case Some(MetaStatement.Primitive.Cell(initial)) =>
+              (Handed.NewCell(Store.Content(arguments.lift(initial).flatMap(_.known), metaTypes.lift(initial))): Handed)
+                .pure[CompilerIO]
+            case Some(MetaStatement.Primitive.Exited(other)) =>
+              runs.made.get(other) match {
+                case Some(made) if made.exits.isEmpty => (Handed.Is(Value.Never): Handed).pure[CompilerIO]
+                case Some(made)                       =>
+                  metaTypeOf(domain).flatMap(metaType =>
+                    joinAll(made.exits.map(_.carried), Some(metaType)).map(meta => Handed.Is(Value.Meta(meta)))
+                  )
+                case None                             => (Handed.Is(Value.unknown): Handed).pure[CompilerIO]
+              }
+            case Some(MetaStatement.Primitive.Stored(other)) =>
+              (runs.made.get(other) match {
+                case Some(made) if made.yields == Value.Never => Handed.Is(Value.Never)
+                case Some(made)                               => Handed.Is(Value.Meta(made.content.flatMap(_.meta)))
+                case None                                     => Handed.Is(Value.unknown)
+              }: Handed).pure[CompilerIO]
+            case Some(_)                                     => (Handed.Is(Value.unknown): Handed).pure[CompilerIO]
+            case None                                        =>
+              val read = statement.reads.toSeq.map(index => index -> valueOf(index, runs))
+              statement.joins match {
+                case Some(Seq(only)) => (Handed.Is(valueOf(only, runs)): Handed).pure[CompilerIO]
+                case _ if read.exists(_._2 == Value.Never) => (Handed.Is(Value.Never): Handed).pure[CompilerIO]
+                case _               =>
+                  handedMeta(
+                    callee,
+                    typeArguments,
+                    companion,
+                    statement.parameters.size,
+                    domain,
+                    statement.parameters.indices.map(index =>
+                      read.toMap.get(index).flatMap(_.known).fold(notComputed)(Evaluator.groundToSem)
+                    )
+                  ).map(meta => Handed.Is(Value.Meta(meta)))
+              }
+          }
+
+        // The field a `match` hands, when the interpretation built the value: none when another constructor built it.
+        def fieldOf(value: Int, constructor: ValueFQN, argument: Int): Option[Handed] =
+          arguments.lift(value).collect { case Value.Data(built, fields) =>
+            if (built == constructor) Handed.Is(fields.lift(argument).getOrElse(Value.unknown)) else Handed.Is(Value.Never)
+          }
+
+        def valueOf(index: Int, runs: Runs): Value =
+          runs.made.get(index).fold(arguments.lift(index).getOrElse(Value.unknown))(_.yields)
+
+        def starts(handed: Seq[MetaStatement], runs: Runs): Option[Start] =
+          handed.flatMap { statement =>
+            statement.primitive match {
+              case Some(MetaStatement.Primitive.Exited(other)) => Seq(Start.AfterExitsOf(other))
+              case Some(MetaStatement.Primitive.Stored(other)) => Seq(Start.AfterReturnOf(other))
+              case Some(_)                                     => Seq.empty
+              case None                                        =>
+                statement.reads.toSeq.filter(runs.made.contains).map(Start.AfterReturnOf(_))
+            }
+          }.distinct match {
+            case Seq()      => Some(Start.AtCall)
+            case Seq(start) => Some(start)
+            case _          => None
+          }
+
+        def startStore(start: Start, runs: Runs): CompilerIO[Store] = start match {
+          case Start.AtCall              => run.store.pure[CompilerIO]
+          case Start.AfterReturnOf(other) => runs.made(other).end.pure[CompilerIO]
+          case Start.AfterExitsOf(other)  =>
+            val made = runs.made(other)
+            Store
+              .joinCells(made.exits.map(_.cells.view.filterKeys(run.store.cells.contains).toMap))
+              .map(cells => made.end.copy(cells = if (made.exits.isEmpty) made.end.cells else cells))
+        }
+
+        code
+          .foldLeftM(Runs(Map.empty, run.budget, run.fresh))((runs, position) => ensure(position, runs, Set.empty))
+          .flatMap { runs =>
+            val continued = runs.made.values.map(_.start).collect {
+              case Start.AfterReturnOf(other) => other
+              case Start.AfterExitsOf(other)  => other
+            }.toSet
+            val last      = runs.made.view.filterKeys(position => !continued.contains(position)).values.toSeq
+            Store.joined(last.map(made => (made.end, made.yields != Value.Never)), run.store).map { store =>
+              (
+                Run(runs.budget, runs.fresh, store),
+                arguments.indices.map(index => runs.made.get(index).fold(arguments(index))(_.yields))
+              )
             }
           }
       }
+  }
+
+  /** What a callee hands one argument of a run of code: a value, or a frame or cell to make for the run. */
+  private enum Handed {
+    case Is(value: Value)
+    case NewFrame
+    case NewCell(content: Store.Content)
+  }
+
+  /** The runs of code a handed statement continues: the code whose exits or cell it reads, or whose yield. */
+  private def readsRuns(statement: MetaStatement): Seq[Int] = statement.primitive match {
+    case Some(MetaStatement.Primitive.Exited(other)) => Seq(other)
+    case Some(MetaStatement.Primitive.Stored(other)) => Seq(other)
+    case Some(_)                                     => Seq.empty
+    case None                                        => statement.reads.toSeq
+  }
+
+  private def functionType(closure: Value.Closure): GroundValue = closure.node.value.expressionType
+
+  private def isCode(value: Value): Boolean = value.isInstanceOf[Value.Closure]
+
+  /** The join of metas of one meta type: not computed when any is, or when the type is not known. */
+  private[channel] def joinAll(metas: Seq[Option[GroundValue]], metaType: Option[GroundValue]): CompilerIO[Option[GroundValue]] =
+    (metas.sequence, metaType) match {
+      case (Some(first +: rest), Some(tpe)) =>
+        rest.foldLeftM(first.some)((joined, meta) =>
+          joined.flatTraverse(sofar =>
+            EscalatingReducer.reduceApplied(WellKnownTypes.metaJoinedFQN, Seq(tpe), Seq(sofar, meta).map(Evaluator.groundToSem))
+          )
+        )
+      case _                                => none[GroundValue].pure[CompilerIO]
+    }
 
   /** The argument metas a stated transfer is reduced over when some of its code yields ⊥ (`docs/meta.md` §12), or
     * `None` when every yield is ⊥, so the call does not return. A ⊥ yield is replaced by another argument of the **same
@@ -395,28 +842,10 @@ object MetaInterpreter {
     case other                                                                         => Value.Meta(other)
   }
 
-  /** What a function value yields: its result once applied to as many arguments as its type takes — a code argument's
-    * thunk or handle block applied to the unit or handles it is run with, which carry no meta, or a handler applied to
-    * what its callee states it hands it (`handed`, ⊤ where nothing is stated).
-    */
-  private def yieldOf(
-      closure: Value.Closure,
-      handed: Seq[Option[GroundValue]],
-      budget: Int
-  ): CompilerIO[(Int, Value)] = {
-    val functionType = closure.node.value.expressionType
-    val arguments    = Seq.tabulate(functionType.functionArity)(index => Value.Meta(handed.lift(index).flatten))
-    applyValue(closure, arguments, functionType.deepReturnType, budget).map((left, value) => (left, settled(value)))
-  }
-
-  /** Derive a bodied callee's meta by interpreting its body under the caller's arguments. Three things make this
-    * decline (soundly, to ⊤) rather than answer:
-    *
-    *   - the **result carries no meta** — the cheap gate, taken before any fact is read. A function-typed result never
-    *     reaches here: a function value is deferred as a closure and only ever asked for applied;
-    *   - the callee has **no body on this track** — a leaf that states nothing, which R2 has already made a compile
-    *     error for a meta-carrying return, or a value whose monomorphization failed upstream;
-    *   - the call is **not saturated** — a partial application is a function value, whose type carries no meta.
+  /** Derive a bodied callee's meta by interpreting its body under the caller's arguments. A callee that cannot be read
+    * — **no body on this track** (a leaf that states nothing, which R2 has already made a compile error for a
+    * meta-carrying return, or a value whose monomorphization failed upstream), or **not saturated** (a partial
+    * application is a function value, whose type carries no meta) — is not followed ([[Run.unfollowed]]).
     *
     * An over-application applies the callee's *result* to the remaining arguments, which is a closure its body returned.
     */
@@ -425,24 +854,21 @@ object MetaInterpreter {
       typeArguments: Seq[GroundValue],
       resultType: GroundValue,
       arguments: Seq[Value],
-      budget: Int
-  ): CompilerIO[(Int, Value)] =
-    if (budget <= 0) unknown(0)
+      run: Run
+  ): CompilerIO[(Run, Value)] =
+    if (run.budget <= 0) run.exhausted.pure[CompilerIO]
     else
-      carriesMeta(resultType).ifM(
-        getFactIfProduced(MonomorphicValue.Key(callee, typeArguments)).flatMap {
-          case Some(mv) if mv.naturalArity.exists(_ <= arguments.size) =>
-            mv.runtime match {
-              case Some(body) =>
-                applyLambda(body.as(MonomorphicExpression(mv.signature, body.value)), Map.empty, arguments, resultType, budget - 1)
-              case None       => unknown(budget)
-            }
-          case _                                                       => unknown(budget)
-        },
-        unknown(budget)
-      )
+      getFactIfProduced(MonomorphicValue.Key(callee, typeArguments)).flatMap {
+        case Some(mv) if mv.naturalArity.exists(_ <= arguments.size) =>
+          mv.runtime match {
+            case Some(body) =>
+              applyLambda(body.as(MonomorphicExpression(mv.signature, body.value)), Map.empty, arguments, resultType, run.spent)
+            case None       => (run.unfollowed(arguments), Value.unknown).pure[CompilerIO]
+          }
+        case _                                                       => (run.unfollowed(arguments), Value.unknown).pure[CompilerIO]
+      }
 
-  /** Interpret one node of a body: what is known of its value, and the budget left after computing it. Bottom-up and
+  /** Interpret one node of a body: what is known of its value, and the interpretation's progress after it. Bottom-up and
     * pure — no record is kept and no diagnostic is raised, so this may be run over a *callee's* body without touching
     * that callee's own table or repeating its checks. A function-typed node is not interpreted here but deferred as a
     * closure, so only a function value that is applied costs anything.
@@ -450,31 +876,31 @@ object MetaInterpreter {
   private def interpret(
       node: Sourced[MonomorphicExpression],
       env: Env,
-      budget: Int
-  ): CompilerIO[(Int, Value)] =
-    if (budget <= 0) unknown(0)
+      run: Run
+  ): CompilerIO[(Run, Value)] =
+    if (run.budget <= 0) run.exhausted.pure[CompilerIO]
     else
       node.value.expression match {
         case MonomorphicExpression.ParameterReference(parameterName)   =>
           // The one point the caller's knowledge enters: a bound parameter *is* the argument. An unbound one (a lambda's
           // own binder that nothing applied) is ⊤.
-          (budget - 1, env.getOrElse(parameterName.value, Value.unknown)).pure[CompilerIO]
+          (run.spent, env.getOrElse(parameterName.value, Value.unknown)).pure[CompilerIO]
         case _ if isFunction(node)                                     =>
-          (budget - 1, Value.Closure(node, env)).pure[CompilerIO]
+          (run.spent, Value.Closure(node, env)).pure[CompilerIO]
         case MonomorphicExpression.IntegerLiteral(value)               =>
-          integerSeed(value.value).map(meta => (budget - 1, Value.Meta(meta)))
+          integerSeed(value.value).map(meta => (run.spent, Value.Meta(meta)))
         case MonomorphicExpression.StringLiteral(value)                =>
-          stringSeed(value.value).map(meta => (budget - 1, Value.Meta(meta)))
+          stringSeed(value.value).map(meta => (run.spent, Value.Meta(meta)))
         case MonomorphicExpression.MonomorphicValueReference(vfqn, ta) =>
           // A bare reference is a *saturated* call when the callee takes no arguments, so a nullary def derives here
           // exactly as an applied one does below.
-          metaOf(vfqn.value, ta, node.value.expressionType, Seq.empty, budget - 1)
+          metaOf(vfqn.value, ta, node.value.expressionType, Seq.empty, run.spent)
         case MonomorphicExpression.FunctionLiteral(_, _, _)            =>
-          (budget - 1, Value.Closure(node, env)).pure[CompilerIO]
+          (run.spent, Value.Closure(node, env)).pure[CompilerIO]
         case _: MonomorphicExpression.FunctionApplication              =>
           val (head, args) = flatten(node)
-          interpretAll(args, env, budget - 1).flatMap((left, arguments) =>
-            applyHead(head, env, arguments, node.value.expressionType, left)
+          interpretAll(args, env, run.spent).flatMap((after, arguments) =>
+            applyHead(head, env, arguments, node.value.expressionType, after)
           )
       }
 
@@ -489,19 +915,19 @@ object MetaInterpreter {
       env: Env,
       arguments: Seq[Value],
       resultType: GroundValue,
-      budget: Int
-  ): CompilerIO[(Int, Value)] =
-    if (arguments.contains(Value.Never)) (budget, Value.Never).pure[CompilerIO]
+      run: Run
+  ): CompilerIO[(Run, Value)] =
+    if (arguments.contains(Value.Never)) (run, Value.Never).pure[CompilerIO]
     else
       head.value.expression match {
         case MonomorphicExpression.MonomorphicValueReference(vfqn, ta) =>
-          metaOf(vfqn.value, ta, resultType, arguments, budget)
+          metaOf(vfqn.value, ta, resultType, arguments, run)
         case MonomorphicExpression.FunctionLiteral(_, _, _)            =>
-          applyLambda(head, env, arguments, resultType, budget)
+          applyLambda(head, env, arguments, resultType, run)
         case MonomorphicExpression.ParameterReference(parameterName)   =>
-          applyValue(env.getOrElse(parameterName.value, Value.unknown), arguments, resultType, budget)
+          applyValue(env.getOrElse(parameterName.value, Value.unknown), arguments, resultType, run)
         case _                                                         =>
-          unknown(budget)
+          (run.unfollowed(arguments), Value.unknown).pure[CompilerIO]
       }
 
   /** Apply a body written in `env` to `arguments`: its leading lambdas bind as many of them as they can, what is under
@@ -513,43 +939,46 @@ object MetaInterpreter {
       env: Env,
       arguments: Seq[Value],
       resultType: GroundValue,
-      budget: Int
-  ): CompilerIO[(Int, Value)] = {
+      run: Run
+  ): CompilerIO[(Run, Value)] = {
     val (body, bound, rest) = bindParameters(node, arguments)
-    interpret(body, env ++ bound, budget).flatMap((left, value) =>
-      if (rest.isEmpty) (left, value).pure[CompilerIO] else applyValue(value, rest, resultType, left)
+    interpret(body, env ++ bound, run).flatMap((after, value) =>
+      if (rest.isEmpty) (after, value).pure[CompilerIO] else applyValue(value, rest, resultType, after)
     )
   }
 
   /** Apply a value to `arguments`: a closure is its node applied in its own environment, which also appends to a
-    * partial application's arguments; anything else is not known to be a function, so ⊤.
+    * partial application's arguments; anything else is not known to be a function, so it is not followed.
     */
   private def applyValue(
       value: Value,
       arguments: Seq[Value],
       resultType: GroundValue,
-      budget: Int
-  ): CompilerIO[(Int, Value)] =
+      run: Run
+  ): CompilerIO[(Run, Value)] =
     value match {
-      case Value.Closure(node, env) if budget > 0 =>
+      case Value.Closure(_, _) if run.budget <= 0 => run.exhausted.pure[CompilerIO]
+      case Value.Closure(node, env)               =>
         val (head, applied) = flatten(node)
-        interpretAll(applied, env, budget - 1).flatMap((left, values) =>
-          applyHead(head, env, values ++ arguments, resultType, left)
+        interpretAll(applied, env, run.spent).flatMap((after, values) =>
+          applyHead(head, env, values ++ arguments, resultType, after)
         )
-      case _                                      => unknown(budget)
+      case _                                      => (run.unfollowed(value +: arguments), Value.unknown).pure[CompilerIO]
     }
 
-  /** Interpret every argument in the *caller's* scope, threading the budget through them, so a wide fan-out spends the
-    * same budget a deep chain does. Arguments are all interpreted before any binder is added, which is what keeps a
-    * binder from shadowing a name a later argument reads.
+  /** Interpret every argument in the *caller's* scope, in order, threading the interpretation's progress through them,
+    * so a wide fan-out spends the same budget a deep chain does and a later argument sees the cells an earlier one
+    * wrote. Evaluation is strict, so the arguments after one that is ⊥ are never evaluated. Arguments are all
+    * interpreted before any binder is added, which is what keeps a binder from shadowing a name a later argument reads.
     */
   private def interpretAll(
       nodes: Seq[Sourced[MonomorphicExpression]],
       env: Env,
-      budget: Int
-  ): CompilerIO[(Int, Seq[Value])] =
-    nodes.foldLeftM((budget, Seq.empty[Value])) { case ((left, values), node) =>
-      interpret(node, env, left).map((remaining, value) => (remaining, values :+ value))
+      run: Run
+  ): CompilerIO[(Run, Seq[Value])] =
+    nodes.foldLeftM((run, Seq.empty[Value])) { case ((before, values), node) =>
+      if (values.contains(Value.Never)) (before, values).pure[CompilerIO]
+      else interpret(node, env, before).map((after, value) => (after, values :+ value))
     }
 
   /** Peel one leading [[MonomorphicExpression.FunctionLiteral]] per argument, binding each binder's name to it, and
@@ -575,10 +1004,13 @@ object MetaInterpreter {
   private def isFunction(node: Sourced[MonomorphicExpression]): Boolean =
     node.value.expressionType.asFunctionType.isDefined
 
-  /** A finished interpretation's value: a closure left unapplied is a function value, whose type carries no meta. */
+  /** A finished interpretation's value, as a caller outside it reads one: its meta, or ⊥. A closure left unapplied is a
+    * function value, whose type carries no meta, and a frame, a cell and a constructed value are the interpretation's
+    * own, gone with the call that made them.
+    */
   private def settled(value: Value): Value = value match {
-    case _: Value.Closure => Value.unknown
-    case other            => other
+    case _: Value.Meta | Value.Never => value
+    case _                           => Value.unknown
   }
 
   /** Whether this callee **states** its transfer — a cached [[UnifiedModuleNames]] membership test for its `^Meta`
@@ -746,9 +1178,6 @@ object MetaInterpreter {
 
   private def metaStructureName(typeName: ValueFQN): QualifiedName =
     QualifiedName(typeName.name.name + MetaConstructorDesugarer.metaTypeSuffix, Qualifier.Type)
-
-  private def unknown(budget: Int): CompilerIO[(Int, Value)] =
-    (budget, Value.unknown).pure[CompilerIO]
 
   /** The `BigInteger` type a literal's seed value carries — the only literal-domain constant the interpretation needs,
     * to wrap a raw `n` as a [[GroundValue.Direct]] when reducing a seed companion at it.

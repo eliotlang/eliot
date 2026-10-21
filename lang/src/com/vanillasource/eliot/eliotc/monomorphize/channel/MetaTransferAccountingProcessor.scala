@@ -90,7 +90,8 @@ class MetaTransferAccountingProcessor
     * many arrows as the declaration has parameters — never from the declared type's name, which for an alias
     * (`type Byte = Int`) names a type declaring no meta structure and would exempt the leaf. Read the same way, a leaf
     * whose brace lists slots over a result carrying no meta is reported too: there is no meta constructor to apply
-    * them to.
+    * them to. A frame or cell statement lists no slots, whatever its result (`writeCellInternal`'s
+    * `Unit {store(cell, s)}`, [[MetaStatement]]).
     */
   private def verifyStated(mv: MonomorphicValue, orv: OperatorResolvedValue): CompilerIO[Unit] = {
     val view = OperatorResolvedExpression.SignatureView.of(orv.signature)
@@ -103,7 +104,10 @@ class MetaTransferAccountingProcessor
                             }
           statesTransfer <- declaresTransfer(mv.vfqn)
           statesSlots    <- if (statesTransfer)
-                              MetaInterpreter.takesConstructor(RefinementChannelProcessor.metaCompanionFqn(mv.vfqn))
+                              (
+                                MetaInterpreter.takesConstructor(RefinementChannelProcessor.metaCompanionFqn(mv.vfqn)),
+                                MetaStatement.of(RefinementChannelProcessor.metaCompanionFqn(mv.vfqn))
+                              ).mapN((slots, statement) => slots && statement.primitive.isEmpty)
                             else false.pure[CompilerIO]
           _              <- if (metaCarrying && !statesTransfer) reportMissing(mv, typeName.value)
                             else if (!metaCarrying && statesSlots) reportSlotsWithoutMeta(mv, typeName.value)

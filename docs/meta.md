@@ -7,7 +7,8 @@ Status (2026-10-21): **two domains shipped, R2 and R3 armed, the interpretation 
 - a value that is never produced is ⊥;
 - a `data` value carries the metas of its fields.
 
-Of Part II, T1 (the gap mechanics) and T2 (⊥) are built (§17). Where the work stopped, and how to continue it, is §18.1.
+Of Part II, T1 (the gap mechanics), T2 (⊥) and T3 (frames and cells) are built (§17). Where the work stopped, and how
+to continue it, is §18.1.
 
 This document replaces three: `total-meta-transfers.md` (the rules and the interpretation), `string-length-meta.md`
 (the `String` size domain) and `structural-meta.md` (the P6 design). Their full text is at `2a66009a`, and §21 maps
@@ -373,8 +374,14 @@ real monomorphized body:
 - **Parameters** are bound to the caller's argument metas.
 - **Leaves** are substituted by their stated transfer, reduced by the one evaluator.
 - **Every other callee** is interpreted recursively.
-- **A call that does not return** is ⊥ (`Value.Never`, §12): a leaf states it with `{never}`, a call any of whose
-  value arguments is ⊥ is ⊥, and a stated transfer reads a ⊥ yield as a sibling of the same meta type.
+- **A call that does not return** is ⊥ (`Value.Never`, §12): a leaf states it with `{never}` or `{exit(…)}`, a call
+  any of whose value arguments is ⊥ is ⊥, and a stated transfer reads a ⊥ yield as a sibling of the same meta type.
+- **Frames and cells** (§11.1) are followed through the one call that made them: the interpretation threads a store of
+  them through every step, in Eliot's strict evaluation order, and code a native runs is followed run by run (§14).
+- **A value a `data` constructor built** is held with its fields as the interpretation holds them, and a `match` on it
+  runs only the arm its constructor selects. Both are generated statements (§13.4), so the channel names no
+  constructor and no eliminator. Within one interpretation that makes a field read exact; across a boundary the
+  interpretation does not walk (a parameter, a record), a field's meta waits on structural meta (§13, T5).
 
 ### 5.1 State or derive
 
@@ -413,9 +420,11 @@ join their arms. When a handled statement exists (§4.5), the handler is applied
   defeat its key. Today, when the budget runs out, the node is left with no meta, and a demand on it fails. That is
   never a wrong answer, but it is a gap (§1). Part II makes the budget a compiler limit: running out of it is an error
   naming the call, never a value handed on (decision I, §18).
-- **The type gate makes it affordable.** Before any body is fetched, a call whose result type carries no meta is
-  skipped. Under today's non-structural R1 that is the overwhelming majority of call nodes: the 43-example sweep ran
-  4m18s with the interpretation against 4m20s without. Part II §13 opens this gate, and §16 measures it.
+- **There is no type gate (since T3).** A call whose result type carried no meta used to be skipped before any body
+  was fetched, which kept the interpretation off most call nodes. T3 removed it: a cell written by a call returning
+  `Unit` (`putState`) must be followed, and so must a `Unit` call that never returns. Measured on a cold compile of
+  every example, one at a time: 214.2 s before, 219.6 s after (+2.5%), no example more than 1.5 s apart, and every jar
+  byte-identical.
 - **There is no memo.** A memo on `(vfqn, typeArgs, argMetas)` is the prepared answer if the budget or the clock is
   ever observed to bind. Measure it with `--statistics`, diffing a run with and without the flag, since the flag
   itself inflates a build by about 20%. P5's contexts are already such a memo, for demands (§6).
@@ -513,8 +522,9 @@ Each of these is a gap: fail-safe at every demand, and pinned by a test that cha
 
 | gap | example | closed by |
 |---|---|---|
-| a field read out of a `data` value | `orZero(Some(7))`, `case Some(x) -> x` | structural meta (§13) |
-| what an escape, a cell or a loop produces or hands its code | `runAbort`, `runStateToPair`, `foldLines` | §10, §11, §14 |
+| a field read out of a `data` value the interpretation did not build | `useByte(orZero(Some(7)))`: `Some(7)` is a separate call node, so its value reaches `orZero` as a meta, and an `Option`'s is `Unit` | structural meta (§13) |
+| the join of two constructed values | `catch(fold(c, 5, raise("x")), e -> 6)`: the escape's result is a `Left` or a `Right` | structural meta (§13) |
+| what a loop produces or hands its code | `foldLines`, a cell written inside `forever` | §11.2 (T4) |
 | a holder that returns any type | `resultValue[A](r: IoResult): A` | decomposing it in the jvm layer (§11.3) |
 | the elements of a `List` | `foldLeft`'s `combine` is handed an element with no meta | `List` carrying its elements' meta (§13.3) |
 | hence `if … else` | `else` reads its result back out of an `Option` built by an escape | all of the above (§15) |
@@ -580,10 +590,10 @@ with a type-parameter result and what each must define:
 
 | leaf | statement |
 |---|---|
-| `exitInternal[K, A](frame, err): A` (Abort, Throw) | `{never}`, **stated since T2**: it does not return (§12). What it is given is received by its frame (§11.1). |
-| `escapeInternal[K, A, R](body, onExit, onValue): R` (Abort, Throw) | `{joined(onExit, onValue)}`. It hands `onValue` what `body` yields, and `onExit` what `body`'s exits gave the frame, which is ⊥ when nothing exits (§11.1, §14). |
-| `withCellInternal[S, A, R](initial, body, combine): R` (State, Writer, Dep) | `{combine}`. It hands `combine` what `body` yields and the cell's content when `body` returns (§11.1). |
-| `readCellInternal[S](cell): S` (State, Writer, Dep) | the cell's content where it is read (§11.1) |
+| `exitInternal[K, A](frame, err): A` (Abort, Throw) | `{exit(frame, err)}`, **stated since T3** (`{never}` in T2): its frame receives `err`, and it does not return (§11.1, §12). |
+| `escapeInternal[K, A, R](body, onExit, onValue): R` (Abort, Throw) | `{joined(onExit, onValue)}`, **stated since T3**. It hands `body` a fresh frame, `onValue` what `body` yields, and `onExit` what `body`'s exits gave the frame, which is ⊥ when nothing exits (§11.1, §14). |
+| `withCellInternal[S, A, R](initial, body, combine): R` (State, Writer, Dep) | `{combine}`, **stated since T3**. It hands `body` a fresh cell holding `initial`, and `combine` what `body` yields and the cell's content when `body` returns (§11.1). |
+| `readCellInternal[S](cell): S` (State, Writer, Dep) | `{content(cell)}`, **stated since T3**: the cell's content where it is read (§11.1) |
 | `foldLeftInternal[A, B](list, initial, combine): B` | the loop's fixpoint from `initial` (§11.2), handing `combine` the meta of the list's elements, which `List` does not carry yet (§13.3) |
 | `foldLinesInternal`, `foldCodePointsInternal` (File) | the loop's fixpoint (§11.2), once their holder is decomposed (§11.3), handing the step `{closed(0, 2147483647)}` per line and `{closed(0, 1114111)}` per code point |
 | `resultValue[A](r: IoResult): A` (File) | none can be honest: it returns its holder's content as any `A`. Decomposed away (§11.3). |
@@ -617,11 +627,34 @@ while the interpretation runs that one call, it can follow them exactly, in Elio
   control splits (a join over code arguments: `fold`, a `match`), each branch starts from the same content, and the
   content after is the join of the branches' contents. A branch that is `Never` contributes nothing. `combine` is
   handed the content when `body` returns.
+- **An exit keeps the cells as they were.** Control leaves through a frame with every cell alive at that point, so an
+  exit records the cells with what it carried, and `onExit` continues from the join of those. That is what keeps
+  `runStateToPair(s, runThrow(c))`'s state across a `raise` (`docs/effects.md` §3.4), which a branch "contributing
+  nothing" alone would have lost.
 
 The interpretation gains a value for a frame and a cell, each with an identity local to one call and its received
 meta or content. The natives say what they hand through a few compile-track meta primitives, recognised by name as
 `joined` and `never` are (§14). So the channel still names no leaf. This is the one place the interpretation becomes
 stateful, and the state never outlives the call that made it.
+
+**Built in T3 (2026-10-21).** `MetaInterpreter` threads a `Store` (the cells and frames alive, by an identity local
+to one interpretation) through every step, left to right, and stops evaluating a call's arguments at the first ⊥, as
+strict evaluation does. A stated call's code arguments are each run once (`runCode`), handed what the callee states it
+hands them (§14). A run whose statements read another run starts where that one left off: after its return
+(`{body}`, `stored(body)`) or after its exits (`exited(body)`), and it is not made at all when it is handed ⊥. Every
+other run starts at the call, and those are the callee's alternatives (`fold`'s arms, a `match`'s). The store after
+the call joins what the runs that no other run continues end with, and the frames keep every exit any of them made.
+
+A frame or a cell reaches the code using it as a **field of a handle** (`Aborting$Handle(frame)`, read back through
+`aborting$frame` → `handleCases`), so following one takes following a constructed value through a `match`. That is two
+more generated statements (§13.4): a constructor states `{built}`, and the eliminator hands each handler `fieldOf`
+(`fieldOr` for a braced field) of its `value`, ⊥ when another constructor built it.
+
+**Code the interpretation does not follow is fail-safe.** A call it cannot read (a leaf stating nothing, a callee whose
+monomorphization failed, an unknown head, the budget spent) is handed whatever its arguments hold; if any of them
+holds a frame or a cell, in a field or in a closure's environment, every cell's content becomes not computed and every
+frame receives an exit carrying a not-computed meta (`Store.tainted`). Since a frame and a cell are second-class, an
+argument is the only way code can reach one.
 
 ### 11.2 A loop is a fixpoint, which the domain makes finite
 
@@ -682,9 +715,10 @@ form, and no companion ever receives it.
   argument, or an arm handed ⊥) is not checked in that context. This is P5 read literally: a demand is checked where
   it is *reached*. `f(Some(5))` compiles over `case None -> useByte(1000)`, and adding `f(None)` reports at that call.
   Built for a call with a ⊥ argument and a `val` block bound to one; an arm handed ⊥ waits on T5.
-- **Where ⊥ is not followed.** A derived body is interpreted only when its result type carries a meta (§5.3's gate),
-  so a call returning `Unit` that always exits is read as `unit`, not ⊥. That is sound, since ⊥ ⊑ every meta, and it
-  costs only the pruning a ⊥ would allow downstream of such a call.
+- **⊥ through a call returning `Unit`** is followed since T3, which removed §5.3's type gate: a derived body is
+  interpreted whatever its result type, so a call that always exits is ⊥ even when it returns `Unit`. (Before T3 it
+  read as not computed: sound, since ⊥ ⊑ every meta, but it lost the pruning downstream, and a cell written in such a
+  call was not followed at all.)
 
 ## 13. Structural meta: a `data` value carries its fields' metas
 
@@ -790,6 +824,29 @@ brace still answers, as today.
 
 **Accessors need nothing.** An accessor's body is a `match`.
 
+**The value-level half is built (T3, 2026-10-21).** Following a frame or a cell needed the link before structural meta
+existed, so the data desugarer already writes it, as statements the channel follows by name (§14):
+
+```eliot
+data Option[A] = None | Some(value: A)
+  ⟶  Some(value: A): Option[A]  {built}                          -- every constructor
+      handleCases$Handed$case1$0 = fieldOf(value, Some)            -- every argument of every handler
+      handleCases$Handed$case0$0 = fieldOf(value, None)            -- a field-less handler's unit
+data Pixel(r: Int {byte}, g: Int)
+  ⟶  handleCases$Handed$case0$0 = fieldOr(value, Pixel, ⟨byte⟩)  -- a braced field: its brace where `value` is not known
+```
+
+`{built}` makes a constructor's call the value it built, its fields as the interpretation holds them. `fieldOf` hands
+that field when the handler's own constructor built `value`, and ⊥ when another did, so the handler is not run and the
+eliminator's join is the arm that was. Where the interpretation did not build `value` it hands nothing known, and
+`fieldOr` reduces to its brace (it is bodied as its third argument), so a braced field answers as it did (§4.5). The
+constructor is written without type arguments, since brackets on an upper-case name make a type application. A named
+implementation's handle is a `data` like any other, so `CoreProcessor` runs the companion desugarers over the named
+implementations' lowering too.
+
+T5 gives the same statements their metas: `{built}` becomes the constructor's transfer above, and `fieldOf` its handed
+transfer, reading `Reach`.
+
 ### 13.5 A field's meta is always defined
 
 A constructor's transfer stores each argument's meta. By §1, each argument has one: a computed or stated meta, or the
@@ -845,27 +902,43 @@ is the callee. That gives the table a fifth row:
 | handed argument, bodied callee | the body | **yes** | **declined (R3)** |
 
 ```eliot
-private def escapeInternal[K, A, R](body uses *: AbortFrame[K] => A, onExit uses *: K {exited(body)} => R,
+private def escapeInternal[K, A, R](body uses *: AbortFrame[K] {frame} => A, onExit uses *: K {exited(body)} => R,
                                     onValue uses *: A {body} => R) uses *: R {joined(onExit, onValue)}
+private def exitInternal[K, A](frame: AbortFrame[K], nothing: K): A {exit(frame, nothing)}
 ```
 
-`{body}` after `onValue`'s domain says that what `onValue` is handed is what `body` yields. It is read as a code
-parameter always is, as the value its code yields. `{exited(body)}` after `onExit`'s says it is handed the join of what
-`body`'s exits gave the frame (§11.1). The cell's natives say the same of its content:
+`{frame}` after `body`'s domain says that `body` is handed a fresh frame of this call. `{body}` after `onValue`'s says
+that what `onValue` is handed is what `body` yields: it is read as a code parameter always is, as the value its code
+yields. `{exited(body)}` after `onExit`'s says it is handed the join of what `body`'s exits gave its frame (§11.1), and
+`{exit(frame, nothing)}` that the frame receives `nothing` and the call does not return. The cell's natives say the
+same of a cell:
 
 ```eliot
-private def withCellInternal[S, A, R](initial: S, body uses *: StateCell[S] => A,
+private def withCellInternal[S, A, R](initial: S, body uses *: StateCell[S] {cell(initial)} => A,
                                       combine uses *: A {body} => S {stored(body)} => R) uses *: R {combine}
 private def readCellInternal[S](cell: StateCell[S]): S {content(cell)}
 private def writeCellInternal[S](cell: StateCell[S], s: S): Unit {store(cell, s)}
 ```
 
-`exited`, `stored`, `content` and `store` are compile-track meta primitives, recognised by name as `joined` and
-`never` are, so the channel names no native. Decision A takes the shape; their spelling is settled when T3 builds them.
+**The spelling, settled in T3.** `frame`, `cell`, `exit`, `exited`, `stored`, `content` and `store` are body-less
+primitives of `eliot.compiler.Meta`, as `never` is. A statement that is one application of one of them to the stating
+value's parameters is a **frame or cell statement** (`MetaStatement`): the channel recognises it by name in the
+companion's resolved body and follows it, and never reduces it, since its arguments are frames, cells and runs of code,
+which have no meta. Two things the decision's sketch left implicit needed a statement each: which code is handed the
+frame or cell (`{frame}`, `{cell(initial)}` on its domain), and that an exit is received by its frame (`exit`, which
+replaced T2's `{never}` on `exitInternal`). A frame or cell statement lists no slots, whatever its result, so R2's
+"slots over a result carrying no meta" does not apply to `writeCellInternal`'s `Unit {store(cell, s)}`.
+
+**A statement that names a parameter, or joins parameters, is that value** where all of them but one are ⊥, not only
+its meta: ⊥ is the identity of every join (§12). So `onValue` is handed the very value `body` built, and an escape whose
+`onExit` is not run is `onValue`'s value, a constructed `Some` or `Right` included. Every such statement in the tree
+(`fold`'s, the eliminators', the escape's, the cell's) says its callee's result *is* one of those values, which is what
+makes reading it so sound. Where two are live the statement is reduced over their metas, as before.
 
 The arrow-domain grammar slot is free: a brace *before* a type is the rejected row spelling, and one *after* a
-parameter's type is §4.4's. It desugars to the handed companion the data desugarer writes
-(`escapeInternal$Handed$onValue$0`), which can now read parameters. It is accepted on a body-less def only (R3).
+parameter's type is §4.4's. It desugars to a handed companion (`escapeInternal$Handed$onValue$0`) named as the data
+desugarer names one, which reads parameters (`MetaParameterDesugarer.arrowStatement`). It is accepted on a body-less
+def only: a body hands what it computes, so a brace on one is an error at the brace (R3).
 
 **Declined (decision F): reshaping the escape primitive** to `escape(body: Frame => R, onExit: K => R)`, so
 its transfer is a plain join and nothing is handed. It would need nothing new here, but `docs/effects.md` §3.4 fixes
@@ -886,14 +959,16 @@ slot.
 - **`catch`.** This is the same shape over `Throw`'s `escapeInternal` and `Either`. A `raise` is `Never`, and the
   body's value is `Right`'s field. `onError` is handed what the `raise`s gave the frame, so `catch(raise("x"), e -> length(e))` is
   `[1, 1]`. The result is the join of the handler's yield and the body's. A body that never raises hands `onError` ⊥,
-  and the result is the body's alone.
+  and the result is the body's alone. **Built in T3** for the two cases where one side is ⊥: the escape is then the
+  live side's constructed `Left` or `Right` itself (§14), which `foldEither`'s `match` reads. A body that may do both
+  makes the escape a join of a `Left` and a `Right`, which waits on structural meta (T5).
 - **`pick(B)`** with `data AB = A | B`, `pick(x) = x match { case A -> 10 case B -> 20 }`. Today it is `[10, 20]`.
   With `B`'s meta `{Unreached, Reached(unit)}`, the `A` arm is handed ⊥, so `pick(B)` is `[20, 20]`.
 
 ## 16. Cost and risk
 
-- **The type gate opens.** Every data type now carries meta, so every call returning one is
-  interpreted. So is every handle, since a named implementation's handle is a `data`. Handles stay in: excluding them
+- **The type gate is already open** (T3, §5.3: +2.5% on a cold compile of the examples). What T5 adds is a meta for
+  every data value, so every call returning one carries a structure, and so does every handle, since a named implementation's handle is a `data`. Handles stay in: excluding them
   would key a rule on `Handles.isDataType` and lose a double's `with` arguments, which are exactly what a test's
   `where` would read.
 - **P5's contexts multiply.** A context is keyed by the metas of every meta-carrying parameter, so a deferred body
@@ -925,7 +1000,14 @@ cache once kept a stale companion across a change and hid a brace that did not e
   across all 47 examples, since none demands or narrows an `Int` an arm may exit from.
 - **T3: frames and cells** (§11.1, §14). The arrow-domain brace in the parser and desugarer; the frame and cell values
   in the interpretation, and their primitives; the statements of the escape and cell natives. `catch` and
-  `runStateToPair` become accept/reject pairs. `if … else` still waits on the field read.
+  `runStateToPair` become accept/reject pairs. `if … else` still waits on the field read. **Built 2026-10-21**, and it
+  took two things the plan did not list. A frame or a cell reaches its code as a field of a handle, so the data
+  desugarer already writes the value-level half of §13.4 (`{built}`, `fieldOf`, `fieldOr`); a first cut that read the
+  data shape in the channel instead was green, and was replaced under §20's rule. And §5.3's type gate is gone, because
+  a cell written by a call returning `Unit` (`putState`) must be followed. Cells and frames are proven in
+  `DerivedMetaTransferIntegrationTest` (a write, a read after it, arms joined, a raise keeping the state, a handler
+  handed what was raised, one nothing exits to not run); `catch` and `if … else` over a body that may both return and
+  exit wait on T5's structural join, pinned as a gap there.
 - **T4: loops and the holder** (§11.2, §11.3). The fixpoint primitive and `Meta`'s widening, with an interval's; the
   file folds and `resultValue` decomposed in the jvm layer.
 - **T5: structural meta** (§13). `Reach`, the structures, records, join instances and `$Fields`; the recursive groups
@@ -985,14 +1067,25 @@ cache once kept a stale companion across a change and hid a brace that did not e
 
 ### 18.1 Where this was left (2026-10-21)
 
-Of Part II, T1 and T2 are built (2026-10-21) and the rest is a design. Every decision in §18 is
+Of Part II, T1, T2 and T3 are built (2026-10-21) and the rest is a design. Every decision in §18 is
 taken: B on 2026-10-21 after the question whether ⊥ is a special value (it is not), then A and C–I as recommended.
-Two spellings are left to the stage that builds them, and are not decisions: the frame and cell primitives
-(`exited`, `stored`, `content`, `store`, §14) in T3, and how D's `widen` sits beside `join` on `Meta` in T4.
+T3 settled the frame and cell primitives' spelling (§14); one spelling is left to the stage that builds it, and is not
+a decision: how D's `widen` sits beside `join` on `Meta`, in T4.
 
-To continue: **start T3** (§17): frames and cells, with the arrow-domain brace (decision F) and the spelling of the
-frame and cell primitives (`exited`, `stored`, `content`, `store`, §14). T5 waits on
-§16's measurement, and T6 on `List` carrying its elements' meta.
+To continue: **start T4** (§17): a loop's fixpoint, with `Meta`'s widening and an interval's, and the file folds and
+`resultValue` decomposed in the jvm layer. A loop's step is code a native runs an unknown number of times, so it is a
+run (§11.1) iterated until the domain's widening is stable, and a cell written in it joins over the iterations. T5 waits
+on §16's measurement, and T6 on `List` carrying its elements' meta.
+
+**The `Unit` question (2026-10-21).** Robert: a type declaring no meta gets `Unit` implicitly, and *"the rest of the
+machinery should not know that this was 'default'"*. T3 removed two places that knew: §5.3's type gate (a call
+returning a type with no meta was not interpreted) and the stated path's shortcut (a code argument of meta type `Unit`
+was not run). Four remain, each a patch over a `Unit`-typed value read back as not computed instead of `unit`:
+`MetaInterpreter.companionArgument`'s `Unit` arm, `MetaDemandsProcessor.demandPrecondition`'s `metaType != unitType`,
+`MetaDemands.rootOf` counting a parameter of a type with no meta as `Unknown` rather than known, and
+`metaConstructorOf`'s `!= unitType` (which is a question about slots, and can be asked as one). Closing them is to give
+a `Unit`-typed value its meta, `unit`, where it is produced: a leaf stating nothing over such a result, and a parameter
+in a root context.
 
 The probes behind §9 used a throwaway `ScratchProbeTest` in `jvm/test`, over `DerivedMetaTransferIntegrationTest`'s
 `useByte` harness, with `compileForErrors` printing each verdict. Its proofs were run with
@@ -1068,6 +1161,10 @@ The stages in order. The full narrative of each is in the three retired document
   `Unit`.
 - **Part II decided**, 2026-10-21. ⊥ was accepted as a fact about control rather than a special value (B), as the way
   to the rest of Part II, and A and C–I were then taken as recommended. Nothing was built.
+- **T1–T3 built**, 2026-10-21. T3's first cut followed a handle's frame by reading the data shape in the channel
+  (constructors through `ModuleConstructors`, `handleCases` by name, as the `match` native does). It was green, and it
+  crossed §20, so Robert chose generated statements instead (`{built}`, `fieldOf`, `fieldOr`), the value-level half of
+  §13.4.
 
 ## 20. Do not re-propose
 
@@ -1084,7 +1181,9 @@ The stages in order. The full narrative of each is in the three retired document
 - **A brace on a bodied return** (§3.3).
 - **The accessor stating a field's meta.** It needs an R3 exception, and it misses `match` arms and multi-constructor
   types.
-- **The channel naming `PatternMatch`, or any branch construct or leaf.** A generated statement carries the link.
+- **The channel naming `PatternMatch`, or any branch construct or leaf.** A generated statement carries the link. That
+  holds for following a constructed value too: reading a data type's constructors and dispatching `handleCases` in the
+  channel was built and green in T3, and replaced by `{built}`/`fieldOf` (2026-10-21).
 - **Naming a meta type by spelling** (`T` ⤳ `T$Meta`) in a companion (§4.1).
 - **Per-platform transfer braces, and a byte-size slot** (§2.2).
 - **A per-target string unit**, whether the host's count or a contributed `sizeOf` native (§2.2).

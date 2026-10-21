@@ -667,18 +667,73 @@ class CoreProcessorTest extends ProcessorTest(Tokenizer(), ASTParser(), CoreProc
     }
   }
 
-  it should "state what the match eliminator hands the field's handler, reading no parameter" in {
+  it should "state what the match eliminator hands the field's handler, its brace where what built the value is not known" in {
     namedValue("data Pixel(r: Foo {g}, b: Foo)", QualifiedName("handleCases$Handed$case0$0", PatternMatchMeta)).asserting {
       nv =>
         nv.runtimeStructure shouldBe Some(
-          Lambda("constructor$", Empty, Lambda("value$", Empty, Lambda("case0$", Empty, App(Ref("constructor$"), Ref("g")))))
+          Lambda(
+            "constructor$",
+            Empty,
+            Lambda(
+              "value",
+              Empty,
+              Lambda(
+                "case0",
+                Empty,
+                App(App(App(meta("fieldOr"), Ref("value")), Ref("Pixel")), App(Ref("constructor$"), Ref("g")))
+              )
+            )
+          )
         )
     }
   }
 
-  it should "number a handed statement by the field's position in its own constructor" in {
-    namedValues("data Shape = Circle(r: Foo) | Square(a: Foo, b: Foo {g})").asserting(
-      _.map(_.qualifiedName.value.name).filter(_.startsWith("handleCases$Handed$")) shouldBe Seq("handleCases$Handed$case1$1")
+  it should "state what the match eliminator hands an unbraced field's handler: the field, when its constructor built it" in {
+    namedValue("data Pixel(r: Foo {g}, b: Foo)", QualifiedName("handleCases$Handed$case0$1", PatternMatchMeta)).asserting {
+      nv =>
+        nv.runtimeStructure shouldBe Some(
+          Lambda("value", Empty, Lambda("case0", Empty, App(App(meta("fieldOf"), Ref("value")), Ref("Pixel"))))
+        )
+    }
+  }
+
+  it should "number a handed statement by the field's position in its own constructor, a field-less one's unit too" in {
+    namedValues("data Shape = Circle(r: Foo) | Square(a: Foo, b: Foo {g}) | Empty").asserting(
+      _.map(_.qualifiedName.value.name).filter(_.startsWith("handleCases$Handed$")) shouldBe
+        Seq("handleCases$Handed$case0$0", "handleCases$Handed$case1$0", "handleCases$Handed$case1$1", "handleCases$Handed$case2$0")
+    )
+  }
+
+  "data constructor" should "state that its call is the value it built" in {
+    namedValue("data Pixel(r: Foo, b: Foo)", QualifiedName("Pixel", M)).asserting { nv =>
+      nv.runtimeStructure shouldBe Some(
+        Lambda("constructor$", Empty, Lambda("r", Empty, Lambda("b", Empty, App(Ref("constructor$"), meta("built")))))
+      )
+    }
+  }
+
+  "arrow-domain brace" should "state what its definition hands its code, reading the definition's parameters" in {
+    namedValue(
+      "def f[A, R](body uses *: A, onValue uses *: A {body} => R) uses *: R",
+      QualifiedName("f$Handed$onValue$0", M)
+    ).asserting(_.runtimeStructure shouldBe Some(Lambda("body", Empty, Lambda("onValue", Empty, Ref("body")))))
+  }
+
+  it should "list slots on a domain a type parameter does not name" in {
+    namedValue("def f[R](onValue uses *: Foo {g} => R) uses *: R", QualifiedName("f$Handed$onValue$0", M)).asserting(
+      _.runtimeStructure shouldBe Some(Lambda("constructor$", Empty, Lambda("onValue", Empty, App(Ref("constructor$"), Ref("g")))))
+    )
+  }
+
+  it should "number its statement by the arrow whose domain it follows" in {
+    namedValues("def f[A, S, R](combine uses *: A => S {g} => R) uses *: R").asserting(
+      _.map(_.qualifiedName.value.name).filter(_.contains("$Handed$")) shouldBe Seq("f$Handed$combine$1")
+    )
+  }
+
+  it should "be refused on a definition with a body" in {
+    errorsOf("def f[R](onValue uses *: Foo {g} => R) uses *: R = onValue(x)").asserting(
+      _ shouldBe Seq("A definition with a body cannot state what it hands its code; only a body-less definition states it.")
     )
   }
 
@@ -951,6 +1006,9 @@ class CoreProcessorTest extends ProcessorTest(Tokenizer(), ASTParser(), CoreProc
       case FlatExpression(parts)                    => Flat(parts.map(_.value.structure))
     }
   }
+
+  /** A primitive of `eliot.compiler.Meta`, as a generated statement names it. */
+  private def meta(name: String): ExprStructure = QualRef(name, "eliot.compiler.Meta")
 
   // What a top-level row lowers to: a thunk `Unit => A`, the shape a slot takes when it must not run its argument.
   private def thunk(payload: ExprStructure): ExprStructure =

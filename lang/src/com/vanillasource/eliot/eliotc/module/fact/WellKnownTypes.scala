@@ -197,6 +197,19 @@ object WellKnownTypes {
   val metaNeverFQN: ValueFQN =
     ValueFQN(ModuleName(compilerPackage, "Meta"), QualifiedName("never", Qualifier.Default))
 
+  /** `eliot.compiler.Meta::join`, the `Meta` ability's own join, which a transfer over a type parameter's meta names
+    * directly (`fold`'s `{join(whenTrue, whenFalse)}`).
+    */
+  val metaJoinFQN: ValueFQN =
+    ValueFQN(ModuleName(compilerPackage, "Meta"), QualifiedName("join", Qualifier.Ability("Meta")))
+
+  /** The frame and cell primitives of `eliot.compiler.Meta` (`docs/meta.md` §11.1, §14), by name: `frame`, `cell`,
+    * `exit`, `exited`, `stored`, `content` and `store`. The refinement channel recognises a statement that is one
+    * application of one of them to the stating value's parameters, and follows the frame or cell it names.
+    */
+  def metaPrimitiveFQN(name: String): ValueFQN =
+    ValueFQN(ModuleName(compilerPackage, "Meta"), QualifiedName(name, Qualifier.Default))
+
   /** `stringLiteral[N]: String` — the string literal's *size* protocol, the [[integerLiteralFQN]] twin for the `String`
     * refinement domain. A string literal needs no conversion (its characters are already the value), so unlike
     * `integerLiteral` this declaration is never referenced by a program and no desugaring rewrites into it: it exists

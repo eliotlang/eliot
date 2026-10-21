@@ -37,9 +37,10 @@ type AbortFrame[K]
  * own, which is also what keeps the two frames apart. Implemented by the backend. It gives no effect: what runs on the
  * frame is the `with` its caller writes.
  */
-private def escapeInternal[K, A, R](body uses *: AbortFrame[K] => A, onExit uses *: K => R, onValue uses *: A => R) uses *: R
+private def escapeInternal[K, A, R](body uses *: AbortFrame[K] {frame} => A, onExit uses *: K {exited(body)} => R,
+                                    onValue uses *: A {body} => R) uses *: R {joined(onExit, onValue)}
 
 /**
  * Leave through `frame`. Control does not return, which is what it states (`{never}`). Implemented by the backend.
  */
-private def exitInternal[K, A](frame: AbortFrame[K], nothing: K): A {never}
+private def exitInternal[K, A](frame: AbortFrame[K], nothing: K): A {exit(frame, nothing)}

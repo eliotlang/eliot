@@ -38,11 +38,17 @@ class CoreProcessor
     // (bounds-as-refinements §4.2, Step 4a). Type aliases are `FunctionDefinition`s, so this runs over them.
     val desugaredMetaConstructors: Seq[(FunctionDefinition, RoleHint)] =
       sourceAstData.functionDefinitions.flatMap(MetaConstructorDesugarer.desugar)
+    // A named `implement` (effects v6 §9.3) lowers to its methods, its marker and its name marker, exactly as the
+    // anonymous form lowers in `ImplementBlock` — except that the named form is parsed into a node of its own, so the
+    // lowering runs here rather than in the parser. See NamedImplementationDesugarer.
+    val desugaredNamedImplementations: Seq[(FunctionDefinition, RoleHint)] =
+      sourceAstData.namedImplementations.flatMap(NamedImplementationDesugarer.desugar)
     // Return-position transfer brace on a def (`def add(…): Int {a.range + b.range}`) → the def's `^Meta` transfer
-    // companion (bounds-as-refinements §4.2, Step 4b). A data type's `match` eliminator states one too (the join of its
-    // arms, see DataDefinitionDesugarer), so the data-desugared definitions are read as well.
+    // companion (bounds-as-refinements §4.2, Step 4b). A data type's constructors and `match` eliminator state one too
+    // (the value built and the join of its arms, see DataDefinitionDesugarer), so the data-desugared definitions are
+    // read as well — a named implementation's handle among them.
     val bracedDefinitions: Seq[FunctionDefinition]                 =
-      sourceAstData.functionDefinitions ++ desugaredFromData.map(_._1)
+      sourceAstData.functionDefinitions ++ desugaredFromData.map(_._1) ++ desugaredNamedImplementations.map(_._1)
     val desugaredMetaTransfers: Seq[(FunctionDefinition, RoleHint)] =
       bracedDefinitions.flatMap(MetaTransferDesugarer.desugar)
     // `where <predicate>` precondition on a def (`def useByte(x: Int) where withinByte(range(x)): Int`) → the def's
@@ -58,11 +64,6 @@ class CoreProcessor
     // reads them, which the channel evaluates at each call (see MetaCompanionLayout).
     val desugaredPayloadSignatures: Seq[(FunctionDefinition, RoleHint)] =
       bracedDefinitions.flatMap(MetaCompanionLayout.desugar)
-    // A named `implement` (effects v6 §9.3) lowers to its methods, its marker and its name marker, exactly as the
-    // anonymous form lowers in `ImplementBlock` — except that the named form is parsed into a node of its own, so the
-    // lowering runs here rather than in the parser. See NamedImplementationDesugarer.
-    val desugaredNamedImplementations: Seq[(FunctionDefinition, RoleHint)] =
-      sourceAstData.namedImplementations.flatMap(NamedImplementationDesugarer.desugar)
     // An `effect` declaration (effects v6 §9.3) lowers exactly as an `ability` block does — the difference is one
     // metadata flag, not a shape — except that it parses into a node of its own. See EffectDefinitionDesugarer.
     val desugaredEffects: Seq[(FunctionDefinition, RoleHint)] =
@@ -96,7 +97,17 @@ class CoreProcessor
     val emptyEffects     = sourceAstData.effectDefinitions
       .filter(_.functions.isEmpty)
       .map(effect => effect.name.as(s"The effect '${effect.name.value}' declares no operation, so nothing could perform it."))
-    (positivityErrors ++ visibilityErrors ++ signatureErrors ++ emptyEffects)
+    // An arrow-domain brace states what a definition hands its code, which only a native needs: a body hands what it
+    // computes, so a brace there could only restate or contradict it (R3, `docs/meta.md` §14).
+    val bodiedHanded     = sourceAstData.functionDefinitions
+      .filter(_.body.nonEmpty)
+      .flatMap(_.args.flatMap(_.handed))
+      .map(handed =>
+        Sourced
+          .outline(handed.brace)
+          .as("A definition with a body cannot state what it hands its code; only a body-less definition states it.")
+      )
+    (positivityErrors ++ visibilityErrors ++ signatureErrors ++ emptyEffects ++ bodiedHanded)
       .traverse_(message => Sourced.compilerError(message)) >>
       sourceAstData.namedImplementations
         .flatMap(NamedImplementationDesugarer.unpatterned)

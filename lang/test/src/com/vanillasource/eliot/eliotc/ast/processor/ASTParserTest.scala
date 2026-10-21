@@ -782,6 +782,19 @@ class ASTParserTest extends ProcessorTest(new Tokenizer(), new ASTParser()) {
       .asserting(_ shouldBe Seq(("t", Seq("closed(0, 9)"))))
   }
 
+  it should "leave a meta brace after a code parameter's arrow domain to that parameter, by the arrow it follows" in {
+    runEngineForHandedMetas("def f(c uses *: A {a} => S {stored(a)} => R, d uses *: B => R) uses *: R").asserting(
+      _ shouldBe Seq(("c", Seq((0, "A", Seq("a")), (1, "S", Seq("stored(a)")))), ("d", Seq.empty))
+    )
+  }
+
+  it should "leave the arrows of a code parameter's type without its braces" in {
+    runEngineForFunctionArgTypes("def f(c uses *: A {a} => R) uses *: R").asserting(
+      _.collect { case ("f", Expression.FlatExpression(parts)) => parts.map(_.value.render) } shouldBe
+        Seq(Seq("A", "=>", "{} R"))
+    )
+  }
+
   private def runEngine(source: String): IO[Map[CompilerFactKey[?], CompilerFact]] =
     runGenerator(source, SourceAST.Key(file)).map(_._2)
 
@@ -891,6 +904,22 @@ class ASTParserTest extends ProcessorTest(new Tokenizer(), new ASTParser()) {
       results.values
         .collect { case SourceAST(_, Sourced(_, _, AST(_, functions, _, _, _))) =>
           functions.flatMap(_.args.map(arg => (arg.name.value, arg.meta.map(_.value.render))))
+        }
+        .toSeq
+        .flatten
+    }
+
+  private def runEngineForHandedMetas(source: String): IO[Seq[(String, Seq[(Int, String, Seq[String])])]] =
+    for {
+      results <- runEngine(source)
+    } yield {
+      results.values
+        .collect { case SourceAST(_, Sourced(_, _, AST(_, functions, _, _, _))) =>
+          functions.flatMap(
+            _.args.map(arg =>
+              (arg.name.value, arg.handed.map(h => (h.argument, h.domain.value.render, h.brace.map(_.value.render))))
+            )
+          )
         }
         .toSeq
         .flatten

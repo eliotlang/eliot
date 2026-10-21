@@ -184,6 +184,92 @@ class DerivedMetaTransferIntegrationTest extends FullIntegrationTest {
     ).asserting(_ shouldBe "9")
   }
 
+  // Within one derived call a value built there keeps its fields (`{built}`, `fieldOf`, `docs/meta.md` §13.4), so a
+  // `match` on it runs only the arm its constructor selects, handed the very field.
+  private val unbox = "data Box(v: Int)\ndef unbox(x: Int): Int = Box(x) match { case Box(y) -> y }\n"
+
+  "a field read of a value built in the same derived call" should "be the field itself" in {
+    accepts(unbox, "unbox(5)", "5")
+  }
+
+  it should "reject a field that does not fit" in {
+    rejects(unbox, "unbox(200)")
+  }
+
+  private def picked(b: Int) = s"data AB = A | B\ndef pick(x: AB): Int = x match { case A -> 10 case B -> $b }\ndef pickA: Int = pick(A)\n"
+
+  "a match on a value built in the same derived call" should "run only the arm its constructor selects" in {
+    accepts(picked(200), "pickA", "10")
+  }
+
+  // A cell is followed through the one call that made it (`docs/meta.md` §11.1): `putState` writes it and `state`
+  // reads it, each through the field of the handle `runStateToPair` built over it, and the discharger hands back what it
+  // held when its code returned.
+  private val counter =
+    """|def counter uses State[Int]: Int = {
+       |  putState(add(state, 1))
+       |  state
+       |}
+       |""".stripMargin
+
+  "a cell" should "hold what was last written into it" in {
+    accepts(counter, "runStateToFinalState(3, counter)", "4")
+  }
+
+  it should "reject what was written into it when that does not fit" in {
+    rejects(counter, "runStateToFinalState(127, counter)")
+  }
+
+  it should "hand a read what the write before it wrote" in {
+    accepts(counter, "runStateToValue(3, counter)", "4")
+  }
+
+  it should "join what each arm wrote" in {
+    accepts("", "runStateToFinalState(0, fold(true, putState(5), putState(9)))", "5")
+  }
+
+  it should "reject when one arm wrote what does not fit" in {
+    rejects("", "runStateToFinalState(0, fold(true, putState(5), putState(200)))")
+  }
+
+  // A frame collects what leaves through it: `raise` exits through the frame `runThrow` made, reached through the field
+  // of the handle `escaping`, and `catch`'s handler is handed what the exits carried — or is not run at all.
+  "a frame" should "hand the handler what was raised" in {
+    accepts("", "catch(raise(\"abc\"), (e: String) -> length(e))", "3")
+  }
+
+  it should "reject what the handler makes of a raise when that does not fit" in {
+    rejects("", "catch(raise(\"abc\"), (e: String) -> add(length(e), 200))")
+  }
+
+  it should "leave a handler nothing exits to unrun" in {
+    accepts("", "catch(5, (e: String) -> 200)", "5")
+  }
+
+  // Where the body may both return and raise, the escape's result is a `Left` or a `Right`, and joining the two needs
+  // a meta of an `Either`'s fields (`docs/meta.md` §13, T5): until then it is not computed, and the demand cannot be
+  // proven rather than wrongly decided.
+  it should "leave a body that may both return and raise unknown, until an Either carries its fields' metas" in {
+    compileForErrors(useByte + "def main uses Console: Unit = printLine(show(useByte(catch(fold(true, 5, raise(\"no\")), (e: String) -> 6))))")
+      .asserting(_ should include("Cannot prove the precondition of 'Test::useByte'"))
+  }
+
+  // `runStateToPair(s, runThrow(c))` keeps the state across a `raise`: the frame is left with the cell as it was.
+  private val raising =
+    """|def raising uses State[Int], Throw[String]: Int = {
+       |  putState(STATE)
+       |  raise("no")
+       |}
+       |""".stripMargin
+
+  "a cell around a frame" should "keep what was written before the exit" in {
+    accepts(raising.replace("STATE", "5"), "runStateToFinalState(0, catch(raising, (e: String) -> 1))", "5")
+  }
+
+  it should "reject what was written before the exit when that does not fit" in {
+    rejects(raising.replace("STATE", "200"), "runStateToFinalState(0, catch(raising, (e: String) -> 1))")
+  }
+
   // A call one of whose arguments does not return is never made, so what it demands is vacuous there (§12, decision C).
   "a demand on a call that is never made" should "not be checked" in {
     compileAndRun(aborting("useByte(add(1000, abort))", "g(true) else 3")).asserting(_ shouldBe "3")

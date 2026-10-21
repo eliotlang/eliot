@@ -1,3 +1,5 @@
+import eliot.compiler.Meta
+
 // Merge copy of the base declaration so the implementation below can resolve it (name resolution is per-file). The
 // merge verifies this copy agrees with the abstract declaration in the stdlib layer, which carries the documentation.
 effect Dep[X] {
@@ -31,9 +33,10 @@ type DepCell[S]
  * `eliot.effect.State`'s leaf of the same shape and purpose; per-module `private` means each module declares its own.
  * Implemented by the backend; it gives no effect.
  */
-private def withCellInternal[S, A, R](initial: S, body uses *: DepCell[S] => A, combine uses *: A => S => R) uses *: R
+private def withCellInternal[S, A, R](initial: S, body uses *: DepCell[S] {cell(initial)} => A,
+                                      combine uses *: A {body} => S {stored(body)} => R) uses *: R {combine}
 
 /**
  * The content of `cell`. Implemented by the backend.
  */
-private def readCellInternal[S](cell: DepCell[S]): S
+private def readCellInternal[S](cell: DepCell[S]): S {content(cell)}

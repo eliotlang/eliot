@@ -68,6 +68,8 @@ object DataDefinitionDesugarer {
       definition: DataDefinition,
       ctor: DataConstructor
   ): (FunctionDefinition, RoleHint) = {
+    // A constructor states that its call is the value it built (`docs/meta.md` §11.1), which is what lets the channel
+    // follow a value into a `match` with no rule about `match`.
     val fd   = FunctionDefinition(
       ctor.name.map(n => QualifiedName(n, Qualifier.Default)),
       definition.genericParameters,
@@ -76,7 +78,8 @@ object DataDefinitionDesugarer {
         definition.name,
         definition.genericParameters.map(gp => typeExpr(gp.name))
       ),
-      None
+      None,
+      returnMeta = Seq(metaPrimitive(ctor.name, "built", Seq.empty))
     )
     val hint = RoleHint.ValueConstructor(QualifiedName(definition.name.value, Qualifier.Type), ctor.fields.size)
     (fd, hint)
@@ -206,11 +209,17 @@ object DataDefinitionDesugarer {
           returnMeta = Seq(handlers.map(handler => reference(handler.name)).reduceRight(joined))
         )
 
-        // A braced field is stated of what the eliminator hands the handler (`docs/meta.md` §4.5): the constructor proved it.
-        val handed = ctors.zip(handlers).flatMap { (ctor, handler) =>
-          ctor.fields.zipWithIndex.collect {
-            case (field, index) if field.meta.nonEmpty =>
-              MetaParameterDesugarer.handedStatement(handleCasesDef, handler.name, index, field.meta)
+        // What the eliminator hands each argument of each handler (`docs/meta.md` §4.5, §11.1): the field of `value` when
+        // the handler's constructor built it, and nothing — the handler does not run — when another one did. A braced
+        // field is stated where what built `value` is not known: the constructor proved it.
+        val constructorTypeArgs = Option.when(definition.genericParameters.nonEmpty)(
+          definition.genericParameters.map(gp => typeExpr(gp.name))
+        )
+        val handed              = ctors.zip(handlers).flatMap { (ctor, handler) =>
+          val constructor = ctor.name.as(SourceExpression.FunctionApplication(None, ctor.name, None, Seq.empty))
+          val arguments   = if (ctor.fields.isEmpty) Seq(Seq.empty) else ctor.fields.map(_.meta)
+          arguments.zipWithIndex.map { (brace, index) =>
+            MetaParameterDesugarer.fieldStatement(handleCasesDef, s.as("value"), handler.name, index, constructor, brace)
           }
         }
 
@@ -251,6 +260,23 @@ object DataDefinitionDesugarer {
   /** A reference to the parameter `name`. */
   private def reference(name: Sourced[String]): Sourced[SourceExpression] =
     name.as(SourceExpression.FunctionApplication(None, name, None, Seq.empty))
+
+  /** A primitive of `eliot.compiler.Meta` applied to `arguments`, named by its module so the data's own module needs no
+    * import of it.
+    */
+  private def metaPrimitive(
+      at: Sourced[?],
+      name: String,
+      arguments: Seq[Sourced[SourceExpression]]
+  ): Sourced[SourceExpression] =
+    at.as(
+      SourceExpression.FunctionApplication(
+        Some(at.as(WellKnownTypes.metaPrimitiveFQN(name).moduleName.show)),
+        at.as(name),
+        None,
+        arguments
+      )
+    )
 
   /** `eliot.compiler.Meta::joined(a, b)`, named by its module so the data's own module needs no import of it. */
   private def joined(a: Sourced[SourceExpression], b: Sourced[SourceExpression]): Sourced[SourceExpression] =

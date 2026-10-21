@@ -1,3 +1,5 @@
+import eliot.compiler.Meta
+
 // Merge copy of the base declaration so the implementation below can resolve it (name resolution is per-file).
 effect State[S] {
    def state: S
@@ -43,14 +45,15 @@ type StateCell[S]
  *
  * It gives no effect: what runs on the cell is the `with` its caller writes (`docs/effects.md` D25).
  */
-private def withCellInternal[S, A, R](initial: S, body uses *: StateCell[S] => A, combine uses *: A => S => R) uses *: R
+private def withCellInternal[S, A, R](initial: S, body uses *: StateCell[S] {cell(initial)} => A,
+                                      combine uses *: A {body} => S {stored(body)} => R) uses *: R {combine}
 
 /**
  * The content of `cell`. Implemented by the backend.
  */
-private def readCellInternal[S](cell: StateCell[S]): S
+private def readCellInternal[S](cell: StateCell[S]): S {content(cell)}
 
 /**
  * Replace the content of `cell`. Implemented by the backend.
  */
-private def writeCellInternal[S](cell: StateCell[S], s: S): Unit
+private def writeCellInternal[S](cell: StateCell[S], s: S): Unit {store(cell, s)}
