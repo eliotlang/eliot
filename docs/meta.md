@@ -10,6 +10,9 @@ Status (2026-10-21): **two domains shipped, R2 and R3 armed, the interpretation 
 Of Part II, T1 (the gap mechanics), T2 (⊥), T3 (frames and cells) and T4 (loops) are built (§17). Where the work
 stopped, and how to continue it, is §18.1.
 
+**One hole in the design is open (§8.1): custom metas.** A program cannot yet declare meta-information for its own
+`data` types, and it should be able to.
+
 This document replaces three: `total-meta-transfers.md` (the rules and the interpretation), `string-length-meta.md`
 (the `String` size domain) and `structural-meta.md` (the P6 design). Their full text is at `2a66009a`, and §21 maps
 their section numbers, which older commits and notes cite, to this one.
@@ -182,8 +185,8 @@ came from. Every one §10 lists states since T4; removing the exemption finds on
 **R3: a bodied value derives, and may not state.** A brace on a value with an Eliot body is an error, read after the
 layer merge (`MonomorphicValue.runtime`). That makes a brace in one layer over a body in another the same check as
 both in one declaration. A brace therefore lives only on a native leaf, so **a user module cannot author a transfer**
-(it declares no natives). R2 and R3 are the two arms of `MetaTransferAccountingProcessor`, and both judge the
-declaration (`OperatorResolvedValue`).
+(it declares no natives). That consequence is a hole, not a goal (§8.1). R2 and R3 are the two arms of
+`MetaTransferAccountingProcessor`, and both judge the declaration (`OperatorResolvedValue`).
 
 **R4: there is no undefined meta.** A top is stated, never an omission (§1).
 
@@ -543,6 +546,67 @@ it, which is what Part II finds.
 
 The `eliot-code` skill tells users what a range is derived through and what is not computed today. It was probed
 against the tree, not taken from this document. Update it when a row closes.
+
+### 8.1 A hole in the design: custom metas
+
+The rows above are metas the channel does not compute yet. This one is a meta nobody can **declare**.
+
+> **Required (Robert, 2026-10-22): custom metas should be possible.** A program defines meta-information for its own
+> `data` types: it implements `Meta` for a domain of its own, and describes how a value's meta is calculated.
+> Everything else (deriving it through bodies, joining it at branches, widening it in loops, demanding it with `where`
+> or a brace) is the channel's, as for `range` and `size`.
+
+**Today nothing but the `Meta` instance can be written.** Probed at `e5fe6e94` with a `Sign` domain
+(`data Sign = Negative | Zero | Positive | AnySign`, with `Eq[Sign]`):
+
+| Attempt | Result |
+|---|---|
+| `implement Meta[Sign] { def join… def widen… }` | Compiles, and is inert: no type can carry a `Sign`. |
+| `data Temperature {sign: Sign}(degrees: Int)` | Parse error. Only `type` parses a slot brace (`TypeAliasDefinition`); `DataDefinition` has none. |
+| `type Celsius {sign: Sign} = Int` | Parses, and the slot is dead. A meta type is read off the *evaluated* type (§4.1), so a `Celsius` has `Int$Meta`, and `sign(c)` in a `where` is "Type mismatch. Expected: Celsius$Meta, Actual: Int$Meta". |
+| `type Reading {sign: Sign}` and a body-less `def readSensor: Reading {Positive}` | "Function not implemented." A slotted *abstract* type and the leaves that state it (R2) need a platform layer, which a user module is not. |
+| `def warm: Temperature {Positive} = Temperature(5)` | R3: a bodied value derives and may not state. |
+
+**Why it is a hole and not a rule.** Two decisions produce it, and neither was taken to forbid custom metas:
+
+- **R3** (§3) keeps a statement off a bodied value because the compiler can see the body. Its consequence, that *"a
+  user module cannot author a transfer"*, was recorded as a consequence, never decided as a goal.
+- **§13.6** gives a `data` value's structural meta no surface, so the generated records may be named freely. It says
+  nothing about a meta a `data` type declares beyond its fields.
+
+The user documentation says the opposite of the requirement today, accurately for the tree: the site's *Under the
+hood* chapter (`eliotlang.github.io`, `_docs/meta-domains.md`) says a program cannot add a new kind of
+meta-information, and why. It changes when this closes.
+
+**A direction, not decided.** The supplier of a `data` value is its **constructor**, and a constructor is already a
+body-less leaf that states (§13.4: `{built(…)}`, written by the data desugarer). So a user-written statement on a
+constructor fits R2 and R3 rather than bending them. It sits exactly where §3.3 puts a statement: where the compiler
+cannot see the supplier, since nothing but the generated constructor builds the value. A sketch:
+
+```eliot
+data Temperature(degrees: Int) {sign: signOf(range(degrees))}
+```
+
+Every bodied function building a `Temperature` then derives its sign through the constructor, a `match` reads it
+back, branches join it with the user's `Meta[Sign]`, and a `where` reads `sign(t)`. No new rule enters the
+interpretation.
+
+**Open questions:**
+
+- **The slot beside the structure.** A `data` meta is already the structure of §13.1: reach, then field metas. A
+  declared slot is a second component. Is the meta a pair (structure, slots), joined component-wise, the slots
+  through the user's instances? Or is a declared slot the *only* meta, replacing the structure? The latter would lose
+  the field metas T5 carries.
+- **Trust.** Every statement today is a platform's axiom (§3.2). A constructor statement would be the first a user
+  writes. A wrong one cannot mis-lay-out a value, since representation reads only the `Int` range (§7). It can admit a
+  program whose user-written `where` is false. Is it trusted like a leaf's, or checked, and checked against what?
+- **Sums.** One statement per constructor, each over its own fields; their join is the user's.
+- **Generic `data`.** `MetaConstructorDesugarer` does not thread a type's generic parameters onto its meta structure
+  yet, so `data Box[A](…) {…}` needs that first.
+- **Slot names.** A slot generates an accessor in the type's own module and namespace (§2.2), so a slot named like a
+  field or a function in the same module collides. The meta-accessor namespace (§18, open) removes that.
+- **A slotted abstract `type` in a user library**, for platforms to implement, is a separate question: it needs a
+  layer, not just a declaration.
 
 ---
 
@@ -961,6 +1025,9 @@ read one either, since the generated accessors are in no user's scope. Structura
 through a data value. It is observed only through that slotted type's `where` or brace downstream. That is also why
 the generated records may be named freely: no user code can depend on their shape.
 
+A meta a `data` type would declare *beyond* its fields is not structural meta, and has no spelling at all yet. That is
+the hole of §8.1.
+
 ### 13.7 Layers
 
 A data type's meta is generated from its **compiler-pool** declaration: the jvm layer's (borrowed), or the compiler
@@ -1228,6 +1295,12 @@ cache once kept a stale companion across a change and hid a brace that did not e
   code reads a fixed number of levels, one `match` each. So a precise meta through such a type buys little before the
   fold, and the fold is what decides how a structure that reaches itself is summarised. Both wait on `List` carrying
   its size, the domain T6 starts. G is not reversed: a field typed by the type itself folds as it says.
+
+**Open, required:**
+
+- **Custom metas** (§8.1). A program must be able to declare meta-information for its own `data` types. Robert,
+  2026-10-22: *"custom metas should be possible"*. The design is open; the constructor statement is the direction
+  §8.1 sketches, and the slot beside the structure and trust are its questions.
 
 **Open, not blocking anything:**
 
