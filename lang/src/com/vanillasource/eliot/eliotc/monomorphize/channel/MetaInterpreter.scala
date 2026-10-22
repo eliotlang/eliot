@@ -63,8 +63,8 @@ import scala.annotation.tailrec
   * Every loop lives in a native, which states it (`looped`, `endless`), and its fixpoint is made finite by the meta
   * type's own widening (§11.2). The [[interpretationBudget]] is therefore not what makes this terminate — it is the §5.3 fail-safe against *cost*: a diamond-shaped call DAG re-interpreted per
   * path is exponential even though each path is acyclic. The budget is a step count threaded through the whole
-  * derivation of one call node, and exhausting it yields **absence**, which is sound ("I know nothing" is always true)
-  * and never a wrong answer.
+  * derivation of one call node, and exhausting it is a **compiler limit** (decision I): [[metaOfCall]] answers that
+  * it ran out, never a value, and the stamping walk reports it at the call.
   *
   * **Higher-order through closures** (§5.2). A function value is a [[Value.Closure]] — the function-typed node and the
   * environment it was written in — and is interpreted only when something applies it: a callee applying one of its own
@@ -202,8 +202,14 @@ object MetaInterpreter {
   private case class Run(budget: Int, fresh: Int, store: Store) {
     def spent: Run = copy(budget = budget - 1)
 
-    /** The budget is spent, so nothing more is followed: any cell may be written and any frame left through. */
-    def exhausted: (Run, Value) = (copy(budget = 0, store = store.tainted), Value.unknown)
+    /** The budget is spent, so nothing more is followed: any cell may be written and any frame left through. A budget
+      * below zero marks the run as cut short, which [[metaOfCall]] reads, since a budget of exactly zero may only mean
+      * the last step was taken.
+      */
+    def exhausted: (Run, Value) = (copy(budget = -1, store = store.tainted), Value.unknown)
+
+    /** Whether the budget ran out before the interpretation finished. */
+    def cutShort: Boolean = budget < 0
 
     /** Code the interpretation does not follow was handed `arguments`, so whatever frame or cell they hold may have
       * been reached.
@@ -222,30 +228,33 @@ object MetaInterpreter {
 
   /** The §5.3 cost fail-safe: the number of interpretation steps one call node's derivation may spend, across depth
     * *and* fan-out together (each node visited costs one, and the budget is threaded through siblings rather than
-    * reset). Exhaustion yields absence, never a wrong answer, so the only thing a small budget costs is precision on a
-    * deep call DAG. Memoization on `(vfqn, typeArgs, argMetas)` (§5.3) is the precision follow-on if this is ever
-    * observed to bind in practice; a hard step count is the stronger guarantee of the two and is what must be here.
+    * reset). Running out of it is a compiler limit, reported at the call (decision I, §5.3), never a value handed on.
+    * Memoization on `(vfqn, typeArgs, argMetas)` (§5.3) is the follow-on if this is ever observed to bind in practice;
+    * a hard step count is the stronger guarantee of the two and is what must be here.
     *
     * It was 256 until loops (T4): a loop runs its code up to about four times — joined, widened, and once more to see
     * it stable — and an endless loop around a cell and a frame (`forever` over `putState` and `raise`) took more than
     * 256 steps. Four times as many changed no example's jar and no example's compile time.
     */
-  private val interpretationBudget: Int = 1024
+  val interpretationBudget: Int = 1024
 
   /** The meta of an ordinary call: the callee **states** its transfer (a native leaf — reduce the companion), or it
     * **derives** one from its body (everything else — interpret it). `resultType` is the *call node's* own ground type,
     * which is what decides whether there is anything to derive at all: an untracked type's meta is the trivial `Unit`
     * (§1, meta is total on types but not structural), so a call returning one is skipped before any body is fetched.
     * That gate is what keeps the interpretation off the overwhelming majority of call nodes in a program.
+    *
+    * `None` when the derivation ran out of the [[interpretationBudget]]: what it got that far is not the call's meta,
+    * so it is not handed on (decision I, `docs/meta.md` §5.3).
     */
   def metaOfCall(
       callee: ValueFQN,
       typeArguments: Seq[GroundValue],
       resultType: GroundValue,
       arguments: Seq[Value]
-  ): CompilerIO[Value] =
+  ): CompilerIO[Option[Value]] =
     metaOf(callee, typeArguments, resultType, arguments, Run(interpretationBudget, 0, Store.empty))
-      .map((_, value) => settled(value))
+      .map((run, value) => Option.unless(run.cutShort)(settled(value)))
 
   /** What a walk hands the interpretation for an argument it walked: a function-typed `node` is a closure over
     * `captured`, what the walk knows of the parameters in scope; any other node is the `value` the walk computed for it.
@@ -813,8 +822,11 @@ object MetaInterpreter {
                   ).tupled
               next.flatMap { (nextAcc, cells) =>
                 val nextStore = Store(cells, frames)
-                if ((nextAcc == acc && nextStore == store) || after.budget <= 0)
+                if (nextAcc == acc && nextStore == store)
                   ended(initial.fold(Value.Never)(_ => nextAcc), nextStore, after.budget, after.fresh).pure[CompilerIO]
+                else if (after.budget <= 0)
+                  // Not stable, and no step is left to make it so: what the loop has so far is not its fixpoint.
+                  ended(Value.unknown, nextStore.tainted, -1, after.fresh).pure[CompilerIO]
                 else iterate(nextAcc, nextStore, after.budget, after.fresh, values, first = false)
               }
             }

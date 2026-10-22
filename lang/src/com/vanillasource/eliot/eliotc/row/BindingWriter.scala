@@ -50,8 +50,8 @@ import scala.collection.mutable
   *     not a capture by a value lambda, which would carry the code past the call that bound it.
   *
   * A `match` is lowered to lambdas before this phase: its arms are the author's code in place, so they are walked as
-  * code, not as the values their lowering makes them look like — a data `match`'s by its eliminator's `uses *`
-  * parameters, a type `match`'s by [[isMatchMachinery]].
+  * code, not as the values their lowering makes them look like — by the `uses *` parameters of the eliminator a data
+  * `match` lowers to, and of the `typeMatch` a type `match` lowers to.
   */
 object BindingWriter {
 
@@ -348,14 +348,6 @@ object BindingWriter {
     // A handle parameter (`docs/effects.md` D36) is not one of the definition's own, which its row's indices count.
     names.take(view.binders.size + view.parameters.size).takeRight(view.parameters.size).dropWhile(Handles.isParameter)
   }
-
-  /** Whether `callee` is `typeMatch` of a `TypeMatch` implementation, which a type `match` lowers to. Its arguments are
-    * the arms of the `match`, which the author wrote in place: code, whatever the lowering's types say. No user can
-    * name it, so nothing else is read as an arm. A data `match`'s eliminator needs no such reading: its handlers are
-    * `uses *` parameters, code by declaration.
-    */
-  private def isMatchMachinery(callee: ValueFQN): Boolean =
-    WellKnownTypes.isTypeMatchTypeMatch(callee)
 
   /** An implementation's type parameters its **pattern does not take**: `K` of `implement[T, K] keyed(f: T => K):
     * Source[T]`. Nothing where the implementation runs determines one, so it is refused at the marker
@@ -670,19 +662,10 @@ object BindingWriter {
     ): Sourced[OperatorResolvedExpression] =
       expr.value match {
         case FunctionLiteral(paramName, paramType, body) if arity > 0          =>
-          expr.as(FunctionLiteral(paramName, paramType, walkCode(body, scope.shadow(paramName.value), peeled(arity))))
+          expr.as(FunctionLiteral(paramName, paramType, walkCode(body, scope.shadow(paramName.value), arity - 1)))
         case ParameterReference(name) if scope.callbacks.contains(name.value) => expr
-        case _                                                                => walk(expr, scope, residual(arity))
+        case _                                                                => walk(expr, scope, arity)
       }
-
-    /** The arguments code is still called with once its written lambdas are peeled. A `match` arm's count is not known
-      * here ([[isMatchMachinery]]) and is `Int.MaxValue`, never decremented ([[peeled]]); its lambdas are the
-      * constructor's fields, so what stands past them is the arm's result: a value.
-      */
-    private def residual(arity: Int): Int = if (arity === Int.MaxValue) 0 else arity
-
-    /** The arity left once one lambda is peeled; an unknown one stays unknown. */
-    private def peeled(arity: Int): Int = if (arity === Int.MaxValue) arity else arity - 1
 
     /** A reference to a definition that `uses` an effect, given fewer arguments than it declares before its return
       * position: it performs nothing where it stands, and whatever receives it performs its effects later, wherever it
@@ -748,7 +731,6 @@ object BindingWriter {
         substitution: Map[String, OperatorResolvedExpression]
     ): Sourced[OperatorResolvedExpression] =
       universe.lookup(callee).flatMap(orv => rowSlot(orv, index).map(orv -> _)) match {
-        case None if isMatchMachinery(callee) => walkCode(arg, scope, Int.MaxValue)
         case None                             =>
           universe.lookup(callee).flatMap(orv => callback(orv, index).map(orv -> _)) match {
             case Some((calleeOrv, cb)) =>

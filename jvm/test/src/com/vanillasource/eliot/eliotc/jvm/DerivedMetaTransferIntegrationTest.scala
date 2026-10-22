@@ -466,4 +466,15 @@ class DerivedMetaTransferIntegrationTest extends FullIntegrationTest {
         "def main uses Console: Unit = printLine(show(relay(1000)))"
     ).asserting(_ should include("precondition of 'Test::useByte' is not satisfied"))
   }
+
+  // Decision I (§5.3): a derivation that runs out of the interpretation's budget is an error at the call, never a meta
+  // handed on. Each `twice<n>` calls the one below it twice, so deriving `twice11` takes more than 2¹¹ steps.
+  private val deep =
+    "def twice0(x: Int): Int = x\n" +
+      (1 to 11).map(n => s"def twice$n(x: Int): Int = twice${n - 1}(twice${n - 1}(x))\n").mkString
+
+  "a derivation deeper than the step budget" should "be reported at the call it was asked for" in {
+    compileForErrors(useByte + deep + "def main uses Console: Unit = printLine(show(twice11(5)))")
+      .asserting(_ should include("Computing the meta-information of this call of 'twice11' takes more than 1024 steps."))
+  }
 }

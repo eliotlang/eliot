@@ -94,6 +94,31 @@ class RefinementChannelProcessor
     } yield RefinementTable(key.vfqn, key.typeArguments, result.records)
   }
 
+  /** The meta of the call at `node`: its callee's statement reduced, or its body interpreted ([[MetaInterpreter]]).
+    * Running out of the interpretation's budget is a compiler limit (decision I, `docs/meta.md` §5.3), reported here,
+    * at the call, and the node keeps no meta. This walk reports it because it is the one that asks for every call's
+    * meta exactly once; [[MetaDemandsProcessor]] reads the same call as unknown, which fails any demand on it.
+    */
+  private def metaOfCall(
+      node: Sourced[MonomorphicExpression],
+      vfqn: Sourced[ValueFQN],
+      typeArgs: Seq[GroundValue],
+      arguments: Seq[MetaInterpreter.Value]
+  ): CompilerIO[Option[GroundValue]] =
+    MetaInterpreter.metaOfCall(vfqn.value, typeArgs, node.value.expressionType, arguments).flatMap {
+      case Some(value) => value.known.pure[CompilerIO]
+      case None        =>
+        Sourced
+          .compilerError(
+            node.as(
+              s"Computing the meta-information of this call of '${vfqn.value.name.name}' takes more than " +
+                s"${MetaInterpreter.interpretationBudget} steps."
+            ),
+            Seq("The compiler follows every call a meta-information depends on, up to a fixed number of steps.")
+          )
+          .as(None)
+    }
+
   /** A definition's leading **handle** parameters (`docs/effects.md` D36) are walked through as the parameters they
     * are, not as a lambda: an effect reaches a body as a handle, which neither carries a meta nor makes the body a
     * lambda's, so a body taking only handles records exactly as one taking nothing (`main`).
@@ -143,14 +168,14 @@ class RefinementChannelProcessor
             // branch construct: which of the two applies is the callee's business, not this walk's.
             for {
               argResults <- args.traverse(walkFlow)
-              meta       <- MetaInterpreter.metaOfCall(
-                              vfqn.value,
+              meta       <- metaOfCall(
+                              node,
+                              vfqn,
                               typeArgs,
-                              node.value.expressionType,
                               args.zip(argResults).map((arg, result) =>
                                 MetaInterpreter.argument(arg, MetaInterpreter.Value.Meta(result.own), Map.empty)
                               )
-                            ).map(_.known)
+                            )
             } yield Flow(meta, argResults.flatMap(_.records) ++ recordAt(node, meta))
           case _ =>
             // Any other application (a `match`, a `typeMatch`, an applied lambda): the result is a ⊤ boundary, and so
@@ -170,9 +195,7 @@ class RefinementChannelProcessor
         // as a call's, because for a **nullary** def that is exactly what this is: a saturated call, spelled without
         // parentheses. A reference that is *not* saturated is a function value, whose type carries no meta, so the same
         // question answers ⊤ there without a special case.
-        MetaInterpreter
-          .metaOfCall(vfqn.value, typeArgs, node.value.expressionType, Seq.empty)
-          .map(value => Flow(value.known, recordAt(node, value.known)))
+        metaOfCall(node, vfqn, typeArgs, Seq.empty).map(meta => Flow(meta, recordAt(node, meta)))
 
       case MonomorphicExpression.ParameterReference(_) =>
         // A parameter arrives at the width of its boundary, whatever is known of its value.

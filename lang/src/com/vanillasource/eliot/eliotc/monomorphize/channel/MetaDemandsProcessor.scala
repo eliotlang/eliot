@@ -167,7 +167,7 @@ class MetaDemandsProcessor
         for {
           rejected <- rejectedAsValue(scope, node, vfqn.value)
           internal <- internalDemands(scope, node, vfqn.value, typeArgs, Seq.empty)
-          value    <- MetaInterpreter.metaOfCall(vfqn.value, typeArgs, node.value.expressionType, Seq.empty)
+          value    <- metaOfCall(vfqn.value, typeArgs, node.value.expressionType, Seq.empty)
         } yield Walked(Info.of(value), Info.of(value), internal.deferred, rejected ++ internal.violations)
       case _: MonomorphicExpression.FunctionApplication                    =>
         val (head, args) = MetaInterpreter.flatten(node)
@@ -181,7 +181,7 @@ class MetaDemandsProcessor
               own        <- if (made) ownDemands(scope, node, vfqn.value, typeArgs, walkedArgs) else Walked.nothing.pure[CompilerIO]
               internal   <- if (made) internalDemands(scope, node, vfqn.value, typeArgs, walkedArgs.map(_.info))
                             else Walked.nothing.pure[CompilerIO]
-              value      <- MetaInterpreter.metaOfCall(
+              value      <- metaOfCall(
                               vfqn.value,
                               typeArgs,
                               node.value.expressionType,
@@ -208,6 +208,20 @@ class MetaDemandsProcessor
               .map(walked => Walked.leaf(Info.unknown).andAll(walked))
         }
     }
+
+  /** The meta of a call, or unknown when its derivation ran out of the interpretation's budget, which fails any demand
+    * that reads it. The running out itself is reported at the call by [[RefinementChannelProcessor]] (decision I,
+    * `docs/meta.md` §5.3), which asks for every call's meta once, where this walk asks once per context.
+    */
+  private def metaOfCall(
+      callee: ValueFQN,
+      typeArguments: Seq[GroundValue],
+      resultType: GroundValue,
+      arguments: Seq[MetaInterpreter.Value]
+  ): CompilerIO[MetaInterpreter.Value] =
+    MetaInterpreter
+      .metaOfCall(callee, typeArguments, resultType, arguments)
+      .map(_.getOrElse(MetaInterpreter.Value.unknown))
 
   /** Walk the arguments of a call to `callee`. A lambda is walked under what the callee states it hands it
     * ([[MetaInterpreter.handedMetas]], `docs/meta.md` §4.5, §13.4) — a `match` arm's field binders, read out of the

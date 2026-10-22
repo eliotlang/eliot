@@ -1,14 +1,15 @@
 # Meta — the refinement channel
 
-Status (2026-10-21): **two domains shipped, R2 and R3 armed, the interpretation and in-context demands built** (Part I).
+Status (2026-10-22): **two domains shipped, R2 and R3 armed, the interpretation and in-context demands built** (Part I).
 **Completing totality is designed and decided, and partly built** (Part II):
 - every leaf states its meta, type-parameter results included;
 - what reaches a native through a frame, a cell or a loop is followed by the interpretation;
 - a value that is never produced is ⊥;
 - a `data` value carries the metas of its fields.
 
-Of Part II, T1 (the gap mechanics), T2 (⊥), T3 (frames and cells) and T4 (loops) are built (§17). Where the work
-stopped, and how to continue it, is §18.1.
+Of Part II, T1 (the gap mechanics), T2 (⊥), T3 (frames and cells), T4 (loops) and T5 (structural meta) are built,
+and of T6 every leaf now states and the step budget is a reported limit (§17). T6's `List` domain is drafted for
+sign-off (§17.1). Where the work stopped, and how to continue it, is §18.1.
 
 **One hole in the design is open (§8.1): custom metas.** A program cannot yet declare meta-information for its own
 `data` types, and it should be able to.
@@ -176,11 +177,11 @@ carries meta is known only once its type is ground. It reads the **evaluated** r
 own codegen, the same shape and reasoning as an undeclared effect. A leaf whose brace lists slots over a result that
 carries no meta is reported at the leaf.
 
-*Shipped with one exemption, reversed in Part II (§10):* a leaf whose result head is a **type parameter**
-(`exitInternal[K, A]: A`, `foldLeftInternal[A, B]: B`) is not checked, on the grounds that it forwards a meta rather
-than originating one. That is false for most of them, and those leaves are where the remaining not-computed metas
-came from. Every one §10 lists states since T4; removing the exemption finds one more, the generated `typeMatch[R]`
-(§10).
+**There is no exemption for a type-parameter result** (since 2026-10-22, §10). R2 shipped with one: a leaf whose
+result head was a type parameter (`exitInternal[K, A]: A`, `foldLeftInternal[A, B]: B`) was not checked, on the
+grounds that it forwards a meta rather than originating one. That was false for most of them, and those leaves are
+where the remaining not-computed metas came from. Every one states now, the generated `typeMatch[R]` last, and R2
+judges every body-less leaf at its instance's evaluated result type, whatever its declaration spells there.
 
 **R3: a bodied value derives, and may not state.** A brace on a value with an Eliot body is an error, read after the
 layer merge (`MonomorphicValue.runtime`). That makes a brace in one layer over a body in another the same check as
@@ -430,9 +431,12 @@ join their arms. When a handled statement exists (§4.5), the handler is applied
 - **The budget is a step count**, `interpretationBudget = 1024` per call node, threaded through depth *and* fan-out
   together. It was 256 until T4: a loop runs its code up to about four times, and `forever` over a `putState` and a
   `raise` took more than 256 steps. Four times as many changed no example's jar or compile time. A hard count bounds a diamond-shaped call DAG absolutely, and a cache would not: distinct argument metas
-  defeat its key. Today, when the budget runs out, the node is left with no meta, and a demand on it fails. That is
-  never a wrong answer, but it is a gap (§1). Part II makes the budget a compiler limit: running out of it is an error
-  naming the call, never a value handed on (decision I, §18).
+  defeat its key. **Running out of it is a compiler limit** (decision I, §18, built 2026-10-22): the derivation answers
+  that it ran out (`MetaInterpreter.metaOfCall` gives `None`, and a loop cut short before its fixpoint counts too),
+  and `RefinementChannelProcessor`, the walk that asks for every call's meta once, reports *"Computing the
+  meta-information of this call of 'f' takes more than 1024 steps"* at the call. `MetaDemandsProcessor` asks once per
+  context, so it reports nothing of its own: it reads the call as unknown, which fails any demand on it. What the
+  derivation had got to is never handed on.
 - **There is no type gate (since T3).** A call whose result type carried no meta used to be skipped before any body
   was fetched, which kept the interpretation off most call nodes. T3 removed it: a cell written by a call returning
   `Unit` (`putState`) must be followed, and so must a `Unit` call that never returns. Measured on a cold compile of
@@ -538,9 +542,9 @@ Each of these is a gap: fail-safe at every demand, and pinned by a test that cha
 | a `data` type recursive other than through a field of its own type | `Rose(kids: Option[Rose], value: Int)`, or `A(b: Option[B])` with `B(a: Option[A])`: the structural map has no finite meta type, so the value's meta is not computed | the recursive group of §13.3, deferred to the recursive-data fold (decision J, §18) |
 | the elements of a `List` | `foldLeft`'s `combine` is handed an element with no meta | `List` carrying its elements' meta (§13.3) |
 | a demand on a closure the walk cannot see applied | `applyTo(y -> useByte(y), 10)`; `useByte(f(x))` with `f` a parameter | a context that can carry a closure (a fact key holding a body and an environment), when a program needs it |
-| the step budget | a deep or wide derived DAG | a memo when observed, and exhaustion reported as an error (§5.3) |
 
-T5 closed the three rows above the `List` one: a field read out of a value the interpretation did not build, the join
+Decision I closed the step budget's row (2026-10-22): running out of it is an error, never a gap (§5.3). T5 closed the
+three rows above the `List` one: a field read out of a value the interpretation did not build, the join
 of two constructed values, and with them `if … else`. Each was a structure that could not carry what flows through
 it, which is what Part II finds.
 
@@ -678,7 +682,17 @@ the table missed is an error naming it. It was to wait on `foldLeftInternal`, wa
 `foldLeftInternal` states since T4. **Tried after T4, the check found a leaf the table missed**: the data desugarer's
 `typeMatch[R]`, the body-less member of every `data`'s type-level match implementation, which the backend generates
 and which reaches codegen at `R = String` (`ExamplesIntegrationTest3`, "match on type-level values"). It was put back,
-and stating `typeMatch` is now what removing the exemption waits on (T6).
+and stating `typeMatch` became what removing the exemption waited on.
+
+**Built 2026-10-22.** `typeMatch[R]` states `{joined(matchCase, elseCase)}`, as `handleCases` states the join of its
+handlers, and R2 judges every body-less leaf by its instance's evaluated result type: `forward[A](a: A): A` is reported
+at `A = Gauge`, and accepted once it states `{a}` (`MetaTransferAccountingProcessorTest`). Every jar is byte-identical.
+Stating the join took one change the plan did not list: `typeMatch`'s two handlers were value parameters, whose meta
+is a function's, so a companion could not join what they yield. They are code now (`uses *`, written with
+module-qualified `Function`, which is how a companion recognises the arrow it reads a yield off), as `handleCases`'s
+handlers are and as a `match` arm is. That deleted the row walk's special reading of a type `match`'s arguments as code
+whatever their types said (`BindingWriter.isMatchMachinery`). What `matchCase` is handed, a type argument of the
+matched type, has no handed statement, so its meta is not computed; no program reads one.
 
 ## 11. What reaches a native through a frame, a cell or a loop
 
@@ -1247,9 +1261,87 @@ cache once kept a stale companion across a change and hid a brace that did not e
   module. The generated structures also get no `TypeMatch` implementation and no eliminator transfer.
 - **T6: `List` carries its elements.** The parametric slot (§13.3), with the size domain. `foldLeftInternal` hands
   `combine` its element's meta, `typeMatch[R]` states (§10), and R2's exemption is removed: the last runtime leaf now
-  states.
+  states. **The leaf half is built (2026-10-22)**: `typeMatch[R]` states and the exemption is gone (§10), and decision
+  I with it (§5.3), every jar byte-identical across all 47 examples. The `List` domain is drafted in §17.1, for
+  sign-off before it is built.
 - **T7: the record.** This document's status, CLAUDE.md's refinement-channel paragraph, and `eliot-code`'s list of
   what is not computed today.
+
+### 17.1 T6: the list domain (draft, 2026-10-22, for sign-off)
+
+**Not decided.** This is the design T6 builds once its open points are taken. Nothing in it is built.
+
+`List` is the third domain, and the first whose meta holds **another type's meta**. Today a `List`'s meta is `Unit`,
+so a fold's element is not computed (§10), and nothing about how many elements a list has can be demanded.
+
+```eliot
+type List[A] {size: Interval[BigInteger], elements: Reach[MetaOf[A]]}
+def empty[A]: List[A]                                {closed(0, 0), Unreached}
+def append[A](list: List[A], element: A): List[A]    {size(list) + closed(1, 1), joined(elements(list), Reached(element))}
+private def foldLeftInternal[A, B](list: List[A], initial: B,
+                                   combine uses *: A {elementOf(elements(list))} => B {looped(initial, combine)} => B)
+   uses *: B {looped(initial, combine)}
+```
+
+- **`size`** is the size domain of §2.2, counted in elements. `empty` is `[0, 0]` and `append` adds one, exactly.
+- **`elements`** is the join of every element's meta, as a recursive `data`'s summary is (§13.3), and `Reach` makes
+  the empty list honest: it has no element, so its slot is `Unreached`, the join's identity, rather than an invented
+  bottom of `A`'s domain, which §18 forbids. `elementOf` is `reached(r, m -> m)`: a fold over a list nothing reached
+  hands its `combine` ⊥, so `combine` does not run, which is what a fold over an empty list does.
+- **What it buys.** A fold's element has a meta, so `list.foldLeft(0, e -> acc -> acc + e)` over `[1, 2, 3]` is bounded
+  by its elements, which closes §8's `List` row and the last open cell of §10's table. A `where` can demand a size (`where nonEmpty(size(list))`).
+  `List::size`, derived through the loop, is `atLeast(0)`, not exact: exactness waits on iterating a known count
+  (§18, open).
+
+**Open, to decide before building:**
+
+1. **Slot accessors move to the meta namespace** (§2.2, §18's "meta-accessor namespace"). `List::size` is a function,
+   so a `size` slot is "Name was already defined in this module". Proposal: a slot's accessor is generated in
+   `Qualifier.Meta` of the default namespace, and in code a meta companion holds (a brace, a `where`), a name resolves
+   to a parameter, then to a meta accessor, then to an ordinary value. Accessors are named only there today (`Int.els`,
+   `String.els`, the two `where` examples), so no spelling changes: a `where` still writes `size(text)`. In a brace an
+   ordinary `size` cannot be meant anyway, since its argument there is a meta, not a list. *Alternative:* a slot named
+   something free (`count`), with no resolver change. That leaves the debt §2.2 records for every later domain.
+   **Recommended: the namespace.**
+
+2. **How a slot names the meta of a type parameter.** §4.1 forbids spelling a meta type (`A$Meta`), and the channel,
+   not the declaration, knows what `A`'s meta type is. Proposal: a compile-track marker `MetaOf[A]` in
+   `eliot.compiler.Meta`, legal only in a slot, naming one of the type's own parameters. The desugarer turns each into
+   a binder of the meta structure and lists the parameters it names in a generated `List$Carried[A] = Function[A,
+   Unit]`, the device `$Fields` (§13.2) and `$Payload` (§4.1) already are. The channel instantiates it as it does a
+   structural meta: `metaTypeOf(List[Int])` is `List$Meta[Int$Meta]`. *Alternative:* no marker, and a slot type that
+   mentions a type parameter means its meta. Shorter, but a reading by position, and wrong for a value parameter
+   (`type Vec[N: Int]`). **Recommended: the marker.** It also gives §8.1's custom metas, and a `where` over elements, a
+   spelling to grow into (`def allBytes(r: Reach[MetaOf[Int]])`), once the evaluator can reduce it outside a slot.
+
+3. **How a native producing a list of a slotted type states its elements.** `argumentsInternal: List[String]` must
+   state a `String` meta inside `Reached(…)`, and §4.1's `constructor$` is the *result's* meta constructor only.
+   Natives affected: `argumentsInternal`, `split`, `words`, and the file holders `resultStrings`/`resultPaths`
+   (`Path` has no slots, so its element is `unit`). *(a)* Decompose them as T4 did `resultValue` (§11.3): a fold native
+   handing each element through a braced arrow domain (`step: B => String {closed(0, 2147483647)} => B`), and the list
+   built in Eliot with `append`. No new mechanism; the cost is a list built by copying appends where the JVM built it
+   once. *(b)* Pass the companion a constructor per carried meta type as well (`constructor$elements`), which needs a
+   brace spelling for it. **Recommended: (a)**, measured, with (b) as the fallback if the copies show.
+
+4. **The meta structure takes type parameters.** `MetaConstructorDesugarer` does not thread a type's parameters onto
+   its meta structure yet ("the only slotted type today has a concrete-domain single slot"). `List$Meta[M$A]` and its
+   `Meta` instance, `implement[M$A ~ Meta] Meta[List$Meta[M$A]]`, need it. No decision, only work.
+
+**What else changes.**
+
+- **Where the statements live.** `type List[A]` is declared in `lang`, `stdlib` and `jvm`. The slots go on the base's
+  declaration, as `String`'s do (`lang`'s `type String` is slotless). `empty`/`append`/`prepend` are declared in both
+  `lang` and `stdlib`, and a brace is a bodied companion, so it is stated in exactly one of them, the one owning the
+  slots, or it is "Has multiple implementations."
+- **R2 and the classification.** A slotted type with carried parameters is still slotted (R2 demands its leaves
+  state), and its meta type is applied: `declaresSlots` and `metaTypeOf` learn `$Carried` beside `$Fields`.
+- **Recursion through a list.** eliot-build's `Clause(children: List[Clause])` has a finite meta today only because a
+  list carries none. With T6 its meta type is infinite, the cycle guard declines it, and it is not computed (§13.3,
+  decision J). Fail-safe, and precision is lost only where nothing demands it today.
+- **Cost.** Measured as T5 was (§16): every list value gains a meta, and a nested list a nested one.
+
+**Order, once decided:** (1) and (4) first, each byte-identical; then the slots and the generic leaves (`empty`,
+`append`, `prepend`, `foldLeftInternal`); then (3)'s natives, which R2 reports one by one once `List` has slots.
 
 ## 18. Decisions
 
@@ -1284,6 +1376,7 @@ cache once kept a stale companion across a change and hid a brace that did not e
   the group. Shape stays the size domain's.
 - **H. An overlay `data` must agree with the runtime one** (§13.7), as an error.
 - **I. The step budget becomes a compiler limit** (§5.3): running out of it is an error naming the call, never a value.
+  **Built 2026-10-22.**
 
 **Decided 2026-10-22:**
 
@@ -1312,7 +1405,7 @@ cache once kept a stale companion across a change and hid a brace that did not e
 - **An interval intersection**, which `substring`'s index ceiling waits on (§2.2).
 - **A meta-accessor namespace** (`Qualifier.Meta` for slot accessors), owed to `List` (§2.2).
 
-### 18.1 Where this was left (2026-10-21)
+### 18.1 Where this was left (2026-10-22)
 
 Of Part II, T1 to T4 are built (2026-10-21) and the rest is a design. Every decision in §18 is
 taken: B on 2026-10-21 after the question whether ⊥ is a special value (it is not), then A and C–I as recommended.
@@ -1321,9 +1414,13 @@ second method of `ability Meta` (§11.2).
 
 **T5** (§17), structural meta, is built (2026-10-22) and measured against its baseline (§16). The memo is not added,
 since the interpretation's share of a compile did not move and no derivation came near the budget. The recursive group
-of §13.3 is not built: decision J (§18, 2026-10-22) defers it to the recursive-data fold. Decision I, the budget as a
-reported limit, which §17 tied to the memo, is not built either. Next is **T6**, `List` carrying its elements' meta,
-which also waits on stating the generated `typeMatch[R]` that removing R2's exemption found (§10).
+of §13.3 is not built: decision J (§18, 2026-10-22) defers it to the recursive-data fold.
+
+**T6's leaf half** is built (2026-10-22): `typeMatch[R]` states, R2 has no exemption left (§10), and decision I makes
+running out of the step budget an error (§5.3), byte-identical across every example. **Next is §17.1**, the `List`
+domain, whose four open points need a decision before it is built: the meta-accessor namespace, the `MetaOf` marker,
+how a native producing a list of a slotted type states its elements, and (no decision, only work) a meta structure
+taking type parameters.
 
 **The `Unit` question (2026-10-21), closed the same day.** Robert: a type declaring no meta gets `Unit` implicitly, and
 *"the rest of the machinery should not know that this was 'default'"*. T3 removed two places that knew: §5.3's type

@@ -299,7 +299,10 @@ object DataDefinitionDesugarer {
     *
     * Example: data Person[NAME: String](content: String) generates: implement TypeMatch[Person[NAME]] { type Fields[R]
     * \= Function[String, R] def typeMatch[R](obj: Type, matchCase: Function[String, R], elseCase: Function[Unit, R]): R
-    * }
+    * {joined(matchCase, elseCase)} }
+    *
+    * `typeMatch` is a runtime leaf whose result is its type parameter, so it states what it does, as every leaf does
+    * (`docs/meta.md` §10): it runs one of its two handlers, so its result is the join of what they yield.
     */
   private def createTypeMatch(definition: DataDefinition, implKey: String): Seq[FunctionDefinition] = {
     val s               = definition.name
@@ -318,9 +321,10 @@ object DataDefinitionDesugarer {
     val abilityQualifier = Qualifier.AbilityImplementation("TypeMatch", implKey, None)
 
     val matchCaseType = typeMatchHandlerType(definition, resultParamName)
-    val elseCaseType  = typeExpr(
-      s.as("Function"),
-      Seq(typeExpr(s.as("Unit")), typeExpr(s.as(resultParamName)))
+    val elseCaseType  = qualified(
+      s,
+      WellKnownTypes.functionDataTypeFQN,
+      Seq(qualified(s, WellKnownTypes.unitTypeFQN, Seq.empty), openResult(s, resultParamName))
     )
 
     // Body-less signature vessel with the default (unguarded) `true` guard in the return-type slot, as above.
@@ -345,33 +349,36 @@ object DataDefinitionDesugarer {
       definition.genericParameters :+ resultParam,
       Seq(
         ArgumentDefinition(s.as("obj"), typeExpr(s.as("Type"))),
-        ArgumentDefinition(s.as("matchCase"), matchCaseType),
-        ArgumentDefinition(s.as("elseCase"), elseCaseType)
+        ArgumentDefinition(s.as("matchCase"), matchCaseType, openRow = true),
+        ArgumentDefinition(s.as("elseCase"), elseCaseType, openRow = true)
       ),
       typeExpr(s.as(resultParamName)),
-      None
+      None,
+      returnMeta = Seq(joined(reference(s.as("matchCase")), reference(s.as("elseCase"))))
     )
 
     Seq(implMarker, fieldsTypeDef, typeMatchDef)
   }
 
-  /** Build the match case handler type for a type match. Zero generic params: Function[Unit, R]. Otherwise: curried
-    * Function[GP1.typeRestriction, Function[GP2.typeRestriction, ..., R]].
+  /** Build the match case handler type for a type match. Zero generic params: `Function[Unit, R]`. Otherwise: curried
+    * `Function[GP1.typeRestriction, Function[GP2.typeRestriction, ..., R]]`. Either way with the open row on the final
+    * codomain: a type `match`'s arm is code its author wrote in place, as a data `match`'s is. Every name is written by
+    * its module, as [[handlerType]]'s are, which is also how a meta companion recognises the arrow it reads the code's
+    * yield off.
     */
-  private def typeMatchHandlerType(definition: DataDefinition, resultParamName: String): Sourced[SourceExpression] =
-    if (definition.genericParameters.isEmpty) {
-      typeExpr(
-        definition.name.as("Function"),
-        Seq(
-          typeExpr(definition.name.as("Unit")),
-          typeExpr(definition.name.as(resultParamName))
-        )
-      )
-    } else {
-      definition.genericParameters.foldRight(typeExpr(definition.name.as(resultParamName))) { (gp, acc) =>
-        typeExpr(definition.name.as("Function"), Seq(gp.typeRestriction, acc))
-      }
-    }
+  private def typeMatchHandlerType(definition: DataDefinition, resultParamName: String): Sourced[SourceExpression] = {
+    val s       = definition.name
+    val domains =
+      if (definition.genericParameters.isEmpty) Seq(qualified(s, WellKnownTypes.unitTypeFQN, Seq.empty))
+      else definition.genericParameters.map(_.typeRestriction)
+    domains.foldRight(openResult(s, resultParamName))((domain, codomain) =>
+      qualified(s, WellKnownTypes.functionDataTypeFQN, Seq(domain, codomain))
+    )
+  }
+
+  /** The result `R` of a handler's arrow, under the open row (`uses *`) of code. */
+  private def openResult(at: Sourced[?], resultParamName: String): Sourced[SourceExpression] =
+    at.as(SourceExpression.EffectfulType(Seq.empty, typeExpr(at.as(resultParamName))))
 
   private def freshName(base: String, existingNames: Set[String]): String =
     if (!existingNames.contains(base)) base

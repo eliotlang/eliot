@@ -8,7 +8,8 @@ import com.vanillasource.eliot.eliotc.plugin.LangProcessors
 /** R2 + R3 enforcement (docs/meta.md §3), the two halves of one rule:
   *
   *   - **R2** — a **body-less** value (a native leaf) that produces a meta-carrying type must **state** a `^Meta`
-  *     transfer; a leaf whose return is a type parameter (a forwarded, not originated, meta) is exempt.
+  *     transfer, a leaf whose return is a type parameter included, at every instantiation where it is one
+  *     (`docs/meta.md` §10).
   *   - **R3** — a **bodied** value derives its transfer from its body and may therefore **not** state one. A `where`
   *     precondition is untouched by this: it is a stated contract, never derived, and its `^Where` companion is a
   *     different name.
@@ -139,11 +140,17 @@ class MetaTransferAccountingProcessorTest extends ProcessorTest(LangProcessors()
     }
   }
 
-  "a body-less leaf whose return is a type parameter" should "be exempt even at a meta-carrying instantiation" in {
+  "a body-less leaf whose return is a type parameter" should "be rejected at a meta-carrying instantiation" in {
     runGenerator(prelude + "def forward[A](a: A): A", accountingKey("forward", Seq(gauge)), ambientStubsWith()).map {
-      case (errors, facts) =>
+      case (errors, _) => errors.map(_.message).mkString("\n") should include(missingTransfer)
+    }
+  }
+
+  it should "be accepted at a meta-carrying instantiation when it states what it forwards" in {
+    runGenerator(prelude + "def forward[A](a: A): A {a}", accountingKey("forward", Seq(gauge)), ambientStubsWith())
+      .map { case (errors, facts) =>
         errors.map(_.message).mkString("\n") should not include missingTransfer
         facts.keySet should contain(accountingKey("forward", Seq(gauge)))
-    }
+      }
   }
 }

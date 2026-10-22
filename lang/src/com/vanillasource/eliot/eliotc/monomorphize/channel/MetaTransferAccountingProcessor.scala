@@ -31,15 +31,9 @@ import scala.annotation.tailrec
   * track), read *after* the layer merge, so §3.2's cross-layer case (the brace in one layer, the body in another) is
   * the same check and needs no separate mechanism.
   *
-  * R2's return-meta test uses the value's **declared** (pre-monomorphization) return type ([[OperatorResolvedValue]]),
-  * so the origination is distinguished from the pass-through:
-  *
-  *   - a **concrete return head** (`String::length : Int`) originates the meta — the leaf must state a `^Meta` transfer
-  *     for it, or it is a compile error at the leaf;
-  *   - a **type-parameter return head** (`foldLeftInternal[F[_], A, B] : F[B]`, `runId[A] : A`) does not originate a
-  *     meta — it forwards whatever its argument/instantiation carries — so it is **exempt**. Deriving such a
-  *     (higher-order) transfer is the meta-interpretation slice (§5), not this one. `docs/meta.md` §10 reverses this
-  *     exemption (decided, not built): such a leaf mostly forwards nothing, so it will state too.
+  * R2 reads the instance's **evaluated** result type, so a leaf returning a type parameter is judged at what each
+  * instantiation makes it: `typeMatch[R]` at `R = String` must state, exactly as `String::length` must. There is no
+  * exemption for a type-parameter result (`docs/meta.md` §10 reversed it): "forwarded" is a claim the leaf states.
   *
   * R3 needs no such test: a brace is illegal on a bodied value whatever it returns.
   *
@@ -83,25 +77,22 @@ class MetaTransferAccountingProcessor
       case _                 => declaresTransfer(mv.vfqn).flatMap(states => reportStated(mv).whenA(states))
     }
 
-  /** R2: a body-less leaf whose declared return head is a concrete meta-carrying type must state its transfer, else it
-    * is reported at the value. A type-parameter return head (a forwarded, non-originated meta) is exempt.
+  /** R2: a body-less leaf whose result carries meta-information must state its transfer, else it is reported at the
+    * value. That includes a result that is a type parameter (`exitInternal[K, A]: A`, `typeMatch[R]: R`): "forwarded"
+    * is a claim, so the leaf states it too (`docs/meta.md` §10).
     *
     * Whether the result carries meta is read from the **evaluated** result type — the instance's signature past as
     * many arrows as the declaration has parameters — never from the declared type's name, which for an alias
-    * (`type Byte = Int`) names a type declaring no meta structure and would exempt the leaf. Read the same way, a leaf
-    * whose brace lists slots over a result carrying no meta is reported too: there is no meta constructor to apply
-    * them to. A frame or cell statement lists no slots, whatever its result (`writeCellInternal`'s
-    * `Unit {store(cell, s)}`, [[MetaStatement]]).
+    * (`type Byte = Int`) names a type declaring no meta structure, and for a type parameter names none at all. Read the
+    * same way, a leaf whose brace lists slots over a result carrying no meta is reported too: there is no meta
+    * constructor to apply them to. A frame or cell statement lists no slots, whatever its result
+    * (`writeCellInternal`'s `Unit {store(cell, s)}`, [[MetaStatement]]).
     */
-  private def verifyStated(mv: MonomorphicValue, orv: OperatorResolvedValue): CompilerIO[Unit] = {
-    val view = OperatorResolvedExpression.SignatureView.of(orv.signature)
-    returnHead(view.returnType.value) match {
-      case OperatorResolvedExpression.ValueReference(typeName, _) =>
+  private def verifyStated(mv: MonomorphicValue, orv: OperatorResolvedValue): CompilerIO[Unit] =
+    resultHead(mv.signature, OperatorResolvedExpression.SignatureView.of(orv.signature).parameters.size) match {
+      case GroundValue.Structure(typeName, _, _) =>
         for {
-          metaCarrying   <- resultHead(mv.signature, view.parameters.size) match {
-                              case GroundValue.Structure(fqn, _, _) => MetaInterpreter.declaresSlots(fqn)
-                              case _                                => false.pure[CompilerIO]
-                            }
+          metaCarrying   <- MetaInterpreter.declaresSlots(typeName)
           statesTransfer <- declaresTransfer(mv.vfqn)
           statesSlots    <- if (statesTransfer)
                               (
@@ -109,17 +100,14 @@ class MetaTransferAccountingProcessor
                                 MetaStatement.of(RefinementChannelProcessor.metaCompanionFqn(mv.vfqn))
                               ).mapN((slots, statement) => slots && statement.primitive.isEmpty)
                             else false.pure[CompilerIO]
-          _              <- if (metaCarrying && !statesTransfer) reportMissing(mv, typeName.value)
-                            else if (!metaCarrying && statesSlots) reportSlotsWithoutMeta(mv, typeName.value)
+          _              <- if (metaCarrying && !statesTransfer) reportMissing(mv, typeName)
+                            else if (!metaCarrying && statesSlots) reportSlotsWithoutMeta(mv, typeName)
                             else ().pure[CompilerIO]
         } yield ()
-      case _                                                      =>
-        // A type-parameter (or literal) return head: the meta is forwarded from an argument/instantiation, not
-        // originated here — exempt, its (higher-order) transfer is the meta-interpretation slice (§5). Reversed by
-        // `docs/meta.md` §10, not yet built.
+      case _                                     =>
+        // A result that is no type structure — `Type` itself, or a function type — carries no meta to state.
         ().pure[CompilerIO]
     }
-  }
 
   /** The evaluated result type of a signature with `parameters` parameters: what remains past that many arrows. */
   @tailrec
@@ -128,12 +116,6 @@ class MetaTransferAccountingProcessor
       case Some((_, codomain)) if parameters > 0 => resultHead(codomain, parameters - 1)
       case _                                     => signature
     }
-
-  /** The ultimate application head of a (return) type expression — `F[B]` ⤳ `F`, `Int` ⤳ `Int`. */
-  private def returnHead(expr: OperatorResolvedExpression): OperatorResolvedExpression = expr match {
-    case OperatorResolvedExpression.FunctionApplication(target, _) => returnHead(target.value)
-    case other                                                     => other
-  }
 
   /** Whether this value declares a `^Meta` transfer — its [[RefinementChannelProcessor.metaCompanionName]] in its
     * module's compiler pool, exactly what
