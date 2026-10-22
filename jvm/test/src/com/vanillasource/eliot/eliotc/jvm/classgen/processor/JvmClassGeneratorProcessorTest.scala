@@ -54,17 +54,31 @@ class JvmClassGeneratorProcessorTest extends AsyncFlatSpec with AsyncIOSpec with
       _         <- Seq(
                      ModuleName(ModuleName.defaultSystemPackage, "Function") -> "type Function[A, B]",
                      ModuleName(ModuleName.compilerPackage, "Type")          -> "type Type",
-                     ModuleName(ModuleName.defaultSystemPackage, "Unit")     -> "type Unit",
+                     ModuleName(ModuleName.defaultSystemPackage, "Unit")     -> "type Unit\ndef unit: Unit",
                      // A synthesized `implement`/`data` marker's default `true` guard resolves to `eliot.lang.Bool::true`
                      // (ability-guards §2.3), so Bool must be loadable — as it always is in a real layer.
                      ModuleName(ModuleName.defaultSystemPackage, "Bool")     -> "type Bool\ndef true: Bool\ndef false: Bool",
                      ModuleName(ModuleName.defaultSystemPackage, "Implementation") -> "type Inferred\ntype Handed = Type",
                      ModuleName(ModuleName.defaultSystemPackage, "PatternMatch") -> "ability PatternMatch[T]",
-                     // Every constructor states `{built}` and every `match` eliminator hands `fieldOf`/`fieldOr`
-                     // (`docs/meta.md` §13.4), naming these by their module, as `Meta.els` declares them.
+                     // Every constructor states `{built(…)}` and every `match` eliminator hands `fieldOf`, over a
+                     // structural meta of `Reach` slots with its `Meta` instances (`docs/meta.md` §13), naming these
+                     // by their module, as `Meta.els` and `Reach.els` declare them.
                      ModuleName(ModuleName.compilerPackage, "Meta")              -> (
-                       "def built[D]: D\ndef fieldOf[V, C, D](value: V, constructor: C): D\n" +
-                         "def fieldOr[V, C, D](value: V, constructor: C, otherwise: D): D = otherwise"
+                       "ability Meta[D] {\ndef join(a: D, b: D): D\ndef widen(previous: D, next: D): D\n}\n" +
+                         "def joined[D ~ Meta](a: D, b: D): D = join(a, b)\n" +
+                         "def widening[D ~ Meta](previous: D, next: D): D = widen(previous, next)\n" +
+                         "def never[D]: D\ndef built[D](meta: D): D = meta\n" +
+                         "def fieldOf[V, C, D](value: V, constructor: C, read: D): D = read"
+                     ),
+                     ModuleName(ModuleName.defaultSystemPackage, "Reach")        -> (
+                       "import eliot.compiler.Meta\ndata Reach[M] = Unreached | Reached(meta: M)\n" +
+                         "implement[M ~ Meta] Meta[Reach[M]] {\n" +
+                         "def join(a: Reach[M], b: Reach[M]): Reach[M] = a match { case Unreached -> b case Reached(x) -> " +
+                         "b match { case Unreached -> a case Reached(y) -> Reached(join(x, y)) } }\n" +
+                         "def widen(previous: Reach[M], next: Reach[M]): Reach[M] = previous match { case Unreached -> next " +
+                         "case Reached(x) -> next match { case Unreached -> previous case Reached(y) -> Reached(widen(x, y)) } }\n}\n" +
+                         "def reached[M, D](reach: Reach[M], read: M => D): D = reach match { case Unreached -> never case Reached(m) -> read(m) }\n" +
+                         "def reachedThen[M, D](reach: Reach[M], handed: D): D = reach match { case Unreached -> never case Reached(_) -> handed }"
                      ),
                      ModuleName(ModuleName.defaultSystemPackage, "TypeMatch")    -> "ability TypeMatch[T] {\ntype Fields[R]\ndef typeMatch[R](value: Type, matched: Fields[R], notMatched: Function[Unit, R]): R\n}"
                    ).traverse { (moduleName, content) =>

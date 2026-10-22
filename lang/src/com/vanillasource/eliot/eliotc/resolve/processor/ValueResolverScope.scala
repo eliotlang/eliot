@@ -30,8 +30,17 @@ object ValueResolverScope {
   def isParameter(name: String): ScopedIO[Boolean] =
     StateT.get[CompilerIO, ValueResolverScope].map(_.parameters.contains(name))
 
+  /** The value `name` names: what the dictionary maps it to, or, for a name holding a `$`, the current module's value of
+    * that name. No user can write such a name (`$` is no identifier character), so it is one the compiler generated
+    * beside the code naming it, in the same module, and no dictionary carries it (`ModuleValueProcessor`): it would grow
+    * every value's fact by names only generated code uses.
+    */
   def getValue(name: QualifiedName): ScopedIO[Option[ValueFQN]] =
-    StateT.get[CompilerIO, ValueResolverScope].map(_.dictionary.get(name))
+    StateT
+      .get[CompilerIO, ValueResolverScope]
+      .map(scope =>
+        scope.dictionary.get(name).orElse(Option.when(name.name.contains('$'))(ValueFQN(scope.currentModule, name)))
+      )
 
   def getPrivateName(name: QualifiedName): ScopedIO[Option[ValueFQN]] =
     StateT.get[CompilerIO, ValueResolverScope].map(_.privateNames.get(name))

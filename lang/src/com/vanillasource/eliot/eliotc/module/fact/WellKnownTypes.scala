@@ -197,6 +197,20 @@ object WellKnownTypes {
   val metaWidenedFQN: ValueFQN =
     ValueFQN(ModuleName(compilerPackage, "Meta"), QualifiedName("widened", Qualifier.Default))
 
+  /** `eliot.compiler.Meta::widening[D ~ Meta](previous: D, next: D): D` — the `Meta` ability's own `widen` at a meta
+    * type a compiler-written instance holds only as a type parameter, which a structural meta's instance widens each slot
+    * with (`docs/meta.md` §13.2).
+    */
+  val metaWideningFQN: ValueFQN =
+    ValueFQN(ModuleName(compilerPackage, "Meta"), QualifiedName("widening", Qualifier.Default))
+
+  /** `eliot.lang.Reach` — the compile-track `data Reach[M] = Unreached | Reached(meta: M)` a structural meta holds one
+    * slot of per constructor (`docs/meta.md` §13.2), with the `reached`/`reachedThen` reads a `match` hands its handlers
+    * through.
+    */
+  def reachFQN(name: String, qualifier: Qualifier = Qualifier.Default): ValueFQN =
+    ValueFQN(ModuleName(defaultSystemPackage, "Reach"), QualifiedName(name, qualifier))
+
   /** `eliot.compiler.Meta::never[D]: D` — what a call that does not return states of its result (`docs/meta.md`
     * §12). The refinement channel recognises a stated transfer reducing to it as ⊥, never as a meta.
     */
@@ -244,6 +258,11 @@ object WellKnownTypes {
     * [[patternMatchAbilityName]].
     */
   val typeMatchAbilityName: String = "TypeMatch"
+
+  /** `Meta` — the ability a meta-information implements (`eliot.compiler.Meta`), which the compiler writes an instance
+    * of for every `data` type's structural meta (`docs/meta.md` §13.2).
+    */
+  val metaAbilityName: String = "Meta"
 
   /** The matcher method of [[typeMatchAbilityName]] — `typeMatch(value, matched, notMatched)`. */
   val typeMatchMethodName: String = "typeMatch"

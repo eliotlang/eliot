@@ -1,0 +1,13 @@
+/**
+ * Whether a constructor of a `data` type can have built a value, and if so the meta-information of
+ * the fields it built it with.
+ *
+ * A value of a `data` type carries one of these per constructor as its compile-time
+ * meta-information, so the compiler can follow what a value holds into the `match` that takes it
+ * apart: an arm whose constructor cannot have built the value does not run, and the fields an arm
+ * is handed carry what was known of them where the value was built. Only the compiler builds and
+ * reads one; a program never names it.
+ *
+ * The compiler platform declares it as data; no platform needs it at runtime.
+ */
+type Reach[M]

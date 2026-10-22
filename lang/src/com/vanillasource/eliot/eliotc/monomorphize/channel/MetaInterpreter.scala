@@ -2,7 +2,12 @@ package com.vanillasource.eliot.eliotc.monomorphize.channel
 
 import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.core.fact.Expression
-import com.vanillasource.eliot.eliotc.core.processor.{MetaCompanionLayout, MetaConstructorDesugarer, MetaParameterDesugarer}
+import com.vanillasource.eliot.eliotc.core.processor.{
+  MetaCompanionLayout,
+  MetaConstructorDesugarer,
+  MetaParameterDesugarer,
+  StructuralMetaDesugarer
+}
 import com.vanillasource.eliot.eliotc.module.fact.{
   ModuleName,
   QualifiedName,
@@ -96,17 +101,20 @@ object MetaInterpreter {
     case Cell(id: Int)
 
     /** A value a `data` constructor built, with its fields as the interpretation holds them: what a `match` on it reads,
-      * which is how a frame or a cell reaches the code using it, as a field of a handle.
+      * which is how a frame or a cell reaches the code using it, as a field of a handle. `meta` is its structural meta
+      * (`docs/meta.md` §13), what its constructor states of it, which is what is left of it once the call that built it
+      * returns.
       */
-    case Data(constructor: ValueFQN, fields: Seq[Value])
+    case Data(constructor: ValueFQN, fields: Seq[Value], meta: Option[GroundValue])
 
-    /** The meta this value is known to have. A closure, a frame, a cell and a constructed value have types declaring
-      * no meta, so theirs is the implicit default's ([[untrackedMeta]]); ⊥ is never materialised.
+    /** The meta this value is known to have. A closure, a frame and a cell have types declaring no meta, so theirs is
+      * the implicit default's ([[untrackedMeta]]); ⊥ is never materialised.
       */
     def known: Option[GroundValue] = this match {
-      case Meta(meta) => meta
-      case Never      => None
-      case _          => Some(untrackedMeta)
+      case Meta(meta)       => meta
+      case Data(_, _, meta) => meta
+      case Never            => None
+      case _                => Some(untrackedMeta)
     }
   }
 
@@ -207,7 +215,7 @@ object MetaInterpreter {
   /** Whether a value holds a frame or a cell: is one, has one in a field, or captured one. */
   private def holdsState(value: Value): Boolean = value match {
     case _: Value.Frame | _: Value.Cell => true
-    case Value.Data(_, fields)          => fields.exists(holdsState)
+    case Value.Data(_, fields, _)       => fields.exists(holdsState)
     case Value.Closure(_, env)          => env.values.exists(holdsState)
     case _                              => false
   }
@@ -267,14 +275,21 @@ object MetaInterpreter {
       Seq.empty
     )
 
-  /** Whether a concrete type declares meta-information — i.e. its module (in the compiler pool, where
-    * [[MetaConstructorDesugarer]] emits meta structures) declares its `T$Meta` structure. A slotless type declares
-    * none, so its meta is the trivial `Unit`. The one membership test three readers share: this object's [[metaTypeOf]]
-    * and its derivation gate, and [[MetaTransferAccountingProcessor]]'s R2.
+  /** Whether a concrete type declares **slots** — i.e. its module (in the compiler pool, where
+    * [[MetaConstructorDesugarer]] emits meta structures) declares its `T$Meta` structure and it is no `data` type's
+    * structural meta. Its meta is then what its slots declare, which a leaf returning it must state (R2,
+    * [[MetaTransferAccountingProcessor]]).
     */
-  def declaresMetaStructure(typeName: ValueFQN): CompilerIO[Boolean] =
+  def declaresSlots(typeName: ValueFQN): CompilerIO[Boolean] =
     getFactOrAbort(UnifiedModuleNames.Key(typeName.moduleName, Platform.Compiler))
-      .map(_.names.contains(metaStructureName(typeName)))
+      .map(names => names.names.contains(metaStructureName(typeName)) && !names.names.contains(fieldsName(typeName)))
+
+  /** Whether a concrete type is a `data` type carrying a **structural meta** (`docs/meta.md` §13): its module declares
+    * its field-types signature `T$Fields` ([[StructuralMetaDesugarer]]).
+    */
+  private def declaresFields(typeName: ValueFQN): CompilerIO[Boolean] =
+    getFactOrAbort(UnifiedModuleNames.Key(typeName.moduleName, Platform.Compiler))
+      .map(_.names.contains(fieldsName(typeName)))
 
   /** A parameter's **statement** (`docs/meta.md` §4.4): the companion stating the meta of the value at
     * parameter `parameter`, which is the `position`th of the `arity` its definition takes, handles included.
@@ -321,69 +336,132 @@ object MetaInterpreter {
   def statedMeta(callee: ValueFQN, calleeTypeArgs: Seq[GroundValue], statement: Statement): CompilerIO[Stated] =
     payloadTypes(callee, calleeTypeArgs, statement.arity).flatMap {
       case Some((parameters, _)) =>
-        parameters.traverse(metaTypeOf).flatMap { metaTypes =>
-          metaConstructorOf(metaTypes(statement.position)).flatMap {
-            case Some(constructor) =>
-              EscalatingReducer
-                .reduceApplied(
-                  statement.companion,
-                  calleeTypeArgs ++ metaTypes :+ constructor.valueType,
-                  Evaluator.groundToSem(constructor) +: Seq.fill(statement.arity)(notComputed)
-                )
-                .map {
-                  case Some(meta: GroundValue.Structure) => Stated.Meta(meta, metaTypes(statement.position))
-                  case _                                 => Stated.Unknown
-                }
-            case None              => (Stated.Untracked(parameters(statement.position)): Stated).pure[CompilerIO]
-          }
+        parameters.traverse(metaTypeOf(_)).map(_.sequence).flatMap {
+          case Some(metaTypes) =>
+            metaConstructorOf(metaTypes(statement.position)).flatMap {
+              case Some(constructor) =>
+                EscalatingReducer
+                  .reduceApplied(
+                    statement.companion,
+                    calleeTypeArgs ++ metaTypes :+ constructor.valueType,
+                    Evaluator.groundToSem(constructor) +: Seq.fill(statement.arity)(notComputed)
+                  )
+                  .map {
+                    case Some(meta: GroundValue.Structure) => Stated.Meta(meta, metaTypes(statement.position))
+                    case _                                 => Stated.Unknown
+                  }
+              case None              => (Stated.Untracked(parameters(statement.position)): Stated).pure[CompilerIO]
+            }
+          case None            => (Stated.Unknown: Stated).pure[CompilerIO]
         }
       case None                  => (Stated.Unknown: Stated).pure[CompilerIO]
     }
 
   /** What a body-less `callee` hands the code argument at parameter `position` when it runs it, as far as it can be
-    * read without running anything: per argument of that code's `functionType`, the meta a **handed** statement states
-    * of it, or ⊤ where none does ([[MetaParameterDesugarer.handedStatement]], `docs/meta.md` §4.5). The supplier is the
-    * callee, which the compiler cannot see, so the statement is axiomatic — the `match` eliminator's, for a braced field,
-    * holds because the constructor proved it. Each is reduced as a parameter statement is, plus the meta type of the
-    * argument it states, read off `functionType`, so a generic field is stated at its instantiation. A statement about
-    * a frame, a cell or a run (§14), or a field of a value the interpretation built (§11.1), says something only where
-    * the interpretation follows the call ([[runCode]]); here it is ⊤, except a braced field's, which is its brace.
+    * read without running anything, from `arguments`, what is known of the call's arguments: per argument of that
+    * code's `functionType`, what a **handed** statement states of it, or unknown where none does
+    * ([[MetaParameterDesugarer.handedStatement]], `docs/meta.md` §4.5). The supplier is the callee, which the compiler
+    * cannot see, so the statement is axiomatic. A `match` eliminator's is read as [[fieldHanded]] reads it, ⊥ for a
+    * handler that does not run. Any other is reduced as a parameter statement is, plus the meta type of the argument it
+    * states, read off `functionType`, so a generic field is stated at its instantiation. A statement about a frame, a
+    * cell or a run (§14) says something only where the interpretation follows the call ([[runCode]]); here it is
+    * unknown.
     */
   def handedMetas(
       callee: ValueFQN,
       calleeTypeArgs: Seq[GroundValue],
       position: Int,
-      functionType: GroundValue
-  ): CompilerIO[Seq[Option[GroundValue]]] = {
+      functionType: GroundValue,
+      arguments: Seq[Value]
+  ): CompilerIO[Seq[Value]] = {
     val domains = peel(functionType, functionType.functionArity).map(_._1).getOrElse(Seq.empty)
     handedStatementsOf(callee).flatMap { statements =>
       domains.indices.toList
         .traverse { argument =>
           statements.get((position, argument)) match {
-            case Some((companion, statement)) if reducible(statement) =>
-              handedMeta(
-                callee,
-                calleeTypeArgs,
-                companion,
-                statement.parameters.size,
-                domains(argument),
-                Seq.fill(statement.parameters.size)(notComputed)
-              )
-            case _                                                   =>
-              none[GroundValue].pure[CompilerIO]
+            case Some((companion, statement)) =>
+              statement.primitive match {
+                case Some(field: MetaStatement.Primitive.FieldOf) =>
+                  fieldHanded(callee, calleeTypeArgs, companion, statement, field, argument, domains(argument), arguments)
+                case None                                         =>
+                  handedMeta(
+                    callee,
+                    calleeTypeArgs,
+                    companion,
+                    statement.parameters.size,
+                    domains(argument),
+                    Seq.fill(statement.parameters.size)(notComputed)
+                  ).map(Value.Meta(_))
+                case Some(_)                                      => Value.unknown.pure[CompilerIO]
+              }
+            case None                         => Value.unknown.pure[CompilerIO]
           }
         }
         .map(_.toSeq)
     }
   }
 
-  /** Whether a handed statement says anything reduced on its own: one about frames, cells or a run says it only of a
-    * run, while a braced field's `fieldOr` reduces to its brace.
+  /** What a `match` eliminator hands argument `argument` of a handler, by its `fieldOf` statement (`docs/meta.md`
+    * §13.4): the very field when the interpretation built the scrutinee, ⊥ when it built it with another constructor;
+    * otherwise the statement reduced over the scrutinee's structural meta, which is the field's meta read out of its
+    * constructor's slot, ⊥ when that slot is unreached. Where the scrutinee's meta is not computed, a braced field is
+    * what its constructor states of it, which every construction proved (§4.5).
     */
-  private def reducible(statement: MetaStatement): Boolean = statement.primitive match {
-    case None | Some(_: MetaStatement.Primitive.FieldOr) => true
-    case _                                               => false
-  }
+  private def fieldHanded(
+      callee: ValueFQN,
+      calleeTypeArgs: Seq[GroundValue],
+      companion: ValueFQN,
+      statement: MetaStatement,
+      field: MetaStatement.Primitive.FieldOf,
+      argument: Int,
+      domain: GroundValue,
+      arguments: Seq[Value]
+  ): CompilerIO[Value] =
+    arguments.lift(field.value) match {
+      case Some(Value.Data(built, fields, _)) =>
+        (if (built == field.constructor) fields.lift(argument).getOrElse(Value.unknown) else Value.Never).pure[CompilerIO]
+      case Some(scrutinee)                    =>
+        scrutinee.known match {
+          case Some(meta) =>
+            handedMeta(
+              callee,
+              calleeTypeArgs,
+              companion,
+              statement.parameters.size,
+              domain,
+              statement.parameters.indices.map(index =>
+                if (index == field.value) Evaluator.groundToSem(meta) else notComputed
+              )
+            ).map(fromReduced)
+          case None       => fieldBrace(callee, calleeTypeArgs, field.constructor, argument).map(Value.Meta(_))
+        }
+      case None                               => Value.unknown.pure[CompilerIO]
+    }
+
+  /** What `constructor` states of its field `argument`, its parameter's statement (§4.5), at the type arguments of the
+    * eliminator `callee`'s scrutinee — a `data` type's constructors take its own type parameters — or nothing when the
+    * field is not braced.
+    */
+  private def fieldBrace(
+      callee: ValueFQN,
+      calleeTypeArgs: Seq[GroundValue],
+      constructor: ValueFQN,
+      argument: Int
+  ): CompilerIO[Option[GroundValue]] =
+    parameterStatements(constructor).flatMap {
+      _.find(_.position == argument) match {
+        case Some(statement) =>
+          payloadTypes(callee, calleeTypeArgs, 1).flatMap {
+            case Some((Seq(GroundValue.Structure(_, typeArguments, _)), _)) =>
+              statedMeta(constructor, typeArguments, statement).map {
+                case Stated.Meta(meta, _) => Some(meta)
+                case _                    => None
+              }
+            case _                                                        => none[GroundValue].pure[CompilerIO]
+          }
+        case None            => none[GroundValue].pure[CompilerIO]
+      }
+    }
 
   /** The handed statements of `callee`, by the position of the code parameter they are about and the index of the
     * argument they state, each with its companion and what it states.
@@ -417,19 +495,21 @@ object MetaInterpreter {
   ): CompilerIO[Option[GroundValue]] =
     payloadTypes(callee, calleeTypeArgs, arity).flatMap {
       case Some((parameters, _)) =>
-        (parameters.traverse(metaTypeOf), metaTypeOf(argumentType)).flatMapN { (metaTypes, handedType) =>
-          def reduce(typeArguments: Seq[GroundValue], leading: Seq[SemValue]): CompilerIO[Option[GroundValue]] =
-            EscalatingReducer
-              .reduceApplied(companion, calleeTypeArgs ++ metaTypes ++ typeArguments, leading ++ arguments)
-              .map(_.collect { case meta: GroundValue.Structure => meta })
-          takesConstructor(companion).ifM(
-            metaConstructorOf(handedType).flatMap {
-              case Some(constructor) =>
-                reduce(Seq(handedType, constructor.valueType), Seq(Evaluator.groundToSem(constructor)))
-              case None              => none[GroundValue].pure[CompilerIO]
-            },
-            reduce(Seq(handedType), Seq.empty)
-          )
+        (parameters.traverse(metaTypeOf(_)).map(_.sequence), metaTypeOf(argumentType)).flatMapN {
+          case (Some(metaTypes), Some(handedType)) =>
+            def reduce(typeArguments: Seq[GroundValue], leading: Seq[SemValue]): CompilerIO[Option[GroundValue]] =
+              EscalatingReducer
+                .reduceApplied(companion, calleeTypeArgs ++ metaTypes ++ typeArguments, leading ++ arguments)
+                .map(_.collect { case meta: GroundValue.Structure => meta })
+            takesConstructor(companion).ifM(
+              metaConstructorOf(handedType).flatMap {
+                case Some(constructor) =>
+                  reduce(Seq(handedType, constructor.valueType), Seq(Evaluator.groundToSem(constructor)))
+                case None              => none[GroundValue].pure[CompilerIO]
+              },
+              reduce(Seq(handedType), Seq.empty)
+            )
+          case _                                   => none[GroundValue].pure[CompilerIO]
         }
       case None                  => none[GroundValue].pure[CompilerIO]
     }
@@ -508,7 +588,7 @@ object MetaInterpreter {
             )
           )
         case Some(primitive)                               =>
-          follow(callee, statement, primitive, arguments, run).map((after, value) =>
+          follow(callee, typeArguments, statement, primitive, arguments, run).map((after, value) =>
             (after.unfollowed(arguments.filter(isCode)), value)
           )
         case None                                          =>
@@ -532,11 +612,13 @@ object MetaInterpreter {
   }
 
   /** A frame or cell statement on a callee's result (`docs/meta.md` §11.1): leaving through a frame, reading a cell,
-    * writing one, or building a value. One the interpretation cannot place — a frame or cell it does not hold — is
-    * followed as unknown, so every frame may have been left through and every cell written ([[Store.tainted]]).
+    * writing one, or building a value, whose meta is the statement reduced over its fields' (§13.4). One the
+    * interpretation cannot place — a frame or cell it does not hold — is followed as unknown, so every frame may have
+    * been left through and every cell written ([[Store.tainted]]).
     */
   private def follow(
       callee: ValueFQN,
+      typeArguments: Seq[GroundValue],
       statement: MetaStatement,
       primitive: MetaStatement.Primitive,
       arguments: Seq[Value],
@@ -544,7 +626,7 @@ object MetaInterpreter {
   ): CompilerIO[(Run, Value)] =
     primitive match {
       case MetaStatement.Primitive.Built if arguments.size == statement.parameters.size =>
-        (run, Value.Data(callee, arguments)).pure[CompilerIO]
+        reduceTransfer(callee, typeArguments, arguments.map(_.known)).map(meta => (run, Value.Data(callee, arguments, meta)))
       case MetaStatement.Primitive.Exit(frame, carried) =>
         (arguments.lift(frame), arguments.lift(carried)) match {
           case (Some(Value.Frame(id)), Some(value)) if run.store.frames.contains(id) =>
@@ -769,21 +851,9 @@ object MetaInterpreter {
             runs: Runs
         ): CompilerIO[Handed] =
           statement.primitive match {
-            case Some(MetaStatement.Primitive.FieldOf(value, constructor)) =>
-              (fieldOf(value, constructor, argument).getOrElse(Handed.Is(Value.unknown)): Handed).pure[CompilerIO]
-            case Some(MetaStatement.Primitive.FieldOr(value, constructor)) =>
-              fieldOf(value, constructor, argument) match {
-                case Some(handed) => handed.pure[CompilerIO]
-                case None         =>
-                  handedMeta(
-                    callee,
-                    typeArguments,
-                    companion,
-                    statement.parameters.size,
-                    domain,
-                    Seq.fill(statement.parameters.size)(notComputed)
-                  ).map(meta => Handed.Is(Value.Meta(meta)))
-              }
+            case Some(field: MetaStatement.Primitive.FieldOf) =>
+              fieldHanded(callee, typeArguments, companion, statement, field, argument, domain, arguments)
+                .map(Handed.Is(_))
             case Some(MetaStatement.Primitive.Frame)         => (Handed.NewFrame: Handed).pure[CompilerIO]
             case Some(MetaStatement.Primitive.Cell(initial)) =>
               (Handed.NewCell(Store.Content(arguments.lift(initial).flatMap(_.known), metaTypes.lift(initial))): Handed)
@@ -793,7 +863,7 @@ object MetaInterpreter {
                 case Some(made) if made.exits.isEmpty => (Handed.Is(Value.Never): Handed).pure[CompilerIO]
                 case Some(made)                       =>
                   metaTypeOf(domain).flatMap(metaType =>
-                    joinAll(made.exits.map(_.carried), Some(metaType)).map(meta => Handed.Is(Value.Meta(meta)))
+                    joinAll(made.exits.map(_.carried), metaType).map(meta => Handed.Is(Value.Meta(meta)))
                   )
                 case None                             => (Handed.Is(Value.unknown): Handed).pure[CompilerIO]
               }
@@ -825,12 +895,6 @@ object MetaInterpreter {
                     )
                   ).map(meta => Handed.Is(Value.Meta(meta)))
               }
-          }
-
-        // The field a `match` hands, when the interpretation built the value: none when another constructor built it.
-        def fieldOf(value: Int, constructor: ValueFQN, argument: Int): Option[Handed] =
-          arguments.lift(value).collect { case Value.Data(built, fields) =>
-            if (built == constructor) Handed.Is(fields.lift(argument).getOrElse(Value.unknown)) else Handed.Is(Value.Never)
           }
 
         def valueOf(index: Int, runs: Runs): Value =
@@ -903,17 +967,16 @@ object MetaInterpreter {
   }
 
   /** A loop's accumulator after one more run yielded `next` (`docs/meta.md` §11.2): unchanged when `next` is the same
-    * value, else the two metas joined, or `widening` widened, by the meta type's own instance at `metaType`. Any other
-    * pair is not computed: a constructed value or a closure that changes from run to run is followed only once structural
-    * meta exists (T5).
+    * value, else the two metas joined, or `widening` widened, by the meta type's own instance at `metaType` — a
+    * constructed value's included, which is its structural meta from then on (§13). A pair one of whose metas is not
+    * computed is not computed.
     */
   private def widenValue(previous: Value, next: Value, metaType: Option[GroundValue], widening: Boolean)
       : CompilerIO[Value] =
-    (previous, next, metaType) match {
-      case _ if previous == next                                         => previous.pure[CompilerIO]
-      case (Value.Meta(Some(before)), Value.Meta(Some(after)), Some(tpe)) =>
-        widened(before, after, tpe, widening).map(Value.Meta(_))
-      case _                                                             => Value.unknown.pure[CompilerIO]
+    (previous.known, next.known, metaType) match {
+      case _ if previous == next                     => previous.pure[CompilerIO]
+      case (Some(before), Some(after), Some(tpe))    => widened(before, after, tpe, widening).map(Value.Meta(_))
+      case _                                         => Value.unknown.pure[CompilerIO]
     }
 
   /** The cells a loop's next run starts with: each of `previous`'s, joined with, or `widening` widened by, what the last
@@ -1227,21 +1290,21 @@ object MetaInterpreter {
   private val notComputed: SemValue =
     SemValue.VNeutral(SemValue.NeutralHead.Reserved(SemValue.NeutralHead.Marker.NotComputed), SemValue.Spine.SNil)
 
-  /** The meta *value* constructor of `metaType`, as a ground reference typed by its own signature (a function from the
-    * slots to the meta type) — or `None` for a meta type with no slots to construct it from. It is the value
-    * constructor [[MetaConstructorDesugarer]] declares beside a meta structure, of the same name, so a meta type without
-    * one has no slots.
+  /** The meta *value* constructor of `metaType`, as a ground reference typed by its own signature at the meta type's
+    * arguments (a function from the slots to the meta type) — or `None` for a meta type with no slots to construct it
+    * from. It is the value constructor [[MetaConstructorDesugarer]] or [[StructuralMetaDesugarer]] declares beside a meta
+    * structure, of the same name, so a meta type without one has no slots.
     */
   private def metaConstructorOf(metaType: GroundValue): CompilerIO[Option[GroundValue.Structure]] = metaType match {
-    case GroundValue.Structure(fqn, Seq(), _) =>
+    case GroundValue.Structure(fqn, typeArguments, _) =>
       val constructor = ValueFQN(fqn.moduleName, QualifiedName(fqn.name.name, Qualifier.Default))
       getFactOrAbort(UnifiedModuleNames.Key(fqn.moduleName, Platform.Compiler)).flatMap { names =>
         if (names.names.contains(constructor.name))
-          getFactOrAbort(CompilerMonomorphicValue.Key(constructor, Seq.empty))
+          getFactOrAbort(CompilerMonomorphicValue.Key(constructor, typeArguments))
             .map(cmv => GroundValue.Structure(constructor, Seq.empty, cmv.signature).some)
         else none[GroundValue.Structure].pure[CompilerIO]
       }
-    case _                                    => none[GroundValue.Structure].pure[CompilerIO]
+    case _                                            => none[GroundValue.Structure].pure[CompilerIO]
   }
 
   /** The meta types a companion of `callee` is instantiated at after the callee's own type arguments — one per parameter
@@ -1264,7 +1327,7 @@ object MetaInterpreter {
       case arity if arity === appliedArgs =>
         payloadTypes(callee, calleeTypeArgs, arity).flatMap {
           case Some((parameters, result)) =>
-            (if (withResult) parameters :+ result else parameters).traverse(metaTypeOf).map(_.some)
+            (if (withResult) parameters :+ result else parameters).traverse(metaTypeOf(_)).map(_.sequence)
           case None                       => none[Seq[GroundValue]].pure[CompilerIO]
         }
       case _                              => none[Seq[GroundValue]].pure[CompilerIO]
@@ -1308,32 +1371,61 @@ object MetaInterpreter {
     if (count === 0) Some((Seq.empty, functionType))
     else functionType.asFunctionType.flatMap((parameter, rest) => peel(rest, count - 1).map((ps, r) => (parameter +: ps, r)))
 
-  /** The **meta type** of a base type — its `$Meta` meta structure if the type declares one (a slotted type like `Int`
-    * ⤳ `Int$Meta`), else the implicit default's [[unitType]] (an untracked type carries no refinement).
-    * This is the total-meta rule of R1: a generic `^Meta` companion reduced at these always lands on a real `Meta`
-    * instance (`Meta[Int$Meta]` or `Meta[Unit]`). A non-structure type argument is left unchanged.
+  /** The **meta type** of a base type: its `$Meta` meta structure if the type declares slots (`Int` ⤳ `Int$Meta`); for
+    * a `data` type its structural meta (`docs/meta.md` §13.2), `D$Meta` at the meta types of its fields' types, which
+    * its `D$Fields` signature gives at the type's arguments; else the implicit default's [[unitType]] (an untracked type
+    * carries no refinement). This is the total-meta rule of R1: a generic `^Meta` companion reduced at these always
+    * lands on a real `Meta` instance. A non-structure type argument is left unchanged.
+    *
+    * `None` where there is no finite meta type: a `data` type reaching itself other than through a field typed by the
+    * type itself (§13.3) — through another type (`Option[Tree]`), or across a group — whose meta is then not computed.
     */
-  private[channel] def metaTypeOf(baseType: GroundValue): CompilerIO[GroundValue] = baseType match {
-    case GroundValue.Structure(fqn, _, _) =>
-      declaresMetaStructure(fqn).map {
-        case true  =>
-          GroundValue.Structure(ValueFQN(fqn.moduleName, metaStructureName(fqn)), Seq.empty, GroundValue.Type)
-        case false => unitType
-      }
-    case other                            => other.pure[CompilerIO]
-  }
+  private[channel] def metaTypeOf(baseType: GroundValue, expanding: Set[ValueFQN] = Set.empty): CompilerIO[Option[GroundValue]] =
+    baseType match {
+      case GroundValue.Structure(fqn, typeArguments, _) if expanding.contains(fqn) => none[GroundValue].pure[CompilerIO]
+      case GroundValue.Structure(fqn, typeArguments, _)                            =>
+        declaresFields(fqn).flatMap {
+          case true  =>
+            EscalatingReducer
+              .reduceApplied(ValueFQN(fqn.moduleName, fieldsName(fqn)), typeArguments, Seq.empty)
+              .flatMap {
+                case Some(fields) =>
+                  fieldTypes(fields)
+                    .traverse(metaTypeOf(_, expanding + fqn))
+                    .map(_.sequence.map(GroundValue.Structure(metaStructureFqn(fqn), _, GroundValue.Type)))
+                case None         => none[GroundValue].pure[CompilerIO]
+              }
+          case false =>
+            declaresSlots(fqn).map {
+              case true  => Some(GroundValue.Structure(metaStructureFqn(fqn), Seq.empty, GroundValue.Type))
+              case false => Some(unitType)
+            }
+        }
+      case other                                                                   => other.some.pure[CompilerIO]
+    }
 
-  /** Whether a *node's* type carries meta-information at all — [[metaTypeOf]] read as a predicate, and the derivation's
-    * cheap gate. Non-structural today (§1, §13): `List[Int]` and `data Counter(n: Int)` carry none, so meta is lost at
-    * every data boundary exactly as it is today.
+  /** The field types a reduced `D$Fields` signature lists: the domains of its arrows, which end in `Unit`. */
+  @tailrec
+  private def fieldTypes(fields: GroundValue, types: Seq[GroundValue] = Seq.empty): Seq[GroundValue] =
+    fields.asFunctionType match {
+      case Some((field, rest)) => fieldTypes(rest, types :+ field)
+      case None                => types
+    }
+
+  /** Whether a *node's* type carries meta-information at all: it declares slots, or it is a `data` type, whose values
+    * carry a structural meta (`docs/meta.md` §13).
     */
   private[channel] def carriesMeta(nodeType: GroundValue): CompilerIO[Boolean] = nodeType match {
-    case GroundValue.Structure(fqn, _, _) => declaresMetaStructure(fqn)
+    case GroundValue.Structure(fqn, _, _) => (declaresSlots(fqn), declaresFields(fqn)).mapN(_ || _)
     case _                                => false.pure[CompilerIO]
   }
 
   private def metaStructureName(typeName: ValueFQN): QualifiedName =
     QualifiedName(typeName.name.name + MetaConstructorDesugarer.metaTypeSuffix, Qualifier.Type)
+
+  private def metaStructureFqn(typeName: ValueFQN): ValueFQN = ValueFQN(typeName.moduleName, metaStructureName(typeName))
+
+  private def fieldsName(typeName: ValueFQN): QualifiedName = StructuralMetaDesugarer.fieldsName(typeName.name.name)
 
   /** The `BigInteger` type a literal's seed value carries — the only literal-domain constant the interpretation needs,
     * to wrap a raw `n` as a [[GroundValue.Direct]] when reducing a seed companion at it.

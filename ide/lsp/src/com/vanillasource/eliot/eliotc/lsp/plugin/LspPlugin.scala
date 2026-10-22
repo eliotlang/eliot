@@ -16,6 +16,7 @@ import com.vanillasource.eliot.eliotc.lsp.virtual.{
   VirtualFileSystem
 }
 import com.vanillasource.eliot.eliotc.module.fact.{ModuleName, QualifiedName, Qualifier, UnifiedModuleNames, ValueFQN}
+import com.vanillasource.eliot.eliotc.platform.Platform
 import com.vanillasource.eliot.eliotc.monomorphize.channel.RefinementTable
 import com.vanillasource.eliot.eliotc.plugin.{CompilerPlugin, Configuration, LangPlugin}
 import com.vanillasource.eliot.eliotc.processor.{CompilationProcess, CompilerProcessor}
@@ -133,15 +134,24 @@ class LspPlugin(vfs: VirtualFileSystem) extends CompilerPlugin with Logging {
 
   /** Demand a front-end fact for every name the module declares, so each one's diagnostics are produced; then, if the
     * module declares its own `main`, drive monomorphization from it.
+    *
+    * A name in the meta namespace — a brace's or a `where`'s companion, a payload signature, what a `data` type's
+    * structural meta states — is compiler-pool code (`docs/meta.md` §4.1), dead in the runtime pool and free to name
+    * what only the compiler platform declares (`eliot.lang.Reach`), so it is checked on the compiler track.
     */
   private def checkModule(compilation: CompilationProcess, moduleName: ModuleName): IO[Unit] =
     compilation.getFact(UnifiedModuleNames.Key(moduleName)).flatMap {
       case None        => IO.unit // unification itself failed; its error is already reported
       case Some(names) =>
         names.names.keys.toList
-          .traverse_(qn => compilation.getFact(SaturatedValue.Key(ValueFQN(moduleName, qn))).void) >>
+          .traverse_(qn => compilation.getFact(SaturatedValue.Key(ValueFQN(moduleName, qn), platformOf(qn))).void) >>
           monomorphizeMain(compilation, moduleName, names)
     }
+
+  private def platformOf(name: QualifiedName): Platform = name.qualifier match {
+    case _: Qualifier.Meta => Platform.Compiler
+    case _                 => Platform.Runtime
+  }
 
   /** Drive whole-program monomorphization from a file's own `main`, so its reachable code is type-checked at concrete
     * types and the per-node ground types behind hover type hints exist.

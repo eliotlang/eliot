@@ -43,7 +43,7 @@ object MetaConstructorDesugarer {
     */
   def desugar(definition: FunctionDefinition): Seq[(FunctionDefinition, RoleHint)] =
     if (definition.metaSlots.isEmpty) Seq.empty
-    else DataDefinitionDesugarer.desugar(metaStructure(definition)) ++ metaJoinInstance(definition)
+    else DataDefinitionDesugarer.desugar(metaStructure(definition), structural = false) ++ metaJoinInstance(definition)
 
   /** The synthetic `data <Name>$Meta(<slots>)` whose desugaring *is* the meta structure. */
   private def metaStructure(definition: FunctionDefinition): DataDefinition = {

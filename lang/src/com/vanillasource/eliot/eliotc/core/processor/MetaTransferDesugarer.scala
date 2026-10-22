@@ -3,7 +3,7 @@ package com.vanillasource.eliot.eliotc.core.processor
 import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.ast.fact.{ArgumentDefinition, FunctionDefinition, Expression as SourceExpression}
 import com.vanillasource.eliot.eliotc.core.fact.RoleHint
-import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, Qualifier}
+import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, Qualifier, WellKnownTypes}
 import com.vanillasource.eliot.eliotc.source.content.Sourced
 
 /** Desugars a def's return-position transfer brace into its `^Meta` **transfer companion** (bounds-as-refinements §4.2,
@@ -62,8 +62,22 @@ object MetaTransferDesugarer {
         }
       case _                                                                          =>
         val constructor = f.name.as(MetaCompanionLayout.constructorParameterName)
-        Some(companion(f, Some(constructor), f.name.as(SourceExpression.FunctionApplication(None, constructor, None, f.returnMeta))))
+        val body        = f.returnMeta match {
+          case Seq(single) if isBuilt(single.value) => single
+          case slots                                => f.name.as(SourceExpression.FunctionApplication(None, constructor, None, slots))
+        }
+        Some(companion(f, Some(constructor), body))
     }
+
+  /** Whether a brace is a data constructor's `built(…)` statement ([[StructuralMetaDesugarer.constructorStatement]]),
+    * which applies the meta constructor itself, inside the joins of its recursive fields, so it is the body as written.
+    */
+  private def isBuilt(brace: SourceExpression): Boolean = brace match {
+    case SourceExpression.FunctionApplication(Some(module), name, None, Seq(_)) =>
+      val built = WellKnownTypes.metaPrimitiveFQN("built")
+      module.value == built.moduleName.show && name.value == built.name.name
+    case _                                                                      => false
+  }
 
   /** The companion with `body`, taking the meta constructor as its first parameter when `constructor` names one. */
   private def companion(

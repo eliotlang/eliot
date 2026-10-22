@@ -155,7 +155,7 @@ class AbilityImplementationProcessor extends SingleKeyTypeProcessor[AbilityImple
               markerVfqn <- markerVfqnFor(vfqn, expectedAbilityFQN.abilityName).pure[CompilerIO]
               marker     <- getFactOrAbort(OperatorResolvedValue.Key(markerVfqn, platform))
               markerSig   = marker.signature
-              matched    <- AbilityMatcher.matchImpl(markerSig, expectedTypeArgs)
+              matched    <- AbilityMatcher.matchImpl(markerSig, expectedTypeArgs, platform)
               verdict    <- matched match {
                               case None    => decline
                               case Some(m) =>

@@ -70,7 +70,7 @@ class ModuleAbilityOverlapCheckProcessor
         // decides applicability exactly at each concrete instantiation.
         if (AbilityMatcher.isUnguarded(sig1) && AbilityMatcher.isUnguarded(sig2))
           for {
-            overlaps <- recover(AbilityMatcher.patternsOverlap(sig1, sig2))(false)
+            overlaps <- recover(AbilityMatcher.patternsOverlap(sig1, sig2, platform))(false)
             _        <- if (overlaps) reportOverlapError(v1, v2, platform) else ().pure[CompilerIO]
           } yield ()
         else ().pure[CompilerIO]

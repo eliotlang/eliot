@@ -99,7 +99,7 @@ class MetaTransferAccountingProcessor
       case OperatorResolvedExpression.ValueReference(typeName, _) =>
         for {
           metaCarrying   <- resultHead(mv.signature, view.parameters.size) match {
-                              case GroundValue.Structure(fqn, _, _) => MetaInterpreter.declaresMetaStructure(fqn)
+                              case GroundValue.Structure(fqn, _, _) => MetaInterpreter.declaresSlots(fqn)
                               case _                                => false.pure[CompilerIO]
                             }
           statesTransfer <- declaresTransfer(mv.vfqn)

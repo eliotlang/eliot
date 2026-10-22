@@ -386,10 +386,11 @@ real monomorphized body:
   them through every step, in Eliot's strict evaluation order, and code a native runs is followed run by run (§14).
 - **A loop** (§11.2) is the fixpoint of its code: a native states it (`looped`, `endless`), and the interpretation runs
   the code from the loop's initial accumulator until neither the accumulator nor any cell changes.
-- **A value a `data` constructor built** is held with its fields as the interpretation holds them, and a `match` on it
-  runs only the arm its constructor selects. Both are generated statements (§13.4), so the channel names no
-  constructor and no eliminator. Within one interpretation that makes a field read exact; across a boundary the
-  interpretation does not walk (a parameter, a record), a field's meta waits on structural meta (§13, T5).
+- **A value a `data` constructor built** is held with its fields as the interpretation holds them, and with its
+  structural meta (§13), and a `match` on it runs only the arm its constructor selects. Both are generated statements
+  (§13.4), so the channel names no constructor and no eliminator. Within one interpretation a field read is the very
+  field; across a boundary the interpretation does not walk (a parameter, a call node of the caller, a cell) the value
+  is its structural meta, and a field read is the field's meta read out of it (since T5).
 
 ### 5.1 State or derive
 
@@ -531,15 +532,14 @@ Each of these is a gap: fail-safe at every demand, and pinned by a test that cha
 
 | gap | example | closed by |
 |---|---|---|
-| a field read out of a `data` value the interpretation did not build | `useByte(orZero(Some(7)))`: `Some(7)` is a separate call node, so its value reaches `orZero` as a meta, and an `Option`'s is `Unit` | structural meta (§13) |
-| the join of two constructed values | `catch(fold(c, 5, raise("x")), e -> 6)`: the escape's result is a `Left` or a `Right` | structural meta (§13) |
+| a `data` type recursive other than through a field of its own type | `Rose(kids: Option[Rose], value: Int)`, or `A(b: Option[B])` with `B(a: Option[A])`: the structural map has no finite meta type, so the value's meta is not computed | the recursive group of §13.3, which T5 did not build (§13.3, "Built") |
 | the elements of a `List` | `foldLeft`'s `combine` is handed an element with no meta | `List` carrying its elements' meta (§13.3) |
-| hence `if … else` | `else` reads its result back out of an `Option` built by an escape | all of the above (§15) |
 | a demand on a closure the walk cannot see applied | `applyTo(y -> useByte(y), 10)`; `useByte(f(x))` with `f` a parameter | a context that can carry a closure (a fact key holding a body and an environment), when a program needs it |
 | the step budget | a deep or wide derived DAG | a memo when observed, and exhaustion reported as an error (§5.3) |
 
-The first four rows are not separate defects. Each is a leaf that does not define its meta, or a structure that
-cannot carry one, which is what Part II finds.
+T5 closed the three rows above the `List` one: a field read out of a value the interpretation did not build, the join
+of two constructed values, and with them `if … else`. Each was a structure that could not carry what flows through
+it, which is what Part II finds.
 
 The `eliot-code` skill tells users what a range is derived through and what is not computed today. It was probed
 against the tree, not taken from this document. Update it when a row closes.
@@ -819,6 +819,17 @@ data Option[A] = None | Some(value: A)
 - **Excluded:** the generated meta structures themselves (a regress), and any type that declares **slots**. A slotted
   type's meta is what it declares (`Int`, `String`, or `docs/recursive-data.md`'s `data Tree[A] {depth: …}`).
 
+**Built (T5, 2026-10-22)**, by `StructuralMetaDesugarer`, which `DataDefinitionDesugarer` calls for every `data` a
+program, a library or a named implementation declares; the generated structures and a slotted type's are desugared
+without one. Three things differ from the sketch above. A field-less constructor has a record too, an empty one
+(`Option$Meta$None`), so its slot is `Reach[Option$Meta$None]` rather than `Reach[Unit]`: every slot's type then names
+its constructor, which is what makes decision H free (§13.7). The names are `D$Meta$C` for a record, `D$Meta` for the
+summary, `meta$D$C$f` for a record's field and `reach$D$C` for a slot, so no two `data` in a module collide. And the
+instances join and widen through `eliot.compiler.Meta::joined` and `widening`, plain definitions, since generated code
+cannot name the ability's own methods by module; `Meta` is resolved for it by fixed FQN, as `PatternMatch` is.
+`Reach` is declared abstractly in the base (`type Reach[M]`) beside its overlay `data`, as `Bound` and `Interval` are,
+so the runtime pool knows the module a compile-track probe asks about.
+
 ### 13.3 Recursive `data` folds into its own summary
 
 The structural map does not terminate on a recursive type: `meta(Tree[A])` would contain `meta(Tree[A])`. Keeping
@@ -856,6 +867,17 @@ type's verdict**, so it cannot form a fact cycle.
 declared. Its elements' meta would be a slot whose type is the element type's meta type, and no slot can be that today:
 a slot's type is fixed (`Interval[BigInteger]`). That parametric slot, together with `size`, is the `List` domain's
 project, and `foldLeftInternal` waits on it (§10).
+
+**Built (T5, 2026-10-22), for a field typed by the type itself only.** A field is recursive when its type is the
+`data` applied to its own type parameters in order (`left: Tree`, `left: Tree[A]`); its slot is left out, the
+constructor joins it, and a `match` hands its handler the summary. The recursive *group* — recursion through another
+type (`Rose(kids: Option[Rose])`) or across types (`A(b: Option[B])`, `B(a: Option[A])`) — is not built: the
+structural map of such a type is infinite, and `MetaInterpreter.metaTypeOf` declines it on meeting a type it is already
+expanding, so the value's meta is not computed (§8), fail-safe. **That narrows decision G, and needs a decision**: the
+sketch above folds a group over one summary, but a field like `kids: Option[Rose]` is neither the type itself nor in a
+group with `Option` (whose `$Fields` does not reach `Rose`), so the sketch's own test does not make it recursive, and
+its meta type `Option$Meta[Rose$Meta[…]]` is infinite. The tree has one such type, eliot-build's `Clause(children:
+List[Clause])`, which is finite today only because `List` carries no element meta; T6 makes it infinite too.
 
 ### 13.4 The constructor and the eliminator state
 
@@ -903,6 +925,17 @@ implementations' lowering too.
 T5 gives the same statements their metas: `{built}` becomes the constructor's transfer above, and `fieldOf` its handed
 transfer, reading `Reach`.
 
+**Built (T5, 2026-10-22).** The statements took their arguments: a constructor states `{built(⟨…⟩)}`, whose argument is
+its transfer, applying the meta constructor itself inside its recursive fields' joins (`MetaTransferDesugarer` leaves
+such a brace unwrapped), and `fieldOf(value, C, read)` hands a handler `read`, `reached(reach$D$C(value), meta$D$C$f)`,
+or `reachedThen(…)` for a field-less constructor's unit and a recursive field's summary. Both are bodied as their last
+argument, so a reduced statement is its meta; the channel still recognises them by name, building a `Value.Data` that
+keeps its meta, and handing the very field of one the interpretation built. `fieldOr` is gone: where the scrutinee's
+meta is not computed, a braced field is its constructor's parameter statement, which every construction proved, at the
+scrutinee type's arguments, since a constructor takes its type's parameters. The `main`-level walk reads the same
+statements (`MetaInterpreter.handedMetas`), with the call's other arguments walked first, so a demand inside an arm
+reads the field too, and an arm handed ⊥ demands nothing.
+
 ### 13.5 A field's meta is always defined
 
 A constructor's transfer stores each argument's meta. By §1, each argument has one: a computed or stated meta, or the
@@ -939,6 +972,13 @@ in another order would hand arm *i* the wrong constructor's fields, silently. **
 - a disagreement is an error at the overlay's declaration.
 
 Today every overlay copy is spelled exactly as the jvm layer's.
+
+**Built (T5, 2026-10-22) as the merge's own check.** The overlay's and the platform's copies of a `data` each generate
+a `D$Meta` constructor whose parameters are `Reach[D$Meta$C]`, one per constructor in order, and a record constructor
+per constructor whose parameters are its fields. The two copies merge by name like any other, and a merge requires
+equal signatures, so constructors renamed or reordered, or a field count changed, fail with "Has multiple different
+definitions" when the first structural meta of the type is built. The message is the merge's, not one written for
+this, and it lands at whichever copy the pool lists first.
 
 ### 13.8 Representation
 
@@ -1071,6 +1111,29 @@ compiled cold, one at a time, twice over:
 So T5 is compared against these sums, and the memo is owed if the summed wall time grows by clearly more than the
 noise, if the channel's share stops being a rounding error, or if any derivation exhausts its budget.
 
+**T5, measured 2026-10-22** the same way:
+
+| | baseline (mean) | T5 as first built | T5 as committed |
+|---|---|---|---|
+| wall time, summed | 221.7 s | 256.5 s (+15.7%) | 237.8 s (+7.3%) |
+| time inside the compiler | 196.5 s | 234.1 s | 214.0 s |
+| the channel's processors | 3.46 s (1.76%) | 3.99 s (1.71%) | 4.08 s (1.91%) |
+| persisting the cache | 31.4 s | 60.5 s | 39.8 s |
+| cache, summed | 138.2 MB | 384.9 MB (2.8×) | 196.0 MB (1.42×) |
+
+- **The interpretation did not grow.** The channel's share is unchanged, the budget probe found the same 293
+  derivations, none exhausted and the most expensive at 450 steps, and P5 still has 525 contexts for 496 refined
+  values. So the memo is not added.
+- **The generated names were the cost.** As first built, T5 tripled the cache, because every value's fact holds its
+  file's dictionary, and every dictionary held every generated name of its file and of the prelude, so a file's facts
+  grew with the square of its names. A name holding a `$` is now in no dictionary (§17), and the generated structures
+  lost their `TypeMatch` implementation and eliminator transfer. What remains is the work T5 does: every program builds
+  at least its `Console` handle, whose structural meta and `Meta` instances are checked on the compiler track, and every
+  `data` in a loaded module mints its structures.
+- **One clean run of the committed build.** Its second run measured load from another job on the machine (its six
+  near-empty library modules took 10.0 s against 7.5–8.0 s in every other run) and is left out. Every jar of both
+  builds is byte-identical to the baseline's, and every exit code the same.
+
 ## 17. Staging
 
 Each stage is verified by the fast example sweep and byte-identity compare (`scripts/example-sweep.sh`), with every
@@ -1103,7 +1166,17 @@ cache once kept a stale companion across a change and hid a brace that did not e
   agreement check. This flips `DerivedMetaTransferIntegrationTest`'s field-read case and makes `if … else` an
   accept/reject pair, and it adds `Pair`, `Either`, a user record, a user tree and `pick(B)`'s pruning. Jars change
   wherever an `Int` is read out of a `data`. **Gated on §16's measurement**, which also decides the memo, and with it
-  the budget becoming a reported limit (decision I).
+  the budget becoming a reported limit (decision I). **Built 2026-10-22, except the recursive groups** (§13.3, "Built",
+  a narrowing that needs a decision), and every jar is byte-identical: no example narrows an `Int` read out of a `data`.
+  The accept/reject pairs are in `DerivedMetaTransferIntegrationTest` and `FieldBraceIntegrationTest`, a field read in a
+  `match` arm in `main` among them. It took four things the plan did not list. `Reach` needed an abstract base
+  declaration, since compile-track probes read the runtime pool's names of every module they meet. `AbilityMatcher`
+  looked up a pattern's references in the runtime pool whatever the platform being matched, which a compiler-pool-only
+  record exposed, and now takes the platform. The LSP checks a module's meta-namespace names on the compiler track,
+  since they may name `Reach`. And the first build tripled the cache (§16): every value's fact holds its file's
+  dictionary, which held every generated name of the file and of the prelude, so a name holding a `$`, which only the
+  compiler writes, is now in no dictionary, and the resolver finds one generated code names unqualified in its own
+  module. The generated structures also get no `TypeMatch` implementation and no eliminator transfer.
 - **T6: `List` carries its elements.** The parametric slot (§13.3), with the size domain. `foldLeftInternal` hands
   `combine` its element's meta, `typeMatch[R]` states (§10), and R2's exemption is removed: the last runtime leaf now
   states.
@@ -1161,10 +1234,11 @@ taken: B on 2026-10-21 after the question whether ⊥ is a special value (it is 
 T3 settled the frame and cell primitives' spelling (§14), and T4 the loop's: `looped` and `endless`, and `widen` as a
 second method of `ability Meta` (§11.2).
 
-To continue: **T5** (§17), structural meta, is gated on §16's measurement, which decides the memo and with it the
-budget becoming a reported limit (decision I). Its baseline, the stage before it, was measured on 2026-10-22 (§16):
-the channel is under 2% of a compile and no derivation comes near the budget, so T5 starts without the memo and is
-measured against those sums when built. T6 waits on `List` carrying its elements' meta, and on stating the
+**T5** (§17), structural meta, is built (2026-10-22) and measured against its baseline (§16). The memo is not added,
+since the interpretation's share of a compile did not move and no derivation came near the budget. Two things are
+open: the recursive group of §13.3 is not built, and the sketch's test does not cover recursion through another type
+(§13.3, "Built"), which needs a decision; and decision I, the budget as a reported limit, which §17 tied to the memo,
+is not built either. Next is **T6**, `List` carrying its elements' meta. T6 waits on `List` carrying its elements' meta, and on stating the
 generated `typeMatch[R]`, which removing R2's exemption found (§10). The `Unit` cleanup below needs neither.
 
 **The `Unit` question (2026-10-21), closed the same day.** Robert: a type declaring no meta gets `Unit` implicitly, and

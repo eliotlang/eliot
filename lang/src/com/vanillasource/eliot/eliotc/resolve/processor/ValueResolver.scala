@@ -21,7 +21,8 @@ import com.vanillasource.eliot.eliotc.module.fact.WellKnownTypes.{
   functionDataTypeFQN,
   typeFQN,
   patternMatchAbilityName,
-  typeMatchAbilityName
+  typeMatchAbilityName,
+  metaAbilityName
 }
 import com.vanillasource.eliot.eliotc.feedback.Logging
 import com.vanillasource.eliot.eliotc.module.fact.{
@@ -862,12 +863,14 @@ object ValueResolver {
     * writes the reference:
     *
     *   - `PatternMatch`/`TypeMatch` (in `eliot.compiler.internal`), named by compiler-generated `implement` markers and
-    *     by the `match` desugaring.
+    *     by the `match` desugaring;
+    *   - `Meta` (in `eliot.compiler`), named by the `Meta` instances a `data` type's structural meta is generated with
+    *     (`docs/meta.md` §13.2), in whatever module the type is declared.
     *
-    * Neither is auto-imported. An explicit import (or a local declaration) of the same name still wins: this map
+    * None is auto-imported. An explicit import (or a local declaration) of the same name still wins: this map
     * is only reached when the name is not in scope at all. */
   private val fixedFqnAbilities: Map[String, AbilityFQN] =
-    Seq(patternMatchAbilityName, typeMatchAbilityName)
-      .map(name => name -> AbilityFQN(ModuleName(ModuleName.compilerInternalPackage, name), name))
-      .toMap
+    (Seq(patternMatchAbilityName, typeMatchAbilityName)
+      .map(name => name -> AbilityFQN(ModuleName(ModuleName.compilerInternalPackage, name), name)) :+
+      (metaAbilityName -> AbilityFQN(ModuleName(ModuleName.compilerPackage, metaAbilityName), metaAbilityName))).toMap
 }

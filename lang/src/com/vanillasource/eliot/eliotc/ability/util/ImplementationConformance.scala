@@ -116,7 +116,8 @@ object ImplementationConformance {
           compatible      <- AbilityMatcher.signaturesCompatible(
                                withoutHandles(member, ability),
                                withoutHandles(clause, ability),
-                               markerSignature
+                               markerSignature,
+                               platform
                              )
           _               <- compilerError(clause.name.as("Signature of implementation does not match the ability definition."))
                                .unlessA(compatible)

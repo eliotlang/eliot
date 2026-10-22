@@ -66,6 +66,12 @@ def joined[D ~ Meta](a: D, b: D): D = join(a, b)
 def widened[D ~ Meta](previous: D, next: D): D = widen(previous, join(previous, next))
 
 /**
+ * `widen(previous, next)`, at a meta-information the compiler holds only as a type argument: what
+ * the compiler-written `Meta` instance of a `data` type's meta-information widens each slot with.
+ */
+def widening[D ~ Meta](previous: D, next: D): D = widen(previous, next)
+
+/**
  * The meta-information of a value that is never produced: the call stating it does not return.
  *
  * A primitive that leaves through a frame, or loops forever, states it on its result. It is no
@@ -177,29 +183,24 @@ def looped[B, C, D](initial: B, code: C): D
 def endless[C, D](code: C): D
 
 /**
- * What a call of a `data` constructor is: the value it built from its arguments. The compiler
- * writes it on every constructor, so following a value through a `match` needs no rule about
- * `match`.
+ * What a call of a `data` constructor is: the value it built from its arguments, whose
+ * meta-information is `meta`. The compiler writes it on every constructor, so following a value
+ * through a `match` needs no rule about `match`.
  *
  * ```eliot
- * Some[A](value: A): Option[A] {built}
+ * Some[A](value: A): Option[A] {built(⟨Unreached, Reached(Option$Meta$Some(value))⟩)}
  * ```
  */
-def built[D]: D
+def built[D](meta: D): D = meta
 
 /**
- * What a `match` hands one argument of the handler for `constructor`: that field of `value`
- * when `constructor` built it, and nothing — the handler does not run — when another one did.
+ * What a `match` hands one argument of the handler for `constructor`: that field of `value` when
+ * the compiler built `value` itself, and otherwise `read`, the field's meta-information read out of
+ * `value`'s, which is nothing — the handler does not run — when `constructor` cannot have built it.
  * The compiler writes it on every `match` eliminator.
  *
  * ```eliot
- * handleCases$Handed$case1$0 = fieldOf(value, Some[A])
+ * handleCases$Handed$case1$0 = fieldOf(value, Some, reached(reach$Option$Some(value), meta$Option$Some$value))
  * ```
  */
-def fieldOf[V, C, D](value: V, constructor: C): D
-
-/**
- * `fieldOf`, for a field whose declaration states its meta: `otherwise`, that stated meta, is
- * what is handed where it is not known what built `value`.
- */
-def fieldOr[V, C, D](value: V, constructor: C, otherwise: D): D = otherwise
+def fieldOf[V, C, D](value: V, constructor: C, read: D): D = read

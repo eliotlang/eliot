@@ -25,8 +25,17 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
   */
 object DataDefinitionDesugarer {
 
+  /** @param structural
+    *   Whether values of the type carry a **structural meta** (`docs/meta.md` §13): its constructors and `match`
+    *   eliminator state it, and its meta structures are generated ([[StructuralMetaDesugarer]]). Every `data` a
+    *   program, a library or a named implementation declares does; the meta structures themselves, and a slotted
+    *   type's, do not, which is what keeps the generation from regressing. Those are compiler-pool values only the
+    *   refinement channel evaluates, so they also get no `TypeMatch` implementation, which nothing asks of a meta
+    *   type, and no transfer on their eliminator, which only a runtime body's interpretation reads.
+    */
   def desugar(
-      definition: DataDefinition
+      definition: DataDefinition,
+      structural: Boolean = true
   ): Seq[(FunctionDefinition, RoleHint)] = {
     // The synthetic `PatternMatch`/`TypeMatch` implementations are keyed by the data type's own name — there is exactly
     // one of each per data type per module, so the name is a stable, position-independent identity (matching the
@@ -39,9 +48,10 @@ object DataDefinitionDesugarer {
     // but a leak nonetheless) and would report itself to VisibilityOrderChecker as a public declaration sitting among
     // the private ones. Dispatch is unaffected: ModuleAbilitiesProcessor indexes implementations from every name in
     // the module, not from the visibility-filtered import dictionary.
-    (createTypeFunction(definition) ++ createConstructors(definition) ++ createAccessors(definition) ++
-      createPatternMatchImpl(definition, implKey).map(_ -> RoleHint.NoHint) ++
-      createTypeMatch(definition, implKey).map(_ -> RoleHint.NoHint))
+    (createTypeFunction(definition) ++ createConstructors(definition, structural) ++ createAccessors(definition) ++
+      createPatternMatchImpl(definition, implKey, structural).map(_ -> RoleHint.NoHint) ++
+      (if (structural) createTypeMatch(definition, implKey) else Seq.empty).map(_ -> RoleHint.NoHint) ++
+      (if (structural) StructuralMetaDesugarer.desugar(definition) else Seq.empty))
       .map { case (fd, hint) => (fd.copy(visibility = definition.visibility), hint) }
   }
 
@@ -59,17 +69,19 @@ object DataDefinitionDesugarer {
       )
     )
 
-  private def createConstructors(definition: DataDefinition): Seq[(FunctionDefinition, RoleHint)] =
+  private def createConstructors(definition: DataDefinition, structural: Boolean): Seq[(FunctionDefinition, RoleHint)] =
     definition.constructors
       .getOrElse(Seq.empty)
-      .map(ctor => createConstructor(definition, ctor))
+      .map(ctor => createConstructor(definition, ctor, structural))
 
   private def createConstructor(
       definition: DataDefinition,
-      ctor: DataConstructor
+      ctor: DataConstructor,
+      structural: Boolean
   ): (FunctionDefinition, RoleHint) = {
-    // A constructor states that its call is the value it built (`docs/meta.md` §11.1), which is what lets the channel
-    // follow a value into a `match` with no rule about `match`.
+    // A constructor states that its call is the value it built, with the structural meta of what it built
+    // (`docs/meta.md` §11.1, §13.4), which is what lets the channel follow a value into a `match` with no rule about
+    // `match`.
     val fd   = FunctionDefinition(
       ctor.name.map(n => QualifiedName(n, Qualifier.Default)),
       definition.genericParameters,
@@ -79,7 +91,7 @@ object DataDefinitionDesugarer {
         definition.genericParameters.map(gp => typeExpr(gp.name))
       ),
       None,
-      returnMeta = Seq(metaPrimitive(ctor.name, "built", Seq.empty))
+      returnMeta = if (structural) Seq(StructuralMetaDesugarer.constructorStatement(definition, ctor)) else Seq.empty
     )
     val hint = RoleHint.ValueConstructor(QualifiedName(definition.name.value, Qualifier.Type), ctor.fields.size)
     (fd, hint)
@@ -158,7 +170,11 @@ object DataDefinitionDesugarer {
     * is the join of what the arms yield, stated as the eliminator's transfer exactly as `Bool::fold` states its own, so
     * a `match` derives its meta through the one mechanism every leaf uses (`docs/meta.md` §4.6).
     */
-  private def createPatternMatchImpl(definition: DataDefinition, implKey: String): Seq[FunctionDefinition] =
+  private def createPatternMatchImpl(
+      definition: DataDefinition,
+      implKey: String,
+      structural: Boolean
+  ): Seq[FunctionDefinition] =
     definition.constructors
       .filter(_.nonEmpty)
       .toSeq
@@ -206,20 +222,23 @@ object DataDefinitionDesugarer {
           ArgumentDefinition(s.as("value"), dataTypeRef) +: handlers,
           typeExpr(s.as(resultParamName)),
           None,
-          returnMeta = Seq(handlers.map(handler => reference(handler.name)).reduceRight(joined))
+          returnMeta =
+            if (structural) Seq(handlers.map(handler => reference(handler.name)).reduceRight(joined)) else Seq.empty
         )
 
-        // What the eliminator hands each argument of each handler (`docs/meta.md` §4.5, §11.1): the field of `value` when
-        // the handler's constructor built it, and nothing — the handler does not run — when another one did. A braced
-        // field is stated where what built `value` is not known: the constructor proved it.
-        val constructorTypeArgs = Option.when(definition.genericParameters.nonEmpty)(
-          definition.genericParameters.map(gp => typeExpr(gp.name))
-        )
-        val handed              = ctors.zip(handlers).flatMap { (ctor, handler) =>
+        // What the eliminator hands each argument of each handler (`docs/meta.md` §11.1, §13.4): the field of `value`
+        // when the interpretation built it, and otherwise the field read out of `value`'s structural meta, which is
+        // nothing — the handler does not run — when the handler's constructor cannot have built it.
+        val handed = if (!structural) Seq.empty else ctors.zip(handlers).flatMap { (ctor, handler) =>
           val constructor = ctor.name.as(SourceExpression.FunctionApplication(None, ctor.name, None, Seq.empty))
-          val arguments   = if (ctor.fields.isEmpty) Seq(Seq.empty) else ctor.fields.map(_.meta)
-          arguments.zipWithIndex.map { (brace, index) =>
-            MetaParameterDesugarer.fieldStatement(handleCasesDef, s.as("value"), handler.name, index, constructor, brace)
+          (0 until ctor.fields.size.max(1)).map { index =>
+            MetaParameterDesugarer.fieldStatement(
+              handleCasesDef,
+              handler.name,
+              index,
+              constructor,
+              StructuralMetaDesugarer.fieldRead(definition, ctor, index, s.as("value"))
+            )
           }
         }
 
@@ -260,23 +279,6 @@ object DataDefinitionDesugarer {
   /** A reference to the parameter `name`. */
   private def reference(name: Sourced[String]): Sourced[SourceExpression] =
     name.as(SourceExpression.FunctionApplication(None, name, None, Seq.empty))
-
-  /** A primitive of `eliot.compiler.Meta` applied to `arguments`, named by its module so the data's own module needs no
-    * import of it.
-    */
-  private def metaPrimitive(
-      at: Sourced[?],
-      name: String,
-      arguments: Seq[Sourced[SourceExpression]]
-  ): Sourced[SourceExpression] =
-    at.as(
-      SourceExpression.FunctionApplication(
-        Some(at.as(WellKnownTypes.metaPrimitiveFQN(name).moduleName.show)),
-        at.as(name),
-        None,
-        arguments
-      )
-    )
 
   /** `eliot.compiler.Meta::joined(a, b)`, named by its module so the data's own module needs no import of it. */
   private def joined(a: Sourced[SourceExpression], b: Sourced[SourceExpression]): Sourced[SourceExpression] =

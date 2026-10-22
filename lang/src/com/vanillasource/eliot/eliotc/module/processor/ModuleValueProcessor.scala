@@ -39,7 +39,7 @@ class ModuleValueProcessor(systemModules: Seq[ModuleName] = defaultSystemModules
                           moduleNames.names.value.keySet ++ importResult.dictionary.keySet,
                           key.platform
                         )
-      localDictionary = moduleNames.names.value.collect { case (name, _) =>
+      localDictionary = moduleNames.names.value.collect { case (name, _) if importable(name) =>
                           (name, ValueFQN(key.vfqn.moduleName, name))
                         }
       dictionary      = systemResult.dictionary ++ importResult.dictionary ++ localDictionary
@@ -80,17 +80,25 @@ class ModuleValueProcessor(systemModules: Seq[ModuleName] = defaultSystemModules
                            !takenNames.contains(name) && !acc.dictionary.contains(name) && !acc.privateNames.contains(name)
                          ImportResult(
                            acc.dictionary ++ moduleNames.names.collect {
-                             case (name, Visibility.Public) if free(name) =>
+                             case (name, Visibility.Public) if free(name) && importable(name) =>
                                (name, ValueFQN(moduleNames.moduleName, name))
                            },
                            acc.privateNames ++ moduleNames.names.collect {
-                             case (name, Visibility.Private) if free(name) =>
+                             case (name, Visibility.Private) if free(name) && importable(name) =>
                                (name, ValueFQN(moduleNames.moduleName, name))
                            }
                          ).pure[CompilerIO]
                        } else compilerError(m.as(s"Could not find imported module: `${m.value.show}`")).as(acc)
       } yield result
     }
+
+  /** Whether a dictionary carries `name`: every name a user can write. A name holding a `$` — which is no identifier
+    * character — is one the compiler generated (a meta companion, a payload signature, a `data` type's structural meta,
+    * `docs/meta.md` §13.2). Generated code names one in its own module unqualified, which the resolver finds there
+    * without a dictionary (`ValueResolverScope.getValue`), and one in another module module-qualified, so carrying it
+    * would only grow every value's fact, which holds its file's dictionary, by names no file can write.
+    */
+  private def importable(name: QualifiedName): Boolean = !name.name.contains('$')
 
   private def extractImportedNames(
       importedModules: Seq[Sourced[ModuleName]],
@@ -110,11 +118,11 @@ class ModuleValueProcessor(systemModules: Seq[ModuleName] = defaultSystemModules
     for {
       moduleNames <- getFactOrAbort(UnifiedModuleNames.Key(module.value, platform))
       result      <- if (moduleNames.present) {
-                       val publicNames       = moduleNames.names.collect { case (name, Visibility.Public) =>
-                         name
+                       val publicNames       = moduleNames.names.collect {
+                         case (name, Visibility.Public) if importable(name) => name
                        }.toSet
-                       val privateNameSet    = moduleNames.names.collect { case (name, Visibility.Private) =>
-                         name
+                       val privateNameSet    = moduleNames.names.collect {
+                         case (name, Visibility.Private) if importable(name) => name
                        }.toSet
                        val shadowingLocal    = publicNames.intersect(localNames)
                        val shadowingImported = publicNames.intersect(accumulated.dictionary.keySet)

@@ -70,18 +70,16 @@ object MetaStatement {
     /** `endless(code)`: `code` runs again and again, each run where the last one ended, and the call does not return. */
     case Endless(code: Int)
 
-    /** `built`: the call is the value its callee, a `data` constructor, built from its arguments. */
+    /** `built(meta)`: the call is the value its callee, a `data` constructor, built from its arguments, whose meta is
+      * the statement reduced (`docs/meta.md` §13.4).
+      */
     case Built
 
-    /** `fieldOf(value, constructor)`: the field of `value` a `match` hands this argument of `constructor`'s handler, ⊥
-      * when another constructor built `value`.
+    /** `fieldOf(value, constructor, read)`: the field of `value` a `match` hands this argument of `constructor`'s
+      * handler, ⊥ when another constructor built `value`; where the interpretation did not build `value`, the statement
+      * reduced, which is `read`, the field read out of `value`'s structural meta.
       */
     case FieldOf(value: Int, constructor: ValueFQN)
-
-    /** `fieldOr(value, constructor, otherwise)`: `fieldOf`, and where what built `value` is not known, the statement
-      * reduced, which is `otherwise`: a braced field's stated meta.
-      */
-    case FieldOr(value: Int, constructor: ValueFQN)
   }
 
   /** What `companion` states. */
@@ -133,7 +131,8 @@ object MetaStatement {
   }
 
   /** The primitive `brace` is: one application of a primitive's name to parameters, as many as the primitive takes, or
-    * for `fieldOf`/`fieldOr` to the scrutinee and the constructor whose handler is handed.
+    * for `built` to the meta it reduces to, and for `fieldOf` to the scrutinee, the constructor whose handler is handed
+    * and the read it reduces to.
     */
   private def primitive(brace: OperatorResolvedExpression, parameters: Seq[String]): Option[Primitive] = {
     val (head, arguments) = applied(brace, Seq.empty)
@@ -157,9 +156,8 @@ object MetaStatement {
           case (Some("store"), Seq(cell, value))       => (position(cell), position(value)).mapN(Primitive.Store(_, _))
           case (Some("looped"), Seq(initial, code))    => (position(initial), position(code)).mapN(Primitive.Looped(_, _))
           case (Some("endless"), Seq(code))            => position(code).map(Primitive.Endless(_))
-          case (Some("built"), Seq())                  => Some(Primitive.Built)
-          case (Some("fieldOf"), Seq(value, built))    => (position(value), constructor(built)).mapN(Primitive.FieldOf(_, _))
-          case (Some("fieldOr"), Seq(value, built, _)) => (position(value), constructor(built)).mapN(Primitive.FieldOr(_, _))
+          case (Some("built"), Seq(_))                 => Some(Primitive.Built)
+          case (Some("fieldOf"), Seq(value, built, _)) => (position(value), constructor(built)).mapN(Primitive.FieldOf(_, _))
           case _                                       => None
         }
       case _                                                  => None
@@ -193,8 +191,7 @@ object MetaStatement {
 
   private val primitiveNames: Map[ValueFQN, String] =
     Seq(
-      "frame", "cell", "exit", "exited", "stored", "content", "store", "looped", "endless", "built", "fieldOf",
-      "fieldOr"
+      "frame", "cell", "exit", "exited", "stored", "content", "store", "looped", "endless", "built", "fieldOf"
     )
       .map(name => WellKnownTypes.metaPrimitiveFQN(name) -> name)
       .toMap

@@ -1,0 +1,47 @@
+import eliot.compiler.Meta
+
+/**
+ * Whether a constructor of a `data` type can have built a value, and if so the meta-information
+ * of the fields it built it with: one slot of a `data` value's meta-information per constructor.
+ *
+ * `Unreached` is the join's identity: a constructor no branch built adds nothing to the join of
+ * two values. The compiler writes every use of it, so a program never names it.
+ */
+data Reach[M] = Unreached | Reached(meta: M)
+
+implement[M ~ Meta] Meta[Reach[M]] {
+   def join(a: Reach[M], b: Reach[M]): Reach[M] = a match {
+      case Unreached -> b
+      case Reached(x) -> b match {
+         case Unreached -> a
+         case Reached(y) -> Reached(join(x, y))
+      }
+   }
+   def widen(previous: Reach[M], next: Reach[M]): Reach[M] = previous match {
+      case Unreached -> next
+      case Reached(x) -> next match {
+         case Unreached -> previous
+         case Reached(y) -> Reached(widen(x, y))
+      }
+   }
+}
+
+/**
+ * What a `match` hands a handler's argument out of a constructor's slot: `read` of the fields'
+ * meta-information when the constructor can have built the value, and nothing — the handler does
+ * not run — when it cannot.
+ */
+def reached[M, D](reach: Reach[M], read: M => D): D = reach match {
+   case Unreached -> never
+   case Reached(m) -> read(m)
+}
+
+/**
+ * `handed` when the constructor can have built the value, and nothing when it cannot: what a `match`
+ * hands a handler argument whose meta-information is not a field of the slot, a field-less
+ * constructor's unit or a recursive field's summary.
+ */
+def reachedThen[M, D](reach: Reach[M], handed: D): D = reach match {
+   case Unreached -> never
+   case Reached(_) -> handed
+}

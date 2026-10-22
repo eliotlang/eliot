@@ -16,9 +16,11 @@ package com.vanillasource.eliot.eliotc.jvm
   *
   * A function value is a **closure** over the metas in scope where it was written, interpreted when something applies
   * it, and a stated transfer over code parameters reads each code argument as what it yields (§5.2) — `fold`'s, and a
-  * data type's `match` eliminator's, which states the join of its handlers. What stays ⊤ is a field read back out of a
-  * data value (structural meta) and a demand inside a lambda body, whose binder only the callee applying it knows. A
-  * callee's own `where` is demanded at what each use site supplies (§6), never over ⊤ parameters.
+  * data type's `match` eliminator's, which states the join of its handlers. A value of a `data` type carries its
+  * fields' metas and which constructors can have built it (structural meta, §13), so a field read across a call is
+  * the field, and an arm no constructor reaches does not run. What stays ⊤ is a demand inside a lambda body, whose
+  * binder only the callee applying it knows. A callee's own `where` is demanded at what each use site supplies (§6),
+  * never over ⊤ parameters.
   */
 class DerivedMetaTransferIntegrationTest extends FullIntegrationTest {
   // `withinByte`/`useByte` are test-local, exactly as in [[TransferBraceReductionIntegrationTest]]: the precondition is
@@ -147,16 +149,22 @@ class DerivedMetaTransferIntegrationTest extends FullIntegrationTest {
     rejects("", "fold(true, 10, 200)")
   }
 
-  // A data type's eliminator states the join of its handlers, exactly as `fold` does, so a `match` is the join of what
-  // its arms yield.
-  private val pick = "data AB = A | B\ndef pick(x: AB): Int = x match { case A -> 10 case B -> 20 }\n"
+  // A data type's eliminator states the join of its handlers, exactly as `fold` does, so a `match` on a value either
+  // constructor may have built is the join of what its arms yield.
+  private def pick(b: Int) = s"data AB = A | B\ndef pick(x: AB): Int = x match { case A -> 10 case B -> $b }\n"
 
   "a match" should "derive the join of what its arms yield" in {
-    accepts(pick, "pick(B)", "20")
+    accepts(pick(20), "pick(fold(true, A, B))", "10")
   }
 
   it should "reject when one arm's yield is too large" in {
-    rejects("data AB = A | B\ndef pick(x: AB): Int = x match { case A -> 10 case B -> 200 }\n", "pick(A)")
+    rejects(pick(200), "pick(fold(true, A, B))")
+  }
+
+  // A value's meta says which constructors can have built it (`docs/meta.md` §13.1), so an arm none of them selects
+  // is handed ⊥ and does not run: `pick(B)` is `[20, 20]` though its other arm yields 200.
+  it should "run only the arms the constructors that can have built its value select" in {
+    accepts(pick(20).replace("case A -> 10", "case A -> 200"), "pick(B)", "20")
   }
 
   // ⊥ (`docs/meta.md` §12): `abort` reaches `exitInternal`, which states `{never}`, so an arm that aborts adds nothing to
@@ -246,12 +254,14 @@ class DerivedMetaTransferIntegrationTest extends FullIntegrationTest {
     accepts("", "catch(5, (e: String) -> 200)", "5")
   }
 
-  // Where the body may both return and raise, the escape's result is a `Left` or a `Right`, and joining the two needs
-  // a meta of an `Either`'s fields (`docs/meta.md` §13, T5): until then it is not computed, and the demand cannot be
-  // proven rather than wrongly decided.
-  it should "leave a body that may both return and raise unknown, until an Either carries its fields' metas" in {
-    compileForErrors(useByte + "def main uses Console: Unit = printLine(show(useByte(catch(fold(true, 5, raise(\"no\")), (e: String) -> 6))))")
-      .asserting(_ should include("Cannot prove the precondition of 'Test::useByte'"))
+  // Where the body may both return and raise, the escape's result is a `Left` or a `Right`, which an `Either`'s meta
+  // joins slot by slot (`docs/meta.md` §13, §15): the result is the join of the handler's yield and the body's.
+  it should "join a body that may both return and raise with what the handler makes of the raise" in {
+    accepts("", "catch(fold(true, 5, raise(\"no\")), (e: String) -> 6)", "5")
+  }
+
+  it should "reject a body that may both return and raise when what it returns does not fit" in {
+    rejects("", "catch(fold(true, 200, raise(\"no\")), (e: String) -> 6)")
   }
 
   // `runStateToPair(s, runThrow(c))` keeps the state across a `raise`: the frame is left with the cell as it was.
@@ -354,14 +364,86 @@ class DerivedMetaTransferIntegrationTest extends FullIntegrationTest {
     compileAndRun(aborting("useByte(add(1000, abort))", "g(true) else 3")).asserting(_ shouldBe "3")
   }
 
+  // A value of a `data` type carries its fields' metas across every call (`docs/meta.md` §13): `Some(7)` is a
+  // separate call node, whose meta is all `orZero` receives, and the arm reads its field out of it.
+  private val orZero = "def orZero(o: Option[Int]): Int = o match { case Some(x) -> x case None -> 0 }\n"
+
+  "a field read in a match arm" should "be what the value was built with, across a call" in {
+    accepts(orZero, "orZero(Some(7))", "7")
+  }
+
+  it should "reject what the value was built with when that does not fit" in {
+    rejects(orZero, "orZero(Some(200))")
+  }
+
+  it should "be what a value built in `main` was built with, for a demand inside the arm" in {
+    compileAndRun(
+      useByte + "def main uses Console: Unit = Some(7) match { case Some(x) -> printLine(show(useByte(x))) case None -> printLine(\"none\") }"
+    ).asserting(_ shouldBe "7")
+  }
+
+  it should "reject a demand inside the arm on what a value built in `main` does not fit" in {
+    compileForErrors(
+      useByte + "def main uses Console: Unit = Some(700) match { case Some(x) -> printLine(show(useByte(x))) case None -> printLine(\"none\") }"
+    ).asserting(_ should include("precondition of 'Test::useByte' is not satisfied"))
+  }
+
+  // `if … else` reads its result out of the `Option` the escape built (`docs/meta.md` §15): `Some` of the value when the
+  // guard holds, `None` when it aborts, so the result is the join of the guarded value and the fallback.
+  "if … else" should "be the join of the guarded value and the fallback" in {
+    accepts("def g(c: Bool): Int = if(c, 5) else 7\n", "g(true)", "5")
+  }
+
+  it should "reject when the guarded value does not fit" in {
+    rejects("def g(c: Bool): Int = if(c, 300) else 5\n", "g(true)")
+  }
+
+  "a pair" should "carry each component's meta" in {
+    accepts("", "first(Pair(5, \"abc\"))", "5")
+  }
+
+  it should "reject a component that does not fit" in {
+    rejects("", "second(Pair(\"abc\", 500))")
+  }
+
+  "an either" should "carry the meta of the side it was built with" in {
+    accepts("def orNine(e: Either[String, Int]): Int = e match { case Left(s) -> 9 case Right(v) -> v }\n", "orNine(Right(5))", "5")
+  }
+
+  // A recursive `data` folds into its own summary (`docs/meta.md` §13.3): every node's fields are in it, but not which
+  // node holds what, so a field read anywhere in a tree is the join over all of them.
+  private val tree =
+    "data Tree = Leaf | Node(left: Tree, value: Int, right: Tree)\n" +
+      "def rootValue(t: Tree): Int = t match { case Leaf -> 0 case Node(l, v, r) -> v }\n"
+
+  "a recursive data value" should "carry the meta of every node's fields" in {
+    accepts(tree, "rootValue(Node(Leaf, 7, Node(Leaf, 9, Leaf)))", "7")
+  }
+
+  it should "reject a field read whose join over the nodes does not fit, though the node read holds what fits" in {
+    rejects(tree, "rootValue(Node(Leaf, 7, Node(Leaf, 200, Leaf)))")
+  }
+
   // The gaps this stage keeps, stated as tests so that closing one is a visible change. "Cannot prove" — an absent
   // bound — is the right diagnostic for each, and it is *not* "not satisfied": the interpretation declined.
-  "a field read in a match arm" should "stay ⊤, since a data value carries no meta of its fields" in {
-    compileForErrors(
-      useByte + "def orZero(o: Option[Int]): Int = o match { case Some(x) -> x case None -> 0 }\n" +
-        "def main uses Console: Unit = printLine(show(useByte(orZero(Some(7)))))"
-    ).asserting(_ should include("Cannot prove the precondition of 'Test::useByte'"))
+  // Recursion other than through a field typed by the data itself — through another type, or across a group of types
+  // — has no finite meta type yet (`docs/meta.md` §8), so such a value's meta is not computed, and the program still
+  // compiles and runs.
+  private val rose =
+    "data Rose(kids: Option[Rose], value: Int)\n" +
+      "def rootOf(r: Rose): Int = r match { case Rose(k, v) -> v }\n"
+
+  "a value recursive through another type" should "stay not computed, and still compile and run" in {
+    compileAndRun(
+      "import eliot.effect.Console\n" + rose + "def main uses Console: Unit = printLine(show(rootOf(Rose(Some(Rose(None, 9)), 7))))"
+    ).asserting(_ shouldBe "7")
   }
+
+  it should "leave a demand on what it holds unproven" in {
+    compileForErrors(useByte + rose + "def main uses Console: Unit = printLine(show(useByte(rootOf(Rose(None, 7)))))")
+      .asserting(_ should include("Cannot prove the precondition of 'Test::useByte'"))
+  }
+
 
   "a demand inside a lambda body" should "stay unknown, since only the callee applying it binds its binder" in {
     compileForErrors(

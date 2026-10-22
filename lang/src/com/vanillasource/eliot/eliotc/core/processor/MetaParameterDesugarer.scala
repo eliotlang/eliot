@@ -66,58 +66,40 @@ object MetaParameterDesugarer {
       }
 
   /** What the `match` eliminator `definition` hands argument `argument` of its handler `parameter`
-    * (`docs/meta.md` §4.5, §11.1) — a supplier the compiler cannot see, so stated, by the data desugarer only. The
-    * handler runs for `constructor`, so it is handed that field of the eliminator's `scrutinee` when `constructor` built
-    * it, and nothing when another one did: the handler does not run. A braced field adds what is handed where it is not
-    * known what built the value, its brace: the constructor proved it.
+    * (`docs/meta.md` §11.1, §13.4) — a supplier the compiler cannot see, so stated, by the data desugarer only. The
+    * handler runs for `constructor`, so it is handed that field of the eliminator's scrutinee when the interpretation
+    * built it with `constructor`, and nothing when with another one; and otherwise `read`, the field read out of the
+    * scrutinee's structural meta ([[StructuralMetaDesugarer.fieldRead]]).
     *
     * {{{
-    *   data Pixel(r: Int {byte}, g: Int)
-    *     ⟶  handleCases$Handed$case0$0[R, Meta$value, Meta$case0, Meta$, Constructor$](
-    *           constructor$: Constructor$, value: Meta$value, case0: Meta$case0): Meta$ =
-    *              fieldOr(value, Pixel, constructor$(byte))
-    *         handleCases$Handed$case0$1[R, Meta$value, Meta$case0, Meta$](value: Meta$value, case0: Meta$case0): Meta$ =
-    *              fieldOf(value, Pixel)
+    *   data Option[A] = None | Some(value: A)
+    *     ⟶  handleCases$Handed$case1$0[A, R, Meta$value, Meta$case0, Meta$case1, Meta$](
+    *           value: Meta$value, case0: Meta$case0, case1: Meta$case1): Meta$ =
+    *              fieldOf(value, Some, reached(reach$Option$Some(value), meta$Option$Some$value))
     * }}}
+    *
+    * A braced field's brace is its constructor's parameter statement, which the channel falls back to where the
+    * scrutinee's meta is not computed: the constructor proved it.
     */
   def fieldStatement(
       definition: FunctionDefinition,
-      scrutinee: Sourced[String],
       parameter: Sourced[String],
       argument: Int,
       constructor: Sourced[SourceExpression],
-      brace: Seq[Sourced[SourceExpression]]
+      read: Sourced[SourceExpression]
   ): FunctionDefinition = {
     val (metaBinders, parameters) = MetaCompanionLayout.metaParameters(definition)
     val handedBinder              = MetaCompanionLayout.typeBinder(parameter.as(MetaCompanionLayout.resultBinderName))
+    val scrutinee                 = parameters.head.name
     val value                     = scrutinee.as(SourceExpression.FunctionApplication(None, scrutinee, None, Seq.empty))
-    val name                      = definition.name.map(handedName(_, parameter.value, argument))
-    val own                       = MetaCompanionLayout.ownBinders(definition)
-    val result                    = MetaCompanionLayout.typeReference(handedBinder.name)
-    if (brace.isEmpty)
-      FunctionDefinition(
-        name,
-        own ++ metaBinders :+ handedBinder,
-        parameters,
-        result,
-        Some(parameter.as(metaPrimitive(parameter, "fieldOf", Seq(value, constructor)))),
-        visibility = definition.visibility
-      )
-    else {
-      val constructorParameter = parameter.as(MetaCompanionLayout.constructorParameterName)
-      val constructorBinder    =
-        MetaCompanionLayout.typeBinder(parameter.as(MetaCompanionLayout.constructorBinderName))
-      val stated               =
-        parameter.as(SourceExpression.FunctionApplication(None, constructorParameter, None, brace))
-      FunctionDefinition(
-        name,
-        own ++ metaBinders :+ handedBinder :+ constructorBinder,
-        ArgumentDefinition(constructorParameter, MetaCompanionLayout.typeReference(constructorBinder.name)) +: parameters,
-        result,
-        Some(parameter.as(metaPrimitive(parameter, "fieldOr", Seq(value, constructor, stated)))),
-        visibility = definition.visibility
-      )
-    }
+    FunctionDefinition(
+      definition.name.map(handedName(_, parameter.value, argument)),
+      MetaCompanionLayout.ownBinders(definition) ++ metaBinders :+ handedBinder,
+      parameters,
+      MetaCompanionLayout.typeReference(handedBinder.name),
+      Some(parameter.as(metaPrimitive(parameter, "fieldOf", Seq(value, constructor, read)))),
+      visibility = definition.visibility
+    )
   }
 
   /** A primitive of `eliot.compiler.Meta` applied to `arguments`, named by its module so no import is needed. */

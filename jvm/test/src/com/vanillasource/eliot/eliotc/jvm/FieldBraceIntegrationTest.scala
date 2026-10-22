@@ -28,17 +28,38 @@ class FieldBraceIntegrationTest extends FullIntegrationTest {
     ).asserting(_ shouldBe "7")
   }
 
-  it should "leave an unbraced field unknown, rather than silently accept" in {
-    compileForErrors(
+  // Where the value read was built is followed, its field is what it was built with (`docs/meta.md` §13), braced or not.
+  it should "read an unbraced field as what it was built with" in {
+    compileAndRun(
       pixel + "def green(p: Pixel): Int = useByte(p.g)\ndef main uses Console: Unit = printLine(show(green(Pixel(7, 0))))"
-    ).asserting(_ should include("Cannot prove the precondition of 'Test::useByte'"))
+    ).asserting(_ shouldBe "0")
+  }
+
+  it should "reject an unbraced field built with what a demand does not accept" in {
+    compileForErrors(
+      pixel + "def green(p: Pixel): Int = useByte(p.g)\ndef main uses Console: Unit = printLine(show(green(Pixel(7, 1000))))"
+    ).asserting(_ should include("The precondition of 'Test::useByte' is not satisfied"))
+  }
+
+  it should "read a braced field as what it was built with, which is at least as precise as its brace" in {
+    compileAndRun(
+      prelude + "data Wide(w: Int {closed(0, 300)})\n" +
+        "def main uses Console: Unit = printLine(show(useByte(Wide(7).w)))"
+    ).asserting(_ shouldBe "7")
+  }
+
+  // A list's element carries no meta yet (§13.3), so a field read out of one is what the field's brace states: the
+  // construction proved it, wherever the value was built.
+  private def fromList(brace: String) =
+    prelude + "import eliot.collection.List\n" + s"data Wide(w: Int {closed(0, $brace)})\n" +
+      "def main uses Console: Unit = printLine(show(useByte(singleton(Wide(7)).foldLeft(0, e -> acc -> e.w))))"
+
+  it should "read a field of a value not known to be built as its brace" in {
+    compileAndRun(fromList("100")).asserting(_ shouldBe "7")
   }
 
   it should "reject a read whose stated meta is wider than a demand" in {
-    compileForErrors(
-      prelude + "data Wide(w: Int {closed(0, 300)})\n" +
-        "def main uses Console: Unit = printLine(show(useByte(Wide(7).w)))"
-    ).asserting(_ should include("The precondition of 'Test::useByte' is not satisfied"))
+    compileForErrors(fromList("300")).asserting(_ should include("The precondition of 'Test::useByte' is not satisfied"))
   }
 
   it should "satisfy a demand inside a match arm on the field's binder" in {

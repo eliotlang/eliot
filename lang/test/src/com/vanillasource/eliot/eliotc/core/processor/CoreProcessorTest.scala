@@ -19,7 +19,9 @@ class CoreProcessorTest extends ProcessorTest(Tokenizer(), ASTParser(), CoreProc
   // The meta namespace of the plain (Default) namespace — where a plain def's `^Meta`/`^Where` companion
   // lives. A companion keeps its callee's qualifier, so an ability implementation's is a different one.
   private val M = Qualifier.Meta(Qualifier.Default)
-  private val PatternMatchMeta = Qualifier.Meta(Qualifier.AbilityImplementation("PatternMatch", "Pixel", None))
+  private val PatternMatchMeta = patternMatchMeta("Pixel")
+
+  private def patternMatchMeta(data: String): Qualifier = Qualifier.Meta(Qualifier.AbilityImplementation("PatternMatch", data, None))
 
   "core processor" should "transform a simple constant reference" in {
     namedValue("def a: A = b", QualifiedName("a", Qualifier.Default)).asserting { nv =>
@@ -667,34 +669,53 @@ class CoreProcessorTest extends ProcessorTest(Tokenizer(), ASTParser(), CoreProc
     }
   }
 
-  it should "state what the match eliminator hands the field's handler, its brace where what built the value is not known" in {
-    namedValue("data Pixel(r: Foo {g}, b: Foo)", QualifiedName("handleCases$Handed$case0$0", PatternMatchMeta)).asserting {
-      nv =>
-        nv.runtimeStructure shouldBe Some(
+  it should "state what the match eliminator hands a field's handler: the field read out of its constructor's slot" in {
+    namedValue("data Pixel(r: Foo {g}, b: Foo)", QualifiedName("handleCases$Handed$case0$1", PatternMatchMeta)).asserting(
+      _.runtimeStructure shouldBe Some(
+        Lambda("value", Empty, Lambda("case0", Empty, fieldOf("Pixel", reached(slot("Pixel", "Pixel"), Ref("meta$Pixel$Pixel$b")))))
+      )
+    )
+  }
+
+  it should "state a braced field's handler as an unbraced one's, its brace being its constructor's statement" in {
+    namedValue("data Pixel(r: Foo {g}, b: Foo)", QualifiedName("handleCases$Handed$case0$0", PatternMatchMeta)).asserting(
+      _.runtimeStructure shouldBe Some(
+        Lambda("value", Empty, Lambda("case0", Empty, fieldOf("Pixel", reached(slot("Pixel", "Pixel"), Ref("meta$Pixel$Pixel$r")))))
+      )
+    )
+  }
+
+  it should "state what the match eliminator hands a field-less constructor's handler: unit, when its slot is reached" in {
+    namedValue("data AB = A | B", QualifiedName("handleCases$Handed$case1$0", patternMatchMeta("AB"))).asserting(
+      _.runtimeStructure shouldBe Some(
+        Lambda(
+          "value",
+          Empty,
           Lambda(
-            "constructor$",
+            "case0",
+            Empty,
+            Lambda("case1", Empty, fieldOf("B", App(App(QualRef("reachedThen", "eliot.lang.Reach"), slot("AB", "B")), QualRef("unit", "eliot.lang.Unit"))))
+          )
+        )
+      )
+    )
+  }
+
+  it should "hand a recursive field's handler the whole summary, when its constructor's slot is reached" in {
+    namedValue("data Tree = Leaf | Node(left: Tree, v: Foo)", QualifiedName("handleCases$Handed$case1$0", patternMatchMeta("Tree")))
+      .asserting(
+        _.runtimeStructure shouldBe Some(
+          Lambda(
+            "value",
             Empty,
             Lambda(
-              "value",
+              "case0",
               Empty,
-              Lambda(
-                "case0",
-                Empty,
-                App(App(App(meta("fieldOr"), Ref("value")), Ref("Pixel")), App(Ref("constructor$"), Ref("g")))
-              )
+              Lambda("case1", Empty, fieldOf("Node", App(App(QualRef("reachedThen", "eliot.lang.Reach"), slot("Tree", "Node")), Ref("value"))))
             )
           )
         )
-    }
-  }
-
-  it should "state what the match eliminator hands an unbraced field's handler: the field, when its constructor built it" in {
-    namedValue("data Pixel(r: Foo {g}, b: Foo)", QualifiedName("handleCases$Handed$case0$1", PatternMatchMeta)).asserting {
-      nv =>
-        nv.runtimeStructure shouldBe Some(
-          Lambda("value", Empty, Lambda("case0", Empty, App(App(meta("fieldOf"), Ref("value")), Ref("Pixel"))))
-        )
-    }
+      )
   }
 
   it should "number a handed statement by the field's position in its own constructor, a field-less one's unit too" in {
@@ -704,12 +725,81 @@ class CoreProcessorTest extends ProcessorTest(Tokenizer(), ASTParser(), CoreProc
     )
   }
 
-  "data constructor" should "state that its call is the value it built" in {
-    namedValue("data Pixel(r: Foo, b: Foo)", QualifiedName("Pixel", M)).asserting { nv =>
-      nv.runtimeStructure shouldBe Some(
-        Lambda("constructor$", Empty, Lambda("r", Empty, Lambda("b", Empty, App(Ref("constructor$"), meta("built")))))
+  "data constructor" should "state that its call is the value it built, its slot reached with its fields' metas" in {
+    namedValue("data Pixel(r: Foo, b: Foo)", QualifiedName("Pixel", M)).asserting(
+      _.runtimeStructure shouldBe Some(
+        Lambda(
+          "constructor$",
+          Empty,
+          Lambda("r", Empty, Lambda("b", Empty, App(meta("built"), App(Ref("constructor$"), reachedSlot(App(App(Ref("Pixel$Meta$Pixel"), Ref("r")), Ref("b")))))))
+        )
       )
-    }
+    )
+  }
+
+  it should "leave every other constructor's slot unreached" in {
+    namedValue("data AB = A | B", QualifiedName("B", M)).asserting(
+      _.runtimeStructure shouldBe Some(
+        Lambda("constructor$", Empty, App(meta("built"), App(App(Ref("constructor$"), QualRef("Unreached", "eliot.lang.Reach")), reachedSlot(Ref("AB$Meta$B")))))
+      )
+    )
+  }
+
+  it should "join a recursive field's meta into its own, which has no slot for it" in {
+    namedValue("data Tree = Leaf | Node(left: Tree, v: Foo)", QualifiedName("Node", M)).asserting(
+      _.runtimeStructure shouldBe Some(
+        Lambda(
+          "constructor$",
+          Empty,
+          Lambda(
+            "left",
+            Empty,
+            Lambda(
+              "v",
+              Empty,
+              App(
+                meta("built"),
+                App(
+                  App(meta("joined"), Ref("left")),
+                  App(App(Ref("constructor$"), QualRef("Unreached", "eliot.lang.Reach")), reachedSlot(App(Ref("Tree$Meta$Node"), Ref("v"))))
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  }
+
+  "data structural meta" should "generate a record per constructor, a summary, their Meta instances and the field types" in {
+    namedValues("data Option[A] = None | Some(value: A)").asserting(
+      _.map(_.qualifiedName.value.name) should contain allOf (
+        "Option$Meta$None",
+        "Option$Meta$Some",
+        "Option$Meta",
+        "meta$Option$Some$value",
+        "reach$Option$None",
+        "reach$Option$Some"
+      )
+    )
+  }
+
+  it should "list every constructor's field types in order, ending in Unit" in {
+    namedValue("data E[A, B] = L(a: A) | R(b: B, c: Foo)", QualifiedName("E$Fields", Qualifier.Meta(Qualifier.Type))).asserting(
+      _.runtimeStructure shouldBe Some(arrow(Ref("A", T), arrow(Ref("B", T), arrow(Ref("Foo", T), QualRef("Unit", "eliot.lang.Unit")))))
+    )
+  }
+
+  it should "leave a recursive field out of the field types" in {
+    namedValue("data Tree = Leaf | Node(left: Tree, v: Foo)", QualifiedName("Tree$Fields", Qualifier.Meta(Qualifier.Type))).asserting(
+      _.runtimeStructure shouldBe Some(arrow(Ref("Foo", T), QualRef("Unit", "eliot.lang.Unit")))
+    )
+  }
+
+  it should "generate no structural meta of the structures themselves" in {
+    namedValues("data Pixel(r: Foo)").asserting(
+      _.map(_.qualifiedName.value.name).filter(_.contains("$Meta$Meta")) shouldBe Seq.empty
+    )
   }
 
   "arrow-domain brace" should "state what its definition hands its code, reading the definition's parameters" in {
@@ -1021,6 +1111,20 @@ class CoreProcessorTest extends ProcessorTest(Tokenizer(), ASTParser(), CoreProc
 
   /** A primitive of `eliot.compiler.Meta`, as a generated statement names it. */
   private def meta(name: String): ExprStructure = QualRef(name, "eliot.compiler.Meta")
+
+  /** `fieldOf(value, <constructor>, <read>)`, what a `match` eliminator hands a handler argument. */
+  private def fieldOf(constructor: String, read: ExprStructure): ExprStructure =
+    App(App(App(meta("fieldOf"), Ref("value")), Ref(constructor)), read)
+
+  /** `reached(<slot>, <accessor>)`, a field read out of a constructor's slot. */
+  private def reached(slot: ExprStructure, accessor: ExprStructure): ExprStructure =
+    App(App(QualRef("reached", "eliot.lang.Reach"), slot), accessor)
+
+  /** The scrutinee's slot of `constructor` in the structural meta of `data`. */
+  private def slot(data: String, constructor: String): ExprStructure = App(Ref(s"reach$$$data$$$constructor"), Ref("value"))
+
+  /** `Reached(<record>)`, a constructor's own slot. */
+  private def reachedSlot(record: ExprStructure): ExprStructure = App(QualRef("Reached", "eliot.lang.Reach"), record)
 
   // What a top-level row lowers to: a thunk `Unit => A`, the shape a slot takes when it must not run its argument.
   private def thunk(payload: ExprStructure): ExprStructure =

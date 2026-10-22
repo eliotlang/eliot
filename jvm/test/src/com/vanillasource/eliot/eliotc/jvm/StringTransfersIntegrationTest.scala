@@ -103,8 +103,9 @@ class StringTransfersIntegrationTest extends FullIntegrationTest {
   }
 
   // `parseIntInternal` states `whole` — the interval open at both ends. That is a *stated* top rather than an
-  // omission, so the program compiles and runs, and a `where` over the parsed number is refused for want of a bound
-  // rather than silently discharged. The two diagnostics differ, which is the whole of R4.
+  // omission, so the program compiles and runs, and a `where` over the parsed number is refused rather than silently
+  // discharged: `else` reads the number out of the `Option` its escape built (`docs/meta.md` §13), so the demand sees
+  // the stated top joined with the fallback, and no bound fits it.
   "a leaf that states the domain's top" should "still compile and run" in {
     compileAndRun(
       """|import eliot.effect.Console
@@ -112,13 +113,13 @@ class StringTransfersIntegrationTest extends FullIntegrationTest {
     ).asserting(_ shouldBe "42")
   }
 
-  it should "leave a where over the parsed number unprovable rather than satisfied" in {
+  it should "refuse a where over the parsed number, whose meta is the domain's top" in {
     compileForErrors(
       """|import eliot.effect.Console
          |def withinDisplay(i: Interval[BigInteger]): Bool = rangeWithin[0, 8](i)
          |def column(x: Int) where withinDisplay(range(x)): Int = x
          |def main uses Console: Unit = printLine(show(column(parseInt("42") else 0)))""".stripMargin
-    ).asserting(_ should include("Cannot prove the precondition of 'Test::column'"))
+    ).asserting(_ should include("The precondition of 'Test::column' is not satisfied"))
   }
 
   // Nothing above changes what any of these leaves compute; the transfers are meta-information only.

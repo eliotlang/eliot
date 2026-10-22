@@ -33,7 +33,7 @@ class CoreProcessor
     // stable per-module identity), so no cross-cutting index bookkeeping is needed — they cannot collide with each
     // other or with user implementations (which are keyed by their own `(ability, pattern)`).
     val desugaredFromData: Seq[(FunctionDefinition, RoleHint)] =
-      sourceAstData.typeDefinitions.flatMap(DataDefinitionDesugarer.desugar)
+      sourceAstData.typeDefinitions.flatMap(DataDefinitionDesugarer.desugar(_))
     // Meta-slot brace on a type declaration (`type Int {range: …}`) → the type's `^Meta` constructor
     // (bounds-as-refinements §4.2, Step 4a). Type aliases are `FunctionDefinition`s, so this runs over them.
     val desugaredMetaConstructors: Seq[(FunctionDefinition, RoleHint)] =

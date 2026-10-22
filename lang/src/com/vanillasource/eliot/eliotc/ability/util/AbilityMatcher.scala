@@ -8,6 +8,7 @@ import com.vanillasource.eliot.eliotc.monomorphize.eval.Evaluator
 import com.vanillasource.eliot.eliotc.monomorphize.fact.GroundValue
 import com.vanillasource.eliot.eliotc.monomorphize.unify.Unifier
 import com.vanillasource.eliot.eliotc.operator.fact.{OperatorResolvedExpression, OperatorResolvedValue}
+import com.vanillasource.eliot.eliotc.platform.Platform
 import com.vanillasource.eliot.eliotc.processor.CompilerIO.*
 import com.vanillasource.eliot.eliotc.source.content.Sourced
 
@@ -37,10 +38,11 @@ object AbilityMatcher {
     */
   def matchImpl(
       markerSignature: Sourced[OperatorResolvedExpression],
-      queryArgs: Seq[GroundValue]
+      queryArgs: Seq[GroundValue],
+      platform: Platform
   ): CompilerIO[Option[Match]] =
     for {
-      setup <- setupEvaluation(Seq(markerSignature))
+      setup <- setupEvaluation(Seq(markerSignature), platform)
       peeled = peelPattern(setup, markerSignature)
     } yield attemptMatch(peeled, queryArgs, markerSignature)
 
@@ -69,10 +71,11 @@ object AbilityMatcher {
     */
   def patternsOverlap(
       sigA: Sourced[OperatorResolvedExpression],
-      sigB: Sourced[OperatorResolvedExpression]
+      sigB: Sourced[OperatorResolvedExpression],
+      platform: Platform
   ): CompilerIO[Boolean] =
     for {
-      setup <- setupEvaluation(Seq(sigA, sigB))
+      setup <- setupEvaluation(Seq(sigA, sigB), platform)
       peeledA = peelPattern(setup, sigA)
       peeledB = peelPattern(peeledA.setup, sigB)
     } yield attemptOverlap(peeledB.setup, peeledA.args, peeledB.args, sigA)
@@ -103,10 +106,11 @@ object AbilityMatcher {
   def signaturesCompatible(
       abstractMethodSig: Sourced[OperatorResolvedExpression],
       implMethodSig: Sourced[OperatorResolvedExpression],
-      implMarkerSig: Sourced[OperatorResolvedExpression]
+      implMarkerSig: Sourced[OperatorResolvedExpression],
+      platform: Platform
   ): CompilerIO[Boolean] =
     for {
-      setup                         <- setupEvaluation(Seq(abstractMethodSig, implMethodSig, implMarkerSig))
+      setup                         <- setupEvaluation(Seq(abstractMethodSig, implMethodSig, implMarkerSig), platform)
       (s1, absParams, absBody)       = peelToBody(setup, abstractMethodSig)
       (s2, _, implBody)              = peelToBody(s1, implMethodSig)
       marker                         = peelPattern(s2, implMarkerSig)
@@ -128,20 +132,26 @@ object AbilityMatcher {
     case class Body(body: Sourced[OperatorResolvedExpression]) extends Binding
   }
 
+  /** Classify every value `expr` references, transitively, in the pool of `platform` — the pool the patterns being
+    * matched live in, since a compiler-pool-only name (a structural meta's record, `docs/meta.md` §13.2) has no runtime
+    * declaration to look up.
+    */
   private def collectBindings(
       expr: OperatorResolvedExpression,
-      acc: Map[ValueFQN, Binding]
+      acc: Map[ValueFQN, Binding],
+      platform: Platform
   ): CompilerIO[Map[ValueFQN, Binding]] =
     OperatorResolvedExpression.foldValueReferences(expr, acc) { (map, name) =>
       if (map.contains(name.value) || name.value == WellKnownTypes.typeFQN) map.pure[CompilerIO]
-      else classifyValueRef(name.value, map)
+      else classifyValueRef(name.value, map, platform)
     }
 
   private def classifyValueRef(
       vfqn: ValueFQN,
-      acc: Map[ValueFQN, Binding]
+      acc: Map[ValueFQN, Binding],
+      platform: Platform
   ): CompilerIO[Map[ValueFQN, Binding]] =
-    getFactIfProduced(OperatorResolvedValue.Key(vfqn)).flatMap {
+    getFactIfProduced(OperatorResolvedValue.Key(vfqn, platform)).flatMap {
       case Some(fact) =>
         // A body-less value (e.g. the abstract `Int`, whose machine representation is not a type body) stays a stuck
         // head here, so ability-pattern matching compares by type constructor (`Numeric[Int]`) instead of unfolding a
@@ -150,7 +160,7 @@ object AbilityMatcher {
           case Some(body) =>
             // Recurse into the fetched body to discover further references; the already-in-map check in
             // `collectBindings` guards against cycles because we add the Body entry before recursing.
-            collectBindings(body.value, acc + (vfqn -> Binding.Body(body)))
+            collectBindings(body.value, acc + (vfqn -> Binding.Body(body)), platform)
           case None       =>
             (acc + (vfqn -> bodylessBinding(vfqn))).pure[CompilerIO]
         }
@@ -176,9 +186,9 @@ object AbilityMatcher {
 
   private case class Setup(evaluator: Evaluator, flexStore: FlexStore)
 
-  private def setupEvaluation(sigs: Seq[Sourced[OperatorResolvedExpression]]): CompilerIO[Setup] =
+  private def setupEvaluation(sigs: Seq[Sourced[OperatorResolvedExpression]], platform: Platform): CompilerIO[Setup] =
     sigs.foldLeft(Map.empty[ValueFQN, Binding].pure[CompilerIO])((acc, sig) =>
-      acc.flatMap(collectBindings(sig.value, _))
+      acc.flatMap(collectBindings(sig.value, _, platform))
     ).map(buildSetup)
 
   private def buildSetup(classifications: Map[ValueFQN, Binding]): Setup = {

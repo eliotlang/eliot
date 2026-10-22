@@ -63,7 +63,7 @@ class AbilityImplementationCheckProcessor
             case ResolveQualifier.AbilityImplementation(resolvedFQN, _, _) if resolvedFQN == abilityFQN =>
               for {
                 markerSig <- ImplementationConformance.markerSignature(method.vfqn, abilityFQN.abilityName, platform)
-                matched   <- AbilityMatcher.matchImpl(markerSig, typeArguments)
+                matched   <- AbilityMatcher.matchImpl(markerSig, typeArguments, platform)
               } yield matched.map(_ => method)
             case _                                                                                   =>
               None.pure[CompilerIO]
