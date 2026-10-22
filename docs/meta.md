@@ -117,8 +117,8 @@ shipped.
   `indexOfInternal`, `take`/`drop`, and `split`/`replace` on an empty argument) switched units with `length`, on both
   tracks. The unit is stated once, on `type String` in `lang`.
 - **The slot is `size`, not `length`.** A slot generates an accessor in the type's own module and Default namespace,
-  and `def length(s: String): Int` already lives there ("Name was already defined in this module"). Moving the
-  accessors into a namespace of their own is what lets a domain use any slot name (decision K, §17.1). `List` is owed
+  and `def length(s: String): Int` already lives there ("Name was already defined in this module"). Since
+  decision K (§17.1) the accessors have a namespace of their own, so a later domain may use any slot name. `List` is owed
   it first, since its natural slot name is also `size`.
 - **The seed.** `def stringLiteral[N: BigInteger]: String {closed(N, N)}` in `eliot.lang.Runtime`. No program calls
   it. It is the vessel that keeps the seed's construction in Eliot: the channel supplies the literal's
@@ -608,7 +608,7 @@ interpretation.
 - **Generic `data`.** `MetaConstructorDesugarer` does not thread a type's generic parameters onto its meta structure
   yet, so `data Box[A](…) {…}` needs that first.
 - **Slot names.** A slot generates an accessor in the type's own module and namespace (§2.2), so a slot named like a
-  field or a function in the same module collides. The accessors' own namespace (decision K, §17.1) removes that.
+  field or a function in the same module collides. The accessors' own namespace (decision K, §17.1, built) removed that.
 - **A slotted abstract `type` in a user library**, for platforms to implement, is a separate question: it needs a
   layer, not just a declaration.
 
@@ -1318,7 +1318,10 @@ def split(separator: String, s: String): List[String]
    then to an ordinary value. No spelling changes: accessors are named only there (`Int.els`, `String.els`, the two
    `where` examples), and no Scala names one by its string. In a brace an ordinary `size` cannot be meant, since its
    argument there is a meta. The generated `Meta` instances name the accessors' namespace directly. Declined: a slot
-   named something free (`count`), which leaves §2.2's debt to every later domain.
+   named something free (`count`), which leaves §2.2's debt to every later domain. **Built 2026-10-22**, byte-identical across every
+   example: `Qualifier.Slot`, an accessor generated there by `MetaConstructorDesugarer`, and `slotsFirst` on the
+   resolver's scope for a meta companion and a `Meta` instance's methods. `WhereOnDefIntegrationTest` pins it: a module
+   declaring its own `def range(x: Int): Int` still reads `Int`'s slot in a `where`, which failed before.
 2. **L. A slot names a type parameter's meta with the marker `MetaOf[A]`**, legal only in a slot, naming one of the
    type's own parameters. The desugarer makes each a binder of the meta structure and lists the parameters in a
    generated `List$Carried[A] = Function[A, Unit]`, the device `$Fields` (§13.2) and `$Payload` (§4.1) already are;

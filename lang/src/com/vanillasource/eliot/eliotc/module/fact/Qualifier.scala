@@ -32,6 +32,14 @@ object Qualifier {
     */
   case class Meta(of: Qualifier) extends Qualifier
 
+  /** The namespace of a **slot accessor**: `range` of `type Int {range: Interval[BigInteger]}`, which reads a slot out
+    * of a meta (`docs/meta.md` §17.1, decision K). Its own namespace, so a slot may be named like a function of its
+    * type's module (`List`'s `size` slot beside `List::size`). [[Meta]] is not free for it: `Meta(Default)` holds a
+    * definition's transfer companion, `length` for `String::length`'s brace. Code about metas (a brace, a `where`, a
+    * `Meta` instance) resolves a bare name to a slot accessor before an ordinary value.
+    */
+  case object Slot extends Qualifier
+
   /** Functions belonging to a given ability.
     */
   case class Ability(name: String) extends Qualifier
@@ -85,6 +93,7 @@ object Qualifier {
       case Default                                          => "Default"
       case Type                                             => "Type"
       case Meta(Default)                                    => "Meta"
+      case Slot                                             => "Slot"
       case Meta(of)                                         => s"Meta(${show(of)})"
       case Ability(name)                                    => name
       case AbilityImplementation(name, pattern, None)       => s"$name#$pattern"

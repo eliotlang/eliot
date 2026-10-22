@@ -13,6 +13,11 @@ object Qualifier {
     * which this is the resolved twin.
     */
   case class Meta(of: Qualifier)                                      extends Qualifier
+
+  /** The namespace of a slot accessor — see [[com.vanillasource.eliot.eliotc.module.fact.Qualifier.Slot]], of which
+    * this is the resolved twin.
+    */
+  case object Slot                                                    extends Qualifier
   case class Ability(name: String)                                    extends Qualifier
 
   /** The resolved twin of [[com.vanillasource.eliot.eliotc.module.fact.Qualifier.AbilityImplementation]]: the same
@@ -34,6 +39,7 @@ object Qualifier {
       case Default                                          => "Default"
       case Type                                             => "Type"
       case Meta(Default)                                    => "Meta"
+      case Slot                                             => "Slot"
       case Meta(of)                                         => s"Meta(${show(of)})"
       case Ability(name)                                    => name
       case AbilityImplementation(name, pattern, None)       => s"${name.abilityName}#$pattern"

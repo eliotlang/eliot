@@ -285,4 +285,20 @@ class WhereOnDefIntegrationTest extends FullIntegrationTest {
         "def main uses Console: Unit = guarded(300, printLine(\"ran\"))"
     ).asserting(_ should include("precondition of 'Test::guarded' is not satisfied"))
   }
+
+  // A slot accessor has a namespace of its own (`docs/meta.md` §17.1, decision K), so a function named like a slot
+  // lives beside it: in a `where`, `range` is `Int`'s slot, and in a body it is the program's own function.
+  "a where precondition in a module declaring a function named like a slot" should "still read the slot" in {
+    compileAndRun(
+      useByte.replace("def useByte", "def range(x: Int): Int = add(x, 1)\ndef useByte") +
+        "def main uses Console: Unit = printLine(show(range(useByte(42))))"
+    ).asserting(_ shouldBe "43")
+  }
+
+  it should "still reject a call whose argument range exceeds the bound" in {
+    compileForErrors(
+      useByte.replace("def useByte", "def range(x: Int): Int = add(x, 1)\ndef useByte") +
+        "def main uses Console: Unit = printLine(show(range(useByte(1000))))"
+    ).asserting(_ should include("precondition of 'Test::useByte' is not satisfied"))
+  }
 }

@@ -3,7 +3,7 @@ package com.vanillasource.eliot.eliotc.resolve.processor
 import cats.data.StateT
 import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.module.fact.QualifiedName
-import com.vanillasource.eliot.eliotc.module.fact.Qualifier.{Ability, Implementation}
+import com.vanillasource.eliot.eliotc.module.fact.Qualifier.{Ability, Default, Implementation, Slot}
 import com.vanillasource.eliot.eliotc.module.fact.{ModuleName, Role, ValueFQN}
 import com.vanillasource.eliot.eliotc.platform.Platform
 import com.vanillasource.eliot.eliotc.processor.CompilerIO.*
@@ -14,7 +14,8 @@ case class ValueResolverScope(
     dictionary: Map[QualifiedName, ValueFQN],
     privateNames: Map[QualifiedName, ValueFQN],
     parameters: Set[String],
-    platform: Platform = Platform.Runtime
+    platform: Platform = Platform.Runtime,
+    slotsFirst: Boolean = false
 )
 
 object ValueResolverScope {
@@ -29,6 +30,22 @@ object ValueResolverScope {
 
   def isParameter(name: String): ScopedIO[Boolean] =
     StateT.get[CompilerIO, ValueResolverScope].map(_.parameters.contains(name))
+
+  /** The value a bare reference `name` names. In code about metas ([[ValueResolverScope.slotsFirst]]) a name in the
+    * default namespace is a slot accessor first (`docs/meta.md` §17.1, decision K): `size(list)` in `List`'s brace is
+    * the slot, not `List::size`. Anywhere else, and when no accessor has the name, it is [[getValue]]'s.
+    */
+  def getReferencedValue(name: QualifiedName): ScopedIO[Option[ValueFQN]] =
+    StateT
+      .get[CompilerIO, ValueResolverScope]
+      .flatMap(scope =>
+        Option
+          .when(scope.slotsFirst && name.qualifier == Default)(QualifiedName(name.name, Slot))
+          .flatMap(scope.dictionary.get) match {
+          case Some(accessor) => StateT.pure[CompilerIO, ValueResolverScope, Option[ValueFQN]](Some(accessor))
+          case None           => getValue(name)
+        }
+      )
 
   /** The value `name` names: what the dictionary maps it to, or, for a name holding a `$`, the current module's value of
     * that name. No user can write such a name (`$` is no identifier character), so it is one the compiler generated

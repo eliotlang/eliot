@@ -487,8 +487,8 @@ class CoreProcessorTest extends ProcessorTest(Tokenizer(), ASTParser(), CoreProc
     }
   }
 
-  it should "generate a slot accessor from the meta structure onto the domain" in {
-    namedValue("type Int {range: Interval}", QualifiedName("range", Qualifier.Default)).asserting { nv =>
+  it should "generate a slot accessor from the meta structure onto the domain, in the slot namespace" in {
+    namedValue("type Int {range: Interval}", QualifiedName("range", Qualifier.Slot)).asserting { nv =>
       nv.signature.value.structure shouldBe
         App(App(Ref("Function", T), Ref("Int$Meta", Qualifier.Type)), Ref("Interval", T))
     }

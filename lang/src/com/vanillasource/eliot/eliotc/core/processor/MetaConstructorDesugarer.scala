@@ -43,7 +43,20 @@ object MetaConstructorDesugarer {
     */
   def desugar(definition: FunctionDefinition): Seq[(FunctionDefinition, RoleHint)] =
     if (definition.metaSlots.isEmpty) Seq.empty
-    else DataDefinitionDesugarer.desugar(metaStructure(definition), structural = false) ++ metaJoinInstance(definition)
+    else
+      DataDefinitionDesugarer.desugar(metaStructure(definition), structural = false).map(inSlotNamespace) ++
+        metaJoinInstance(definition)
+
+  /** A slot's accessor in [[Qualifier.Slot]], its own namespace (`docs/meta.md` §17.1, decision K), so a slot may be
+    * named like a function of the type's module: `List`'s `size` slot beside `List::size`. Code about metas finds it
+    * there before an ordinary value of the same name, so a brace still writes `size(list)`.
+    */
+  private def inSlotNamespace(generated: (FunctionDefinition, RoleHint)): (FunctionDefinition, RoleHint) =
+    generated match {
+      case (accessor, hint: RoleHint.FieldAccessor) =>
+        (accessor.copy(name = accessor.name.map(_.copy(qualifier = Qualifier.Slot))), hint)
+      case other                                    => other
+    }
 
   /** The synthetic `data <Name>$Meta(<slots>)` whose desugaring *is* the meta structure. */
   private def metaStructure(definition: FunctionDefinition): DataDefinition = {

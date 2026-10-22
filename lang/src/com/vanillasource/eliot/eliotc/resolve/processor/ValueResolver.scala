@@ -59,7 +59,8 @@ class ValueResolver
         unifiedValue.dictionary,
         unifiedValue.privateNames,
         genericParams.toSet,
-        key.platform
+        key.platform,
+        slotsFirst = isAboutMetas(key.vfqn.name.qualifier)
       )
 
     val resolveProgram = for {
@@ -439,6 +440,7 @@ class ValueResolver
     qualifier match {
       case CoreQualifier.Default                               => (Qualifier.Default: Qualifier).pure[ScopedIO]
       case CoreQualifier.Type                                  => (Qualifier.Type: Qualifier).pure[ScopedIO]
+      case CoreQualifier.Slot                                  => (Qualifier.Slot: Qualifier).pure[ScopedIO]
       // The meta namespace shadows another one, so it converts by converting what it shadows — a meta companion of an
       // ability-implementation method resolves that implementation's ability name exactly as the method itself does
       // (the companion is generated in the same file, hence the same import scope).
@@ -613,6 +615,18 @@ class ValueResolver
       CoreQualifiedName(abilityFQN.abilityName, CoreQualifier.Ability(abilityFQN.abilityName))
     )
 
+  /** Whether a value of this qualifier is code **about metas**, whose bare names resolve to a slot accessor before an
+    * ordinary value (`docs/meta.md` §17.1, decision K): a meta companion — a transfer brace, a `where`, a parameter or
+    * handed statement — and a method of a `Meta` instance, which joins metas (`Int$Meta(join(range(a), range(b)))`).
+    * There a value's arguments are metas, so an ordinary function of the same name (`List::size`) is never what is
+    * meant.
+    */
+  private def isAboutMetas(qualifier: CoreQualifier): Boolean = qualifier match {
+    case CoreQualifier.Meta(_)                                => true
+    case CoreQualifier.AbilityImplementation(ability, _, _) => ability === metaAbilityName
+    case _                                                    => false
+  }
+
   private def resolveInAbilityScope[T](
       abilityFQN: AbilityFQN,
       marker: UnifiedModuleValue,
@@ -687,7 +701,7 @@ class ValueResolver
             Expression.ValueReference(nameSrc.as(typeFQN)).pure[ScopedIO]
           } else {
             // This should be a referenced value
-            getValue(nameSrc.value).flatMap {
+            getReferencedValue(nameSrc.value).flatMap {
               case Some(vfqn) =>
                 // This is a normal value; resolve any explicit type args
                 typeArgExprs
