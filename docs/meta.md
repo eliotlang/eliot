@@ -532,7 +532,7 @@ Each of these is a gap: fail-safe at every demand, and pinned by a test that cha
 
 | gap | example | closed by |
 |---|---|---|
-| a `data` type recursive other than through a field of its own type | `Rose(kids: Option[Rose], value: Int)`, or `A(b: Option[B])` with `B(a: Option[A])`: the structural map has no finite meta type, so the value's meta is not computed | the recursive group of §13.3, which T5 did not build (§13.3, "Built") |
+| a `data` type recursive other than through a field of its own type | `Rose(kids: Option[Rose], value: Int)`, or `A(b: Option[B])` with `B(a: Option[A])`: the structural map has no finite meta type, so the value's meta is not computed | the recursive group of §13.3, deferred to the recursive-data fold (decision J, §18) |
 | the elements of a `List` | `foldLeft`'s `combine` is handed an element with no meta | `List` carrying its elements' meta (§13.3) |
 | a demand on a closure the walk cannot see applied | `applyTo(y -> useByte(y), 10)`; `useByte(f(x))` with `f` a parameter | a context that can carry a closure (a fact key holding a body and an environment), when a program needs it |
 | the step budget | a deep or wide derived DAG | a memo when observed, and exhaustion reported as an error (§5.3) |
@@ -873,11 +873,12 @@ project, and `foldLeftInternal` waits on it (§10).
 constructor joins it, and a `match` hands its handler the summary. The recursive *group* — recursion through another
 type (`Rose(kids: Option[Rose])`) or across types (`A(b: Option[B])`, `B(a: Option[A])`) — is not built: the
 structural map of such a type is infinite, and `MetaInterpreter.metaTypeOf` declines it on meeting a type it is already
-expanding, so the value's meta is not computed (§8), fail-safe. **That narrows decision G, and needs a decision**: the
-sketch above folds a group over one summary, but a field like `kids: Option[Rose]` is neither the type itself nor in a
-group with `Option` (whose `$Fields` does not reach `Rose`), so the sketch's own test does not make it recursive, and
-its meta type `Option$Meta[Rose$Meta[…]]` is infinite. The tree has one such type, eliot-build's `Clause(children:
-List[Clause])`, which is finite today only because `List` carries no element meta; T6 makes it infinite too.
+expanding, so the value's meta is not computed (§8), fail-safe. That narrows decision G, and the sketch above does not
+cover the case anyway: a field like `kids: Option[Rose]` is neither the type itself nor in a group with `Option` (whose
+`$Fields` does not reach `Rose`), so the sketch's own test does not make it recursive, and its meta type
+`Option$Meta[Rose$Meta[…]]` is infinite. The tree has one such type, eliot-build's `Clause(children: List[Clause])`,
+which is finite today only because `List` carries no element meta; T6 makes it infinite too, and the cycle guard
+covers it then as it covers `Rose` now. **Deferred by decision J** (§18) to the recursive-data fold.
 
 ### 13.4 The constructor and the eliminator state
 
@@ -1167,7 +1168,7 @@ cache once kept a stale companion across a change and hid a brace that did not e
   accept/reject pair, and it adds `Pair`, `Either`, a user record, a user tree and `pick(B)`'s pruning. Jars change
   wherever an `Int` is read out of a `data`. **Gated on §16's measurement**, which also decides the memo, and with it
   the budget becoming a reported limit (decision I). **Built 2026-10-22, except the recursive groups** (§13.3, "Built",
-  a narrowing that needs a decision), and every jar is byte-identical: no example narrows an `Int` read out of a `data`.
+  deferred by decision J), and every jar is byte-identical: no example narrows an `Int` read out of a `data`.
   The accept/reject pairs are in `DerivedMetaTransferIntegrationTest` and `FieldBraceIntegrationTest`, a field read in a
   `match` arm in `main` among them. It took four things the plan did not list. `Reach` needed an abstract base
   declaration, since compile-track probes read the runtime pool's names of every module they meet. `AbilityMatcher`
@@ -1217,6 +1218,17 @@ cache once kept a stale companion across a change and hid a brace that did not e
 - **H. An overlay `data` must agree with the runtime one** (§13.7), as an error.
 - **I. The step budget becomes a compiler limit** (§5.3): running out of it is an error naming the call, never a value.
 
+**Decided 2026-10-22:**
+
+- **J. The recursive group of decision G is deferred to the recursive-data fold** (`docs/recursive-data.md`), and
+  designed with it. T5 folds only a field typed by the type itself (§13.3, "Built"); a type recursive through another
+  type or across types keeps a meta that is not computed, which is fail-safe. Recursive `data` is legal — only a
+  recursive *value* is refused (the recursion gate reads bodies, never signatures), and strict positivity refuses only
+  negative recursion — but no program can walk one to an arbitrary depth until the fold exists: without recursion, user
+  code reads a fixed number of levels, one `match` each. So a precise meta through such a type buys little before the
+  fold, and the fold is what decides how a structure that reaches itself is summarised. Both wait on `List` carrying
+  its size, the domain T6 starts. G is not reversed: a field typed by the type itself folds as it says.
+
 **Open, not blocking anything:**
 
 - **May an ability declare a transfer its implementations must satisfy?** (§3.1). A contract feature, not part of
@@ -1235,11 +1247,10 @@ T3 settled the frame and cell primitives' spelling (§14), and T4 the loop's: `l
 second method of `ability Meta` (§11.2).
 
 **T5** (§17), structural meta, is built (2026-10-22) and measured against its baseline (§16). The memo is not added,
-since the interpretation's share of a compile did not move and no derivation came near the budget. Two things are
-open: the recursive group of §13.3 is not built, and the sketch's test does not cover recursion through another type
-(§13.3, "Built"), which needs a decision; and decision I, the budget as a reported limit, which §17 tied to the memo,
-is not built either. Next is **T6**, `List` carrying its elements' meta. T6 waits on `List` carrying its elements' meta, and on stating the
-generated `typeMatch[R]`, which removing R2's exemption found (§10). The `Unit` cleanup below needs neither.
+since the interpretation's share of a compile did not move and no derivation came near the budget. The recursive group
+of §13.3 is not built: decision J (§18, 2026-10-22) defers it to the recursive-data fold. Decision I, the budget as a
+reported limit, which §17 tied to the memo, is not built either. Next is **T6**, `List` carrying its elements' meta,
+which also waits on stating the generated `typeMatch[R]` that removing R2's exemption found (§10).
 
 **The `Unit` question (2026-10-21), closed the same day.** Robert: a type declaring no meta gets `Unit` implicitly, and
 *"the rest of the machinery should not know that this was 'default'"*. T3 removed two places that knew: §5.3's type
