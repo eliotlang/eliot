@@ -1045,6 +1045,32 @@ So structural meta's stage is **gated on a measurement**: the sweep's wall time,
 flag, and the cache size, against the stage before it. If the budget or the clock binds, the memo of §5.3 is added
 then.
 
+**The stage before it, measured 2026-10-22** at `4147fa63` (T4 and the `Unit` cleanup), every one of the 52 examples
+compiled cold, one at a time, twice over:
+
+| | run 1 | run 2 |
+|---|---|---|
+| wall time, summed | 218.0 s | 225.4 s |
+| the same with `--statistics` | 225.0 s | 233.1 s |
+| time inside the compiler (`--statistics` total) | 192.9 s | 200.0 s |
+| the channel's processors (`MetaDemands`, `RefinementChannel`, `MetaTransferAccounting`, `Reconcile`) | 3.36 s (1.74%) | 3.57 s (1.78%) |
+| cache, summed | 138.0 MB | 138.4 MB |
+
+- **Noise.** Two runs of an unchanged tree differ by 3.4% in the sum and by 6% per example on average (17% at worst),
+  so a single example's time says nothing and only the sum is compared. The cache's size moves by up to 3% per
+  example between identical runs; every jar was byte-identical. The flag costs 3% here, not the 20% `CLAUDE.md`
+  quotes, so the plain and flagged sums can both be compared.
+- **Where the channel's time goes.** `RefinementChannelProcessor` is 2.19 s of the 3.36 s; the interpretation
+  (`MetaDemandsProcessor`) is 0.38 s. The most a single example spends in the channel is 3.5% of its compile
+  (`Intervals`).
+- **The budget does not bind.** An env-gated probe in `metaOfCall` (thrown away afterwards) recorded every derivation:
+  293 over all the examples, none exhausted. The most expensive used 450 of its 1024 steps (`TestSuite::runTest`), the
+  next 348 (`Numeric::*` in `Intervals`); 226 of the 293 took ten steps or fewer, and only 3 took more than 200.
+- **P5's contexts do not multiply yet**: 525 `MetaDemands` facts for 496 refined values, 1.06 contexts each.
+
+So T5 is compared against these sums, and the memo is owed if the summed wall time grows by clearly more than the
+noise, if the channel's share stops being a rounding error, or if any derivation exhausts its budget.
+
 ## 17. Staging
 
 Each stage is verified by the fast example sweep and byte-identity compare (`scripts/example-sweep.sh`), with every
@@ -1136,7 +1162,9 @@ T3 settled the frame and cell primitives' spelling (§14), and T4 the loop's: `l
 second method of `ability Meta` (§11.2).
 
 To continue: **T5** (§17), structural meta, is gated on §16's measurement, which decides the memo and with it the
-budget becoming a reported limit (decision I). T6 waits on `List` carrying its elements' meta, and on stating the
+budget becoming a reported limit (decision I). Its baseline, the stage before it, was measured on 2026-10-22 (§16):
+the channel is under 2% of a compile and no derivation comes near the budget, so T5 starts without the memo and is
+measured against those sums when built. T6 waits on `List` carrying its elements' meta, and on stating the
 generated `typeMatch[R]`, which removing R2's exemption found (§10). The `Unit` cleanup below needs neither.
 
 **The `Unit` question (2026-10-21), closed the same day.** Robert: a type declaring no meta gets `Unit` implicitly, and
