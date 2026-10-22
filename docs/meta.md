@@ -1301,13 +1301,13 @@ def append[A](list: List[A], element: A): List[A] {size(list) + closed(1, 1), wi
 private def foldLeftInternal[A, B](list: List[A], initial: B,
                                    combine uses *: A {list.item} => B {looped(initial, combine)} => B)
    uses *: B {looped(initial, combine)}
-private def argumentsInternal: List[String]       {atLeast(0), Reached({closed(0, 2147483647)})}
+private def argumentsInternal: List[String]       {atLeast(0), Reached(MetaOf[String](closed(0, 2147483647)))}
 def split(separator: String, s: String): List[String]
-   {interval(Bounded(1), end(size(s)) + 1), Reached({interval(Bounded(0), end(size(s)))})}
+   {interval(Bounded(1), end(size(s)) + 1), Reached(MetaOf[String](interval(Bounded(0), end(size(s)))))}
 ```
 
-`noItem` and `withItem` are the two compile-track helpers that build the hidden `Reach`; the exact spelling of the
-`Reach`-building half is settled when it is built, since only platform statements write it.
+`noItem` and `withItem` are the two compile-track helpers that build the hidden `Reach`, generated per `MetaOf` slot
+from its name (`no<Slot>`, `with<Slot>`), since only platform statements write it.
 
 **The decisions** (Robert, 2026-10-22, after the draft's points were elaborated with examples):
 
@@ -1343,6 +1343,14 @@ def split(separator: String, s: String): List[String]
    item through a braced arrow domain, as T4 did `resultValue` (§11.3). That costs O(n²), since the JVM `append` copies
    its list (`readLines` of a 10,000-line file is about 50 million element copies), and loses the size's precision to
    the loop's widening, so it is measured before it is taken.
+
+   **N's spelling is reversed (Robert, 2026-10-22), before it was built.** In an expression `{…}` is already a block,
+   so `Reached({closed(0, 5)})` parses as `Reached(closed(0, 5))`, a bare interval. The item's meta is written
+   `MetaOf[T](slots…)` instead (Robert: *"Didn't we introduce MetaOf[]?"*): in code about metas, the resolver resolves
+   `T` as a type name and replaces the expression by that type's meta constructor, from `T`'s own module. `T` must be a
+   type declaring slots, named directly; through an alias, a type parameter or a slotless type it is an error naming
+   `T`, so nothing infers a meta type from a spelling (§4.1). A slotless item is `unit` (`List[Path]`'s), and a generic
+   one the parameter's own meta. The fold decomposition stays the fallback.
 5. **No decision, only work:** `MetaConstructorDesugarer` threads a type's parameters onto its meta structure and
    instance (`implement[M$A ~ Meta] Meta[List$Meta[M$A]]`), as `StructuralMetaDesugarer` already does for `data`. **Built with L.**
 
