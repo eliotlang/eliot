@@ -1,6 +1,7 @@
 import eliot.effect.Throw
 import eliot.file.Path
 import eliot.collection.List
+import eliot.lang.Reach
 
 // Merge copy of the FileSystem effect so the implementation below can resolve it (name resolution is per-file). The
 // merge verifies this copy agrees with the abstract declaration in the base layer, which carries the documentation.
@@ -205,12 +206,13 @@ private def resultBool(r: IoResult): Bool
  * The value slot of a result holder that holds a `List[String]` (`readLinesInternal`'s). Implemented by the backend.
  */
 private def resultStrings(r: IoResult): List[String]
+   {closed(0, 2147483647), Reached(MetaOf[String](closed(0, 2147483647)))}
 
 /**
  * The value slot of a result holder that holds a `List[Path]` (`listDirectoryInternal`'s, `walkInternal`'s).
  * Implemented by the backend.
  */
-private def resultPaths(r: IoResult): List[Path]
+private def resultPaths(r: IoResult): List[Path] {closed(0, 2147483647), Reached(unit)}
 
 /**
  * The error-message slot of a result holder (`null` when it holds a value). Implemented by the backend.

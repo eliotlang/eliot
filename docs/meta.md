@@ -41,7 +41,8 @@ A type may declare **meta slots**:
 
 ```eliot
 type Int {range: Interval[BigInteger]}
-type String {size: Interval[BigInteger]}
+type String {length: Interval[BigInteger]}
+type List[A] {size: Interval[BigInteger], item: Reach[MetaOf[A]]}
 ```
 
 The slots are compile-time information *about* a value, and they are not part of its type. `Int == Int`
@@ -107,7 +108,7 @@ type Int {range: Interval[BigInteger]}
 
 ### 2.2 The size domain: `String`
 
-`type String {size: Interval[BigInteger]}`. This is the domain that proved the machinery generic rather than
+`type String {length: Interval[BigInteger]}`. This is the domain that proved the machinery generic rather than
 `Int`-shaped. It cost one compiler arm (the literal seed) and one declaration; every other piece was already
 shipped.
 
@@ -116,10 +117,13 @@ shipped.
   `where` over a per-target count would hold on the JVM and fail on an MCU. The index family (`substring`,
   `indexOfInternal`, `take`/`drop`, and `split`/`replace` on an empty argument) switched units with `length`, on both
   tracks. The unit is stated once, on `type String` in `lang`.
-- **The slot is `size`, not `length`.** A slot generates an accessor in the type's own module and Default namespace,
-  and `def length(s: String): Int` already lives there ("Name was already defined in this module"). Since
-  decision K (§17.1) the accessors have a namespace of their own, so a later domain may use any slot name. `List` is owed
-  it first, since its natural slot name is also `size`.
+- **The slot is `length`, named like the function that returns it** (since 2026-10-22). It was `size` until then:
+  a slot's accessor lived in its type's module and default namespace, beside `def length(s: String): Int` ("Name was
+  already defined in this module"). Decision K gave accessors a namespace of their own (§17.1), and then `List`'s
+  `size` slot hid `String`'s in every file importing `List`, since a file sees one value per name: `split`'s own
+  statement could not read its argument's size. Robert took the rename, so each slot is named like the function that
+  computes it, `String::length` and `List::size`. Slot names are still one scope per file: two domains whose slots
+  share a name cannot both be read by their bare names in one file, and one is written module-qualified.
 - **The seed.** `def stringLiteral[N: BigInteger]: String {closed(N, N)}` in `eliot.lang.Runtime`. No program calls
   it. It is the vessel that keeps the seed's construction in Eliot: the channel supplies the literal's
   `codePointCount`, and the brace builds the meta. Counting is platform-independent because the unit is.
@@ -131,12 +135,12 @@ shipped.
   base may not name. A per-platform transfer brace cannot fill it either: a brace desugars to an ordinary named value,
   so two layers bodying it is "Has multiple implementations."
 
-What the `String` leaves state (`n` is `size(s)`):
+What the `String` leaves state (`n` is `length(s)`):
 
 | leaf | stated |
 |---|---|
-| `length` | `{size(s)}`. This is in the base, because the identity holds on every target. |
-| `combine` (`++`) | `{size(a) + size(b)}`, exact |
+| `length` | `{length(s)}`. This is in the base, because the identity holds on every target. |
+| `combine` (`++`) | `{length(a) + length(b)}`, exact |
 | `substring(startIndex, endIndex, s)` | `{interval(Bounded(0), end(n))}`. Only the length ceiling, because the index ceiling needs an interval **intersection** the domain lacks (`minBound` absorbs `Unbounded`, which is right at a `start` and wrong at an `end`). |
 | `trim` | `{interval(Bounded(0), end(n))}` |
 | `toUpperCase` / `toLowerCase` | `{interval(start(n), end(n) * 3)}`. Not length-preserving: `ß` ⤳ `SS`, `ﬃ` ⤳ `FFI`. |
@@ -169,7 +173,7 @@ domain-agnostic. Two constraints apply:
 
 **R1: every type has a meta type** (§1).
 
-**R2: a leaf must state its transfer.** It states it as a brace on its return: `def length(s: String): Int {size(s)}`.
+**R2: a leaf must state its transfer.** It states it as a brace on its return: `def length(s: String): Int {length(s)}`.
 The check is **use-site and post-monomorphization** (*Use-Site Verification*): whether a generic leaf's result
 carries meta is known only once its type is ground. It reads the **evaluated** result type, so
 `def readGauge: Reading` over `type Reading = Gauge` is not exempt by spelling. Its fact,
@@ -210,7 +214,7 @@ report a hundred spurious errors.
 - **A statement lives in the layer that owns the fact it states.** Ask what the bound is a property of. If it is a
   representation, the statement belongs to the platform: `readLineInternal`'s `closed(0, 2³¹−1)`, `outcomeExitCode`'s
   full `int` range. If it is the operation itself or its argument's meta, it belongs to the base: `length`'s
-  `{size(s)}`, `combine`'s sum, `show`'s `atLeast(1)`. Exactly one layer may carry a brace: it desugars to a concrete
+  `{length(s)}`, `combine`'s sum, `show`'s `atLeast(1)`. Exactly one layer may carry a brace: it desugars to a concrete
   companion, so two would be "Has multiple implementations". Signature equality ignores braces, so the merge stays
   lexical.
 - **A leaf's statement is axiomatic.** Nothing rechecks it, and since S9 the backend no longer even truncates at the
@@ -437,6 +441,13 @@ join their arms. When a handled statement exists (§4.5), the handler is applied
   meta-information of this call of 'f' takes more than 1024 steps"* at the call. `MetaDemandsProcessor` asks once per
   context, so it reports nothing of its own: it reads the call as unknown, which fails any demand on it. What the
   derivation had got to is never handed on.
+
+  **Open (2026-10-22): decision I as built makes eliot-build fail to compile.** The limit fires at `main`'s call of
+  `answer`, the whole build tool, at 1024 steps, at 16 384 and at 262 144 alike, so the cost grows exponentially, the
+  diamond-shaped DAG this note names, and no budget is the answer. Before I such a call was left not computed, which
+  nothing read. It is on `master`, unreleased, and every dependent pins `v0.18`, so nothing is broken yet, but no
+  release can be cut until it is decided. The candidates are the memo above, measured first, and narrowing what I
+  reports; either changes a decided rule, so it waits on Robert.
 - **There is no type gate (since T3).** A call whose result type carried no meta used to be skipped before any body
   was fetched, which kept the interpretation off most call nodes. T3 removed it: a cell written by a call returning
   `Unit` (`putState`) must be followed, and so must a `Unit` call that never returns. Measured on a cold compile of
@@ -540,10 +551,10 @@ Each of these is a gap: fail-safe at every demand, and pinned by a test that cha
 | gap | example | closed by |
 |---|---|---|
 | a `data` type recursive other than through a field of its own type | `Rose(kids: Option[Rose], value: Int)`, or `A(b: Option[B])` with `B(a: Option[A])`: the structural map has no finite meta type, so the value's meta is not computed | the recursive group of §13.3, deferred to the recursive-data fold (decision J, §18) |
-| the elements of a `List` | `foldLeft`'s `combine` is handed an element with no meta | `List` carrying its elements' meta (§13.3) |
 | a demand on a closure the walk cannot see applied | `applyTo(y -> useByte(y), 10)`; `useByte(f(x))` with `f` a parameter | a context that can carry a closure (a fact key holding a body and an environment), when a program needs it |
 
-Decision I closed the step budget's row (2026-10-22): running out of it is an error, never a gap (§5.3). T5 closed the
+Decision I closed the step budget's row (2026-10-22): running out of it is an error, never a gap (§5.3), though see
+the note there. T6 closed the `List` row the same day: a fold's element is every item's meta (§17.1). T5 closed the
 three rows above the `List` one: a field read out of a value the interpretation did not build, the join
 of two constructed values, and with them `if … else`. Each was a structure that could not carry what flows through
 it, which is what Part II finds.
@@ -669,7 +680,7 @@ with a type-parameter result and what each must define:
 | `escapeInternal[K, A, R](body, onExit, onValue): R` (Abort, Throw) | `{joined(onExit, onValue)}`, **stated since T3**. It hands `body` a fresh frame, `onValue` what `body` yields, and `onExit` what `body`'s exits gave the frame, which is ⊥ when nothing exits (§11.1, §14). |
 | `withCellInternal[S, A, R](initial, body, combine): R` (State, Writer, Dep) | `{combine}`, **stated since T3**. It hands `body` a fresh cell holding `initial`, and `combine` what `body` yields and the cell's content when `body` returns (§11.1). |
 | `readCellInternal[S](cell): S` (State, Writer, Dep) | `{content(cell)}`, **stated since T3**: the cell's content where it is read (§11.1) |
-| `foldLeftInternal[A, B](list, initial, combine): B` | `{looped(initial, combine)}`, **stated since T4**, the loop's fixpoint from `initial`, which it hands `combine` too (§11.2). The element it hands `combine` is stated once `List` carries its elements' meta (§13.3). |
+| `foldLeftInternal[A, B](list, initial, combine): B` | `{looped(initial, combine)}`, **stated since T4**, the loop's fixpoint from `initial`, which it hands `combine` too (§11.2). The element it hands `combine` is every item's meta, **since T6** (§17.1). |
 | `foldLinesInternal`, `foldCodePointsInternal` (File) | `{joined(onValue, onError)}`, **stated since T4**, once their holder was decomposed (§11.3): `onValue` is handed the loop's fixpoint, the step `{closed(0, 2147483647)}` per line and `{closed(0, 1114111)}` per code point |
 | `resultValue[A](r: IoResult): A` (File) | none can be honest: it returned its holder's content as any `A`. **Decomposed away in T4** (§11.3). |
 | `Bool::fold[A]` | already `{join(whenTrue, whenFalse)}` |
@@ -1269,45 +1280,63 @@ cache once kept a stale companion across a change and hid a brace that did not e
 
 ### 17.1 T6: the list domain (decided 2026-10-22, decisions K–N)
 
-`List` is the third domain, and the first whose meta holds **another type's meta**. Today a `List`'s meta is `Unit`,
-so a fold's element is not computed (§8), and nothing about how many items a list has can be demanded.
+`List` is the third domain, and the first whose meta holds **another type's meta**. Until T6 a `List`'s meta was
+`Unit`, so a fold's element was not computed (§8), and nothing about how many items a list has could be demanded.
+**Built 2026-10-22** (decisions K–N, with the corrections below).
 
 ```eliot
-type List[A] {size: Interval[BigInteger], item: MetaOf[A]}
+type List[A] {size: Interval[BigInteger], item: Reach[MetaOf[A]]}
 ```
 
 - **`size`** is the size domain of §2.2, counted in items. `empty` is `[0, 0]` and `append` adds one, exactly.
-- **`item`** is the meta **every** item has: the items of a list have one type, so they have one meta type, and the
-  slot holds the join of their metas. `list.item.range` in a brace or a `where` is the range of every `Int` of a
-  `List[Int]` (Robert's spelling). Decision M.
-- **A list with no item.** The meta type is generated as `List$Meta[M$A](size: Interval[BigInteger], item:
-  Reach[M$A])`: `Reach` (§13.2) is inside, never on the surface. An empty list's slot is `Unreached`, the value the join
-  ignores, so `append(empty, 1000).item` is exactly `[1000, 1000]`. Reading `item` of a list that can have no item is
-  ⊥, as reading a field of a constructor that cannot have built a value is (§13.4): a fold over it does not run its
-  step, and a demand reading it holds vacuously (decision C), so `def total(list: List[Int]) where
-  allBytes(list.item.range)` accepts `total(empty)`. The alternatives were declined: a value picked for an empty
-  list's item (any range is vacuously true, but a demand on `whole` rejects `total(empty)` and a join with the pick
-  widens every real item), and a "nothing" value in every domain, which is a member on `Meta` mirroring the declined
-  `top` (§18, 2026-10-20).
-- **What it buys.** A fold's element has a meta, so `list.foldLeft(0, e -> acc -> acc + e)` over `[1, 2, 3]` is bounded
-  by its items, which closes §8's `List` row. A `where` can demand a size (`where nonEmpty(size(list))`). `List::size`,
-  derived through the loop, is `atLeast(0)`, not exact: exactness waits on iterating a known count (§18, open).
+- **`item`** is the meta **every** item has, or that there is none: the items of a list have one type, so one meta
+  type, and the slot holds `Reached` with the join of their metas, or `Unreached` for a list that can have no item.
+  `Unreached` is the value the join ignores, so `append(empty, 1000).item` is exactly `Reached([1000, 1000])`.
+- **A `where` says what a list with no item means.** `item` is the `Reach` itself, so a demand over every item reads
+  it through `forAll`, which holds of `Unreached`, and the predicate is a real `true` or `false` either way:
 
-The leaves the platform states, in the spelling decision N gives them:
+  ```eliot
+  def allBytes(list: List[Int]) where list.item.forAll(m -> withinByte(m.range)): Int
+  allBytes(empty)                  // accepted: no item to fail it
+  allBytes(append(empty, 300))     // rejected
+  def check(list: List[Int]) where list.item.forAll(m -> withinByte(m.range)) && nonEmpty(size(list)): Int
+  check(empty)                     // rejected: the other conjunct is false
+  ```
+
+  `Reach` is importable for this (`import eliot.lang.Reach`), on the compile track only.
+- **⊥ only where it is control.** A fold over a list that can have no item does not run its step: the element it
+  hands is `reached(item(list), m -> m)`, as a `match` arm whose constructor cannot have built its value does not run
+  (§13.4). Nothing reads ⊥ as a value.
+- **What it buys.** A fold's element has a meta, so the last item read out of `[3, 7]` is `[0, 7]` with the
+  accumulator's start, which closes §8's `List` row. A `where` can demand a size (`where nonEmpty(size(list))`).
+  `List::size`, derived through the loop, is `atLeast(0)`, not exact: exactness waits on iterating a known count
+  (§18, open).
+
+The leaves state it:
 
 ```eliot
-def empty[A]: List[A]                             {closed(0, 0), noItem}
-def append[A](list: List[A], element: A): List[A] {size(list) + closed(1, 1), withItem(list, element)}
+def empty[A]: List[A]                             {closed(0, 0), Unreached}
+def append[A](list: List[A], element: A): List[A] {size(list) + closed(1, 1), eliot.compiler.Meta::joined(item(list), Reached(element))}
 private def foldLeftInternal[A, B](list: List[A], initial: B,
-                                   combine uses *: A {list.item} => B {looped(initial, combine)} => B)
-   uses *: B {looped(initial, combine)}
-private def argumentsInternal: List[String]       {atLeast(0), Reached(MetaOf[String](closed(0, 2147483647)))}
+                                   combine uses *: A {eliot.lang.Reach::reached(eliot.collection.List::item(list), m -> m)} =>
+                                                   B {looped(initial, combine)} => B) …
+private def argumentsInternal: List[String]       {closed(0, 2147483647), Reached(MetaOf[String](closed(0, 2147483647)))}
 def split(separator: String, s: String): List[String]
-   {interval(Bounded(1), end(size(s)) + 1), Reached(MetaOf[String](interval(Bounded(0), end(size(s)))))}
+   {interval(Bounded(1), end(length(s) + closed(1, 1))), Reached(MetaOf[String](interval(Bounded(0), end(length(s)))))}
 ```
 
-`noItem` and `withItem` are the two compile-track helpers that build the hidden `Reach`, generated per `MetaOf` slot
-from its name (`no<Slot>`, `with<Slot>`), since only platform statements write it.
+`List.els` names `eliot.compiler.Meta::joined` by its module, since its own `joined` (the `Show` one) hides it. The jvm
+`List.els` names `item` by its module: the accessor is generated from the slots the stdlib's declaration carries,
+and a file sees only its own names and its imports, so a module-qualified name in code about metas is a slot
+accessor first too. `prepend` states what `append` does; `words` `[0, length(s)]` items, each at most `length(s)`;
+the file holders `resultStrings` and `resultPaths` (`Reached(unit)`, a `Path` having no slots) and `argumentsInternal`
+the JVM's `int` limits. The LSP checks a name in the slot namespace on the compiler track, as a meta companion's.
+
+**Proven** by `ListMetaIntegrationTest` (accept/reject pairs for a fold's item, a `size` demand, a `forAll` demand,
+`forAll` over the empty list with and without another conjunct, and `split`'s items) and by eliot-build: its 368 tests
+pass on this tree (run with the budget's report switched off locally, for the reason in §5.3's note below). Every
+example's jar is byte-identical: none narrows an `Int` read out of a list. `FieldBraceIntegrationTest`'s list case
+flipped as expected: a field read out of a list's item is what the item was built with, not merely its brace.
 
 **The decisions** (Robert, 2026-10-22, after the draft's points were elaborated with examples):
 
@@ -1333,7 +1362,13 @@ from its name (`no<Slot>`, `with<Slot>`), since only platform statements write i
    `M$A`, generates `T$Carried`, and derives the instance with `StructuralMetaDesugarer.metaInstance`, so `Int$Meta`'s
    instance is the same generator's now; `MetaInterpreter.metaTypeOf` applies a slotted type's structure to the meta
    types `T$Carried` lists. Pinned by `CoreProcessorTest`; nothing declares a `MetaOf` slot until M.
-3. **M. `item` on the surface, `Reach` inside** (above).
+3. **M. `item` on the surface, `Reach` inside.** **Corrected while it was built (Robert, 2026-10-22):** reading an
+   empty list's `item` as ⊥ was the bottom value §18 rules out, ⊥ standing in for a missing meta, which decision B
+   forbids, and it was unsound besides: ⊥ swallowed a whole predicate, so `forAll`'s `check(empty)` above would have
+   been accepted with its size conjunct false. *"The meta value type will always cover 'bottom' states, if there are
+   any"*: `item` is the `Reach` itself, the declaration says so (`Reach[MetaOf[A]]`), and a `where` reads it with
+   `forAll` (Robert: *"keep Reach, forAll is fine"*). The generated `noItem`/`withItem`/`eachItem` helpers this
+   needed were dropped with it.
 4. **N. A native producing a list of a slotted type states its items with a nested brace.** `argumentsInternal`,
    `split`, `words` and the file holders must state a `String` meta inside the item, and §4.1's `constructor$` is the
    result's meta constructor only. An inner `{…}` means *the meta of the type that stands here, built from these
@@ -1351,6 +1386,7 @@ from its name (`no<Slot>`, `with<Slot>`), since only platform statements write i
    type declaring slots, named directly; through an alias, a type parameter or a slotless type it is an error naming
    `T`, so nothing infers a meta type from a spelling (§4.1). A slotless item is `unit` (`List[Path]`'s), and a generic
    one the parameter's own meta. The fold decomposition stays the fallback.
+   **And `String`'s slot is renamed `length`** (Robert, 2026-10-22), since `List`'s `size` hid it (§2.2).
 5. **No decision, only work:** `MetaConstructorDesugarer` threads a type's parameters onto its meta structure and
    instance (`implement[M$A ~ Meta] Meta[List$Meta[M$A]]`), as `StructuralMetaDesugarer` already does for `data`. **Built with L.**
 
@@ -1418,8 +1454,9 @@ from its name (`no<Slot>`, `with<Slot>`), since only platform statements write i
   fold, and the fold is what decides how a structure that reaches itself is summarised. Both wait on `List` carrying
   its size, the domain T6 starts. G is not reversed: a field typed by the type itself folds as it says.
 - **K–N, the list domain** (§17.1): slot accessors in a namespace of their own (K); `MetaOf[A]`, in a slot only, names
-  a type parameter's meta (L); `List[A] {size, item}` with `Reach` inside, an empty list's `item` read as ⊥ (M); a
-  native states a list's items with a nested brace, a decomposition into folds the fallback (N).
+  a type parameter's meta (L); `List[A] {size, item}` with `item` a `Reach` a `where` reads with `forAll`, as corrected while
+  it was built (M); a native states a list's items with `MetaOf[T](…)`, a nested brace being a block, a decomposition
+  into folds the fallback (N); and `String`'s slot is `length`. **Built 2026-10-22.**
 
 **Open, required:**
 
@@ -1447,9 +1484,10 @@ second method of `ability Meta` (§11.2).
 since the interpretation's share of a compile did not move and no derivation came near the budget. The recursive group
 of §13.3 is not built: decision J (§18, 2026-10-22) defers it to the recursive-data fold.
 
-**T6's leaf half** is built (2026-10-22): `typeMatch[R]` states, R2 has no exemption left (§10), and decision I makes
-running out of the step budget an error (§5.3), byte-identical across every example. **Next is §17.1**, the `List`
-domain, decided the same day (K–N) and built in the order given there.
+**T6** is built (2026-10-22): `typeMatch[R]` states, R2 has no exemption left (§10), decision I makes running out of
+the step budget an error (§5.3), and the `List` domain carries its size and its items (§17.1, K–N), every example
+byte-identical. **Open: decision I fails eliot-build** (§5.3's note) and waits on Robert. Next after that is **T7**,
+the record.
 
 **The `Unit` question (2026-10-21), closed the same day.** Robert: a type declaring no meta gets `Unit` implicitly, and
 *"the rest of the machinery should not know that this was 'default'"*. T3 removed two places that knew: §5.3's type

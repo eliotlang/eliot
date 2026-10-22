@@ -15,7 +15,12 @@ def foldLeft[A, B](initial: B, combine uses *: A => B => B, list: List[A]) uses 
  * generic native, which cannot be partially applied. Implemented by the backend.
  *
  * Its accumulator is a loop's: `initial`, then whatever `combine` yields, once per element. `combine` is handed it as
- * its second argument and the call returns it. What each element is, a `List` does not carry yet.
+ * its second argument and the call returns it. Each element it hands `combine` has the meta-information every item of
+ * `list` has, and over a list that can have no item `combine` does not run, as a `match` arm whose constructor cannot
+ * have built its value does not. The accessor is named by its module: it is generated from the slots the base layer
+ * declares on `List`, which this file does not.
  */
 private def foldLeftInternal[A, B](list: List[A], initial: B,
-                                   combine uses *: A => B {looped(initial, combine)} => B) uses *: B {looped(initial, combine)}
+                                   combine uses *: A {eliot.lang.Reach::reached(eliot.collection.List::item(list), m -> m)} =>
+                                                   B {looped(initial, combine)} => B)
+   uses *: B {looped(initial, combine)}

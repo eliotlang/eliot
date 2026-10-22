@@ -89,7 +89,7 @@ class TransferBraceReductionIntegrationTest extends FullIntegrationTest {
     compileForErrors(
       """|import eliot.effect.Console
          |def fitsDisplay(i: Interval[BigInteger]): Bool = rangeWithin[0, 8](i)
-         |def banner(text: String) where fitsDisplay(size(text)): String = text
+         |def banner(text: String) where fitsDisplay(length(text)): String = text
          |def main uses Console: Unit = printLine(banner(show(5)))""".stripMargin
     ).asserting(_ should include("precondition of 'Test::banner' is not satisfied"))
   }

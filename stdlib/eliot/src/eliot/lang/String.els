@@ -1,7 +1,7 @@
 import eliot.effect.Abort
 import eliot.compiler.Meta
 
-type String {size: Interval[BigInteger]}
+type String {length: Interval[BigInteger]}
 
 /**
  * The number of code points in `s`.
@@ -12,12 +12,12 @@ type String {size: Interval[BigInteger]}
  * parts. Use it for slicing with `substring`/`take`/`drop`, which index in the same unit, rather than as a
  * measure of visible text width.
  *
- * The number it returns is the string's own tracked `size`, so a compile-time bound on a string is a
+ * The number it returns is the string's own tracked `length` slot, so a compile-time bound on a string is a
  * compile-time bound on its length: `length("hello")` is known to be `5`, and a `where` over an `Int` range
  * can be discharged by the string it was measured from. Stating that is exact rather than approximate, and
- * it holds on every target for the same reason the unit does — `size` counts precisely what this returns.
+ * it holds on every target for the same reason the unit does — the slot counts precisely what this returns.
  */
-def length(s: String): Int {size(s)}
+def length(s: String): Int {length(s)}
 
 /**
  * `true` when `s` has no characters at all.
@@ -79,7 +79,7 @@ def contains(part: String, s: String): Bool
  * whatever the platform stores underneath.
  *
  * A slice is never longer than what it is cut from and never shorter than nothing, so the stated size is
- * `[0, end(size(s))]`: the string's own upper limit is kept and its lower one given up. Both ends are
+ * `[0, end(length(s))]`: the string's own upper limit is kept and its lower one given up. Both ends are
  * reachable — `substring(0, 0, s)` is empty whatever `s` holds, and `substring(0, length(s), s)` is all of
  * it — so this is the tightest bound that ignores the indices, and it is honest for every pair of them
  * because clamping can only shorten.
@@ -99,7 +99,7 @@ def contains(part: String, s: String): Bool
  * def label(setting: String): String = labelOf(setting) else setting
  * ```
  */
-def substring(startIndex: Int, endIndex: Int, s: String): String {interval(Bounded(0), end(size(s)))}
+def substring(startIndex: Int, endIndex: Int, s: String): String {interval(Bounded(0), end(length(s)))}
 
 /**
  * The first `count` code points of `s`, or all of `s` when it is shorter.
@@ -181,9 +181,9 @@ def parseInt(s: String) uses Abort: Int = if(s.isInteger, parseIntInternal(s))
  * spaces as well as the ASCII blanks; interior whitespace is untouched.
  *
  * Trimming only ever removes code points, and it may remove all of them, so the stated size is
- * `[0, end(size(s))]` — the argument's upper limit kept, its lower one given up to the all-blank string.
+ * `[0, end(length(s))]` — the argument's upper limit kept, its lower one given up to the all-blank string.
  */
-def trim(s: String): String {interval(Bounded(0), end(size(s)))}
+def trim(s: String): String {interval(Bounded(0), end(length(s)))}
 
 /**
  * `s` with every character replaced by its upper-case form.
@@ -195,23 +195,23 @@ def trim(s: String): String {interval(Bounded(0), end(size(s)))}
  *
  * Case conversion is **not** length-preserving, which is the bound's whole point: `ß` upper-cases to `SS`
  * and `ﬃ` to `FFI`, so a code point can become as many as three. No mapping ever yields fewer, so the
- * stated size is `[start(size(s)), end(size(s)) * 3]` — the lower limit carries over untouched and the upper
+ * stated size is `[start(length(s)), end(length(s)) * 3]` — the lower limit carries over untouched and the upper
  * one triples. The factor is a fact about Unicode's case mappings rather than about a platform's storage, so
  * it means the same thing on every target for the same reason the unit does.
  *
- * Spelled as `size(s)` added to itself three times rather than multiplied by an interval holding `3`, because
+ * Spelled as `length(s)` added to itself three times rather than multiplied by an interval holding `3`, because
  * addition stays exact on a half-open interval where multiplication does not: `[a, ∞) + [a, ∞) + [a, ∞)` is
  * `[3a, ∞)`, while any multiplication with an unbounded endpoint widens to `whole` (see `Numeric[Interval[T]]`).
  * Tripling by repeated addition is therefore the tighter statement, not merely the spellable one.
  */
-def toUpperCase(s: String): String {interval(start(size(s)), end(size(s) + size(s) + size(s)))}
+def toUpperCase(s: String): String {interval(start(length(s)), end(length(s) + length(s) + length(s)))}
 
 /**
  * `s` with every character replaced by its lower-case form.
  *
  * Locale-independent, exactly as `toUpperCase` — see there for what that rules out, and for why the stated
  * size grows rather than stays put: lower-casing expands too (`İ` becomes an `i` followed by a combining
- * dot), so it carries the same `[start(size(s)), end(size(s)) * 3]` bound.
+ * dot), so it carries the same `[start(length(s)), end(length(s)) * 3]` bound.
  *
  * ```eliot
  * // Bring typed input into a canonical form for comparison, so "Quit", "QUIT"
@@ -221,7 +221,7 @@ def toUpperCase(s: String): String {interval(start(size(s)), end(size(s) + size(
  * def isCommand(name: String, input: String): Bool = normalized(input) == name
  * ```
  */
-def toLowerCase(s: String): String {interval(start(size(s)), end(size(s) + size(s) + size(s)))}
+def toLowerCase(s: String): String {interval(start(length(s)), end(length(s) + length(s) + length(s)))}
 
 /**
  * `s` with every occurrence of `target` replaced by `replacement`.
@@ -231,9 +231,9 @@ def toLowerCase(s: String): String {interval(start(size(s)), end(size(s) + size(
  * `target` is not re-examined. An empty `target` inserts `replacement` between every pair of characters.
  *
  * The stated size counts the worst case: the original code points may all survive, and `target` can occur at
- * most `size(s) + 1` times — that many is what the empty target reaches, inserting between every pair of
+ * most `length(s) + 1` times — that many is what the empty target reaches, inserting between every pair of
  * characters and at both ends — so the result holds no more than
- * `end(size(s)) + (end(size(s)) + 1) * end(size(replacement))` code points, which the brace spells as one
+ * `end(length(s)) + (end(length(s)) + 1) * end(length(replacement))` code points, which the brace spells as one
  * interval expression — `n + n * r + r`, the same quantity multiplied out, keeping every operand an interval
  * the arithmetic already relates. Nothing bounds it from below beyond zero, since a `target` covering all of
  * `s` with an empty `replacement` leaves nothing.
@@ -244,7 +244,7 @@ def toLowerCase(s: String): String {interval(start(size(s)), end(size(s) + size(
  * ```
  */
 def replace(target: String, replacement: String, s: String): String
-   {interval(Bounded(0), end(size(s) + size(s) * size(replacement) + size(replacement)))}
+   {interval(Bounded(0), end(length(s) + length(s) * length(replacement) + length(replacement)))}
 
 /**
  * `s` written `count` times in a row.
@@ -252,8 +252,8 @@ def replace(target: String, replacement: String, s: String): String
  * Total: a `count` of zero or less yields `""`.
  *
  * The other direction of cross-domain flow: an `Int`'s range drives a `String`'s size, where `length` carries
- * a size into a range. The result holds `count * size(s)` code points, so the stated size is
- * `[0, end(range(count)) * end(size(s))]` — raised to `0` at the top as well as the bottom, because a `count`
+ * a size into a range. The result holds `count * length(s)` code points, so the stated size is
+ * `[0, end(range(count)) * end(length(s))]` — raised to `0` at the top as well as the bottom, because a `count`
  * the compiler knows to be negative would otherwise multiply out to a negative ceiling for a result that is
  * simply `""`.
  *
@@ -263,7 +263,7 @@ def replace(target: String, replacement: String, s: String): String
  * ```
  */
 def repeat(count: Int, s: String): String
-   {interval(Bounded(0), maxBound(end(range(count) * size(s)), Bounded(0)))}
+   {interval(Bounded(0), maxBound(end(range(count) * length(s)), Bounded(0)))}
 
 /**
  * Two strings are equal when they hold the same characters in the same order.
@@ -286,13 +286,13 @@ implement Compare[String] {
  * Two strings combine by concatenation, with the empty string as the identity.
  *
  * Concatenation is the one `String` leaf whose size is stated **exactly**: the result holds every code point
- * of `a` followed by every code point of `b` and nothing else, so its size is `size(a) + size(b)` —
+ * of `a` followed by every code point of `b` and nothing else, so its size is `length(a) + length(b)` —
  * `Interval` addition, precisely as `Int`'s `add` states its own range. Addition stays exact on a half-open
  * interval too, so combining a string of known size with one bounded only from below still says what it can:
  * `[2, 2] + [0, ∞)` is `[2, ∞)`.
  */
 implement Combine[String] {
-   def combine(a: String, b: String): String {size(a) + size(b)}
+   def combine(a: String, b: String): String {length(a) + length(b)}
    def empty: String = ""
 }
 
@@ -310,7 +310,7 @@ implement Show[String] {
  * escape into user code. Implemented by the backend.
  *
  * A found index is a position inside `s`, and the sentinel is one below the first of them, so the stated
- * range is `[-1, end(size(s))]` — the string's own size bounds where a match can start. It is stated on the
+ * range is `[-1, end(length(s))]` — the string's own size bounds where a match can start. It is stated on the
  * leaf rather than on `indexOf` because `indexOf` has a body, and a bodied value derives its meta rather than
  * stating one; the derivation that would carry this through the `if` is the meta interpretation, which does
  * not exist yet.
@@ -319,7 +319,7 @@ implement Show[String] {
  * in the language at all: a `-` is always an operator, so a negative value is produced by a subtraction. The
  * compiler evaluates that subtraction while checking, exactly as it evaluates the rest of the brace.
  */
-private def indexOfInternal(part: String, s: String): Int {interval(Bounded(0 - 1), end(size(s)))}
+private def indexOfInternal(part: String, s: String): Int {interval(Bounded(0 - 1), end(length(s)))}
 
 /**
  * The number `s` spells, or `0` when it spells none — the raw leaf behind `parseInt`, which turns that case into an

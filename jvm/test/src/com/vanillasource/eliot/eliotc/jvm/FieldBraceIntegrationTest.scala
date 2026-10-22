@@ -48,18 +48,18 @@ class FieldBraceIntegrationTest extends FullIntegrationTest {
     ).asserting(_ shouldBe "7")
   }
 
-  // A list's element carries no meta yet (§13.3), so a field read out of one is what the field's brace states: the
-  // construction proved it, wherever the value was built.
-  private def fromList(brace: String) =
-    prelude + "import eliot.collection.List\n" + s"data Wide(w: Int {closed(0, $brace)})\n" +
-      "def main uses Console: Unit = printLine(show(useByte(singleton(Wide(7)).foldLeft(0, e -> acc -> e.w))))"
+  // A list carries its items' meta (`docs/meta.md` §17.1), so a field read out of a list's item is what the item was
+  // built with, as a field read out of a value built in place is, and not merely what the field's brace states.
+  private def fromList(built: Int) =
+    prelude + "import eliot.collection.List\n" + "data Wide(w: Int {closed(0, 300)})\n" +
+      s"def main uses Console: Unit = printLine(show(useByte(singleton(Wide($built)).foldLeft(0, e -> acc -> e.w))))"
 
-  it should "read a field of a value not known to be built as its brace" in {
-    compileAndRun(fromList("100")).asserting(_ shouldBe "7")
+  it should "read a field of a list's item as what it was built with" in {
+    compileAndRun(fromList(7)).asserting(_ shouldBe "7")
   }
 
-  it should "reject a read whose stated meta is wider than a demand" in {
-    compileForErrors(fromList("300")).asserting(_ should include("The precondition of 'Test::useByte' is not satisfied"))
+  it should "reject a field of a list's item built with what a demand does not accept" in {
+    compileForErrors(fromList(300)).asserting(_ should include("The precondition of 'Test::useByte' is not satisfied"))
   }
 
   it should "satisfy a demand inside a match arm on the field's binder" in {

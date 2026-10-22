@@ -24,9 +24,11 @@ import com.vanillasource.eliot.eliotc.module.fact.WellKnownTypes.{
   typeMatchAbilityName,
   metaAbilityName
 }
+import com.vanillasource.eliot.eliotc.core.processor.{MetaConstructorDesugarer, StructuralMetaDesugarer}
 import com.vanillasource.eliot.eliotc.feedback.Logging
 import com.vanillasource.eliot.eliotc.module.fact.{
   ModuleName,
+  UnifiedModuleNames,
   UnifiedModuleValue,
   ValueFQN,
   QualifiedName as CoreQualifiedName,
@@ -615,6 +617,62 @@ class ValueResolver
       CoreQualifiedName(abilityFQN.abilityName, CoreQualifier.Ability(abilityFQN.abilityName))
     )
 
+  /** `MetaOf` as code about metas writes it, `MetaOf[T](slots…)`: the meta of a `T` built from its slots. */
+  private val metaOfName: CoreQualifiedName = CoreQualifiedName(MetaConstructorDesugarer.metaOfName, CoreQualifier.Default)
+
+  /** The meta constructor `MetaOf[T]` names (`docs/meta.md` §17.1, decision N): `T` resolved as a type name, and its
+    * meta structure's value constructor from `T`'s own module — `MetaOf[String](closed(0, 5))` is a `String`'s meta of
+    * size `[0, 5]`. `T` must be a type declaring slots, named directly: nothing infers a meta type from a spelling
+    * (§4.1), so an alias, a type parameter, an applied type or a type with no slots is an error naming it.
+    */
+  private def resolveMetaOf(nameSrc: Sourced[CoreQualifiedName], typeArg: Sourced[CoreExpression]): ScopedIO[Expression] =
+    resolveExpression(typeArg.value, false).flatMap {
+      case Expression.ValueReference(typeName, Seq()) =>
+        val module      = typeName.value.moduleName
+        val constructor = ValueFQN(
+          module,
+          CoreQualifiedName(typeName.value.name.name + MetaConstructorDesugarer.metaTypeSuffix, CoreQualifier.Default)
+        )
+        getFactOrAbort(UnifiedModuleNames.Key(module, Platform.Compiler)).liftToScoped.flatMap { names =>
+          val slotted =
+            names.names.contains(constructor.name) &&
+              !names.names.contains(StructuralMetaDesugarer.fieldsName(typeName.value.name.name))
+          if (slotted) (Expression.ValueReference(nameSrc.as(constructor)): Expression).pure[ScopedIO]
+          else notSlotted(typeArg)
+        }
+      case _                                          => notSlotted(typeArg)
+    }
+
+  private def notSlotted(typeArg: Sourced[CoreExpression]): ScopedIO[Expression] =
+    compilerAbort(
+      typeArg.as("'MetaOf' builds the meta-information of a type declaring slots, named directly."),
+      Seq("Name the type the slots are declared on, not an alias, a type parameter or a type without slots.")
+    ).liftToScoped
+
+  /** The value a module-qualified reference names, and its unified value. In code about metas a name in the default
+    * namespace is a slot accessor first, as an unqualified one is ([[ValueResolverScope.getReferencedValue]]): a file
+    * names an accessor its own file does not declare by its module (`eliot.collection.List::item(list)`).
+    */
+  private def qualifiedValue(moduleName: ModuleName, name: CoreQualifiedName): ScopedIO[Option[(ValueFQN, UnifiedModuleValue)]] = {
+    def lookup(vfqn: ValueFQN): ScopedIO[Option[(ValueFQN, UnifiedModuleValue)]] =
+      getPlatform.flatMap(platform => getFactIfProduced(UnifiedModuleValue.Key(vfqn, platform)).liftToScoped).map(_.map(vfqn -> _))
+    val ordinary = ValueFQN(moduleName, name)
+    val accessor = CoreQualifiedName(name.name, CoreQualifier.Slot)
+    // The module's names are asked first: probing a value it does not have is an error, not an absence.
+    def declaresAccessor: ScopedIO[Boolean] =
+      getPlatform.flatMap(platform =>
+        getFactIfProduced(UnifiedModuleNames.Key(moduleName, platform)).liftToScoped.map(_.exists(_.names.contains(accessor)))
+      )
+    inMetaCode.flatMap {
+      case true if name.qualifier == CoreQualifier.Default =>
+        declaresAccessor.flatMap {
+          case true  => lookup(ValueFQN(moduleName, accessor))
+          case false => lookup(ordinary)
+        }
+      case _                                               => lookup(ordinary)
+    }
+  }
+
   /** Whether a value of this qualifier is code **about metas**, whose bare names resolve to a slot accessor before an
     * ordinary value (`docs/meta.md` §17.1, decision K): a meta companion — a transfer brace, a `where`, a parameter or
     * handed statement — and a method of a `Meta` instance, which joins metas (`Int$Meta(join(range(a), range(b)))`).
@@ -622,7 +680,7 @@ class ValueResolver
     * meant.
     */
   private def isAboutMetas(qualifier: CoreQualifier): Boolean = qualifier match {
-    case CoreQualifier.Meta(_)                                => true
+    case CoreQualifier.Meta(_) | CoreQualifier.Slot          => true
     case CoreQualifier.AbilityImplementation(ability, _, _) => ability === metaAbilityName
     case _                                                    => false
   }
@@ -691,6 +749,11 @@ class ValueResolver
           marker            <- ImplementationNameResolver.resolve(implementationName, moduleName)
           resolvedArguments <- arguments.traverse(argument => resolveExpression(argument.value, runtime).map(argument.as))
         } yield Expression.WithBinding(resolvedSubject, implementationName.as(marker), resolvedArguments)
+      case NamedValueReference(nameSrc, None, Seq(typeArg)) if nameSrc.value == metaOfName =>
+        inMetaCode.flatMap {
+          case true  => resolveMetaOf(nameSrc, typeArg)
+          case false => compilerAbort[Expression](nameSrc.as("'MetaOf' names a meta-information only in code about one.")).liftToScoped
+        }
       case NamedValueReference(nameSrc, None, typeArgExprs)          =>
         isParameter(nameSrc.value.name).flatMap { isParam =>
           if (isParam) {
@@ -737,11 +800,10 @@ class ValueResolver
         }
       case NamedValueReference(nameSrc, Some(qualSrc), typeArgExprs) =>
         val moduleName = ModuleName.parse(qualSrc.value)
-        val vfqn       = ValueFQN(moduleName, nameSrc.value)
         val outline    = Sourced.outline(Seq(qualSrc, nameSrc))
 
-        getPlatform.flatMap(platform => getFactIfProduced(UnifiedModuleValue.Key(vfqn, platform)).liftToScoped).flatMap {
-          case Some(umv) =>
+        qualifiedValue(moduleName, nameSrc.value).flatMap {
+          case Some((vfqn, umv)) =>
             getCurrentModule.flatMap { currentMod =>
               if (umv.namedValue.visibility == Visibility.Private && moduleName != currentMod) {
                 compilerAbort(nameSrc.as("Name is private.")).liftToScoped
@@ -751,7 +813,7 @@ class ValueResolver
                   .map(resolvedTypeArgs => Expression.ValueReference(outline.as(vfqn), resolvedTypeArgs))
               }
             }
-          case None      => compilerAbort(nameSrc.as("Qualified named value not available.")).liftToScoped
+          case None              => compilerAbort(nameSrc.as("Qualified named value not available.")).liftToScoped
         }
       case FunctionApplication(target, arg)                          =>
         for {

@@ -94,7 +94,7 @@ class DerivedMetaTransferIntegrationTest extends FullIntegrationTest {
   // The `String` domain derives through exactly the same walk — nothing in the interpretation is `Int`-shaped.
   private val display =
     """|def fitsDisplay(i: Interval[BigInteger]): Bool = rangeWithin[0, 4](i)
-       |def display(text: String) where fitsDisplay(size(text)): String = text
+       |def display(text: String) where fitsDisplay(length(text)): String = text
        |def label(s: String): String = s
        |""".stripMargin
 

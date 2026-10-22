@@ -1,4 +1,4 @@
-// A display that is 16 code points wide, expressed as a predicate over a string's tracked size. `size` is
+// A display that is 16 code points wide, expressed as a predicate over a string's tracked size. `length` is
 // `String`'s meta slot exactly as `range` is `Int`'s — an `Interval[BigInteger]` in the compiler's refinement
 // channel, counting the same code points `length` counts at runtime.
 def fitsDisplay(i: Interval[BigInteger]): Bool = rangeWithin[0, 16](i)
@@ -15,14 +15,14 @@ def fitsDisplay(i: Interval[BigInteger]): Bool = rangeWithin[0, 16](i)
  * Because a size counts code points rather than storage units, the same precondition means the same thing on every
  * target: `"Eliot"` is five on a UTF-16 platform and five on a UTF-8 one.
  */
-def banner(text: String) where fitsDisplay(size(text)): String = text
+def banner(text: String) where fitsDisplay(length(text)): String = text
 
 /**
  * A cursor position on that same display, this time a precondition over an **`Int`'s value range** — the channel's
  * first domain, over the very same `Interval` predicate `banner` uses. The two domains share their lattice and their
- * vocabulary; only the slot they read differs (`range` of a number, `size` of a string).
+ * vocabulary; only the slot they read differs (`range` of a number, `length` of a string).
  *
- * That is what makes the call below work: `length` states a meta transfer (`{size(s)}`), so the size the compiler
+ * That is what makes the call below work: `length` states a meta transfer (`{length(s)}`), so the size the compiler
  * knows for `"Eliot"` becomes the range it knows for `length("Eliot")`, and this precondition is discharged by the
  * string rather than by a number anyone wrote down. A literal too long for the display fails here exactly as it would
  * at `banner`.

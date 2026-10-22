@@ -1,6 +1,6 @@
 package com.vanillasource.eliot.eliotc.jvm
 
-/** End-to-end proof of the refinement channel's **second domain**: a `String`'s tracked `size`
+/** End-to-end proof of the refinement channel's **second domain**: a `String`'s tracked `length` slot
   * (`docs/meta.md` §2.2). `type String {size: Interval[BigInteger]}` declares the slot; a string
   * literal *seeds* the singleton size of its own length through the same literal-protocol `^Meta` path the integer
   * seed uses (`eliot.lang.Runtime::stringLiteral`'s `{closed(N, N)}` brace).
@@ -15,12 +15,12 @@ package com.vanillasource.eliot.eliotc.jvm
   * silent pass (`docs/meta.md` §1).
   */
 class StringSizeIntegrationTest extends FullIntegrationTest {
-  // A display four code points wide. `size` is `String`'s meta slot exactly as `range` is `Int`'s, so the predicate is
+  // A display four code points wide. `length` is `String`'s meta slot exactly as `range` is `Int`'s, so the predicate is
   // the ordinary `rangeWithin` over an `Interval[BigInteger]` — no string-specific machinery.
   private val banner =
     """|import eliot.effect.Console
        |def fitsDisplay(i: Interval[BigInteger]): Bool = rangeWithin[0, 4](i)
-       |def banner(text: String) where fitsDisplay(size(text)): String = text
+       |def banner(text: String) where fitsDisplay(length(text)): String = text
        |""".stripMargin
 
   "a where precondition over a string's size" should "accept a literal that provably fits" in {
@@ -81,7 +81,7 @@ class StringSizeIntegrationTest extends FullIntegrationTest {
     compileAndRun(
       """|import eliot.effect.Console
          |def fitsDisplay(i: Interval[BigInteger]): Bool = rangeWithin[0, 4](i)
-         |def banner(text: String) where fitsDisplay(size(text)): String = text
+         |def banner(text: String) where fitsDisplay(length(text)): String = text
          |def asDigit(x: Int) where fitsDisplay(range(x)): Int = x
          |def main uses Console: Unit = printLine(banner("ab") ++ show(asDigit(3)))""".stripMargin
     ).asserting(_ shouldBe "ab3")

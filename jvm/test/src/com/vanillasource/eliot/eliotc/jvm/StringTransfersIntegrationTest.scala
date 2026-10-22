@@ -20,7 +20,7 @@ class StringTransfersIntegrationTest extends FullIntegrationTest {
   private val banner =
     """|import eliot.effect.Console
        |def fitsDisplay(i: Interval[BigInteger]): Bool = rangeWithin[0, 8](i)
-       |def banner(text: String) where fitsDisplay(size(text)): String = text
+       |def banner(text: String) where fitsDisplay(length(text)): String = text
        |""".stripMargin
 
   private def accepts(expression: String, output: String) =
@@ -74,7 +74,7 @@ class StringTransfersIntegrationTest extends FullIntegrationTest {
     compileForErrors(
       """|import eliot.effect.Console
          |def fitsNarrow(i: Interval[BigInteger]): Bool = rangeWithin[0, 1](i)
-         |def initial(text: String) where fitsNarrow(size(text)): String = text
+         |def initial(text: String) where fitsNarrow(length(text)): String = text
          |def main uses Console: Unit = printLine(initial(toUpperCase("ß")))""".stripMargin
     ).asserting(_ should include("precondition of 'Test::initial' is not satisfied"))
   }
@@ -92,7 +92,7 @@ class StringTransfersIntegrationTest extends FullIntegrationTest {
     rejects("""repeat(5, "ab")""")
   }
 
-  // The worst case is every original code point kept plus a replacement at each of the `size(s) + 1` positions an
+  // The worst case is every original code point kept plus a replacement at each of the `length(s) + 1` positions an
   // empty target would occupy: 3 + (3 + 1) * 1 = 7 here, which fits, and 3 + (3 + 1) * 2 = 11, which does not.
   "the size of a replacement" should "allow for a replacement between every pair of characters" in {
     accepts("""replace("-", "+", "a-b")""", "a+b")

@@ -5,7 +5,8 @@ import eliot.compiler.Meta
  * of the fields it built it with: one slot of a `data` value's meta-information per constructor.
  *
  * `Unreached` is the join's identity: a constructor no branch built adds nothing to the join of
- * two values. The compiler writes every use of it, so a program never names it.
+ * two values. A list's `item` is one too, `Unreached` for a list that can have no item, which is how a
+ * `where` reads it (`forAll`) and a platform states it.
  */
 data Reach[M] = Unreached | Reached(meta: M)
 
@@ -44,4 +45,17 @@ def reached[M, D](reach: Reach[M], read: M => D): D = reach match {
 def reachedThen[M, D](reach: Reach[M], handed: D): D = reach match {
    case Unreached -> never
    case Reached(_) -> handed
+}
+
+/**
+ * Whether `predicate` holds of the meta-information `reach` holds, and `true` when it holds none: what a `where` says
+ * of every item of a list, which holds of every item of a list that can have none.
+ *
+ * ```eliot
+ * def allBytes(list: List[Int]) where list.item.forAll(m -> rangeWithin[0, 255](m.range)): Int
+ * ```
+ */
+def forAll[M](predicate: M => Bool, reach: Reach[M]): Bool = reach match {
+   case Unreached -> true
+   case Reached(m) -> predicate(m)
 }

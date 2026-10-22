@@ -1,5 +1,6 @@
 import eliot.file.Path
 import eliot.collection.List
+import eliot.lang.Reach
 
 // Merge copy of the base declaration so the implementation below can resolve it (name resolution is per-file). The
 // merge verifies this copy agrees with the abstract effect in the stdlib layer, which carries the documentation.
@@ -36,7 +37,7 @@ private def valueOrNone(value: String): Option[String] = if(isNull(value), None)
  * the main class — which is what makes the "no program name" promise on `arguments` true rather than approximate.
  * Implemented by the backend.
  */
-private def argumentsInternal: List[String]
+private def argumentsInternal: List[String] {closed(0, 2147483647), Reached(MetaOf[String](closed(0, 2147483647)))}
 
 /**
  * `System.getenv(name)`, `null` when unset. Implemented by the backend.

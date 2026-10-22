@@ -386,12 +386,15 @@ contain `data` (a chosen representation), a native leaf, or any representation-d
   Constructors `interval`/`closed`/`atLeast`/`atMost`/`whole` and the `where`-facing predicate
   `rangeWithin[Lo, Hi](i)` are abstract in the base, bodied per platform. `add`/`subtract` stay exact on a
   half-open interval; `multiply` widens to `whole` (its corner products lose the position that signs an infinity).
-- `type String {size: Interval[BigInteger]}` — the channel's **second domain** (`docs/meta.md` §2.2),
+- `type String {length: Interval[BigInteger]}` — the channel's **second domain** (`docs/meta.md` §2.2),
   the same one-slot shape and the same machinery, which is what proves the channel is not `Int`-shaped. The unit is the
   **code point** — what `String::length` counts on every target — so a `where` over a size means the same thing
-  everywhere; the slot is `size` because `length` is taken by the runtime function in that module. A literal seeds it
+  everywhere; the slot is named like the function that returns it. **Slot accessors live in `Qualifier.Slot`**, their
+  own namespace, found first by bare (and module-qualified) names in code about metas — a brace, a `where`, a `Meta`
+  instance — so a slot may share its module's function name; slot names are still one scope per file, which is why
+  `String`'s is `length` and `List`'s `size`. A literal seeds it
   (`Runtime::stringLiteral`'s brace, the string twin of `integerLiteral`'s), and `length` is the first leaf to **state**
-  a transfer (`{size(s)}`), carrying a size into the `Int` domain. Stating one needed the backend's **result-edge
+  a transfer (`{length(s)}`), carrying a size into the `Int` domain. Stating one needed the backend's **result-edge
   re-encode** (S3, landed): a call boundary hands an integer back at the ⊤ bignum, so a node the transfer narrows is
   converted right after the call — `ExpressionCodeGenerator.convertResultFromBoundary`. Since the **round-trip
   peephole** (S9) that conversion is the *fallback*, not the common path: the backend's rule is **a value is emitted at
@@ -439,6 +442,12 @@ contain `data` (a chosen representation), a native leaf, or any representation-d
   and place. A brace on a `data` field is the same decision (§4.5): the constructor proves it, and the `match` eliminator
   states it of what it hands a handler (a *handed* statement), which every accessor and arm reads it through;
   one on a bodied return is declined (§3.3) — a meta is stated only where the compiler cannot see the supplier.
+- `type List[A] {size: Interval[BigInteger], item: Reach[MetaOf[A]]}` — the **third domain** (`docs/meta.md` §17.1),
+  the first holding another type's meta: `MetaOf[A]` (legal in a slot only) becomes a binder of `List$Meta`, listed by
+  a generated `List$Carried[A]`, and the channel applies it (`List[Int]` ⤳ `List$Meta[Int$Meta]`). `item` is a `Reach`,
+  `Unreached` for a list that can have no item — never ⊥ — so a `where` reads it with `forAll` (`eliot.lang.Reach`). A
+  native producing a list of a slotted type states its items with `MetaOf[T](slots…)`, which the resolver turns into
+  `T`'s meta constructor, `T` named directly.
 - `def foldLeft[A, B](initial: B, combine: ..., list: List[A]): B` — an abstract function, signature only.
 - A `type X = ...` alias and a body-less `type X` differ only by having a body; `data X(...)` is the *concrete*
   form that additionally introduces a value constructor.

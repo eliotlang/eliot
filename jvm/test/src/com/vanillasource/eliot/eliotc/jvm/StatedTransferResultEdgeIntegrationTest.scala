@@ -1,7 +1,7 @@
 package com.vanillasource.eliot.eliotc.jvm
 
 /** End-to-end proof of the **result-edge re-encode** (`docs/meta.md` §7, stage S3) and of the first
-  * *stated* meta transfer that needs it: `def length(s: String): Int {size(s)}`.
+  * *stated* meta transfer that needs it: `def length(s: String): Int {length(s)}`.
   *
   * A leaf's stated transfer pins a narrow range on the **call node** — `length("hello")` is `[5, 5]`, which the backend
   * lays out as a `java.lang.Byte`. But `String::length` is emitted as a generated native static method whose return

@@ -1,13 +1,19 @@
 
+import eliot.lang.Reach
+
 // Merge copies of the base declarations this file builds on (name resolution is per-file). They must stay
 // character-exact with the lang layer's eliot.collection.List, which also carries their documentation.
-type List[A]
+//
+// A list's meta-information is how many items it has, in its `size`, and in its `item` the meta-information every one
+// of its items has, `Unreached` when it can have none (docs/meta.md §17.1). It is declared here, with what the three
+// constructors do to it: `empty` has no item, and `append` and `prepend` add one.
+type List[A] {size: Interval[BigInteger], item: Reach[MetaOf[A]]}
 
-def empty[A]: List[A]
+def empty[A]: List[A] {closed(0, 0), Unreached}
 
-def append[A](list: List[A], element: A): List[A]
+def append[A](list: List[A], element: A): List[A] {size(list) + closed(1, 1), eliot.compiler.Meta::joined(item(list), Reached(element))}
 
-def prepend[A](list: List[A], element: A): List[A]
+def prepend[A](list: List[A], element: A): List[A] {size(list) + closed(1, 1), eliot.compiler.Meta::joined(item(list), Reached(element))}
 
 def foldLeft[A, B](initial: B, combine uses *: A => B => B, list: List[A]) uses *: B
 
@@ -320,8 +326,11 @@ def insertBy[A, K ~ Compare](key: A => K, element: A, sortedList: List[A]): List
  * // "dep github.com/x/foo v1.3" read as its three tokens.
  * def tokens(line: String): List[String] = line.split(" ")
  * ```
+ *
+ * There is at least one piece and at most one more than `s` has code points, and no piece is longer than `s`.
  */
 def split(separator: String, s: String): List[String]
+   {interval(Bounded(1), end(length(s) + closed(1, 1))), Reached(MetaOf[String](interval(Bounded(0), end(length(s)))))}
 
 /**
  * The whitespace-separated words of `s`, with no empty pieces — the tokenizer a line-oriented format is written
@@ -333,8 +342,11 @@ def split(separator: String, s: String): List[String]
  * ```eliot
  * def keyword(line: String): String = line.words.head orElse ""
  * ```
+ *
+ * There are at most as many words as `s` has code points, and no word is longer than `s`.
  */
 def words(s: String): List[String]
+   {interval(Bounded(0), end(length(s))), Reached(MetaOf[String](interval(Bounded(0), end(length(s)))))}
 
 /**
  * The elements of `list` rendered with `Show` and written one after another with `separator` between them — the

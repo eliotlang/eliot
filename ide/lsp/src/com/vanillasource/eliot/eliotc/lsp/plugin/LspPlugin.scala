@@ -137,7 +137,8 @@ class LspPlugin(vfs: VirtualFileSystem) extends CompilerPlugin with Logging {
     *
     * A name in the meta namespace — a brace's or a `where`'s companion, a payload signature, what a `data` type's
     * structural meta states — is compiler-pool code (`docs/meta.md` §4.1), dead in the runtime pool and free to name
-    * what only the compiler platform declares (`eliot.lang.Reach`), so it is checked on the compiler track.
+    * what only the compiler platform declares (`eliot.lang.Reach`), so it is checked on the compiler track, and so is a
+    * slot accessor's namespace, whose generated readers of an item slot name it too (`docs/meta.md` §17.1).
     */
   private def checkModule(compilation: CompilationProcess, moduleName: ModuleName): IO[Unit] =
     compilation.getFact(UnifiedModuleNames.Key(moduleName)).flatMap {
@@ -149,8 +150,8 @@ class LspPlugin(vfs: VirtualFileSystem) extends CompilerPlugin with Logging {
     }
 
   private def platformOf(name: QualifiedName): Platform = name.qualifier match {
-    case _: Qualifier.Meta => Platform.Compiler
-    case _                 => Platform.Runtime
+    case _: Qualifier.Meta | Qualifier.Slot => Platform.Compiler
+    case _                                  => Platform.Runtime
   }
 
   /** Drive whole-program monomorphization from a file's own `main`, so its reachable code is type-checked at concrete

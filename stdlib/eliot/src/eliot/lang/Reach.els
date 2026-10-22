@@ -5,8 +5,10 @@
  * A value of a `data` type carries one of these per constructor as its compile-time
  * meta-information, so the compiler can follow what a value holds into the `match` that takes it
  * apart: an arm whose constructor cannot have built the value does not run, and the fields an arm
- * is handed carry what was known of them where the value was built. Only the compiler builds and
- * reads one; a program never names it.
+ * is handed carry what was known of them where the value was built.
+ *
+ * A list's `item` is one as well: `Reached` with the meta-information every item has, or `Unreached`
+ * for a list that can have no item. A `where` reads it with `forAll`, and a platform states it.
  *
  * The compiler platform declares it as data; no platform needs it at runtime.
  */

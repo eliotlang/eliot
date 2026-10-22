@@ -31,6 +31,9 @@ object ValueResolverScope {
   def isParameter(name: String): ScopedIO[Boolean] =
     StateT.get[CompilerIO, ValueResolverScope].map(_.parameters.contains(name))
 
+  /** Whether the code being resolved is about metas ([[ValueResolverScope.slotsFirst]]). */
+  def inMetaCode: ScopedIO[Boolean] = StateT.get[CompilerIO, ValueResolverScope].map(_.slotsFirst)
+
   /** The value a bare reference `name` names. In code about metas ([[ValueResolverScope.slotsFirst]]) a name in the
     * default namespace is a slot accessor first (`docs/meta.md` §17.1, decision K): `size(list)` in `List`'s brace is
     * the slot, not `List::size`. Anywhere else, and when no accessor has the name, it is [[getValue]]'s.
