@@ -1,15 +1,17 @@
 package com.vanillasource.eliot.eliotc.core.processor
 
 import cats.syntax.all.*
+
 import com.vanillasource.eliot.eliotc.ast.fact.{
   ArgumentDefinition,
   DataConstructor,
   DataDefinition,
   FunctionDefinition,
+  GenericParameter,
   Expression as SourceExpression
 }
 import com.vanillasource.eliot.eliotc.core.fact.RoleHint
-import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, Qualifier}
+import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, Qualifier, ValueFQN, WellKnownTypes}
 import com.vanillasource.eliot.eliotc.source.content.Sourced
 
 /** Desugars a **slotted** type declaration into its **meta structure** — the type of the refinement meta a value of
@@ -23,29 +25,59 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
   * Interval[BigInteger])` — a type constructor, a value constructor, a per-slot accessor, and a `PatternMatch`
   * implementation the accessor reduces through — **plus** the auto-derived `Meta[Int$Meta]` instance. So the meta of an
   * `Int` is an `Int$Meta` structure whose `range` field is an `Interval`, joined field-wise, while the meta of a `Bool`
-  * or a `String` is the trivial `Unit` (its one `Meta[Unit]` instance, declared with `Unit`, is the do-nothing join).
+  * is the trivial `Unit` (its one `Meta[Unit]` instance, declared with `Unit`, is the do-nothing join).
   *
   * The `$Meta` suffix keeps the meta type's name distinct from the ordinary `Int^Type` without a new namespace: `$` is
   * not a valid identifier character (the lexer's `isLetter`/`isLetterOrDigit`), so `Int$Meta` can never collide with a
-  * user type. This makes the transfer companion generatable with **no lookup** — a slotted value of type `T` has meta
-  * type `T$Meta`, a pure name transform. Meta structures are compiler-pool-only (the channel evaluates them) — dead in
-  * the runtime pool, never code-generated.
+  * user type. Meta structures are compiler-pool-only (the channel evaluates them) — dead in the runtime pool, never
+  * code-generated.
+  *
+  * **A slot may hold a type parameter's meta** (`docs/meta.md` §17.1, decision L), spelled `MetaOf[A]`, legal only in a
+  * slot and naming one of the type's own parameters. Each becomes a binder of the meta structure, and the parameters it
+  * names are listed, in the type's own order, by a generated **carried-types signature**, as `$Fields` lists a `data`
+  * type's field types (`StructuralMetaDesugarer`):
+  *
+  * {{{
+  *   type Box[A] {size: Interval[BigInteger], item: Reach[MetaOf[A]]}
+  *     ⟶  data Box$Meta[M$A](size: Interval[BigInteger], item: Reach[M$A])
+  *         implement[M$A ~ Meta] Meta[Box$Meta[M$A]] { … }                -- field-wise, through `joined`/`widening`
+  *         Box$Carried[A]: Type = Function[A, Unit]
+  * }}}
+  *
+  * The channel finds the meta type of `Box[Int]` by evaluating `Box$Carried[Int]` and mapping the meta types of what it
+  * lists onto the binders: `Box$Meta[Int$Meta]`. A `MetaOf` naming anything else is left as written, and the
+  * resolver reports it, since no module declares the name.
   *
   * Reuses [[DataDefinitionDesugarer]] verbatim (per "reuse, don't write parallel generators"), so multi-slot types are
-  * multi-field structures for free. Type generic parameters are not yet threaded onto the meta structure — the only
-  * slotted type today has a concrete-domain single slot.
+  * multi-field structures for free, and [[StructuralMetaDesugarer.metaInstance]] for the instance.
   */
 object MetaConstructorDesugarer {
 
   /** The `data`-style meta structure generated from `definition`'s meta-slot brace **plus** the auto-derived
-    * `Meta[<Name>$Meta]` instance, or empty when it declares no slots (every ordinary `def`/alias/slotless type — whose
-    * meta is the trivial `Unit`, supplied by the channel, not a synthetic here).
+    * `Meta[<Name>$Meta]` instance and, when a slot holds a type parameter's meta, the carried-types signature; or empty
+    * when it declares no slots (every ordinary `def`/alias/slotless type — whose meta is the trivial `Unit`, supplied by
+    * the channel, not a synthetic here).
     */
   def desugar(definition: FunctionDefinition): Seq[(FunctionDefinition, RoleHint)] =
     if (definition.metaSlots.isEmpty) Seq.empty
-    else
-      DataDefinitionDesugarer.desugar(metaStructure(definition), structural = false).map(inSlotNamespace) ++
-        metaJoinInstance(definition)
+    else {
+      val structure = metaStructure(definition)
+      DataDefinitionDesugarer.desugar(structure, structural = false).map(inSlotNamespace) ++
+        StructuralMetaDesugarer.metaInstance(structure).map(_ -> RoleHint.NoHint) ++
+        carriedTypes(definition).map(_ -> RoleHint.NoHint)
+    }
+
+  /** Appended to a type's name to name its carried-types signature, in the meta namespace of the type namespace. */
+  val carriedSuffix: String = "$Carried"
+
+  /** The name of the carried-types signature of the slotted type named `typeName`. The single source of truth the channel
+    * reads it through.
+    */
+  def carriedName(typeName: String): QualifiedName =
+    QualifiedName(typeName + carriedSuffix, Qualifier.Meta(Qualifier.Type))
+
+  /** The marker a slot names a type parameter's meta with: `MetaOf[A]`. Recognised as written, here only. */
+  val metaOfName: String = "MetaOf"
 
   /** A slot's accessor in [[Qualifier.Slot]], its own namespace (`docs/meta.md` §17.1, decision K), so a slot may be
     * named like a function of the type's module: `List`'s `size` slot beside `List::size`. Code about metas finds it
@@ -58,94 +90,121 @@ object MetaConstructorDesugarer {
       case other                                    => other
     }
 
-  /** The synthetic `data <Name>$Meta(<slots>)` whose desugaring *is* the meta structure. */
+  /** The synthetic `data <Name>$Meta[M$A…](<slots>)` whose desugaring *is* the meta structure: one binder per carried
+    * parameter, each `MetaOf[A]` in a slot replaced by its binder.
+    */
   private def metaStructure(definition: FunctionDefinition): DataDefinition = {
     val metaTypeName = definition.name.map(_.name + metaTypeSuffix)
+    val carried      = carriedParameters(definition)
     DataDefinition(
       metaTypeName,
-      Seq.empty,
-      Some(Seq(DataConstructor(metaTypeName, definition.metaSlots))),
+      carried.map(parameter => MetaCompanionLayout.typeBinder(binderName(parameter))),
+      Some(
+        Seq(
+          DataConstructor(
+            metaTypeName,
+            definition.metaSlots.map(slot => slot.copy(typeExpression = withBinders(slot.typeExpression, carried)))
+          )
+        )
+      ),
       visibility = definition.visibility
     )
   }
 
-  /** The auto-derived `Meta[<Name>$Meta]` **instance** — the lattice join and widening over the type's meta structure
-    * (Step 1 of `docs/generic-refinement-merges.md`). A *user* declares `Meta` only for their own domain
-    * (`Meta[Interval[T]]`); the compiler derives the matching instance for the compound *meta structure* `Int$Meta`
-    * field-wise, so `fold`'s generic `^Meta` companion (`join(whenTrue, whenFalse)`, reduced by the channel at the meta
-    * type args) has a `Meta[Int$Meta]` to reduce through:
-    *
-    * {{{
-    *   implement Meta[Int$Meta] {
-    *     def join(a: Int$Meta, b: Int$Meta): Int$Meta = Int$Meta(join(range(a), range(b)))
-    *     def widen(a: Int$Meta, b: Int$Meta): Int$Meta = Int$Meta(widen(range(a), range(b)))
-    *   }
-    * }}}
-    *
-    * Each slot is joined (widened) by the `Meta` ability's own `join` (`widen`), dispatched on the slot's domain
-    * (`range(a) : Interval[..]` ⤳ the `Meta[Interval[T]]` instance). The compound join thus routes through the domain's
-    * *instance*, not a hand-copied plain function: the refinement channel's post-monomorphize executor links each
-    * instance at its own monomorphization (`docs/refinement-channel-follow-ups.md`), so a transitively-reached
-    * Eliot-body instance dispatches. The result is rewrapped in the meta *constructor* `Int$Meta(..)`.
-    *
-    * The marker/method shapes mirror [[DataDefinitionDesugarer.createPatternMatchImpl]] and the surface `implement`
-    * desugar ([[com.vanillasource.eliot.eliotc.ast.fact.ImplementBlock]]): a body-less marker whose sole arg is the
-    * pattern type and whose return slot is the (unguarded) `true`, keyed by `Qualifier.AbilityImplementation("Meta",
-    * "<Name>$Meta")` — the meta structure is nullary, so its pattern key is just its name. A slot whose domain head is
-    * not a simple type application yields no instance (fail-safe: the channel then hard-errors "No ability
-    * implementation found", never accepts a wrong join); the only slotted type today is `Int`'s clean `Interval` slot.
+  /** `<Name>$Carried[<the type's parameters>]: Type = Function[A, Function[…, Unit]]`, the carried parameters in the
+    * type's own order, or nothing when no slot holds a type parameter's meta. It ends in `Unit`, as `$Fields` does.
     */
-  private def metaJoinInstance(definition: FunctionDefinition): Seq[(FunctionDefinition, RoleHint)] = {
-    val metaTypeName  = definition.name.map(_.name + metaTypeSuffix)
-    val metaTypeRef   = app(metaTypeName)
-    val implQualifier = Qualifier.AbilityImplementation("Meta", metaTypeName.value, None)
-    val perSlotJoins  = definition.metaSlots.traverse(slotJoin(_, "join"))
-    val perSlotWidens = definition.metaSlots.traverse(slotJoin(_, "widen"))
-    (perSlotJoins, perSlotWidens).tupled.toSeq.flatMap { (joins, widens) =>
-      def method(name: String, slots: Seq[Sourced[SourceExpression]]): FunctionDefinition =
-        FunctionDefinition(
-          metaTypeName.as(QualifiedName(name, implQualifier)),
-          Seq.empty,
-          Seq(
-            ArgumentDefinition(metaTypeName.as("a"), metaTypeRef),
-            ArgumentDefinition(metaTypeName.as("b"), metaTypeRef)
-          ),
-          metaTypeRef,
-          Some(app(metaTypeName, slots)),
-          visibility = definition.visibility
-        )
-      val marker = FunctionDefinition(
-        metaTypeName.as(QualifiedName("Meta", implQualifier)),
+  private def carriedTypes(definition: FunctionDefinition): Option[FunctionDefinition] = {
+    val s       = definition.name
+    val carried = carriedParameters(definition)
+    Option.when(carried.nonEmpty)(
+      FunctionDefinition(
+        s.map(name => carriedName(name.name)),
+        definition.args.map(arg => GenericParameter(arg.name, arg.typeExpression, Seq.empty)),
         Seq.empty,
-        Seq(ArgumentDefinition(metaTypeName.as("arg"), metaTypeRef)),
-        SourceExpression.trueReference(metaTypeName),
-        None,
+        typeReference(s.as("Type")),
+        Some(
+          carried.foldRight(qualified(s, WellKnownTypes.unitTypeFQN, Seq.empty))((parameter, rest) =>
+            qualified(s, WellKnownTypes.functionDataTypeFQN, Seq(typeReference(parameter), rest))
+          )
+        ),
         visibility = definition.visibility
       )
-      Seq(marker, method("join", joins), method("widen", widens)).map(_ -> RoleHint.NoHint)
+    )
+  }
+
+  /** The type's own parameters some slot names with `MetaOf`, in the type's order. */
+  private def carriedParameters(definition: FunctionDefinition): Seq[Sourced[String]] = {
+    val named = definition.metaSlots.flatMap(slot => metaOfs(slot.typeExpression)).toSet
+    definition.args.map(_.name).filter(parameter => named.contains(parameter.value))
+  }
+
+  /** The names every `MetaOf[X]` in `expr` applies to, where `X` is a bare name. */
+  private def metaOfs(expr: Sourced[SourceExpression]): Seq[String] = expr.value match {
+    case MetaOf(parameter)                                          => Seq(parameter.value)
+    case SourceExpression.FlatExpression(parts)                       => parts.flatMap(metaOfs)
+    case SourceExpression.FunctionApplication(_, _, arguments, values) =>
+      (arguments.getOrElse(Seq.empty) ++ values).flatMap(metaOfs)
+    case _                                                          => Seq.empty
+  }
+
+  /** `expr` with every `MetaOf[A]` of a carried parameter `A` replaced by its binder `M$A`. */
+  private def withBinders(expr: Sourced[SourceExpression], carried: Seq[Sourced[String]]): Sourced[SourceExpression] =
+    expr.value match {
+      case MetaOf(parameter) if carried.exists(_.value == parameter.value)               =>
+        typeReference(binderName(parameter))
+      case SourceExpression.FlatExpression(parts)                                =>
+        expr.as(SourceExpression.FlatExpression(parts.map(withBinders(_, carried))))
+      case SourceExpression.FunctionApplication(module, name, arguments, values) =>
+        expr.as(
+          SourceExpression.FunctionApplication(
+            module,
+            name,
+            arguments.map(_.map(withBinders(_, carried))),
+            values.map(withBinders(_, carried))
+          )
+        )
+      case _                                                                     => expr
+    }
+
+  /** `MetaOf[X]` as written, `X` a bare name; either may stand alone in an operator run of one. */
+  private object MetaOf {
+    def unapply(expr: SourceExpression): Option[Sourced[String]] = alone(expr) match {
+      case SourceExpression.FunctionApplication(None, name, Some(Seq(argument)), Seq()) if name.value == metaOfName =>
+        alone(argument.value) match {
+          case SourceExpression.FunctionApplication(None, parameter, None, Seq()) => Some(parameter)
+          case _                                                                   => None
+        }
+      case _                                                                                                       => None
+    }
+
+    private def alone(expr: SourceExpression): SourceExpression = expr match {
+      case SourceExpression.FlatExpression(Seq(single)) => alone(single.value)
+      case other                                        => other
     }
   }
 
-  /** The per-slot expression `<method>(<slot>(a), <slot>(b))` of the `Meta` method `method` — e.g. `join(range(a),
-    * range(b))`, dispatched by the slot's domain type to that domain's `Meta` instance — or `None` when the slot's domain
-    * head is not a simple type application (see [[metaJoinInstance]]).
-    */
-  private def slotJoin(slot: ArgumentDefinition, method: String): Option[Sourced[SourceExpression]] =
-    slot.typeExpression.value match {
-      case SourceExpression.FunctionApplication(_, domainHead, _, _) =>
-        Some(app(domainHead.as(method), Seq(project(slot.name, "a"), project(slot.name, "b"))))
-      case _                                                         => None
-    }
+  /** The meta structure's binder for carried parameter `parameter`: `M$A`. */
+  private def binderName(parameter: Sourced[String]): Sourced[String] = parameter.map(name => s"M$$$name")
 
-  /** `<slotName>(<binder>)` — the slot accessor applied to a join parameter (`range(a)`). */
-  private def project(slotName: Sourced[String], binder: String): Sourced[SourceExpression] =
-    app(slotName, Seq(app(slotName.as(binder))))
+  /** A bare-name type `name`. */
+  private def typeReference(name: Sourced[String]): Sourced[SourceExpression] =
+    name.as(SourceExpression.FunctionApplication(None, name, None, Seq.empty))
 
-  /** A bare-name function application `name(args)` — resolves as the type constructor in a type position and the value
-    * constructor / function in a value position, exactly as [[DataDefinitionDesugarer]]'s generated references do.
-    */
-  private def app(name: Sourced[String], args: Seq[Sourced[SourceExpression]] = Seq.empty): Sourced[SourceExpression] =
-    name.as(SourceExpression.FunctionApplication(None, name, None, args))
+  /** The type `vfqn[arguments]`, named by its module so the type's own module needs no import of it. */
+  private def qualified(
+      at: Sourced[?],
+      vfqn: ValueFQN,
+      arguments: Seq[Sourced[SourceExpression]]
+  ): Sourced[SourceExpression] =
+    at.as(
+      SourceExpression.FunctionApplication(
+        Some(at.as(vfqn.moduleName.show)),
+        at.as(vfqn.name.name),
+        Option.when(arguments.nonEmpty)(arguments),
+        Seq.empty
+      )
+    )
 
   /** Appended to a type's name to form its meta structure's name. `$` is not an identifier character, so the result
     * cannot collide with any user-declared type.

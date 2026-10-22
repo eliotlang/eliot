@@ -180,7 +180,7 @@ object StructuralMetaDesugarer {
     * `eliot.compiler.Meta::joined` and `widening`, which dispatch to each field's own instance. A structure with no field
     * has one meta, which its join and widening leave as it is.
     */
-  private def metaInstance(structure: DataDefinition): Seq[FunctionDefinition] = {
+  def metaInstance(structure: DataDefinition): Seq[FunctionDefinition] = {
     val s          = structure.name
     val binders    = structure.genericParameters.map(binder =>
       binder.copy(abilityConstraints = Seq(UnresolvedAbilityConstraint(binder.name.as("Meta"), Seq(typeReference(binder.name)))))

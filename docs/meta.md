@@ -1328,7 +1328,11 @@ def split(separator: String, s: String): List[String]
    the channel instantiates it as it does a structural meta: `metaTypeOf(List[Int])` is `List$Meta[Int$Meta]`.
    Declined: a slot type mentioning a parameter meaning its meta, a reading by position, wrong for a value parameter
    (`type Buffer[N: Int] {limit: N}`). The marker is also the spelling §8.1's custom metas and a `where` over items may
-   grow into, once the evaluator can reduce it outside a slot; that is not part of T6.
+   grow into, once the evaluator can reduce it outside a slot; that is not part of T6. **Built 2026-10-22, with point 5**,
+   byte-identical across every example: `MetaConstructorDesugarer` rewrites each `MetaOf[A]` to the structure's binder
+   `M$A`, generates `T$Carried`, and derives the instance with `StructuralMetaDesugarer.metaInstance`, so `Int$Meta`'s
+   instance is the same generator's now; `MetaInterpreter.metaTypeOf` applies a slotted type's structure to the meta
+   types `T$Carried` lists. Pinned by `CoreProcessorTest`; nothing declares a `MetaOf` slot until M.
 3. **M. `item` on the surface, `Reach` inside** (above).
 4. **N. A native producing a list of a slotted type states its items with a nested brace.** `argumentsInternal`,
    `split`, `words` and the file holders must state a `String` meta inside the item, and §4.1's `constructor$` is the
@@ -1340,7 +1344,7 @@ def split(separator: String, s: String): List[String]
    its list (`readLines` of a 10,000-line file is about 50 million element copies), and loses the size's precision to
    the loop's widening, so it is measured before it is taken.
 5. **No decision, only work:** `MetaConstructorDesugarer` threads a type's parameters onto its meta structure and
-   instance (`implement[M$A ~ Meta] Meta[List$Meta[M$A]]`), as `StructuralMetaDesugarer` already does for `data`.
+   instance (`implement[M$A ~ Meta] Meta[List$Meta[M$A]]`), as `StructuralMetaDesugarer` already does for `data`. **Built with L.**
 
 **What else changes.**
 

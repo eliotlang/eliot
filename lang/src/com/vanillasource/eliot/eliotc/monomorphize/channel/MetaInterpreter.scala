@@ -1408,13 +1408,37 @@ object MetaInterpreter {
                 case None         => none[GroundValue].pure[CompilerIO]
               }
           case false =>
-            declaresSlots(fqn).map {
-              case true  => Some(GroundValue.Structure(metaStructureFqn(fqn), Seq.empty, GroundValue.Type))
-              case false => Some(unitType)
+            declaresSlots(fqn).flatMap {
+              case true  => slottedMetaType(fqn, typeArguments, expanding)
+              case false => Some(unitType).pure[CompilerIO]
             }
         }
       case other                                                                   => other.some.pure[CompilerIO]
     }
+
+  /** The meta type of a slotted type `fqn[typeArguments]`: its meta structure, applied to the meta types of the
+    * parameters its slots carry (`docs/meta.md` §17.1, decision L), which its `T$Carried` signature lists — `List$Meta[
+    * Int$Meta]` for `List[Int]`. A type whose slots carry none has no such signature, and its structure takes nothing.
+    */
+  private def slottedMetaType(
+      fqn: ValueFQN,
+      typeArguments: Seq[GroundValue],
+      expanding: Set[ValueFQN]
+  ): CompilerIO[Option[GroundValue]] = {
+    val carried = ValueFQN(fqn.moduleName, MetaConstructorDesugarer.carriedName(fqn.name.name))
+    getFactOrAbort(UnifiedModuleNames.Key(fqn.moduleName, Platform.Compiler)).flatMap { names =>
+      if (!names.names.contains(carried.name))
+        Some(GroundValue.Structure(metaStructureFqn(fqn), Seq.empty, GroundValue.Type)).pure[CompilerIO]
+      else
+        EscalatingReducer.reduceApplied(carried, typeArguments, Seq.empty).flatMap {
+          case Some(types) =>
+            fieldTypes(types)
+              .traverse(metaTypeOf(_, expanding + fqn))
+              .map(_.sequence.map(GroundValue.Structure(metaStructureFqn(fqn), _, GroundValue.Type)))
+          case None        => none[GroundValue].pure[CompilerIO]
+        }
+    }
+  }
 
   /** The field types a reduced `D$Fields` signature lists: the domains of its arrows, which end in `Unit`. */
   @tailrec

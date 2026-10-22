@@ -515,6 +515,34 @@ class CoreProcessorTest extends ProcessorTest(Tokenizer(), ASTParser(), CoreProc
     }
   }
 
+  "a slot holding a type parameter's meta (decision L)" should "generate the carried-types signature" in {
+    namedValues("type Box[A] {size: Interval, item: MetaOf[A]}").asserting(
+      _.map(_.qualifiedName.value) should contain(QualifiedName("Box$Carried", Qualifier.Meta(T)))
+    )
+  }
+
+  it should "list the carried parameters in it, ending in Unit" in {
+    namedValue("type Box[A] {size: Interval, item: MetaOf[A]}", QualifiedName("Box$Carried", Qualifier.Meta(T)))
+      .asserting(
+        _.runtime.map(_.value.structure) shouldBe
+          Some(App(App(QualRef("Function", "eliot.lang.Function"), Ref("A", T)), QualRef("Unit", "eliot.lang.Unit")))
+      )
+  }
+
+  it should "type the slot by the meta structure's binder" in {
+    namedValue("type Box[A] {size: Interval, item: MetaOf[A]}", QualifiedName("item", Qualifier.Slot))
+      .asserting(
+        _.signature.value.structure shouldBe
+          Lambda("M$A", Ref("Type", T), App(App(Ref("Function", T), App(Ref("Box$Meta", T), Ref("M$A", T))), Ref("M$A", T)))
+      )
+  }
+
+  it should "not generate a carried-types signature for a slot naming no type parameter" in {
+    namedValues("type Int {range: Interval}").asserting(
+      _.map(_.qualifiedName.value.name) should not contain "Int$Carried"
+    )
+  }
+
   "transfer brace (bounds Step 4b)" should "generate a ^Meta transfer companion in the Meta namespace" in {
     namedValues("type Foo {bar: D}\ndef f(a: Foo): Foo {a.bar}").asserting { nvs =>
       nvs.map(_.qualifiedName.value) should contain(QualifiedName("f", M))
