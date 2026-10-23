@@ -685,6 +685,12 @@ recursive `data` and `MetaOf[A]` in a `data` slot wait for O6 (Q6). A sum's fiel
 have no value accessor (P). Still open from the list above: whether a brace may read its own body's derived meta, and a
 slotted abstract `type` in a user library.
 
+> **Partly reversed the same day by decision R** (§18): meta code reads no field's meta. A field accessor applied to
+> a meta would need the meta to mirror the runtime structure in public, and the compiler generates no such mirror.
+> A type's meta is what its own slots declare, and a constructor's statement flattens what it needs from its fields
+> into them. P's other half stands: a declared slot is the type's own and replaces nothing, so it sits beside the
+> structural meta, which stays without a surface (§13.6).
+
 **A precision gap the derivation should still close.** A field holding a list built by a fold has the loop's widened
 meta (§11.2), so a derived `transpose` loses its matrix's dimensions. A brace can now restate them; iterating once per
 count where a loop's count has a known range would derive them (§18, "Open, not blocking").
@@ -1127,11 +1133,11 @@ mechanical repairs to the stated-transfer path, and both are independent of `dat
 
 ### 13.6 Structural meta has no surface
 
-> **Partly reversed 2026-10-23 by decision P** (§18): meta code reads a single-constructor `data` value's field metas
-> through the type's own accessors, nested as the data is (`t.degrees.range`, `r.temp.degrees.range`). The sentence
-> below on a `where` no longer holds once O4a (§17.2) is built. What stands: no brace *states* a structural meta, and
-> the generated records have no name a user can write, so they may still be named freely. The section is kept as
-> written until O7 rewrites Part I.
+> ~~**Partly reversed 2026-10-23 by decision P** (§18): meta code reads a single-constructor `data` value's field
+> metas through the type's own accessors, nested as the data is (`t.degrees.range`, `r.temp.degrees.range`). The
+> sentence below on a `where` no longer holds once O4a (§17.2) is built.~~ **Restored the same day by decision R**
+> (§18): the section holds as written. Meta code reads no field's meta, so the generated records still have no name a
+> user can write. A meta a `data` type declares beyond its fields is O4b's (§17.2), and is not structural meta.
 
 A user cannot write one. There is no brace on a `data`-typed parameter, field or leaf return: a brace lists slots, and
 R2's "lists slots over a result that carries no meta" check widens to "…or whose meta is structural". A `where` cannot
@@ -1582,38 +1588,18 @@ change in the same stage.
   bodied per platform, with the compile track's copy in the overlay. Independent of O4, and also small. Speculatively
   re-bodying natives that exist only to carry a statement is not part of it.
 
-- **O4a: a field's meta through the data's own accessor** (decision P). Independent of declared slots, and useful
-  without them: `def f(p: Pair[Int, Int]) where withinByte(p.first.range)`.
-  - **The surface.** In meta code (a `where`, a brace), a single-constructor `data` type's field accessor applied to
-    that type's meta answers the field's meta, so accessors compose as deep as the data nests:
+- ~~**O4a: a field's meta through the data's own accessor** (decision P).~~ **Dropped 2026-10-23 by decision R**
+  (§18), before any code. The plan generated, for every field of a single-constructor `data`, a meta accessor of the
+  field's name in `Qualifier.Slot`, so `def f(p: Pair[Int, Int]) where withinByte(p.first.range)` would read. Starting
+  it found the clash that undid it: meta code looks a bare name up in `Qualifier.Slot` first (decision K), and meta
+  code also reads ordinary `data` values, so the generated `start`/`end` of `Interval` would have shadowed the value
+  accessors `Meta[Interval]`'s join and nine braces read endpoints with (`end(length(s))`). Only the argument's type
+  tells the two apart. Asked how to resolve it, Robert went to the root instead: in meta code `p` is a meta, and
+  `p.first` names a runtime field of a value meta code does not have, so the reading works only if the meta mirrors the
+  runtime structure in public. The compiler generates no such mirror; a type's meta is what its slots declare. The
+  `where` above has no spelling: a program that wants it wraps the pair in a `data` of its own with a slot.
 
-    ```eliot
-    data Temperature(degrees: Int)
-    data Room(name: String, temp: Temperature)
-
-    def show(t: Temperature) where withinByte(t.degrees.range): …
-    def open(r: Room) where withinByte(r.temp.degrees.range): …
-    ```
-
-  - **The accessors.** For every field value code has an accessor for, the structural desugarer generates a meta
-    accessor of the same name in `Qualifier.Slot` (decision K's namespace, which meta code searches first): from
-    `D$Meta` to the field's meta type, reading the field out of the constructor's record (`D$Meta$C`) through the
-    reach. The records keep their `$` names and stay out of every dictionary (§13.6, T5's cache fix): the accessor is
-    the surface, so the records may still be renamed.
-  - **Mirrors value code.** Exactly the accessors value code has: a single-constructor `data` only, since
-    `DataDefinitionDesugarer` makes accessors only there. A sum's fields have no meta accessor (Robert agreed,
-    2026-10-23); reading them waits for a `match` in meta code, which nothing has asked for. A field typed by the type
-    itself (§13.3's folded summary) gets none either, until O6.
-  - **To settle while building:** the read of a single constructor's reach. A value of a single-constructor type
-    always has it `Reached`, since its constructor states it so and a join of two `Reached` is `Reached`, but the
-    accessor must still be total over `Unreached`, and the process has no special values to answer with (§18). The
-    likely answer is that meta code reads it as the `List` item does (`forAll`-style), or that the generated accessor
-    states the field's meta under `reached`; settle it against §13.5 before writing code.
-  - **Tests**: accept/reject pairs for a field, a nested field and a generic field (`Pair`), each also through a
-    derived call; a sum's field read in meta code is an error naming the field; LSP hover is unchanged.
-  - Jars: byte-identical, since nothing in the tree reads a field's meta in meta code today.
-
-- **O4b: a meta declared on a `data` type.** Parser, AST, desugaring, slot accessors. Builds on O4a.
+- **O4b: a meta declared on a `data` type.** Parser, AST, desugaring, slot accessors. The next stage.
   - **Spelling** (Q3, decided): the slots on the type's head, as on `type`; each constructor states them in a brace
     after its fields.
 
@@ -1623,18 +1609,18 @@ change in the same stage.
     ```
 
     `DataDefinition` gains the slots and `DataConstructor` the statement.
-  - **The slot is the type's own** (decision P): `sign(t)` reads it, and `t.degrees.range` still reads the field's meta
-    through the accessor, exactly as without a slot. Nothing is copied up a level. In the representation the slots
-    are fields of `D$Meta` beside the reach and constructor records, which keep each field's meta nested as T5 builds
-    it. The generated instance already joins and widens field-wise, so a slot goes through the user's `Meta[Sign]`
+  - **The slot is the type's own** (decision P): `sign(t)` reads it, and it is all meta code reads of a `Temperature`
+    (decision R). Nothing is copied up a level, and nothing reads a field's meta: what a slot needs of a field, the
+    constructor's statement flattens into it. In the representation the slots are fields of `D$Meta`
+    beside the reach and constructor records, which keep each field's meta nested as T5 builds it. The generated instance already joins and widens field-wise, so a slot goes through the user's `Meta[Sign]`
     with no new machinery. `metaTypeOf` is unchanged, since a slot's type is closed.
   - **Accessors**: each slot gets a `Qualifier.Slot` accessor (decision K), as a `type`'s slot does. A slot named like
-    one of the type's fields is an error at the slot (decided 2026-10-23), since both accessors live in `Qualifier.Slot`
-    and meta code would read the slot where the author meant the field.
+    one of the type's fields is an error at the slot (decided 2026-10-23): meta code would read the slot under the name
+    value code reads the field by.
   - **The constructor's statement** becomes `{built(constructor$(slots…, Unreached, Reached(D$Meta$C(fields…))))}`,
     where `slots…` are the user's expressions; the companion's parameters are the constructor's fields, so
-    `range(degrees)` reads that field's meta exactly as a parameter brace reads a parameter's, and a field of a `data`
-    type is read through O4a's accessors.
+    `range(degrees)` reads that field's meta exactly as a parameter brace reads a parameter's. A field of a `data`
+    type is read through that type's own slots (`sign(temp)`), and a field of a slotless type has nothing to read.
   - **Every constructor of a slotted `data` states its slots** (Q5, decided; Robert: *"They have to state what the
     meta value is, so not stating is a compiler error. Meta values are total."*). A constructor without one is an
     error at the constructor.
@@ -1645,13 +1631,15 @@ change in the same stage.
     free, since the two `D$Meta` signatures must match; an overlay copy of a slotted `data` is new ground and gets a
     test.
   - **Tests**: the `Sign` probe of §8.1 turned into accept/reject pairs: a demand on `sign(t)` after construction; a
-    join at `if … else` through the user's `join`; a loop through the user's `widen`; `t.degrees.range` still read
-    beside the slot; a missing constructor statement; a slot named like a field; the refusals of Q6. LSP hover shows
-    nothing for a custom domain (`TypeHintIndex` decodes `Int$Meta` only), which is acceptable.
+    join at `if … else` through the user's `join`; a loop through the user's `widen`; a `match` arm still handed
+    the field's structural meta beside the slot (`t match { case Temperature(d) -> useByte(d) }` after
+    `Temperature(5)`); a constructor statement reading a slotted field's slot; a missing constructor statement; a
+    slot named like a field; the refusals of Q6. LSP hover shows nothing for a custom domain (`TypeHintIndex` decodes
+    `Int$Meta` only), which is acceptable.
   - Jars: byte-identical, since no example declares a slot on a `data`.
 
 - **O5: a brace on a bodied value returning a slotted `data`.** `def warm: Temperature {Positive} =
-  Temperature(5)`. The brace lists the slots only. The field metas stay derived (O4a reads them, nothing states them),
+  Temperature(5)`. The brace lists the slots only. The field metas stay derived (a `match` arm reads them, nothing states them),
   so here a brace narrows *part* of a meta. The companion's `constructor$` parameter (§4.1) is already the channel's to choose: it
   passes a constructor that rebuilds the derived meta with the stated slots. This lifts O1's refusal for a slotted
   `data` result; a slotless `data` result stays refused, having nothing to state. Tests: the brace narrows the slot,
@@ -1663,7 +1651,7 @@ change in the same stage.
 
 - **O7: the record.**
   - Part I: R3 leaves §3; §3.3's table gets "stated or derived; a brace is trusted"; §5.1's state-or-derive becomes
-    three arms; §8.1 closes; §2.3 says a user may now grow a domain; §13.6 says what decision P made readable.
+    three arms; §8.1 closes; §2.3 says a user may now grow a domain; §13.6 stands (decision R).
   - CLAUDE.md's refinement-channel paragraph.
   - The global `eliot-code` skill (`~/.claude/skills/eliot-code/`): overriding and custom metas, with the warning
     that a wrong brace is silent, and reading a field's meta through its accessor.
@@ -1674,7 +1662,7 @@ change in the same stage.
   Each earlier stage records itself here as it lands, as T1–T6 did, so O7 is the Part I rewrite and the outside
   documents.
 
-**Order.** O1 (built), then O4a, O4b and O5, in that order. O2 and O3 are independent of each other and of O4, and
+**Order.** O1 (built), then O4b and O5, in that order (O4a was dropped by decision R). O2 and O3 are independent of each other and of O4, and
 can come whenever a program asks for them. O6 waits on the recursive-data fold. O7 is last.
 
 **The plan's questions**, as answered (Q3–Q6 by Robert on 2026-10-23; Q1, Q2 and Q7 built in O1 as recommended):
@@ -1684,13 +1672,15 @@ can come whenever a program asks for them. O6 waits on the recursive-data fold. 
 | Q1 | A control primitive in a bodied brace | Refused. The body's control is derived (rule 3), so a primitive would restate or contradict what the walk followed. Built in O1. |
 | Q2 | A braced body that runs out of the budget | Still reported. The brace replaces a result, not a walk. Built in O1. |
 | Q3 | The `data` slot spelling | Slots on the head, a statement brace per constructor (O4b). Decided as recommended. |
-| Q4 | The slot beside the structure | **Neither option** (both and replace were offered): decision P. A slot is the type's own; a field's meta is read through the data's own accessor, nested (O4a). |
+| Q4 | The slot beside the structure | **Neither option** (both and replace were offered): decision P. A slot is the type's own; a field's meta is read through the data's own accessor, nested (O4a). **Partly reversed by decision R**: no field's meta is read in meta code, so the slot sits *beside* the structural meta, which keeps no surface. |
 | Q5 | A constructor without a statement | An error. Decided: meta values are total. |
 | Q6 | Recursive `data`, `MetaOf` in a `data` slot | Refused until O6. Decided as recommended. |
 | Q7 | A bodied brace over a slotless `data` result | Refused: nothing nameable to state. Built in O1. |
 
 Two points decision P raised were decided with it, as recommended: a sum's fields get no meta accessor, mirroring
-value code, and a slot named like a field of its type is an error.
+value code, and a slot named like a field of its type is an error. Decision R made the first moot, since no field gets
+one. The second stands on a reason of its own: meta code would read the slot under the name value code reads the
+field by.
 
 Out of scope: a brace on an **ability method declaration** stays §18's open question (whether an ability may declare
 a transfer its implementations must satisfy). An implementation's member is an ordinary bodied value, so O applies to
@@ -1762,7 +1752,26 @@ it from O1. O1 pins what a brace on each of the two does.
   the field's accessor, as deep as the data nests. It partly reverses §13.6 (*"A `where` cannot read one either"*),
   marked there. With it: a sum's fields get no meta accessor, as they get no value accessor; a slot named like one of
   its type's fields is an error. It is not §20's declined *"accessor stating a field's meta"*: the accessor reads a
-  meta, it states nothing. **Not built.**
+  meta, it states nothing. **Not built.** **Partly reversed the same day by decision R**: no accessor reads a field's
+  meta, so O4a is dropped; that a declared slot is the type's own and replaces nothing stands.
+- **R. Meta code reads no field's meta: a type's meta is what its own slots declare** (§17.2). Partly reverses P,
+  before any of it was built. Starting O4a found that a generated meta accessor named like a field would shadow, in
+  meta code, the value accessors of the `data` meta code computes with (`Interval`'s `start`/`end`). Robert: *"metas
+  are values themselves, which _do_ have accessors to other values. So writing "a.i.range" would use "a", which is a
+  meta value. The "i" accessor on that meta value would mean absolutely nothing. "a.i" is the runtime structure, but
+  not the meta structure. … To make "a.i.range" work, we would need the "a"'s meta to have the same structure as the
+  "a"'s runtime type. So I see two ways, either we auto-generate something, like the same structure for the meta. Or
+  we don't do anything, and let the user define the meta's structure. I tend to vote for the second one. So basically
+  "a.i.range" would not work. The user would have to flatten meta structures to an appropriate meta value."* So:
+  - no meta accessor is generated for a field, and O4a is dropped;
+  - a declared slot is the type's own and replaces nothing (P's first half, which stands), so it sits **beside** the
+    structural meta (§13.1), which keeps following a value into a `match` and keeps no surface: §13.6 holds as written;
+  - what a slot needs of a field, the constructor's statement flattens into it (O4b), reading an `Int` field's `range`
+    or a slotted `data` field's own slots;
+  - a constraint on a field of a type the program does not own (`p.first.range` of a `Pair`) has no spelling. A
+    program wraps the value in a `data` of its own with a slot.
+
+  **Not built.**
 - **Q3, Q5, Q6 of §17.2**: the `data` slot spelling is slots on the head and a statement per constructor; a
   constructor that does not state its slots is an error (*"Meta values are total"*); a slot on a recursive `data` and
   `MetaOf[A]` in a `data` slot wait for O6. **Not built.**
@@ -1794,8 +1803,9 @@ the step budget an error (§5.3), and the `List` domain carries its size and its
 byte-identical. **Open: decision I fails eliot-build** (§5.3's note) and waits on Robert. Decision O (2026-10-23,
 §8.1) is taken; its migration is planned in §17.2 (stages O1–O7). O1, the override, is built (2026-10-23) on the
 recommendations for Q1, Q2 and Q7. Q3–Q6 were answered the same day, Q4 with decision P, and the plan was adjusted:
-O4 is split into O4a (a field's meta through its accessor) and O4b (declared slots). **Next: O4a**, starting with its
-one open design point, the read of a single constructor's reach. Next after that is **T7**, the record, which O7 folds into.
+O4 is split into O4a (a field's meta through its accessor) and O4b (declared slots). Starting O4a found a name clash
+in meta code, and Robert answered it with decision R: no field's meta is read in meta code, so O4a is dropped.
+**Next: O4b**, a meta declared on a `data` type. Next after that is **T7**, the record, which O7 folds into.
 
 **The `Unit` question (2026-10-21), closed the same day.** Robert: a type declaring no meta gets `Unit` implicitly, and
 *"the rest of the machinery should not know that this was 'default'"*. T3 removed two places that knew: §5.3's type
@@ -1907,7 +1917,12 @@ The stages in order. The full narrative of each is in the three retired document
   2026-10-23). Robert: *"I definitely don't want proofs, nor properties. … I just want values."* A meta is a value,
   and a value the derivation cannot see is stated (O).
 - **Flattening a `data` value's meta into one record**, or a declared slot replacing its field metas (§17.2's Q4, both
-  offered 2026-10-23). A field's meta is read through the field's accessor, nested (decision P).
+  offered 2026-10-23). ~~A field's meta is read through the field's accessor, nested (decision P).~~ Since decision R
+  no meta code reads a field's meta: the compiler flattens nothing, and a constructor's statement flattens what its
+  slots need, by the author's hand.
+- **Meta accessors named after a `data` type's fields**, a public mirror of the structural meta (O4a, planned and
+  dropped 2026-10-23, decision R). In meta code a name means a meta's own slot or an ordinary value; a field
+  accessor applied to a meta names a runtime field of a value meta code does not have.
 - **The accessor stating a field's meta.** It needs an R3 exception, and it misses `match` arms and multi-constructor
   types.
 - **The channel naming `PatternMatch`, or any branch construct or leaf.** A generated statement carries the link. That
