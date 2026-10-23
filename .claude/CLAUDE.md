@@ -421,7 +421,10 @@ contain `data` (a chosen representation), a native leaf, or any representation-d
   R3** (§P3), the same processor's other arm split on `MonomorphicValue.runtime`: a **bodied** value derives its meta
   from its body and so may not also state one — read post-merge, so a brace in one layer over a body in another is the
   same check. A brace therefore lives only on a native leaf, which means **a user module cannot author one at all**
-  (it declares no natives); a `where` is untouched, being a stated contract by design. Two rules
+  (it declares no natives); a `where` is untouched, being a stated contract by design. **Decision O (2026-10-23, not
+  built) reverses R3** (`docs/meta.md` §8.1): a brace on a bodied value will state its result's meta, replacing the
+  derived one — pure trust, the body still walked for cells/frames/exits — and that is how custom metas are declared;
+  until it is built the tree enforces R3. Two rules
   it settled: a transfer lives in the layer that owns the **fact it states** (an operation's own bound in the base, a
   representation's in the platform layer), and a leaf's statement is **axiomatic** — nothing rechecks it — so a bound
   that is merely usually true (POSIX's `[0, 255]` for an exit code, which Windows breaks) is a bug, and the honest
