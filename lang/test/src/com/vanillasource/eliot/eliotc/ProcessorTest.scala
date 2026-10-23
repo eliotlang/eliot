@@ -127,20 +127,28 @@ abstract class ProcessorTest(val processors: CompilerProcessor*) extends AsyncFl
       errors    <- generator.currentErrors()
     } yield (result, errors)
 
+  /** Compile `source` as module `Test` and demand `trigger`. Each of `layers` is another file of module `Test`, as a
+    * second layer's copy of the module is: its definitions merge with `source`'s.
+    */
   def runGenerator(
       source: String,
       trigger: CompilerFactKey[? <: CompilerFact],
-      imports: Seq[SystemImport] = Seq.empty
-  ): IO[(Seq[CompilerError], Map[CompilerFactKey[?], CompilerFact])] =
+      imports: Seq[SystemImport] = Seq.empty,
+      layers: Seq[String] = Seq.empty
+  ): IO[(Seq[CompilerError], Map[CompilerFactKey[?], CompilerFact])] = {
+    val layerFiles = layers.indices.map(index => URI.create(s"TestLayer$index.els")).toList
+    val files      = file +: layerFiles
     for {
       generator <- IncrementalFactGenerator.create(SequentialCompilerProcessors(processors), None)
-      _         <- generator.registerFact(SourceContent(file, Sourced(file, PositionRange.zero, source)))
+      _         <- (files zip (source +: layers.toList)).traverse((uri, content) =>
+                     generator.registerFact(SourceContent(uri, Sourced(uri, PositionRange.zero, content)))
+                   )
       // Register each source under **both** platform pools: the runtime pool (the value monos) and the compiler pool.
       // Since signature-unification C1/C2 the value mono reads its signature twin (`CompilerMonomorphicValue(v@Signature)`)
       // **mandatorily**, and the compiler pool borrows the whole runtime track in a real build (`PathScanner`), so the
       // harness must mirror that — otherwise the twin never produces and the mandatory read aborts.
-      _         <- generator.registerFact(PathScan(Path.of("Test.els"), Seq(file)))
-      _         <- generator.registerFact(PathScan(Path.of("Test.els"), Seq(file), Platform.Compiler))
+      _         <- generator.registerFact(PathScan(Path.of("Test.els"), files))
+      _         <- generator.registerFact(PathScan(Path.of("Test.els"), files, Platform.Compiler))
       _         <- imports.traverse { imp =>
                      val modulePath = imp.moduleName.toPath
                      val impFile    = URI.create(modulePath.toString)
@@ -152,6 +160,7 @@ abstract class ProcessorTest(val processors: CompilerProcessor*) extends AsyncFl
       facts     <- generator.currentFacts()
       errors    <- generator.currentErrors()
     } yield (errors, facts)
+  }
 
   /** A source stub for a system module the harness pre-registers (its `.els` path is derived from [[moduleName]] via
     * the shared [[ModuleName.toPath]] layout). `packages` defaults to the `eliot.lang` prelude; relocated modules (e.g.

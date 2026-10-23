@@ -28,12 +28,17 @@ import scala.annotation.tailrec
   *   parameters (`{joined(onExit, onValue)}`, `fold`'s `{join(whenTrue, whenFalse)}`). Since ⊥ is the identity of
   *   every join (`docs/meta.md` §12), such a statement whose parameters but one are ⊥ is that one, whatever the
   *   interpretation holds of it — a constructed value, a frame — and not only its meta.
+  * @param controls
+  *   Whether the statement says something about control rather than a meta: it is a primitive, or it mentions
+  *   `eliot.compiler.Meta::never` anywhere. A bodied value may not state that (`docs/meta.md` §8.1, decision O), since
+  *   what its body does to control is derived.
   */
 case class MetaStatement(
     parameters: Seq[String],
     reads: Set[Int],
     primitive: Option[MetaStatement.Primitive],
-    joins: Option[Seq[Int]]
+    joins: Option[Seq[Int]],
+    controls: Boolean
 )
 
 object MetaStatement {
@@ -90,11 +95,13 @@ object MetaStatement {
       )
       val parameters    = names.filterNot(_ == MetaCompanionLayout.constructorParameterName)
       val brace         = body.map(unwrapped)
+      val stated        = brace.flatMap(primitive(_, parameters))
       MetaStatement(
         parameters,
         brace.fold(Set.empty[Int])(free(_).flatMap(name => Option(parameters.indexOf(name)).filter(_ >= 0))),
-        brace.flatMap(primitive(_, parameters)),
-        brace.flatMap(joined(_, parameters))
+        stated,
+        brace.flatMap(joined(_, parameters)),
+        stated.isDefined || brace.exists(mentionsNever)
       )
     }
 
@@ -162,6 +169,15 @@ object MetaStatement {
         }
       case _                                                  => None
     }
+  }
+
+  /** Whether an expression names `eliot.compiler.Meta::never` anywhere. */
+  private def mentionsNever(expression: OperatorResolvedExpression): Boolean = expression match {
+    case OperatorResolvedExpression.ValueReference(name, _)               => name.value == WellKnownTypes.metaNeverFQN
+    case OperatorResolvedExpression.FunctionApplication(target, argument) =>
+      mentionsNever(target.value) || mentionsNever(argument.value)
+    case OperatorResolvedExpression.FunctionLiteral(_, _, body)           => mentionsNever(body.value)
+    case _                                                                => false
   }
 
   /** The parameters `brace` is the join of: a parameter itself, or `joined`/`join` of two such. */

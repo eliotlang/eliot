@@ -1,18 +1,18 @@
 package com.vanillasource.eliot.eliotc.monomorphize.channel
 
 import com.vanillasource.eliot.eliotc.ProcessorTest
-import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, Qualifier, ValueFQN}
+import com.vanillasource.eliot.eliotc.module.fact.{ModuleName, QualifiedName, Qualifier, ValueFQN}
 import com.vanillasource.eliot.eliotc.monomorphize.fact.GroundValue
 import com.vanillasource.eliot.eliotc.plugin.LangProcessors
 
-/** R2 + R3 enforcement (docs/meta.md §3), the two halves of one rule:
+/** What a return brace may say (docs/meta.md §3, §8.1):
   *
   *   - **R2** — a **body-less** value (a native leaf) that produces a meta-carrying type must **state** a `^Meta`
   *     transfer, a leaf whose return is a type parameter included, at every instantiation where it is one
   *     (`docs/meta.md` §10).
-  *   - **R3** — a **bodied** value derives its transfer from its body and may therefore **not** state one. A `where`
-  *     precondition is untouched by this: it is a stated contract, never derived, and its `^Where` companion is a
-  *     different name.
+  *   - **Decision O** — a **bodied** value may state its result's meta, which replaces the derived one, and nothing
+  *     else: no control, no slots over a result carrying none, and nothing over a `data` result. A `where`
+  *     precondition is untouched by this: it is a stated contract, and its `^Where` companion is a different name.
   *
   * A meta-carrying type here is one declaring `$Meta` slots (`type Gauge {level: Interval[BigInteger]}`, mirroring
   * production's `type Int {range: Interval[BigInteger]}`); the check is demanded directly at each value's
@@ -38,7 +38,18 @@ class MetaTransferAccountingProcessorTest extends ProcessorTest(LangProcessors()
 
   private val missingTransfer = "carries meta-information, but states no meta transfer"
 
-  private val statedTransfer = "but it also states a meta transfer"
+  private val statedControl = "its { ... } return brace may state only the meta-information of its result"
+
+  private def statedSlotsWithoutMeta(result: String) = s"but $result carries none"
+
+  private val statedData = "is a data type, whose meta-information is derived from its fields"
+
+  private val metaPrimitives = SystemImport("Meta", "def never[D]: D", ModuleName.compilerPackage)
+
+  private def errorsOf(source: String, name: String) =
+    runGenerator(prelude + source, accountingKey(name), ambientStubsWith() :+ metaPrimitives).map((errors, facts) =>
+      errors.map(_.message).mkString("\n") + facts.keySet.contains(accountingKey(name)).toString
+    )
 
   "a body-less leaf producing a meta-carrying type" should "be rejected when it states no transfer" in {
     runGenerator(prelude + "def readGauge: Gauge", accountingKey("readGauge"), ambientStubsWith()).map {
@@ -101,16 +112,33 @@ class MetaTransferAccountingProcessorTest extends ProcessorTest(LangProcessors()
     }
   }
 
-  "a bodied value that states a transfer" should "be rejected (R3: it derives, it may not state)" in {
+  "a bodied value that states its result" should "be accepted (decision O: the brace replaces the derived meta)" in {
     runGenerator(prelude + "def echo(g: Gauge): Gauge {level(g)} = g", accountingKey("echo"), ambientStubsWith()).map {
-      case (errors, _) => errors.map(_.message).mkString("\n") should include(statedTransfer)
+      case (_, facts) => facts.keySet should contain(accountingKey("echo"))
     }
   }
 
-  "the codegen precondition" should "block a stating bodied value's WovenValue" in {
+  "the codegen precondition" should "let a stating bodied value's WovenValue through" in {
     runGenerator(prelude + "def echo(g: Gauge): Gauge {level(g)} = g", wovenKey("echo"), ambientStubsWith()).map {
-      case (_, facts) => facts.keySet should not contain wovenKey("echo")
+      case (_, facts) => facts.keySet should contain(wovenKey("echo"))
     }
+  }
+
+  "a bodied value stating control" should "be rejected, since its body's control is derived" in {
+    errorsOf("def echo(g: Gauge): Gauge {eliot.compiler.Meta::never} = g", "echo").asserting(_ should include(statedControl))
+  }
+
+  "a bodied value stating slots over a result carrying no meta" should "be rejected" in {
+    errorsOf("type Plain\ndef echo(p: Plain): Plain {0} = p", "echo").asserting(_ should include(statedSlotsWithoutMeta("'Plain'")))
+  }
+
+  "a bodied value stating a function result" should "be rejected" in {
+    errorsOf("def lift(g: Gauge): Function[Gauge, Gauge] {level(g)} = h -> h", "lift")
+      .asserting(_ should include(statedSlotsWithoutMeta("'Function'")))
+  }
+
+  "a bodied value stating a data result" should "be rejected, since a data type declares no slots" in {
+    errorsOf("data Box(v: Gauge)\ndef box(g: Gauge): Box {level(g)} = Box(g)", "box").asserting(_ should include(statedData))
   }
 
   "a bodied value carrying a where precondition" should "be accepted (a `where` is stated, never derived)" in {
@@ -119,23 +147,24 @@ class MetaTransferAccountingProcessorTest extends ProcessorTest(LangProcessors()
       accountingKey("echo"),
       ambientStubsWith()
     ).map { case (errors, facts) =>
-      errors.map(_.message).mkString("\n") should not include statedTransfer
+      errors.map(_.message).mkString("\n") shouldBe ""
       facts.keySet should contain(accountingKey("echo"))
     }
   }
 
   "a bodied value" should "not be answered for by an ability implementation's brace on the same bare name" in {
     // §4.2: a companion keeps its callee's qualifier, so the `Sum[Gauge]` implementation's brace is that
-    // implementation's transfer and not the plain `combine`'s — which derives, states nothing, and is accepted.
+    // implementation's transfer and not the plain `combine`'s. Its `never` is legal on a native and refused on a bodied
+    // value, so the plain `combine` is accepted only if the brace is not read as its own.
     runGenerator(
       prelude +
         "ability Sum[T] { def combine(a: T, b: T): T }\n" +
-        "implement Sum[Gauge] { def combine(a: Gauge, b: Gauge): Gauge {level(a)} }\n" +
+        "implement Sum[Gauge] { def combine(a: Gauge, b: Gauge): Gauge {eliot.compiler.Meta::never} }\n" +
         "def combine(a: Gauge, b: Gauge): Gauge = a",
       accountingKey("combine"),
-      ambientStubsWith()
+      ambientStubsWith() :+ metaPrimitives
     ).map { case (errors, facts) =>
-      errors.map(_.message).mkString("\n") should not include statedTransfer
+      errors.map(_.message).mkString("\n") shouldBe ""
       facts.keySet should contain(accountingKey("combine"))
     }
   }

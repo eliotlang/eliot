@@ -98,7 +98,8 @@ class CoreProcessor
       .filter(_.functions.isEmpty)
       .map(effect => effect.name.as(s"The effect '${effect.name.value}' declares no operation, so nothing could perform it."))
     // An arrow-domain brace states what a definition hands its code, which only a native needs: a body hands what it
-    // computes, so a brace there could only restate or contradict it (R3, `docs/meta.md` §14).
+    // computes, so a brace there could only restate or contradict it (`docs/meta.md` §14). It is the rule a bodied
+    // value's return brace keeps under decision O (§8.1): it states a result, never control.
     val bodiedHanded     = sourceAstData.functionDefinitions
       .filter(_.body.nonEmpty)
       .flatMap(_.args.flatMap(_.handed))

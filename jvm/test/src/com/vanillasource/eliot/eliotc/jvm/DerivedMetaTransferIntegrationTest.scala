@@ -1,8 +1,8 @@
 package com.vanillasource.eliot.eliotc.jvm
 
-/** End-to-end proof of the **meta interpretation** (`docs/meta.md` §5): a value with a body does
-  * not *state* what it does to meta-information — R3 forbids it — it **derives** it, by having its body interpreted
-  * under the caller's argument metas. Before this, a call to a bodied callee was a ⊤ boundary, so precision was a
+/** End-to-end proof of the **meta interpretation** (`docs/meta.md` §5): a value with a body **derives** what it does
+  * to meta-information, by having its body interpreted under the caller's argument metas, and a brace on it replaces
+  * only the meta of the result (decision O, the last cases). Before this, a call to a bodied callee was a ⊤ boundary, so precision was a
   * property of *where code sits relative to a native* rather than of what the code *is*: `def label(s: String): String
   * = s` lost its argument's size at the call, and every helper a program factored out lost the bound it preserved.
   *
@@ -476,5 +476,61 @@ class DerivedMetaTransferIntegrationTest extends FullIntegrationTest {
   "a derivation deeper than the step budget" should "be reported at the call it was asked for" in {
     compileForErrors(useByte + deep + "def main uses Console: Unit = printLine(show(twice11(5)))")
       .asserting(_ should include("Computing the meta-information of this call of 'twice11' takes more than 1024 steps."))
+  }
+
+  // Decision O (`docs/meta.md` §8.1): a brace on a bodied value replaces the meta its body derives for its result,
+  // trusted. The derivation cannot learn from a condition (`if` is `fold(condition, value, abort)`), so without a brace
+  // `requireSmall` hands on its argument's meta; its author knows what the guard means and says it.
+  private def requireSmall(brace: String) = s"def requireSmall(n: Int) uses Abort: Int$brace = if(n < 100, n)\n"
+
+  "a brace on a bodied value" should "replace the meta its body derives" in {
+    accepts(requireSmall(" {closed(0, 99)}"), "requireSmall(add(100, 100)) else 0", "0")
+  }
+
+  it should "leave the derived meta in place when there is none" in {
+    rejects(requireSmall(""), "requireSmall(add(100, 100)) else 0")
+  }
+
+  it should "be taken as written when it is wider than the derivation" in {
+    rejects("def widened(x: Int): Int {closed(0, 1000)} = x\n", "widened(5)")
+  }
+
+  // The body is still walked (rule 3): a cell written inside a braced body is followed after the call.
+  private def bumping(state: Int) =
+    s"""|def bump uses State[Int]: Int {closed(0, 0)} = {
+        |  putState($state)
+        |  0
+        |}
+        |""".stripMargin
+
+  it should "leave what its body writes into a cell to be followed" in {
+    accepts(bumping(5), "runStateToFinalState(0, bump)", "5")
+  }
+
+  it should "leave what its body writes into a cell to be checked" in {
+    rejects(bumping(200), "runStateToFinalState(0, bump)")
+  }
+
+  it should "not make a call that never returns return" in {
+    compileAndRun(
+      aborting("useByte(fold(c, 5, stop))", "g(true) else 0")
+        .replace("def g(", "def stop uses Abort: Int {closed(0, 1000)} = abort\ndef g(")
+    ).asserting(_ shouldBe "5")
+  }
+
+  // What a code parameter's runs yield is not recorded for a bodied value's brace yet (§17.2, O2), so a brace reading
+  // one is not computed: fail-safe, never a guess.
+  it should "be not computed where it reads a code parameter" in {
+    compileForErrors(
+      useByte + "def run(a uses *: Int) uses *: Int {range(a)} = a\n" +
+        "def main uses Console: Unit = printLine(show(useByte(run(5))))"
+    ).asserting(_ should include("Cannot prove the precondition of 'Test::useByte'"))
+  }
+
+  // The accepted price (§8.1): nothing checks a brace, so one narrower than what the body returns compiles, and the
+  // backend lays the call's result out at the width the brace chose. `add` computes in the domain its node's meta
+  // picks, a byte for `[0, 10]`, so 300 wraps to 44 (`300 mod 256`). Pinned so that a change to it is seen.
+  it should "be trusted when it is narrower than what the body returns" in {
+    accepts("def lie(x: Int): Int {closed(0, 10)} = x\n", "add(lie(300), 0)", "44")
   }
 }

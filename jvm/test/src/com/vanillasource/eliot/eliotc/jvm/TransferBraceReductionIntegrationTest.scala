@@ -12,14 +12,11 @@ package com.vanillasource.eliot.eliotc.jvm
   * rejecting alone would also pass if the meta were simply unknown — which is a different diagnostic ("Cannot prove" is
   * an absent bound, "not satisfied" a violated one), pinned separately below.
   *
-  * **Why these programs no longer state their own braces.** This suite used to put the brace on an ordinary bodied test
-  * def (`def f(a: Int, b: Int): Int {range(a) + range(b)} = a + b`). **R3** (`docs/meta.md` §3)
-  * outlaws that shape: a bodied value *derives* its meta from its body, so only a native leaf may state one — and a
-  * user module declares no natives. Each shape is therefore exercised through the layer brace that actually ships it
-  * (`Numeric[Int]::add`, `Runtime::integerLiteral`, `Show[Int]::show`), and the last case pins R3 itself. Nothing is
-  * lost by the move: the caveat the old suite carried — that lowering a brace-narrowed return across a *user* def's
-  * call boundary is a deferred backend representation matter (`docs/refinement-channel-follow-ups.md` §4), since the
-  * callee's body is compiled once with ⊤ parameters — was exactly a symptom of the shape R3 removes.
+  * **Why these programs state no braces of their own.** Each shape is exercised through the layer brace that actually
+  * ships it (`Numeric[Int]::add`, `Runtime::integerLiteral`, `Show[Int]::show`), which is what a program meets. A
+  * brace on an ordinary bodied def was refused by R3 until decision O (`docs/meta.md` §8.1) made it the result's
+  * statement; the last case pins that it is reduced at the call like any other, and
+  * [[DerivedMetaTransferIntegrationTest]] what it does to the derivation.
   *
   * The arguments are **direct calls** (`add(60, 60)`) rather than infix `60 + 60`, so each case is about the brace
   * alone; an infix spine derives the same meta through the interpretation (`docs/meta.md` §5).
@@ -118,10 +115,15 @@ class TransferBraceReductionIntegrationTest extends FullIntegrationTest {
   // value with an Eliot body derives its meta-information from that body, so a brace on it is a stated summary the
   // compiler would silently prefer to the code — the one shape in which the channel can be *wrong* rather than merely
   // imprecise, since `RefinementChannelProcessor.metaViaCompanion` reads a companion wherever one exists.
-  "a transfer brace on a bodied value" should "be rejected, naming the fix" in {
-    compileForErrors(
-      useByte + "def f(a: Int, b: Int): Int {range(a) + range(b)} = add(a, b)\n" +
-        "def main uses Console: Unit = printLine(show(useByte(f(100, 100))))"
-    ).asserting(_ should include("remove the { ... } return brace"))
+  private val braced = "def f(a: Int, b: Int): Int {range(a) + range(b)} = add(a, b)\n"
+
+  "a transfer brace on a bodied value" should "be reduced at the call, as its result's meta" in {
+    compileAndRun(useByte + braced + "def main uses Console: Unit = printLine(show(useByte(f(60, 60))))")
+      .asserting(_ shouldBe "120")
+  }
+
+  it should "reject what it states when that does not fit" in {
+    compileForErrors(useByte + braced + "def main uses Console: Unit = printLine(show(useByte(f(100, 100))))")
+      .asserting(_ should include("precondition of 'Test::useByte' is not satisfied"))
   }
 }

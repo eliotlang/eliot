@@ -37,10 +37,11 @@ import scala.annotation.tailrec
   *
   *   - a **leaf states** its transfer, so its meta is its `^Meta` companion reduced on the argument metas;
   *   - **everything else derives**, so its meta is obtained by *interpreting its own body* with its parameters bound to
-  *     the caller's argument metas.
+  *     the caller's argument metas — and a bodied value whose return carries a brace then has its result's meta
+  *     replaced by that brace (decision O, `docs/meta.md` §8.1), while everything else its body did stands.
   *
-  * Those are R2 and R3 read as a definition rather than as a prohibition, which is why [[metaOf]] is a two-armed `ifM`
-  * on exactly the test [[MetaTransferAccountingProcessor]] enforces. Before this existed only the first arm did: a call
+  * The first is R2 read as a definition rather than as a prohibition, which is why [[metaOf]] splits on exactly the
+  * tests [[MetaTransferAccountingProcessor]] judges. Before this existed only the first arm did: a call
   * to a bodied callee was a ⊤ boundary, so precision was a property of *where code sits relative to a native* rather
   * than of what the code *is* — `def label(s: String): String = s` lost its argument's size, and `String::show`
   * (bodied, therefore forbidden to state) derived nothing at all.
@@ -239,7 +240,7 @@ object MetaInterpreter {
   val interpretationBudget: Int = 1024
 
   /** The meta of an ordinary call: the callee **states** its transfer (a native leaf — reduce the companion), or it
-    * **derives** one from its body (everything else — interpret it). `resultType` is the *call node's* own ground type,
+    * **derives** one from its body (everything else — interpret it, then apply its brace if it states one, [[metaOf]]). `resultType` is the *call node's* own ground type,
     * which is what decides whether there is anything to derive at all: an untracked type's meta is the trivial `Unit`
     * (§1, meta is total on types but not structural), so a call returning one is skipped before any body is fetched.
     * That gate is what keeps the interpretation off the overwhelming majority of call nodes in a program.
@@ -296,7 +297,7 @@ object MetaInterpreter {
   /** Whether a concrete type is a `data` type carrying a **structural meta** (`docs/meta.md` §13): its module declares
     * its field-types signature `T$Fields` ([[StructuralMetaDesugarer]]).
     */
-  private def declaresFields(typeName: ValueFQN): CompilerIO[Boolean] =
+  private[channel] def declaresFields(typeName: ValueFQN): CompilerIO[Boolean] =
     getFactOrAbort(UnifiedModuleNames.Key(typeName.moduleName, Platform.Compiler))
       .map(_.names.contains(fieldsName(typeName)))
 
@@ -543,9 +544,16 @@ object MetaInterpreter {
       case _                                                           => (node, Seq.empty)
     }
 
-  /** The closure invariant of §1, executed: **state or derive**, split on the presence of a `^Meta` companion — the
-    * same test [[MetaTransferAccountingProcessor]] enforces from the other side, so the two cannot drift into
-    * disagreeing about which values summarise and which are read.
+  /** The closure invariant of §1, executed, in three arms split on two tests, a `^Meta` companion and a body on this
+    * track — the same two [[MetaTransferAccountingProcessor]] judges, so the two cannot drift into disagreeing about
+    * which values summarise and which are read:
+    *
+    *   - a **native** with a companion is *stated*: the companion is its only meta ([[stated]]);
+    *   - a **bodied** value with a companion is *derived, then stated*: its body is walked, and the brace replaces the
+    *     result's meta (decision O, [[restated]]);
+    *   - anything else is *derived* ([[derive]]).
+    *
+    * The body is read after the layer merge, so a brace in one layer over a body in another is the second arm.
     */
   private def metaOf(
       callee: ValueFQN,
@@ -557,9 +565,41 @@ object MetaInterpreter {
     if (arguments.contains(Value.Never)) (run, Value.Never).pure[CompilerIO]
     else
       declaresTransfer(callee).ifM(
-        stated(callee, typeArguments, arguments, run),
+        isBodied(callee, typeArguments).ifM(
+          restated(callee, typeArguments, resultType, arguments, run),
+          stated(callee, typeArguments, arguments, run)
+        ),
         derive(callee, typeArguments, resultType, arguments, run)
       )
+
+  /** Whether `callee` has a body on this track at these type arguments. One whose monomorphization failed upstream has
+    * none to walk, so it is read as its statement alone.
+    */
+  private def isBodied(callee: ValueFQN, typeArguments: Seq[GroundValue]): CompilerIO[Boolean] =
+    getFactIfProduced(MonomorphicValue.Key(callee, typeArguments)).map(_.exists(_.runtime.isDefined))
+
+  /** A bodied value stating its result's meta (decision O, `docs/meta.md` §8.1). Its body is derived as any other
+    * body is, so the cells it wrote, the frames it left through and the steps it spent are what the body did; only the
+    * meta of the value it returns is replaced, by its brace reduced over the argument metas. The brace is trusted:
+    * nothing compares it with what was derived. A call that does not return stays ⊥, having no result to state, and a
+    * derivation cut short stays cut short, since the brace replaces a result and not a walk.
+    *
+    * A code argument is passed to the brace as not computed: the body runs it, and what its runs yield is not recorded
+    * for the brace yet (`docs/meta.md` §17.2, O2).
+    */
+  private def restated(
+      callee: ValueFQN,
+      typeArguments: Seq[GroundValue],
+      resultType: GroundValue,
+      arguments: Seq[Value],
+      run: Run
+  ): CompilerIO[(Run, Value)] =
+    derive(callee, typeArguments, resultType, arguments, run).flatMap {
+      case derived @ (after, value) if value == Value.Never || after.cutShort => derived.pure[CompilerIO]
+      case (after, _)                                                         =>
+        reduceTransfer(callee, typeArguments, arguments.map(argument => if (isCode(argument)) None else argument.known))
+          .map(meta => (after, Value.Meta(meta)))
+    }
 
   /** A stated transfer over the call's arguments. The code the callee runs is followed run by run ([[runCode]]), each
     * run handed what the callee states it hands it, and the transfer reads each as what it yields: a companion is Eliot

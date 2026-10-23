@@ -1538,6 +1538,25 @@ change in the same stage.
     at the width the brace chose. It documents the behaviour, so that a change to it is seen.
   - Jars: byte-identical across every example.
 
+  **Built 2026-10-23**, on the recommendations for Q1, Q2 and Q7, all three refusals or a report and so fail-safe.
+  `MetaInterpreter.metaOf` has the three arms; "bodied" is a produced `MonomorphicValue` with a runtime body, so a
+  value whose monomorphization failed upstream is read as its statement. `MetaStatement` gained `controls`, a primitive
+  or `never` anywhere in the brace. Beyond the plan:
+  - **A brace over a function result is refused too**, as slots over a result carrying no meta. The bodied arm reads
+    its result past as many arrows as the companion takes parameters, as the channel does, where R2's arm counts the
+    signature's parameters; read R2's way, `def lift(g: Gauge): Gauge => Gauge {level(g)}` was judged at `Gauge` and
+    accepted. Accepted, the brace would have replaced the closure the body returns with a meta that is not computed.
+  - **The cross-layer case is a `ProcessorTest`**, since the integration session has one source root:
+    `runGenerator(…, layers = …)` adds files of module `Test`, which merge as two layers' copies do.
+    `MetaInterpreterTest` tells the arms apart through ⊥: a stated call is its brace, a derived one stays ⊥ when its
+    body never returns, in one file and across two.
+  - **Where the price is paid.** The pinned case wraps only behind a consumer that computes at the call node's width:
+    `add(lie(300), 0)` with `lie`'s `{closed(0, 10)}` prints `44`, while `useByte(lie(1000))`, handed straight to a ⊤
+    parameter, prints `1000`, because S9 leaves a boundary result meeting a ⊤ slot unconverted (§2.2). So a wrong
+    brace is silent *and* its effect depends on what reads the result.
+
+  The jars are byte-identical across all 47 examples.
+
 - **O2: a bodied brace reads its code parameters.** A native's brace reads a code parameter as what its runs yield
   (§5.2). On a bodied value the body runs it, so the walk records what each application of a code parameter yields,
   and the brace reads their join: `def choose(c: Bool, a uses *: Int, b uses *: Int): Int {joined(a, b)} = fold(c, a,
@@ -1684,6 +1703,7 @@ it from O1. O1 pins what a brace on each of the two does.
   Every domain, `range` and `size` included. It reverses R3, §3.3's last row and §20's *"a brace on a bodied
   return"*, and is how custom metas are declared: a `data` slot stated by its constructor, narrowed by any bodied
   value's brace. A silent wrong brace is the accepted price. **Not built.** Its remaining questions are in §8.1.
+  **O1, the override, built 2026-10-23** (§17.2).
 
 **Open, not blocking anything:**
 
@@ -1710,8 +1730,8 @@ of §13.3 is not built: decision J (§18, 2026-10-22) defers it to the recursive
 **T6** is built (2026-10-22): `typeMatch[R]` states, R2 has no exemption left (§10), decision I makes running out of
 the step budget an error (§5.3), and the `List` domain carries its size and its items (§17.1, K–N), every example
 byte-identical. **Open: decision I fails eliot-build** (§5.3's note) and waits on Robert. Decision O (2026-10-23,
-§8.1) is taken and not built; its migration is planned in §17.2 (stages O1–O7), and the plan's questions Q1–Q7
-wait on Robert's sign-off. Next after that is **T7**, the record, which O7 folds into.
+§8.1) is taken; its migration is planned in §17.2 (stages O1–O7). O1, the override, is built (2026-10-23) on the
+recommendations for Q1, Q2 and Q7; Q3–Q6, which O4 needs, wait on Robert's sign-off. Next after that is **T7**, the record, which O7 folds into.
 
 **The `Unit` question (2026-10-21), closed the same day.** Robert: a type declaring no meta gets `Unit` implicitly, and
 *"the rest of the machinery should not know that this was 'default'"*. T3 removed two places that knew: §5.3's type

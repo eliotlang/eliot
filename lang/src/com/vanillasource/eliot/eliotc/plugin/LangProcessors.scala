@@ -114,7 +114,7 @@ object LangProcessors {
     CompilerMonomorphicTypeCheckProcessor(),
     RefinementChannelProcessor(),
     MetaDemandsProcessor(),
-    // R2/R3 meta-transfer accounting, demanded as a `WovenValue` codegen precondition (docs/meta.md §3).
+    // Meta-transfer accounting (R2, and what a bodied value's brace may say), demanded as a `WovenValue` codegen precondition (docs/meta.md §3).
     MetaTransferAccountingProcessor(),
     WovenValueProcessor(),
     UsedNamesProcessor(maxNestedRepeats),
