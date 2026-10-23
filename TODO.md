@@ -22,41 +22,12 @@ notes.
   (`docs/meta.md` §4.4, §4.5); a brace on a bodied return is declined. A reusable meta value
   (`def byte: Interval[BigInteger] = …`) still has to write its literals in type position (`between[0, 255]`) until
   the `Int` literal item above is solved.
-- **Flow grades: quantitative computation tracking (cycles/WCET, stack, peak memory) on the
-  effect row.** Design sketched 2026-07-10 in the bounds-as-refinements discussion. The dependency
-  ladder is ranges → sizes → grades (fold cost needs sizes, frame sizes need ranges): the
-  refinement channel's **ranges** domain has shipped, and so has a `String` `size` domain
-  (`docs/meta.md` §2.2) — but a fold's cost is a function of a *collection's* size, so what
-  this still waits on is **`List`/`Array` `size`**, the one that needs structural meta
-  (`docs/meta.md` §13). Core idea: the effect row generalizes from "set of abilities" to
-  "abilities + **named grades**" —
-  `def onTick(s: State): {Timer, cycles: ≤800} Unit` — where a grade is *not* an ability
-  (nothing is performed, nothing resolved or discharged) but a quantity with an algebra,
-  registered per platform (`flow cycles {Interval[BigInteger]}` +
-  `implement Grade[D] { seq (+), branch (interval hull → BCET..WCET), zero, within (≤) }`);
-  the existing effect row is the powerset special case (seq = branch = union, within = ⊆).
-  The §4.2 projection discipline transfers wholesale: a parameter's grade is referenced by slot
-  projection (`step.cycles`), never bound; return-position entries are expressions (axiomatic on
-  natives, checked contracts on bodied defs) — showcase, with cross-channel composition:
-  `def fold[T, A](ls: List[T], init: A, step: F[A]): {cycles: ls.size.end * step.cycles + 7} F[A]`.
-  Grade-only rows on pure functions perform nothing and bind nothing (they name no ability, so the
-  write has no binder to fill). Leaf grades are stated on native signatures by the platform
-  layer (AVR datasheet cycle counts); width-dependent leaf costs are either expressions over the
-  operands' value-metas or accounted post-lowering where `Represent`'s layout is known (same as
-  stack frames). Accounting = generalize the effect walk (`EffectUsageCollector` + discharge-
-  summary DAG) from the union lattice to arbitrary `Grade`s, run over the *residual* program
-  (CTFE'd-away code costs zero). Covers: cycles (exact on cache-less simple cores — totality +
-  monomorphization deleted the hard WCET subproblems: loop bounds come from sizes, no recursion,
-  no indirect calls), max stack depth (sum frames / branch max over the whole-program DAG,
-  post-lowering), and peak memory (composes as a monoid on `(net, peak)` pairs); an `Inf`
-  super-loop's *step* carries the deadline budget — the real-time contract. Out of scope for the
-  mechanism: in-place reuse (linearity is a type discipline, not meta-information) and hardware
-  fidelity beyond simple cores. This supersedes the older idea of "WCET as type parameters /
-  effects with type parameters" — quantities stay out of the type channel per the
-  differentiation rule (doc §3).
+- **Grades: cycles/WCET, stack and peak memory.** Design moved to `docs/grades.md` (2026-10-23), re-anchored on D36:
+  a grade is a property of a computation measured on emitted code, not a meta; the channel supplies loop bounds
+  (`size`) and widths (`range`), the backend costs, the program budgets. Waits on an AVR backend and the residual
+  program (`docs/reduce-and-reify.md`).
 - **Important:** after compilation the program should be guaranteed to fit all resources —
-  memory, stack, etc. (Mechanism: the flow-grade system above, plus `Represent`-driven layout
-  from the refinement channel.)
+  memory, stack, etc. (Mechanism: `docs/grades.md`, plus layout from the refinement channel.)
 
 ## Effects & I/O
 

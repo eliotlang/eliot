@@ -390,7 +390,7 @@ So the value here is **entirely in the recursive case** — the one that today c
 
 ## Meta-data: run the transfer function, bounded by the structure
 
-The result's refinement cannot be stated axiomatically. The grade design in `TODO.md` can write
+The result's refinement cannot be stated axiomatically. The grade design (`docs/grades.md`) can write
 
 ```
 def fold[T, A](ls: List[T], init: A, step: F[A]): {cycles: ls.size.end * step.cycles + 7} F[A]

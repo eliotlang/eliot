@@ -12,7 +12,10 @@ and of T6 every leaf now states and the step budget is a reported limit (§17). 
 (§17.1, decisions K–N). Where the work stopped, and how to continue it, is §18.1.
 
 **One hole in the design is open (§8.1): custom metas.** A program cannot yet declare meta-information for its own
-`data` types, and it should be able to.
+`data` types, and it should be able to. §8.1 carries a proposal (2026-10-23) that waits on Robert's sign-off: a
+constructor statement for a meta computed from a value's parts, and a proposed reversal of R3, confined to user
+domains, for a property an algorithm establishes. Cycles, stack depth and peak memory are not metas (§8.2); they are
+`docs/grades.md`.
 
 This document replaces three: `total-meta-transfers.md` (the rules and the interpretation), `string-length-meta.md`
 (the `String` size domain) and `structural-meta.md` (the P6 design). Their full text is at `2a66009a`, and §21 maps
@@ -593,35 +596,101 @@ The user documentation says the opposite of the requirement today, accurately fo
 hood* chapter (`eliotlang.github.io`, `_docs/meta-domains.md`) says a program cannot add a new kind of
 meta-information, and why. It changes when this closes.
 
-**A direction, not decided.** The supplier of a `data` value is its **constructor**, and a constructor is already a
-body-less leaf that states (§13.4: `{built(…)}`, written by the data desugarer). So a user-written statement on a
-constructor fits R2 and R3 rather than bending them. It sits exactly where §3.3 puts a statement: where the compiler
-cannot see the supplier, since nothing but the generated constructor builds the value. A sketch:
+**The proposal (2026-10-23, waiting on Robert's sign-off).** Robert, on raising it again: *"metas should be able to be
+defined for custom types. That means the user defines how the meta is calculated. This reverses the notion that
+implemented functions can not have metas defined."* Whether R3 has to give way depends on **where a meta comes
+from**, and there are two cases.
+
+**(a) A meta computed from the value's parts: the constructor states it, and no rule changes.** A temperature's sign,
+a matrix's dimensions and a buffer's fill level are functions of what the value is built from. The supplier of a
+`data` value is its **constructor**, and a constructor is already a body-less leaf that states (§13.4: `{built(…)}`,
+written by the data desugarer). So a user-written statement on a constructor fits R2 and R3 rather than bending them.
+It sits exactly where §3.3 puts a statement: where the compiler cannot see the supplier, since nothing but the
+generated constructor builds the value.
 
 ```eliot
 data Temperature(degrees: Int) {sign: signOf(range(degrees))}
+def negate(t: Temperature): Temperature = Temperature(0 - t.degrees)   // derives its sign; states nothing
 ```
 
 Every bodied function building a `Temperature` then derives its sign through the constructor, a `match` reads it
-back, branches join it with the user's `Meta[Sign]`, and a `where` reads `sign(t)`. No new rule enters the
-interpretation.
+back, branches join it with the user's `Meta[Sign]`, loops widen it with the user's `widen`, and a `where` reads
+`sign(t)`. No new rule enters the interpretation, and nothing is trusted: the statement's inputs are the field metas
+the channel computed, and its body is the user's ordinary compile-time Eliot.
+
+A custom meta needs a **nominal** type. `type Celsius = Int` *is* `Int` (*Types Are Values*), so it cannot carry a
+meta of its own, which is why the probe above reads `Int$Meta` off it. An alias has no constructor, so it has no
+supplier at which a statement could stand. The answer to the probe is `data`, not a slotted alias.
+
+**(b) A property an algorithm establishes: a statement on a bodied value, which is a reversal of R3.** "Sorted",
+"normalized", "validated" are not functions of a value's field metas. The derivation can never produce them, so the
+statement has to stand on the bodied function that establishes the property (`sort`). That is the reversal Robert
+names, of R3 and of §20's *"a brace on a bodied return"*, and its question is **trust**:
+
+- **A checked statement adds no precision.** The older position in the tree is *"axiomatic on natives, checked
+  contracts on bodied defs"* (`docs/grades.md`'s source sketch, `docs/recursive-data.md`). A statement checked against
+  the derivation can only be at least as wide as what is derived, which is why §3.3 declined it: where the derived
+  meta is not computed nothing fits it, and where it is precise a statement could only widen it. A checked statement
+  on a bodied value therefore cannot deliver (b). It can only abstract, which is a modular certificate *Use-Site
+  Verification* gives up.
+- **So (b) means trusted user axioms**, the first statements a user writes rather than a platform. The proposal
+  confines them:
+  1. **A visible spelling of their own**, not a quiet brace, so every trusted claim in a program can be listed, as
+     every native can.
+  2. **User-declared domains only.** `range`, `length` and `size` feed layout (§7), so a false user statement about an
+     `Int` range is a miscompile, not merely a false `where`. A platform domain stays derived on a bodied value and
+     stated on a native. A false user-domain axiom can admit a program whose user-written `where` is false; it cannot
+     mis-lay-out a value.
+  3. **Property-tested.** eliot-test can probe the claim with generators where the domain offers an abstraction
+     function from a value to its meta, which is the *Use-Site Verification* stance on library correctness: totality
+     from tests, not proof.
+- **Often a private constructor is the better tool.** A property like "sorted" is usually a nominal type whose
+  constructor is private: only `sort` builds a `SortedList`, and visibility is the proof. A meta earns its place for
+  **quantities** that flow, join and widen, where a type per value would be too rigid (a type per range, per size).
+  Whether (b) is needed at all once (a) exists is part of the question.
+
+Trusted statements on bodied values would also be **summaries**: the interpretation would stop at them rather than walk
+the body, which is one way out of the exponential DAG decision I hits in eliot-build (§5.3). That is a reason to want
+them, not a reason they are sound, and it applies only to the user domains (2) admits.
+
+**A precision gap inside (a), closed in the derivation, not by stating.** A field holding a list built by a fold has the
+loop's widened meta: §11.2 widens `[3, 3]`-sized steps to `atLeast(0)`, so a derived `transpose` loses its matrix's
+dimensions. The fix belongs in the derivation: where a loop's count has a known bounded range, run the code once per
+count and join the results, which is exact for a `map`-shaped step. §11.2 already notes the `[n, n]` case; this
+widens it to `[lo, hi]`, under the step budget.
 
 **Open questions:**
 
+- **(a) or (a) and (b).** Is the constructor statement the whole of custom metas, with "sorted"-like properties left
+  to private constructors, or is (b) taken too, with its three confinements?
 - **The slot beside the structure.** A `data` meta is already the structure of §13.1: reach, then field metas. A
   declared slot is a second component. Is the meta a pair (structure, slots), joined component-wise, the slots
   through the user's instances? Or is a declared slot the *only* meta, replacing the structure? The latter would lose
   the field metas T5 carries.
-- **Trust.** Every statement today is a platform's axiom (§3.2). A constructor statement would be the first a user
-  writes. A wrong one cannot mis-lay-out a value, since representation reads only the `Int` range (§7). It can admit a
-  program whose user-written `where` is false. Is it trusted like a leaf's, or checked, and checked against what?
 - **Sums.** One statement per constructor, each over its own fields; their join is the user's.
 - **Generic `data`.** `MetaConstructorDesugarer` does not thread a type's generic parameters onto its meta structure
-  yet, so `data Box[A](…) {…}` needs that first.
+  yet, so `data Box[A](…) {…}` needs that first. `MetaOf[A]` (decision L) is the spelling such a slot would use.
 - **Slot names.** A slot generates an accessor in the type's own module and namespace (§2.2), so a slot named like a
   field or a function in the same module collides. The accessors' own namespace (decision K, §17.1, built) removed that.
 - **A slotted abstract `type` in a user library**, for platforms to implement, is a separate question: it needs a
   layer, not just a declaration.
+
+### 8.2 Not a meta: cycles, stack and peak memory
+
+Robert, 2026-10-23: metas were meant to calculate *"memory allocation and runtime time / instruction count on
+microcontrollers"*, and he doubted the second was a meta at all, since optimization changes it after the stage metas
+are computed in. The split:
+
+- **A value's size is a meta.** How big a value is (an `Int`'s width from its `range`, a buffer's capacity from
+  `List::size` or `String::length`) is information the value carries. The backend already derives a width from it
+  (§7). Sizing a static buffer for an MCU is the same move and needs no new mechanism. Byte size stays the backend's
+  derivation, not a slot (§2.2).
+- **Cycles, stack depth and peak memory are not metas.** They belong to a *computation*, not to a value. They compose
+  along control flow (summed in sequence, the hull over branches), not by a value join. And they are final only after
+  lowering, inlining and folding, so they are computed over the code a backend emits.
+
+What the channel owes them is **bounds**: a loop's iteration count is a `size` meta, and an operation's width is a
+`range`. The design that consumes them is `docs/grades.md`.
 
 ---
 
@@ -1461,8 +1530,14 @@ flipped as expected: a field read out of a list's item is what the item was buil
 **Open, required:**
 
 - **Custom metas** (§8.1). A program must be able to declare meta-information for its own `data` types. Robert,
-  2026-10-22: *"custom metas should be possible"*. The design is open; the constructor statement is the direction
-  §8.1 sketches, and the slot beside the structure and trust are its questions.
+  2026-10-22: *"custom metas should be possible"*. Proposed 2026-10-23, two decisions waiting on Robert:
+  - **(a) a constructor statement** for a meta computed from a value's parts. It changes no rule.
+  - **(b) a reversal of R3, confined to user domains**: a trusted statement on a bodied value, for a property an
+    algorithm establishes, with a visible spelling of its own and property tests behind it. A checked statement on a
+    bodied value cannot do this job, since it is never more precise than the derivation. It also reverses §20's
+    *"a brace on a bodied return"* for those domains.
+
+  The slot beside the structure, sums, generic `data` and slot names are (a)'s questions either way.
 
 **Open, not blocking anything:**
 
@@ -1470,7 +1545,9 @@ flipped as expected: a field read out of a list's item is what the item was buil
   totality.
 - **A compile-time `power` native**, which would make `parseIntInternal` tight (`"42"` ⤳ `[-99, 99]`). Safe now that
   the interval domain has `whole` to saturate into. A prerequisite for nothing.
-- **Iterating a loop exactly** when its count is known (`[n, n]`), instead of widening (§11.2).
+- **Iterating a loop exactly** when its count is known (`[n, n]`), instead of widening (§11.2). Proposed 2026-10-23
+  to cover a bounded count `[lo, hi]` too, one run per count joined, which is what keeps a custom meta precise through
+  a fold (§8.1).
 - **An interval intersection**, which `substring`'s index ceiling waits on (§2.2).
 
 ### 18.1 Where this was left (2026-10-22)
@@ -1592,7 +1669,8 @@ The stages in order. The full narrative of each is in the three retired document
 - **A budget whose exhaustion hands on a missing meta** (§5.3, decision I).
 - **An `{Inf}` leaf may not return a meta-carrying type.** It buys nothing, since a leaf is summarized, never executed.
   It would also forbid an honestly bounded blocking read.
-- **A brace on a bodied return** (§3.3).
+- **A brace on a bodied return** (§3.3). Under review since 2026-10-23: §8.1 (b) proposes reversing this for
+  user-declared domains only, as a trusted statement; a platform domain is not affected.
 - **The accessor stating a field's meta.** It needs an R3 exception, and it misses `match` arms and multi-constructor
   types.
 - **The channel naming `PatternMatch`, or any branch construct or leaf.** A generated statement carries the link. That
