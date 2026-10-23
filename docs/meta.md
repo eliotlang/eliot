@@ -487,8 +487,9 @@ join their arms. When a handled statement exists (§4.5), the handler is applied
 
 - **The budget is a step count**, `interpretationBudget = 1024` per call node, threaded through depth *and* fan-out
   together. It was 256 until T4: a loop runs its code up to about four times, and `forever` over a `putState` and a
-  `raise` took more than 256 steps. Four times as many changed no example's jar or compile time. A hard count bounds a diamond-shaped call DAG absolutely, and a cache would not: distinct argument metas
-  defeat its key. **Running out of it is a compiler limit** (decision I, §18, built 2026-10-22): the derivation answers
+  `raise` took more than 256 steps. Four times as many changed no example's jar or compile time. A hard count bounds a
+  diamond-shaped call DAG absolutely, and the memo below does not: distinct argument metas defeat its key. A call the
+  memo recalls costs one step. **Running out of it is a compiler limit** (decision I, §18, built 2026-10-22): the derivation answers
   that it ran out (`MetaInterpreter.metaOfCall` gives `None`, and a loop cut short before its fixpoint counts too),
   and `RefinementChannelProcessor`, the walk that asks for every call's meta once, reports *"Computing the
   meta-information of this call of 'f' takes more than 1024 steps"* at the call. `MetaDemandsProcessor` asks once per
@@ -496,19 +497,31 @@ join their arms. When a handled statement exists (§4.5), the handler is applied
   derivation had got to is never handed on.
 
   **Open (2026-10-22): decision I as built makes eliot-build fail to compile.** The limit fires at `main`'s call of
-  `answer`, the whole build tool, at 1024 steps, at 16 384 and at 262 144 alike, so the cost grows exponentially, the
-  diamond-shaped DAG this note names, and no budget is the answer. Before I such a call was left not computed, which
-  nothing read. It is on `master`, unreleased, and every dependent pins `v0.18`, so nothing is broken yet, but no
-  release can be cut until it is decided. The candidates are the memo above, measured first, and narrowing what I
-  reports; either changes a decided rule, so it waits on Robert.
+  `answer`, the whole build tool, at 1024 steps, at 16 384 and at 262 144 alike. Before I such a call was left not
+  computed, which nothing read. It is on `master`, unreleased, and every dependent pins `v0.18`, so nothing is broken
+  yet, but no release can be cut until it is decided. **Measured 2026-10-23, with the memo below built:** deriving
+  `answer` takes 3 084 227 steps (796 925 calls) without the memo and 149 866 with it (27 955 calls made, 9 227
+  recalled), and the whole of eliot-build's launcher then compiles in 54 s, of which the refinement channel is 8.3 s;
+  without the memo the same compile takes 191 s. No other derivation in eliot-build makes more than 200 calls. So
+  the memo removed the exponential, and what is left is real: the derivation from `main` walks the whole program, and
+  its calls differ in their argument metas. Of the 27 955 calls, only 5 135 are distinct once the store is set aside,
+  so a key reading only the frames and cells a call can reach would cut it about fivefold more, though never to
+  1024. What waits on Robert is the budget: raised (eliot-build needs about 150 000 steps), counted in calls made
+  rather than steps, or decision I narrowed; any of them changes a decided number or rule.
 - **There is no type gate (since T3).** A call whose result type carried no meta used to be skipped before any body
   was fetched, which kept the interpretation off most call nodes. T3 removed it: a cell written by a call returning
   `Unit` (`putState`) must be followed, and so must a `Unit` call that never returns. Measured on a cold compile of
   every example, one at a time: 214.2 s before, 219.6 s after (+2.5%), no example more than 1.5 s apart, and every jar
   byte-identical.
-- **There is no memo.** A memo on `(vfqn, typeArgs, argMetas)` is the prepared answer if the budget or the clock is
-  ever observed to bind. Measure it with `--statistics`, diffing a run with and without the flag, since the flag
-  itself inflates a build by about 20%. P5's contexts are already such a memo, for demands (§6).
+- **The memo** (built 2026-10-23, `MetaInterpreter.Memo`). A call's answer — its value, the store after it and how
+  many frames and cells it made — depends on the callee, its type arguments, its result type, its arguments and the
+  store at the call, and on nothing else, so one derivation keeps every answer it got and recalls it, for one step,
+  when the same call comes again. The budget does not change an answer, only whether it is got: an answer the budget
+  cut short is not kept. Frames and cells are identities local to the derivation, so an entry is kept with them
+  renumbered in the order the call mentions them, and numbered back when it is recalled; a closure keeps only the
+  parameters its node mentions, so two closures over the same code are equal when what they read is. It is scoped to
+  one call node's derivation, as the budget is, so whether a call is reported never depends on what was derived
+  before it. Every example's jar is byte-identical with it. P5's contexts are such a memo already, for demands (§6).
 - **A loop's meta is a fixpoint** (§11.2, built in T4). A loop lives in a native, which states it through a primitive
   of the transfer language recognised by name (`looped`, `endless`), because the channel names no leaf. *Finite* is
   not *computable at compile time*: `readLines`' size is truthfully `0 .. 2³¹−1`. So the iteration count is never run
