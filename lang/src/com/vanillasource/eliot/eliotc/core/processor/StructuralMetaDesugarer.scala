@@ -47,6 +47,13 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
   * Recursion through another type (`Option[Tree]`) or across a group of types is not folded; the channel finds no
   * finite meta type for it and leaves its meta not computed.
   *
+  * **A `data` type may declare slots of its own** (§17.2, O4b), `data Temperature {sign: Sign}(degrees: Int)
+  * {signOf(range(degrees))}`: they are the summary's first fields, before the constructors' slots, each read by an
+  * accessor in [[Qualifier.Slot]] (`sign(t)`), joined and widened through the slot type's own instance, and stated by
+  * every constructor ([[constructorStatement]]). They sit beside the structural meta and replace nothing: what a slot
+  * needs of a field, the constructor's statement says, and no code about metas reads a field's meta (decision R).
+  * [[DataSlotChecker]] refuses the shapes this does not cover.
+  *
   * The structures themselves, and a slotted type's meta structure, are desugared without one (a regress otherwise).
   */
 object StructuralMetaDesugarer {
@@ -66,17 +73,21 @@ object StructuralMetaDesugarer {
     definition.constructors.filter(_.nonEmpty).toSeq.flatMap { ctors =>
       val records = ctors.map(record(definition, _))
       val summary = summaryData(definition, ctors)
-      (records :+ summary).flatMap(DataDefinitionDesugarer.desugar(_, structural = false)) ++
+      (records.flatMap(DataDefinitionDesugarer.desugar(_, structural = false)) ++
+        DataDefinitionDesugarer.desugar(summary, structural = false).map(slotsInSlotNamespace(definition))) ++
         (records :+ summary).flatMap(metaInstance).map(_ -> RoleHint.NoHint) :+
         (fieldTypes(definition, ctors) -> RoleHint.NoHint)
     }
 
   /** What a constructor's call states (`docs/meta.md` §13.4): the value it built, whose meta reaches its own slot with
-    * the record of its fields' metas, and no other, joined with the summaries its recursive fields hold.
+    * the record of its fields' metas, and no other, joined with the summaries its recursive fields hold. A type's
+    * declared slots come first, each what the constructor's own statement says of it (§17.2, O4b).
     *
     * {{{
     *   Some(value)              {built(constructor$(Unreached, Reached(Option$Meta$Some(value))))}
     *   Node(left, value, right) {built(joined(left, joined(right, constructor$(Unreached, Reached(Tree$Meta$Node(value))))))}
+    *   data Temperature {sign: Sign}(degrees: Int) {signOf(range(degrees))}
+    *     ⟶  Temperature(degrees) {built(constructor$(signOf(range(degrees)), Reached(Temperature$Meta$Temperature(degrees))))}
     * }}}
     */
   def constructorStatement(definition: DataDefinition, ctor: DataConstructor): Sourced[SourceExpression] = {
@@ -90,7 +101,7 @@ object StructuralMetaDesugarer {
         )
       else qualified(at, WellKnownTypes.reachFQN("Unreached"), Seq.empty)
     }
-    val built  = reference(at, MetaCompanionLayout.constructorParameterName, slots)
+    val built  = reference(at, MetaCompanionLayout.constructorParameterName, ctor.statement ++ slots)
     val joined = ctor.fields.filter(isRecursive(definition, _)).foldRight(built) { (field, rest) =>
       qualified(at, WellKnownTypes.metaJoinedFQN, Seq(reference(field.name), rest))
     }
@@ -144,7 +155,9 @@ object StructuralMetaDesugarer {
     )
   }
 
-  /** `data D$Meta[M$C$f…](reach$D$C: Reach[D$Meta$C[M$C$f…]], …)`: one slot per constructor, one binder per field. */
+  /** `data D$Meta[M$C$f…](<declared slots>, reach$D$C: Reach[D$Meta$C[M$C$f…]], …)`: the type's declared slots, then
+    * one slot per constructor, and one binder per field.
+    */
   private def summaryData(definition: DataDefinition, ctors: Seq[DataConstructor]): DataDefinition = {
     val name = definition.name.as(metaName(definition))
     DataDefinition(
@@ -154,7 +167,7 @@ object StructuralMetaDesugarer {
         Seq(
           DataConstructor(
             name,
-            ctors.map { ctor =>
+            definition.metaSlots ++ ctors.map { ctor =>
               ArgumentDefinition(
                 ctor.name.as(slotName(definition, ctor)),
                 qualifiedType(
@@ -243,6 +256,18 @@ object StructuralMetaDesugarer {
       ),
       visibility = definition.visibility
     )
+  }
+
+  /** A declared slot's accessor of the summary in [[Qualifier.Slot]], as a `type`'s slot is
+    * ([[MetaConstructorDesugarer]]), so code about metas reads it by the slot's name: `sign(t)`. The constructors'
+    * slots, which follow the declared ones, keep their generated names.
+    */
+  private def slotsInSlotNamespace(definition: DataDefinition)(
+      generated: (FunctionDefinition, RoleHint)
+  ): (FunctionDefinition, RoleHint) = generated match {
+    case (accessor, hint @ RoleHint.FieldAccessor(_, index)) if index < definition.metaSlots.size =>
+      (accessor.copy(name = accessor.name.map(_.copy(qualifier = Qualifier.Slot))), hint)
+    case other                                                                                  => other
   }
 
   /** Whether `field` is typed by the data itself at its own type parameters, in order: a recursive field. */

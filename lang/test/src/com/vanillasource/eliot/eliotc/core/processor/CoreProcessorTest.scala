@@ -753,6 +753,42 @@ class CoreProcessorTest extends ProcessorTest(Tokenizer(), ASTParser(), CoreProc
     )
   }
 
+  "a slot a data type declares (O4b)" should "be read by an accessor in the slot namespace, from the type's meta" in {
+    namedValue("data Pixel {g: Foo}(r: Foo) {r}", QualifiedName("g", Qualifier.Slot)).asserting(
+      _.signature.value.structure shouldBe
+        Lambda("M$Pixel$r", Ref("Type", T), App(App(Ref("Function", T), App(Ref("Pixel$Meta", T), Ref("M$Pixel$r", T))), Ref("Foo", T)))
+    )
+  }
+
+  it should "come first in the type's meta, before its constructors' reach" in {
+    namedValue("data Pixel {g: Foo}(r: Foo) {r}", QualifiedName("Pixel$Meta", Qualifier.Default)).asserting(
+      _.signature.value.structure shouldBe
+        Lambda(
+          "M$Pixel$r",
+          Ref("Type", T),
+          App(
+            App(Ref("Function", T), Ref("Foo", T)),
+            App(
+              App(Ref("Function", T), App(QualRef("Reach", "eliot.lang.Reach"), App(Ref("Pixel$Meta$Pixel", T), Ref("M$Pixel$r", T)))),
+              App(Ref("Pixel$Meta", T), Ref("M$Pixel$r", T))
+            )
+          )
+        )
+    )
+  }
+
+  it should "be stated by the constructor's own statement, before its slot's reach" in {
+    namedValue("data Pixel {g: Foo}(r: Foo) {r}", QualifiedName("Pixel", M)).asserting(
+      _.runtimeStructure shouldBe Some(
+        Lambda(
+          "constructor$",
+          Empty,
+          Lambda("r", Empty, App(meta("built"), App(App(Ref("constructor$"), Ref("r")), reachedSlot(App(Ref("Pixel$Meta$Pixel"), Ref("r"))))))
+        )
+      )
+    )
+  }
+
   "data constructor" should "state that its call is the value it built, its slot reached with its fields' metas" in {
     namedValue("data Pixel(r: Foo, b: Foo)", QualifiedName("Pixel", M)).asserting(
       _.runtimeStructure shouldBe Some(

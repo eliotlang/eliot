@@ -1599,7 +1599,7 @@ change in the same stage.
   runtime structure in public. The compiler generates no such mirror; a type's meta is what its slots declare. The
   `where` above has no spelling: a program that wants it wraps the pair in a `data` of its own with a slot.
 
-- **O4b: a meta declared on a `data` type.** Parser, AST, desugaring, slot accessors. The next stage.
+- **O4b: a meta declared on a `data` type.** Parser, AST, desugaring, slot accessors.
   - **Spelling** (Q3, decided): the slots on the type's head, as on `type`; each constructor states them in a brace
     after its fields.
 
@@ -1637,6 +1637,23 @@ change in the same stage.
     slot named like a field; the refusals of Q6. LSP hover shows nothing for a custom domain (`TypeHintIndex` decodes
     `Int$Meta` only), which is acceptable.
   - Jars: byte-identical, since no example declares a slot on a `data`.
+
+  **Built 2026-10-23.** `DataDefinition.metaSlots` and `DataConstructor.statement` are parsed where planned, the
+  single-constructor form taking its statement after its fields. `StructuralMetaDesugarer` puts the slots first in
+  `D$Meta`, moves their accessors into `Qualifier.Slot`, and prepends each constructor's statement to its `constructor$`
+  application. The channel needed nothing: `metaTypeOf`, `metaConstructorOf`, the generated instance and the demand all
+  took the wider `D$Meta` as they were. The refusals are `DataSlotChecker`'s, run in `CoreProcessor`: a constructor
+  stating nothing, or another number of slots than declared, a constructor stating slots its type does not declare, a
+  slotted type with no constructor, a slot named like a field, a slot holding `MetaOf`, and a slot on a type whose
+  fields mention the type itself. That last test is wider than §13.3's recursive field: a type recursive through
+  another type (`Rose(kids: Option[Rose])`) is refused too, since its meta is not computed anyway (decision J). Mutual
+  recursion across types is not detected by a declaration's own fields, and stays fail-safe, its meta not computed.
+  Tests: `DataSlotIntegrationTest` (the pairs above, plus a slot on a sum, a slot on a generic type, and a statement
+  reading a slotted field's slot), `DataSlotOverlayIntegrationTest` (a library root with an overlay copy that agrees,
+  and one declaring another slot, refused by the merge's "Has multiple different definitions"), and three
+  `CoreProcessorTest` cases on the generated shapes. A program importing both `eliot.compiler.Meta`, for its
+  `implement Meta`, and `eliot.collection.List` still collides on `joined`; the test names the list functions by their
+  module. All 47 example jars are byte-identical.
 
 - **O5: a brace on a bodied value returning a slotted `data`.** `def warm: Temperature {Positive} =
   Temperature(5)`. The brace lists the slots only. The field metas stay derived (a `match` arm reads them, nothing states them),
@@ -1771,10 +1788,10 @@ it from O1. O1 pins what a brace on each of the two does.
   - a constraint on a field of a type the program does not own (`p.first.range` of a `Pair`) has no spelling. A
     program wraps the value in a `data` of its own with a slot.
 
-  **Not built.**
+  Nothing to build: R removes a stage. O4b is built under it (2026-10-23).
 - **Q3, Q5, Q6 of §17.2**: the `data` slot spelling is slots on the head and a statement per constructor; a
   constructor that does not state its slots is an error (*"Meta values are total"*); a slot on a recursive `data` and
-  `MetaOf[A]` in a `data` slot wait for O6. **Not built.**
+  `MetaOf[A]` in a `data` slot wait for O6. **Built 2026-10-23** (O4b).
 
 **Open, not blocking anything:**
 
@@ -1805,7 +1822,8 @@ byte-identical. **Open: decision I fails eliot-build** (§5.3's note) and waits 
 recommendations for Q1, Q2 and Q7. Q3–Q6 were answered the same day, Q4 with decision P, and the plan was adjusted:
 O4 is split into O4a (a field's meta through its accessor) and O4b (declared slots). Starting O4a found a name clash
 in meta code, and Robert answered it with decision R: no field's meta is read in meta code, so O4a is dropped.
-**Next: O4b**, a meta declared on a `data` type. Next after that is **T7**, the record, which O7 folds into.
+O4b, a meta declared on a `data` type, is built the same day. **Next: O5**, a brace on a bodied value returning a
+slotted `data`. Next after that is **T7**, the record, which O7 folds into.
 
 **The `Unit` question (2026-10-21), closed the same day.** Robert: a type declaring no meta gets `Unit` implicitly, and
 *"the rest of the machinery should not know that this was 'default'"*. T3 removed two places that knew: §5.3's type

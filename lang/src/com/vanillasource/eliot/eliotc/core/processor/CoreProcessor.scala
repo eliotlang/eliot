@@ -110,8 +110,8 @@ class CoreProcessor
       )
     (positivityErrors ++ visibilityErrors ++ signatureErrors ++ emptyEffects ++ bodiedHanded)
       .traverse_(message => Sourced.compilerError(message)) >>
-      sourceAstData.namedImplementations
-        .flatMap(NamedImplementationDesugarer.unpatterned)
+      (sourceAstData.namedImplementations.flatMap(NamedImplementationDesugarer.unpatterned) ++
+        sourceAstData.typeDefinitions.flatMap(DataSlotChecker.check))
         .traverse_((message, help) => Sourced.compilerError(message, help)) >>
       debug[CompilerIO](
         s"Core functions in ${key.uri}: ${coreAstData.namedValues.map(_.render).mkString(", ")}"

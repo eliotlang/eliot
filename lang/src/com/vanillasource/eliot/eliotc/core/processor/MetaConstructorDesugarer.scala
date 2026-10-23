@@ -139,6 +139,9 @@ object MetaConstructorDesugarer {
     definition.args.map(_.name).filter(parameter => named.contains(parameter.value))
   }
 
+  /** Whether `expr` names a type parameter's meta with `MetaOf[X]` anywhere: legal in a `type`'s slot only. */
+  def namesMetaOf(expr: Sourced[SourceExpression]): Boolean = metaOfs(expr).nonEmpty
+
   /** The names every `MetaOf[X]` in `expr` applies to, where `X` is a bare name. */
   private def metaOfs(expr: Sourced[SourceExpression]): Seq[String] = expr.value match {
     case MetaOf(parameter)                                          => Seq(parameter.value)
