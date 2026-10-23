@@ -12,6 +12,14 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
   * higher-kinded `F[_]` sugar, recovered from its `Function[Type, Type]` encoding), value-argument parentheses, and the
   * `data` constructor list. Bodies are intentionally omitted from `def` signatures — a doc page shows the contract, not
   * the implementation.
+  *
+  * Every meta the declaration states is part of that contract (`docs/meta.md` §3.3), so it is shown: a type's slots, a
+  * parameter's or a field's brace, a `where`, a return brace (on a bodied def too, since decision O makes it the
+  * function's promise to its callers), and a constructor's slot statement:
+  * {{{
+  * def toByte(n: Int) where positive(range(n)): Int {closed(0, 255)}
+  * data Temperature {frost: Frost}(celsius: Int) {frostOf(range(celsius))}
+  * }}}
   */
 object SignatureRenderer {
 
@@ -70,23 +78,26 @@ object SignatureRenderer {
 
   def data(dd: DataDefinition): String = {
     val prefix = visibilityPrefix(dd.visibility)
-    val head   = s"${prefix}data ${dd.name.value}${genericList(dd.genericParameters)}"
+    val head   = s"${prefix}data ${dd.name.value}${genericList(dd.genericParameters)}${metaSlotList(dd.metaSlots)}"
     dd.constructors match {
       case None                                                                               => head
       case Some(Seq(single)) if single.name.value === dd.name.value && single.fields.nonEmpty =>
-        s"$head${valueArgs(single.fields)}"
+        s"$head${valueArgs(single.fields)}${metaBrace(single.statement)}"
       case Some(constructors)                                                                 =>
         s"$head = ${constructors.map(constructor).mkString(" | ")}"
     }
   }
 
   private def constructor(c: DataConstructor): String =
-    if (c.fields.isEmpty) c.name.value else s"${c.name.value}${valueArgs(c.fields)}"
+    if (c.fields.isEmpty) s"${c.name.value}${metaBrace(c.statement)}"
+    else s"${c.name.value}${valueArgs(c.fields)}${metaBrace(c.statement)}"
 
   private def valueDefinition(fn: FunctionDefinition): String = {
     val modifiers = visibilityPrefix(fn.visibility) + fixityPrefix(fn.fixity, fn.precedence)
     val args      = if (fn.args.isEmpty) "" else valueArgs(fn.args)
-    s"${modifiers}def ${fn.name.value.name}${genericList(fn.genericParameters)}$args: ${fn.typeDefinition.value.render}"
+    val where     = fn.whereClause.map(w => s" where ${w.value.render}").getOrElse("")
+    s"${modifiers}def ${fn.name.value.name}${genericList(fn.genericParameters)}$args$where: " +
+      s"${fn.typeDefinition.value.render}${metaBrace(fn.returnMeta)}"
   }
 
   private def typeDefinition(fn: FunctionDefinition): String = {
@@ -105,6 +116,12 @@ object SignatureRenderer {
   private def metaSlotList(slots: Seq[ArgumentDefinition]): String =
     if (slots.isEmpty) ""
     else slots.map(slot => s"${slot.name.value}: ${slot.typeExpression.value.render}").mkString(" {", ", ", "}")
+
+  /** A stated meta, ` {expression, …}` after what it is stated of, e.g. the ` {closed(0, 255)}` of a parameter, a
+    * return or a constructor; empty when nothing is stated.
+    */
+  private def metaBrace(statement: Seq[Sourced[Expression]]): String =
+    if (statement.isEmpty) "" else statement.map(_.value.render).mkString(" {", ", ", "}")
 
   private def visibilityPrefix(visibility: Visibility): String =
     visibility match {
@@ -188,5 +205,5 @@ object SignatureRenderer {
   }
 
   private def valueArgs(args: Seq[ArgumentDefinition]): String =
-    args.map(a => s"${a.name.value}: ${a.typeExpression.value.render}").mkString("(", ", ", ")")
+    args.map(a => s"${a.name.value}: ${a.typeExpression.value.render}${metaBrace(a.meta)}").mkString("(", ", ", ")")
 }

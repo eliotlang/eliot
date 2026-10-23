@@ -1,20 +1,22 @@
 # Meta — the refinement channel
 
-Status (2026-10-22): **two domains shipped, R2 and R3 armed, the interpretation and in-context demands built** (Part I).
+Status (2026-10-23): **three domains shipped and a program may declare its own; R2 armed and R3 reversed; the
+interpretation and in-context demands built** (Part I).
 **Completing totality is designed and decided, and partly built** (Part II):
 - every leaf states its meta, type-parameter results included;
 - what reaches a native through a frame, a cell or a loop is followed by the interpretation;
 - a value that is never produced is ⊥;
 - a `data` value carries the metas of its fields.
 
-Of Part II, T1 (the gap mechanics), T2 (⊥), T3 (frames and cells), T4 (loops) and T5 (structural meta) are built,
-and of T6 every leaf now states and the step budget is a reported limit (§17). T6's `List` domain is decided
-(§17.1, decisions K–N). Where the work stopped, and how to continue it, is §18.1.
+Of Part II, T1 (the gap mechanics), T2 (⊥), T3 (frames and cells), T4 (loops), T5 (structural meta) and T6 are
+built: every leaf states, the step budget is a reported limit, and a `List` carries its size and its items' meta
+(§17, §17.1, decisions K–N). Only the recursive group of §13.3 is left, deferred to the recursive-data fold
+(decision J). Where the work stopped, and how to continue it, is §18.1.
 
-**One hole in the design is open (§8.1): custom metas.** A program cannot yet declare meta-information for its own
-`data` types, and it should be able to. Decision O (2026-10-23, §8.1, not built) closes it: a brace on a bodied value states its
-result's meta, replacing the derived one, trusted like a native's. That reverses R3. Its migration is planned in
-§17.2. Cycles, stack depth and peak memory are not metas (§8.2); they are
+**Custom metas are built (§8.1, decision O).** A brace on a bodied value states its result's meta, replacing the
+derived one, trusted like a native's (R3, §3). A `data` type declares slots that each constructor states, and a brace
+on a function returning one narrows them. The pivot's remaining stages (O2, O3, O6) wait for a program that needs them
+or for the recursive-data fold (§17.2). Cycles, stack depth and peak memory are not metas (§8.2); they are
 `docs/grades.md`.
 
 This document replaces three: `total-meta-transfers.md` (the rules and the interpretation), `string-length-meta.md`
@@ -63,7 +65,7 @@ undefined meta. Meta is a shadow logic that runs behind every function.
 >
 > 1. **Base.** Every **leaf** (a value with no Eliot body on any mount) states its transfer.
 > 2. **Step.** Every other value derives its transfer from its body, whose calls all have transfers by (1) or (2).
->    Decision O (§8.1, 2026-10-23, not built) lets such a value state its result's meta instead, replacing the derived one.
+>    It may also state its result's meta, which then replaces the derived one (R3, §3).
 > 3. **Termination.** *Total by Default*: the recursion gate rejects every cycle in the runtime-body reference graph,
 >    so derivation walks a DAG.
 
@@ -168,6 +170,10 @@ domain-agnostic. Two constraints apply:
   statement cannot be written. A second slot means every leaf states both, spelling an open endpoint or the domain's
   top for the one it does not know.
 - **A domain that is not an interval grows its own top**, in its own vocabulary, and never borrows a wrapper (§2.1).
+- **A program may grow one too** (§8.1). It writes the domain as an ordinary `data` with a `Meta` instance, and
+  declares a slot on a `data` type of its own, which every constructor states from its fields:
+  `data Temperature {frost: Frost}(celsius: Int) {frostOf(range(celsius))}`. The standard library's three domains
+  differ only in sitting on a body-less `type`, whose leaves state them.
   The second slot most likely to earn itself is an **encoding claim** (`ascii ⊑ latin1 ⊑ unicode`), which would let a
   backend size an ASCII string at exactly `size` bytes. It would be the first non-interval domain. It needs a
   user-declared `Meta[Encoding]`, and a domain head that `MetaConstructorDesugarer.slotJoin` accepts (a simple type
@@ -191,15 +197,38 @@ grounds that it forwards a meta rather than originating one. That was false for 
 where the remaining not-computed metas came from. Every one states now, the generated `typeMatch[R]` last, and R2
 judges every body-less leaf at its instance's evaluated result type, whatever its declaration spells there.
 
-**R3: a bodied value derives, and may not state.** A brace on a value with an Eliot body is an error, read after the
-layer merge (`MonomorphicValue.runtime`). That makes a brace in one layer over a body in another the same check as
-both in one declaration. A brace therefore lives only on a native leaf, so **a user module cannot author a transfer**
-(it declares no natives). That consequence is a hole, not a goal (§8.1). R2 and R3 are the two arms of
-`MetaTransferAccountingProcessor`, and both judge the declaration (`OperatorResolvedValue`).
+**R3: a bodied value derives, and may state its result.** A brace on a value with an Eliot body states its result's
+meta and **replaces** the derived one (decision O, 2026-10-23, §8.1; until then R3 refused the brace, and a user module
+could author no transfer at all):
 
-> **R3 is reversed by decision O (2026-10-23, §8.1), not yet built.** A brace on a bodied value will state its
-> result's meta, replacing the derived one, trusted as a native's statement is. Until it is built, the tree enforces
-> R3 as described above.
+```eliot
+def toByte(n: Int) uses Abort: Int {closed(0, 255)} = if(n >= 0 && n <= 255) n
+```
+
+The derivation cannot learn from a condition (`if` is `fold(condition, value, abort)`, and the `abort` arm is ⊥), so
+`toByte`'s result would be `n`'s meta unchanged. Its author knows what passing the check means, and says it.
+
+- **Pure trust.** Nothing checks the brace: not against the derivation, not at runtime, not in a test build. It has
+  the standing of a native's statement (§3.2). A brace wider than the derivation is taken as written too.
+- **The result only.** The body is still walked (§5.1): cells, frames and exits inside it are followed (§11.1), a body
+  that never returns is still ⊥ (§12), and a body that runs out of the step budget is still reported (§5.3). So a
+  brace is not a summary and saves no interpretation steps.
+- **Slots only.** The walk derives control, so a control primitive in a bodied brace (`never`, `exit`, `frame`,
+  `cell`, `store`, `content`, `looped`, `endless`, `built`, `fieldOf`; `MetaStatement.controls`) is refused. So are
+  slots over a result carrying no meta, a function result included (read past as many arrows as the companion takes
+  parameters, as the channel reads it), and a brace over a `data` result whose type declares no slots. A `data` result
+  whose type declares slots is stated by its slots alone, and keeps its derived structural meta (§8.1).
+- **Read after the layer merge** (`MonomorphicValue.runtime`), as R2 is, so a brace in one layer over a body in
+  another is the same case as both in one declaration.
+
+R2 and R3 are the two arms of `MetaTransferAccountingProcessor`, and both judge the declaration
+(`OperatorResolvedValue`). `MetaInterpreter` splits on the same test (§5.1).
+
+**The price: a wrong brace is silent.** The backend lays out from metas (§7), so a brace narrower than the values a
+body returns makes a width that wraps them: with `def lie(x: Int): Int {closed(0, 10)} = x`, `add(lie(300), 0)` prints
+`44`. Where the result meets a consumer reading the boundary width it arrives unconverted, so `useByte(lie(1000))`
+prints `1000`: what a wrong brace does depends on what reads the result. This is a deliberate exception to the rule
+that a gap is fail-safe, taken as one (§8.1).
 
 **R4: there is no undefined meta.** A top is stated, never an omission (§1).
 
@@ -247,16 +276,16 @@ report a hundred spurious errors.
 | leaf return | the native | no | stated, axiomatic (R2) |
 | parameter | every caller | not from the body | stated; each call proves it (§4.4) |
 | `data` field | the constructor | not from a reader | stated; construction proves it (§4.5) |
-| bodied return | the body | **yes** | **derived only (R3)** |
+| bodied return | the body | **yes** | derived; a brace replaces it, trusted (R3) |
 
-A brace on a bodied return is declined. Where the derived meta is not computed, nothing could fit it. Where the
-derived meta is precise, a brace could only widen it. The one remaining argument for it is abstraction, which is a
-modular certificate, and *Use-Site Verification* deliberately gives that up. Part II adds a fifth row: what a native
-hands its code (§14).
+The last row is the one exception to the rule above. The compiler sees the supplier, and still a brace is accepted,
+because seeing a body is not understanding it: the derivation follows values and cannot learn from what a condition
+means. The brace is trusted rather than proven, since proving it would need properties, which Eliot does not track
+(§20). Part II adds a fifth row: what a native hands its code (§14).
 
-Decision O (2026-10-23, §8.1, not built) reverses the last row: a bodied return may be stated, and the statement
-replaces the derived meta, trusted rather than proven. The reasoning above assumed a statement must be checked against
-the derivation; O does not check it, so it can narrow where the derivation cannot see.
+Until decision O (2026-10-23) the row read *derived only*: a brace was declined because, where the derived meta is
+precise, a checked brace could only widen it. That reasoning assumed a brace is checked against the derivation; O's
+is not, so it can narrow where the derivation cannot see.
 
 ## 4. Companions
 
@@ -414,11 +443,23 @@ real monomorphized body:
 
 ### 5.1 State or derive
 
-Whether a callee is summarised or read is one `ifM` on the test R2 and R3 enforce: the companion lookup. So the
-closure invariant of §1 is executed and enforced by the same two facts, and the two cannot drift into two opinions.
-`def double(x: Int): Int = add(x, x)` at `60` is `[120, 120]`, and `label("abcd")` with `def label(s: String): String
-= s` is a size of `[4, 4]`. A pure `val` block is interpreted too: it lowers to an applied lambda, so its bindings are
-ordinary parameter bindings.
+Whether a callee is summarised or read is decided by the two tests R2 and R3 judge: the companion lookup, and the
+body. So the closure invariant of §1 is executed and enforced by the same facts, and the two cannot drift into two
+opinions. `MetaInterpreter.metaOf` has three arms:
+
+- **A native with a companion is stated**: its brace, reduced over the argument metas. There is no body to walk.
+- **A bodied value with a companion is derived, then stated** (R3). The body is walked as for any other value, and
+  the walk keeps its `Run`: the store, the frames, every exit and the budget spent are what the body did. Only the
+  result's value is replaced, by the brace reduced over the argument metas (`restated`). A code argument reaches the
+  brace as not computed, so a brace reading one is not computed, fail-safe (§17.2, O2, would read its runs). ⊥ stays
+  ⊥. A value the body built stays a `Value.Data` with its fields, only its meta replaced, and a slotted `data` result
+  gets the derived meta with the stated slots in front (`restatingConstructorOf`, §8.1).
+- **Anything else is derived.**
+
+"Bodied" is a produced `MonomorphicValue` with a runtime body, read after the merge, so a value whose
+monomorphization failed upstream is read as its statement. `def double(x: Int): Int = add(x, x)` at `60` is
+`[120, 120]`, and `label("abcd")` with `def label(s: String): String = s` is a size of `[4, 4]`. A pure `val` block
+is interpreted too: it lowers to an applied lambda, so its bindings are ordinary parameter bindings.
 
 The interpretation **raises no diagnostic and records nothing**. A record is keyed by source position *in the value
 being walked*, and a demand by the position it is written, so interpreting a callee inside its caller must do neither.
@@ -574,125 +615,110 @@ it, which is what Part II finds.
 The `eliot-code` skill tells users what a range is derived through and what is not computed today. It was probed
 against the tree, not taken from this document. Update it when a row closes.
 
-### 8.1 A hole in the design: custom metas
+### 8.1 Custom metas
 
-The rows above are metas the channel does not compute yet. This one is a meta nobody can **declare**.
+The rows above are metas the channel does not compute yet. This section is how a program **declares** one: closed
+2026-10-23 by decision O, built in stages O1, O4b and O5 (§17.2).
 
 > **Required (Robert, 2026-10-22): custom metas should be possible.** A program defines meta-information for its own
 > `data` types: it implements `Meta` for a domain of its own, and describes how a value's meta is calculated.
 > Everything else (deriving it through bodies, joining it at branches, widening it in loops, demanding it with `where`
 > or a brace) is the channel's, as for `range` and `size`.
 
-**Today nothing but the `Meta` instance can be written.** Probed at `e5fe6e94` with a `Sign` domain
-(`data Sign = Negative | Zero | Positive | AnySign`, with `Eq[Sign]`):
+Until then only the `Meta` instance could be written: a `data` took no slot, a slotted alias was dead (a meta type is
+read off the evaluated type, §4.1), a slotted abstract type needed a platform layer, and R3 refused a brace on a bodied
+value. The probe that found it, with a `Sign` domain, is at `e5fe6e94`.
 
-| Attempt | Result |
-|---|---|
-| `implement Meta[Sign] { def join… def widen… }` | Compiles, and is inert: no type can carry a `Sign`. |
-| `data Temperature {sign: Sign}(degrees: Int)` | Parse error. Only `type` parses a slot brace (`TypeAliasDefinition`); `DataDefinition` has none. |
-| `type Celsius {sign: Sign} = Int` | Parses, and the slot is dead. A meta type is read off the *evaluated* type (§4.1), so a `Celsius` has `Int$Meta`, and `sign(c)` in a `where` is "Type mismatch. Expected: Celsius$Meta, Actual: Int$Meta". |
-| `type Reading {sign: Sign}` and a body-less `def readSensor: Reading {Positive}` | "Function not implemented." A slotted *abstract* type and the leaves that state it (R2) need a platform layer, which a user module is not. |
-| `def warm: Temperature {Positive} = Temperature(5)` | R3: a bodied value derives and may not state. |
+**Decision O (2026-10-23).** Robert, after declining a proof-based alternative: *"I definitely don't want proofs, nor
+properties. I don't want to prove anything, I just want values. … 'requirePositive' _should_ constrain n's meta. Not be
+calculating it, but by _defining_. … This would only require that we can 'override' the calculated meta with our own.
+We don't need to check it. If the user knows he/she can constrain the value more than the automated calculation does,
+he/she is free to do it."* Then: *"pure trust, replace result only"*. The rule is R3 (§3): a brace on a value's return
+states that value's meta wherever it stands, on a native as its only meta, on a bodied value replacing the derived
+one. It applies to every domain, `range` and `size` included, with no confinement to user domains. A custom meta is
+that rule plus a slot on a `data` type.
 
-**Why it is a hole and not a rule.** Two decisions produce it, and neither was taken to forbid custom metas:
-
-- **R3** (§3) keeps a statement off a bodied value because the compiler can see the body. Its consequence, that *"a
-  user module cannot author a transfer"*, was recorded as a consequence, never decided as a goal.
-- **§13.6** gives a `data` value's structural meta no surface, so the generated records may be named freely. It says
-  nothing about a meta a `data` type declares beyond its fields.
-
-The user documentation says the opposite of the requirement today, accurately for the tree: the site's *Under the
-hood* chapter (`eliotlang.github.io`, `_docs/meta-domains.md`) says a program cannot add a new kind of
-meta-information, and why. It changes when this closes.
-
-**Decision O (2026-10-23, not built): a brace on a bodied value states its result's meta, replacing the derived
-one.** Robert, after declining a proof-based alternative: *"I definitely don't want proofs, nor properties. I don't
-want to prove anything, I just want values. … 'requirePositive' _should_ constrain n's meta. Not be calculating it,
-but by _defining_. … This would only require that we can 'override' the calculated meta with our own. We don't need
-to check it. If the user knows he/she can constrain the value more than the automated calculation does, he/she is
-free to do it."* Then: *"pure trust, replace result only"*.
+**The domain** is an ordinary `data` with a `Meta` instance from `eliot.compiler.Meta`:
 
 ```eliot
-def requirePositive(n: Int) uses Abort: Int {positive(range(n))} = if(n > 0) n
+data Frost = AboveFreezing | MaybeFreezing
+
+implement Meta[Frost] {
+   def join(a: Frost, b: Frost): Frost = a match {
+      case AboveFreezing -> b
+      case MaybeFreezing -> MaybeFreezing
+   }
+   def widen(previous: Frost, next: Frost): Frost = join(previous, next)
+}
 ```
 
-Here `positive` stands for an ordinary compile-time function over an interval that raises its start to `1`. It is
-illustrative: the base has no such function yet. Without the brace, the result's meta is `n`'s, unchanged, because
-the derivation cannot learn from a condition (`if` is `fold(condition, value, abort)`, and the `abort` arm is ⊥). The
-author knows what the condition means, so the author says it.
+**The slot** is declared on the type's head, as on a `type`, and **every constructor states every slot** in a brace
+after its fields (Q3, Q5). The statement's parameters are the constructor's fields, each seen as its meta, as a `where`
+sees a parameter, so it reads an `Int` field's `range` or a slotted `data` field's own slots:
 
-The rule, which replaces R3:
+```eliot
+def frostOf(celsius: Interval[BigInteger]): Frost = fold(rangeWithin[1, 1000](celsius), AboveFreezing, MaybeFreezing)
 
-1. **A brace on a value's return states that value's meta, wherever it stands.** On a native it is the only meta, and
-   R2 still demands it. On a bodied value it is optional, and when present it **replaces** the derived meta of the
-   result. A brace reads the argument metas, as a native's does (`{length(s)}`), and is reduced by the one evaluator
-   like every companion.
-2. **Pure trust.** Nothing checks it: not against the derivation, not at runtime, not in a test build. It has the
-   standing of a native's statement (§3.2), now in any module. Two safeguards were offered and declined: an assertion
-   inserted at the return in test builds where the brace says more than the derivation, and an intersection with the
-   derived meta, so a brace could never widen.
-3. **The result only.** The interpretation still walks the body: cells, frames and exits inside it are followed as
-   before (§11.1), and only the meta of the value the body returns is replaced. A call whose derivation is ⊥ (it never
-   returns) stays ⊥, since ⊥ is a fact about control and not a meta (§12). So a brace is **not a summary**: it saves
-   no interpretation steps, and it is no answer to decision I's cost (§5.3).
+data Temperature {frost: Frost}(celsius: Int) {frostOf(range(celsius))}
+data Pipes {risk: Frost}(inside: Temperature, outside: Temperature) {join(frost(inside), frost(outside))}
+data Heater {heat: Frost} = Boiler(flow: Temperature) {frost(flow)} | Off {MaybeFreezing}
 
-**Accepted consequence: a wrong brace is silent, and it is the first such place a user writes.** The backend lays
-out from metas (§7). A brace on an `Int` that is narrower than the values it returns makes a width that wraps them,
-and once a `size` sizes a static buffer, a brace too small for a list makes code that writes past it. A native's
-statement always carried this risk (§3.2: *"a bound that is merely usually true is a bug"*); O extends it from a
-handful of platform files to every module. This is a deliberate exception to the rule that a gap is fail-safe, and it
-was taken as one.
+def startPump(t: Temperature) where isAboveFreezing(frost(t)) uses Console: Unit = …
+```
 
-**What it reverses**, each recorded rather than rewritten in place: R3 (§3), and with it *"a user module cannot
-author a transfer"*; §3.3's row *"bodied return: derived only"*; and §20's *"a brace on a bodied return"*. R2 stands.
+- **The slot is the type's own** (decisions P and R). `frost(t)` reads it, and it is all meta code reads of a
+  `Temperature`: no field's meta is read in meta code, since `t.celsius` names a runtime field of a value meta code
+  does not have. What a slot needs of a field, the constructor's statement flattens into it. A constraint on a field of
+  a type the program does not own (`p.first.range` of a `Pair`) has no spelling; the program wraps the value in a
+  `data` of its own with a slot.
+- **It sits beside the structural meta** (§13.1), which replaces nothing and keeps no surface (§13.6): a `match` on a
+  `Temperature` still hands its arm the `celsius` it was built with, at that value's range.
+- **The representation.** The slots are the leading fields of `D$Meta`, before the reach and constructor records, and
+  their accessors are in `Qualifier.Slot` (decision K). `StructuralMetaDesugarer` prepends each constructor's
+  statement to its `constructor$` application, so the generated instance joins and widens a slot through the user's
+  `Meta` instance with no new machinery, and the channel needed nothing. A slotted type also gets
+  `D$Slots[<D's binders>]: Type = Function[S1, …, Unit]`, which is what tells it from a slotless one.
+- **A function narrows a slot with a brace** (O5): `def warm: Temperature {AboveFreezing} = Temperature(5)`. The brace
+  lists the slots only; the field metas stay derived. The channel passes the companion a constructor of the slots
+  alone, which builds `D$Meta` from them and the derived meta's reach records.
+- **Refused, each an error** (`DataSlotChecker`, at the core boundary): a constructor stating nothing (*"The
+  constructor 'Off' does not state the slots of its type 'Heater'."*) or another number of slots than declared; a
+  statement on a type declaring no slots; a slotted type with no constructor; a slot named like a field of its type,
+  since meta code would read the slot under the name value code reads the field by; a slot holding `MetaOf`; and a slot
+  on a type whose fields mention the type itself, recursive through another type included. Two layers' copies of a
+  slotted `data` must agree on their slots, by the merge's ordinary signature check (decision H).
+
+**Accepted consequence: a wrong brace is silent, and every module may now write one.** The backend lays out from
+metas (§7): a brace on an `Int` narrower than the values it returns makes a width that wraps them (§3's `lie`), and
+once a `size` sizes a static buffer, a brace too small for a list makes code that writes past it. A native's statement
+always carried this risk (§3.2: *"a bound that is merely usually true is a bug"*); O extends it from a handful of
+platform files to every module. A constructor's statement carries it too: nothing checks that `frostOf` is right.
+This is a deliberate exception to the rule that a gap is fail-safe, and it was taken as one. Two safeguards were
+offered and declined: an assertion at the return in test builds, and an intersection with the derived meta.
+
+**What it reversed**, each recorded where it stood rather than rewritten: R3 (§3), and with it *"a user module cannot
+author a transfer"*; §3.3's row *"bodied return: derived only"*; and §20's *"a brace on a bodied return"*.
 Parameter braces (§4.4) and field braces (§4.5) are unchanged: those are still proven by whoever supplies the value.
-When built, `MetaTransferAccountingProcessor` loses its R3 arm.
 
-**How it answers custom metas.** A `data` type declares a slot, and its constructor states it from the field metas,
-since the generated constructor is a leaf and R2 asks a leaf to state:
+**Not there yet**, each fail-safe:
 
-```eliot
-data Temperature(degrees: Int) {sign: signOf(range(degrees))}
-def warm: Temperature {Positive} = Temperature(5)          // a bodied value may now state, by O
-```
-
-The constructor statement is the slot's default, and with O any bodied function building a `Temperature` may
-state a narrower one. O applies to every domain, `range` and `size` included, with no confinement to user domains.
-
-**Superseded the same day:** the two-part proposal this section carried (a constructor statement, and a trusted
-statement confined to user domains), and a third offered in conversation, of named properties introduced by a
-checking primitive, which Robert declined: Eliot tracks values, not proofs (§20).
-
-**Still open** (§17.2's Q3–Q7 propose answers to the first four, for sign-off):
-
-- **The slot beside the structure.** A `data` meta is already the structure of §13.1: reach, then field metas. A
-  declared slot is a second component. Is the meta a pair (structure, slots), joined component-wise, the slots
-  through the user's instances? Or is a declared slot the *only* meta, replacing the structure? The latter would lose
-  the field metas T5 carries.
-- **The `data` slot's spelling**, which does not parse today (the probe above).
-- **Sums.** One statement per constructor, each over its own fields; their join is the user's.
-- **Generic `data`.** `MetaConstructorDesugarer` does not thread a type's generic parameters onto its meta structure
-  yet, so `data Box[A](…) {…}` needs that first. `MetaOf[A]` (decision L) is the spelling such a slot would use.
-- **Whether a brace may read the derived meta** of its own body, to narrow it rather than restate it. Not needed for
-  `requirePositive`, which narrows its argument's.
-- **A slotted abstract `type` in a user library**, for platforms to implement, is a separate question: it needs a
-  layer, not just a declaration.
-
-**Decided 2026-10-23** (§18, Q3–Q6 and decision P): the spelling is slots on the head and a statement per constructor
-(Q3); a declared slot is the type's own and replaces nothing, and a field's meta is read through the type's own
-accessor, nested, never flattened into the type's meta (P); every constructor states every slot (Q5); a slot on a
-recursive `data` and `MetaOf[A]` in a `data` slot wait for O6 (Q6). A sum's fields have no meta accessor, as they
-have no value accessor (P). Still open from the list above: whether a brace may read its own body's derived meta, and a
-slotted abstract `type` in a user library.
-
-> **Partly reversed the same day by decision R** (§18): meta code reads no field's meta. A field accessor applied to
-> a meta would need the meta to mirror the runtime structure in public, and the compiler generates no such mirror.
-> A type's meta is what its own slots declare, and a constructor's statement flattens what it needs from its fields
-> into them. P's other half stands: a declared slot is the type's own and replaces nothing, so it sits beside the
-> structural meta, which stays without a surface (§13.6).
+- **A bodied brace reading a code parameter** is not computed (O2, until a program needs it).
+- **Narrowing vocabulary.** The base has no interval intersection and no `positive`, so a brace spells a narrowing
+  with the constructors it has (`interval(Bounded(1), end(range(n)))`) (O3).
+- **Generic and recursive slots.** `MetaOf[A]` in a `data` slot, and a slot on a recursive `data`, wait on the
+  recursive-data fold (O6, decision J). A slot of a fixed domain on a generic type (`data Box[A] {full: Frost}(…)`)
+  works.
+- **Whether a brace may read the derived meta of its own body**, to narrow it rather than restate it. Open; nothing
+  needs it.
+- **A slotted abstract `type` in a user library**, for platforms to implement. It needs a layer, not a declaration.
+- **Rough edges.** A brace listing the wrong number of slots is refused by the companion's own type check, *"Not a
+  function"* naming `Temperature$Meta`, which is the message a `type`'s slot brace already gives. LSP hover decodes
+  `Int$Meta` only, so it shows nothing of a custom domain. A file importing both `eliot.compiler.Meta` (for its
+  `implement Meta`) and `eliot.collection.List` cannot use `joined` by its bare name, and names the list functions by
+  their module.
 
 **A precision gap the derivation should still close.** A field holding a list built by a fold has the loop's widened
-meta (§11.2), so a derived `transpose` loses its matrix's dimensions. A brace can now restate them; iterating once per
+meta (§11.2), so a derived `transpose` loses its matrix's dimensions. A brace can restate them; iterating once per
 count where a loop's count has a known range would derive them (§18, "Open, not blocking").
 
 ### 8.2 Not a meta: cycles, stack and peak memory
@@ -1145,8 +1171,8 @@ read one either, since the generated accessors are in no user's scope. Structura
 through a data value. It is observed only through that slotted type's `where` or brace downstream. That is also why
 the generated records may be named freely: no user code can depend on their shape.
 
-A meta a `data` type would declare *beyond* its fields is not structural meta, and has no spelling at all yet. That is
-the hole of §8.1.
+A meta a `data` type declares *beyond* its fields is not structural meta: it is a slot on the type's head, stated by
+every constructor, and sits beside the structural meta (§8.1, decision R).
 
 ### 13.7 Layers
 
@@ -1183,7 +1209,7 @@ is the callee. That gives the table a fifth row:
 | Position | Supplier | Visible to the compiler? | So |
 |---|---|---|---|
 | handed argument (arrow domain) | the callee running the code | not for a native | stated, axiomatic |
-| handed argument, bodied callee | the body | **yes** | **declined (R3)** |
+| handed argument, bodied callee | the body | **yes** | **declined** |
 
 ```eliot
 private def escapeInternal[K, A, R](body uses *: AbortFrame[K] {frame} => A, onExit uses *: K {exited(body)} => R,
@@ -1222,7 +1248,8 @@ makes reading it so sound. Where two are live the statement is reduced over thei
 The arrow-domain grammar slot is free: a brace *before* a type is the rejected row spelling, and one *after* a
 parameter's type is §4.4's. It desugars to a handed companion (`escapeInternal$Handed$onValue$0`) named as the data
 desugarer names one, which reads parameters (`MetaParameterDesugarer.arrowStatement`). It is accepted on a body-less
-def only: a body hands what it computes, so a brace on one is an error at the brace (R3). Since T4 it is accepted on a
+def only: a body hands what it computes, so a brace on one is an error at the brace (`CoreProcessor`). Decision O
+reversed R3 for a return, where the derivation cannot learn from a condition, and not here, where nothing is gained. Since T4 it is accepted on a
 function-typed **value** parameter as well (`step: B {looped(initial, step)} => String => B`, §11.3): the callee
 supplies what it applies a function value to exactly as it supplies what it runs code with.
 
@@ -1697,7 +1724,19 @@ change in the same stage.
   Each earlier stage records itself here as it lands, as T1–T6 did, so O7 is the Part I rewrite and the outside
   documents.
 
-**Order.** O1, O4b and O5 are built, in that order (O4a was dropped by decision R). O2 and O3 are independent of each other and of O4, and
+  **Built 2026-10-23.** Part I states decision O as shipped: R3 (§3) is the bodied arm with its refusals and price,
+  §3.3's last row is *derived; a brace replaces it, trusted*, §5.1 has the three arms, §2.3 lets a program grow a
+  domain, and §8.1 is the design of custom metas rather than a hole. CLAUDE.md's channel paragraph and the global
+  `eliot-code` skill say the same. The site's *Meta-information* part already taught decision O and O4b (rewritten the
+  same day, ahead of the build); its *Meta-information of your own* chapter gained O5 in place of *"What is not there
+  yet"*, and *Refining* lost the sentence saying a `data` result could not be refined. **apidoc** showed none of a
+  signature's metas but a `type`'s slots, so a bodied def's brace, now its promise to callers, was invisible, and so
+  were every native's brace, a parameter or field brace, a `where`, a `data` type's slots and a constructor's
+  statement. `SignatureRenderer` renders all of them, and LSP hover with it, since both go through `forName`. It still
+  prints a `uses` clause as the internal brace row, which is the effects gap noted in the site's reference memory, not
+  this stage's.
+
+**Order.** O1, O4b, O5 and O7 are built, in that order (O4a was dropped by decision R). O2 and O3 are independent of each other and of O4, and
 can come whenever a program asks for them. O6 waits on the recursive-data fold. O7 is last.
 
 **The plan's questions**, as answered (Q3–Q6 by Robert on 2026-10-23; Q1, Q2 and Q7 built in O1 as recommended):
@@ -1777,8 +1816,9 @@ it from O1. O1 pins what a brace on each of the two does.
   checks it. The result only: the body is still walked for cells, frames and exits, so a brace is not a summary.
   Every domain, `range` and `size` included. It reverses R3, §3.3's last row and §20's *"a brace on a bodied
   return"*, and is how custom metas are declared: a `data` slot stated by its constructor, narrowed by any bodied
-  value's brace. A silent wrong brace is the accepted price. **Not built.** Its remaining questions are in §8.1.
-  **O1, the override, built 2026-10-23** (§17.2).
+  value's brace. A silent wrong brace is the accepted price. **Built 2026-10-23**: O1, the override, then O4b and O5,
+  custom metas (§17.2). Its remaining questions were answered by Q3–Q7 and decisions P and R; what is still open is
+  listed in §8.1.
 - **P. A `data` value's meta is read through the data's own accessors, nested, never flattened** (§17.2, O4a). Asked
   whether a declared slot sits beside T5's field metas or replaces them, Robert chose neither: *"'temp.degrees.range'
   is [5,5]. You should be able to access the meta through the accessor of the data element, not 'flattened'. A data
@@ -1840,9 +1880,9 @@ byte-identical. **Open: decision I fails eliot-build** (§5.3's note) and waits 
 recommendations for Q1, Q2 and Q7. Q3–Q6 were answered the same day, Q4 with decision P, and the plan was adjusted:
 O4 is split into O4a (a field's meta through its accessor) and O4b (declared slots). Starting O4a found a name clash
 in meta code, and Robert answered it with decision R: no field's meta is read in meta code, so O4a is dropped.
-O4b, a meta declared on a `data` type, is built the same day, and so is O5, a brace on a bodied value returning a
-slotted `data`. **Next: O7**, the record (T7 folds into it). O2 and O3 wait for a program that needs them, and O6 for
-the recursive-data fold.
+O4b, a meta declared on a `data` type, is built the same day, and so are O5, a brace on a bodied value returning a
+slotted `data`, and O7, the record (T7 folded into it). The pivot is complete: O2 and O3 wait for a program that needs
+them, and O6 for the recursive-data fold. **What blocks a release is decision I** (§5.3's note), still open.
 
 **The `Unit` question (2026-10-21), closed the same day.** Robert: a type declaring no meta gets `Unit` implicitly, and
 *"the rest of the machinery should not know that this was 'default'"*. T3 removed two places that knew: §5.3's type

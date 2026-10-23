@@ -292,7 +292,7 @@ subset of its data.
       feature), `check/AbilityResolver`, `check/HandleHoleResolver`.
     - riders on `MonomorphicValue`: `channel/RefinementChannelProcessor` (Int ranges; it walks a definition's leading
       handle parameters as parameters, and a `where` companion leaves a callee's handles out) and
-      `channel/MetaTransferAccountingProcessor` (meta transfers: R2 a leaf must state, R3 nothing else may), the
+      `channel/MetaTransferAccountingProcessor` (meta transfers: R2 a leaf must state, R3 a bodied value may, its result only), the
       latter a `WovenValue` codegen precondition, and `channel/MetaDemandsProcessor` (P5: every `where` and parameter
       brace checked in each meta context its call is reached in from `main`, one `MetaDemands` fact per context; a
       body's root context leaves its meta-carrying parameters symbolic and defers what reads them to its callers).
@@ -417,14 +417,21 @@ contain `data` (a chosen representation), a native leaf, or any representation-d
   more leaves state — `Show[Int]::show` at `atLeast(1)` (the ceiling is a digit count, needing a logarithm no leaf
   offers), `Show[Path]::show` at `atLeast(0)`, and the nine jvm input/holder natives at the JVM's `String`/`int`
   representation limits — and `MetaTransferAccountingProcessor` is now a **codegen precondition** in
-  `WovenValueProcessor`, so a native producing a meta-carrying type and stating nothing no longer compiles. **S6 armed
-  R3** (§P3), the same processor's other arm split on `MonomorphicValue.runtime`: a **bodied** value derives its meta
-  from its body and so may not also state one — read post-merge, so a brace in one layer over a body in another is the
-  same check. A brace therefore lives only on a native leaf, which means **a user module cannot author one at all**
-  (it declares no natives); a `where` is untouched, being a stated contract by design. **Decision O (2026-10-23, not
-  built) reverses R3** (`docs/meta.md` §8.1): a brace on a bodied value will state its result's meta, replacing the
-  derived one — pure trust, the body still walked for cells/frames/exits — and that is how custom metas are declared;
-  until it is built the tree enforces R3. Two rules
+  `WovenValueProcessor`, so a native producing a meta-carrying type and stating nothing no longer compiles. **R3** is
+  the same processor's other arm, split on `MonomorphicValue.runtime` read post-merge: since **decision O** (2026-10-23,
+  `docs/meta.md` §3, §8.1; S6 had armed R3 the other way, refusing it) a brace on a **bodied** value states its
+  result's meta and **replaces** the derived one — pure trust, nothing checks it; the result only, the body still
+  walked for cells/frames/exits, ⊥ still ⊥, the budget still reported; slots only, a control primitive or slots over a
+  meta-less or function result refused. `MetaInterpreter.metaOf` has three arms to match: stated (native), derived then
+  stated (`restated`, bodied with a brace), derived. A wrong brace is **silent** (`add(lie(300), 0)` wraps to `44`), the
+  accepted price. **Custom metas** are that plus a `data` slot: `data Temperature {frost: Frost}(celsius: Int)
+  {frostOf(range(celsius))}` — slots on the head, every constructor states every slot from its fields' metas
+  (`DataSlotChecker` refuses a missing statement, a slot named like a field, `MetaOf`, a recursive type), the domain an
+  ordinary `data` with a user `Meta` instance; a bodied function returning one restates its slots alone
+  (`def warm: Temperature {AboveFreezing} = …`, `D$Slots`, `restatingConstructorOf`). Meta code reads **no field's
+  meta** (decision R): a slot sits beside the structural meta, which keeps no surface; a constructor's statement
+  flattens what a slot needs. Open: O2 (a bodied brace reading code), O3 (intersection/narrowing vocabulary), O6
+  (`MetaOf`/recursive `data` slots). Two rules
   it settled: a transfer lives in the layer that owns the **fact it states** (an operation's own bound in the base, a
   representation's in the platform layer), and a leaf's statement is **axiomatic** — nothing rechecks it — so a bound
   that is merely usually true (POSIX's `[0, 255]` for an exit code, which Windows breaks) is a bug, and the honest
@@ -444,7 +451,8 @@ contain `data` (a chosen representation), a native leaf, or any representation-d
   (`MetaParameterDesugarer`, `<def>$Parameter$<p>`) reads no parameter: its parameters are placeholders that only count
   and place. A brace on a `data` field is the same decision (§4.5): the constructor proves it, and the `match` eliminator
   states it of what it hands a handler (a *handed* statement), which every accessor and arm reads it through;
-  one on a bodied return is declined (§3.3) — a meta is stated only where the compiler cannot see the supplier.
+  a meta is stated where the compiler cannot see the supplier, with one exception: a bodied return, which a brace
+  replaces on trust because the derivation cannot learn from what a condition means (§3.3, R3).
 - `type List[A] {size: Interval[BigInteger], item: Reach[MetaOf[A]]}` — the **third domain** (`docs/meta.md` §17.1),
   the first holding another type's meta: `MetaOf[A]` (legal in a slot only) becomes a binder of `List$Meta`, listed by
   a generated `List$Carried[A]`, and the channel applies it (`List[Int]` ⤳ `List$Meta[Int$Meta]`). `item` is a `Reach`,

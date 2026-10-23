@@ -23,8 +23,13 @@ class SignatureRendererTest extends AnyFlatSpec with Matchers {
       constraints: Seq[UnresolvedAbilityConstraint[Sourced[Expression]]] = Seq.empty
   ): GenericParameter = GenericParameter(s(name), s(restriction), constraints)
 
-  private def arg(name: String, t: Expression): ArgumentDefinition =
-    ArgumentDefinition(s(name), s(t))
+  private def arg(name: String, t: Expression, meta: Seq[Expression] = Seq.empty): ArgumentDefinition =
+    ArgumentDefinition(s(name), s(t), meta = meta.map(s))
+
+  private def call(name: String, arguments: Expression*): Expression =
+    Expression.FunctionApplication(None, s(name), None, arguments.map(s).toList)
+
+  private def int(value: String): Expression = Expression.IntegerLiteral(s(value))
 
   private def fn(
       name: String,
@@ -36,7 +41,9 @@ class SignatureRendererTest extends AnyFlatSpec with Matchers {
       fixity: Fixity = Fixity.Application,
       precedence: Seq[PrecedenceDeclaration] = Seq.empty,
       visibility: Visibility = Visibility.Public,
-      metaSlots: Seq[ArgumentDefinition] = Seq.empty
+      metaSlots: Seq[ArgumentDefinition] = Seq.empty,
+      returnMeta: Seq[Expression] = Seq.empty,
+      whereClause: Option[Expression] = None
   ): FunctionDefinition =
     FunctionDefinition(
       s(QualifiedName(name, qualifier)),
@@ -47,7 +54,9 @@ class SignatureRendererTest extends AnyFlatSpec with Matchers {
       fixity,
       precedence,
       visibility,
-      metaSlots = metaSlots
+      metaSlots = metaSlots,
+      returnMeta = returnMeta.map(s),
+      whereClause = whereClause.map(s)
     )
 
   "signature renderer" should "render a nullary value with no parentheses" in {
@@ -97,6 +106,46 @@ class SignatureRendererTest extends AnyFlatSpec with Matchers {
     SignatureRenderer.function(
       fn("Int", Qualifier.Type, metaSlots = Seq(arg("range", ty("Interval", ty("BigInteger")))))
     ) shouldBe "type Int {range: Interval[BigInteger]}"
+  }
+
+  it should "render a bodied def's return brace, its where and its parameter braces" in {
+    SignatureRenderer.function(
+      fn(
+        "toByte",
+        args = Seq(arg("n", ty("Int")), arg("m", ty("Int"), Seq(call("closed", int("0"), int("9"))))),
+        ret = ty("Int"),
+        body = Some(ty("n")),
+        returnMeta = Seq(call("closed", int("0"), int("255"))),
+        whereClause = Some(call("positive", call("range", ty("n"))))
+      )
+    ) shouldBe "def toByte(n: Int, m: Int {closed(0, 9)}) where positive(range(n)): Int {closed(0, 255)}"
+  }
+
+  it should "render a data type's slots and its constructor's statement in record form" in {
+    SignatureRenderer.data(
+      DataDefinition(
+        s("Temperature"),
+        Seq.empty,
+        Some(Seq(DataConstructor(s("Temperature"), Seq(arg("celsius", ty("Int"))), Seq(s(ty("Above")))))),
+        metaSlots = Seq(arg("frost", ty("Frost")))
+      )
+    ) shouldBe "data Temperature {frost: Frost}(celsius: Int) {Above}"
+  }
+
+  it should "render each constructor's statement of a slotted sum" in {
+    SignatureRenderer.data(
+      DataDefinition(
+        s("Heater"),
+        Seq.empty,
+        Some(
+          Seq(
+            DataConstructor(s("Boiler"), Seq(arg("flow", ty("Temperature"))), Seq(s(call("frost", ty("flow"))))),
+            DataConstructor(s("Off"), Seq.empty, Seq(s(ty("Maybe"))))
+          )
+        ),
+        metaSlots = Seq(arg("heat", ty("Frost")))
+      )
+    ) shouldBe "data Heater {heat: Frost} = Boiler(flow: Temperature) {frost(flow)} | Off {Maybe}"
   }
 
   it should "render a type alias body" in {
