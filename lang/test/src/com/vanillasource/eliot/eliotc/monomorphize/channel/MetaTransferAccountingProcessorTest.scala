@@ -42,7 +42,7 @@ class MetaTransferAccountingProcessorTest extends ProcessorTest(LangProcessors()
 
   private def statedSlotsWithoutMeta(result: String) = s"but $result carries none"
 
-  private val statedData = "is a data type, whose meta-information is derived from its fields"
+  private val statedData = "is a data type declaring no slots, whose meta-information is derived from its fields"
 
   private val metaPrimitives = SystemImport("Meta", "def never[D]: D", ModuleName.compilerPackage)
 
@@ -137,7 +137,7 @@ class MetaTransferAccountingProcessorTest extends ProcessorTest(LangProcessors()
       .asserting(_ should include(statedSlotsWithoutMeta("'Function'")))
   }
 
-  "a bodied value stating a data result" should "be rejected, since a data type declares no slots" in {
+  "a bodied value stating a data result" should "be rejected when the data type declares no slots" in {
     errorsOf("data Box(v: Gauge)\ndef box(g: Gauge): Box {level(g)} = Box(g)", "box").asserting(_ should include(statedData))
   }
 

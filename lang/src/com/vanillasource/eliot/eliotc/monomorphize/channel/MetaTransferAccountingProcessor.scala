@@ -22,8 +22,9 @@ import scala.annotation.tailrec
   *   - **A bodied value may state its result** (decision O, which reversed R3). Its body is still derived, and the
   *     brace replaces only the meta of the value it returns ([[MetaInterpreter]]), trusted and never checked. So the
   *     brace may say only that: not something about control (a frame, a cell, a loop, an exit, `never`), which the
-  *     walk of the body derives; not slots over a result carrying no meta, nothing being there to state; and not the
-  *     meta of a `data` result, whose structure has no surface (§13.6) and which declares no slots yet (§17.2, O4/O5).
+  *     walk of the body derives; and not slots over a result carrying no meta, nothing being there to state. A `data`
+  *     result's brace states the slots its type declares (§17.2, O5), and only those, since the rest of its meta is
+  *     structural and has no surface (§13.6): one declaring none is refused, having nothing to state.
   *
   * A rider on [[MonomorphicValue]] (runtime track), on the [[RefinementChannelProcessor]] template. The leaf test the
   * rules split on is exactly the body test the fact already carries — `mv.runtime.isEmpty` (no Eliot body on this
@@ -84,7 +85,7 @@ class MetaTransferAccountingProcessor
               resultHead(mv.signature, arity) match {
                 case GroundValue.Structure(typeName, _, _) =>
                   MetaInterpreter.declaresFields(typeName).flatMap { data =>
-                    if (data) reportData(mv, typeName)
+                    if (data) MetaInterpreter.declaresDataSlots(typeName).ifM(().pure[CompilerIO], reportData(mv, typeName))
                     else
                       (
                         MetaInterpreter.declaresSlots(typeName),
@@ -180,8 +181,8 @@ class MetaTransferAccountingProcessor
   private def reportData(mv: MonomorphicValue, typeName: ValueFQN): CompilerIO[Unit] =
     compilerAbort[Unit](
       mv.name.as(
-        s"This value states meta-information, but '${typeName.name.name}' is a data type, whose meta-information is " +
-          s"derived from its fields and has nothing a { ... } return brace can state; remove the brace."
+        s"This value states meta-information, but '${typeName.name.name}' is a data type declaring no slots, whose " +
+          s"meta-information is derived from its fields and has nothing a { ... } return brace can state; remove the brace."
       )
     )
 }

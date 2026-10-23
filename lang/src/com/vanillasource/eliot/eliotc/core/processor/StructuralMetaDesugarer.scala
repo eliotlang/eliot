@@ -66,8 +66,16 @@ object StructuralMetaDesugarer {
     */
   def fieldsName(typeName: String): QualifiedName = QualifiedName(typeName + fieldsSuffix, Qualifier.Meta(Qualifier.Type))
 
-  /** The structures, their `Meta` instances and the field-types signature of `definition`, or empty for a type with no
-    * constructors.
+  /** Appended to a type's name to name its slot-types signature, in the meta namespace of the type namespace. */
+  val slotsSuffix: String = "$Slots"
+
+  /** The name of the slot-types signature of the `data` named `typeName`, which only a type declaring slots has. The
+    * single source of truth the channel reads it through.
+    */
+  def slotsName(typeName: String): QualifiedName = QualifiedName(typeName + slotsSuffix, Qualifier.Meta(Qualifier.Type))
+
+  /** The structures, their `Meta` instances, the field-types signature of `definition` and, when it declares slots, its
+    * slot-types signature, or empty for a type with no constructors.
     */
   def desugar(definition: DataDefinition): Seq[(FunctionDefinition, RoleHint)] =
     definition.constructors.filter(_.nonEmpty).toSeq.flatMap { ctors =>
@@ -75,8 +83,8 @@ object StructuralMetaDesugarer {
       val summary = summaryData(definition, ctors)
       (records.flatMap(DataDefinitionDesugarer.desugar(_, structural = false)) ++
         DataDefinitionDesugarer.desugar(summary, structural = false).map(slotsInSlotNamespace(definition))) ++
-        (records :+ summary).flatMap(metaInstance).map(_ -> RoleHint.NoHint) :+
-        (fieldTypes(definition, ctors) -> RoleHint.NoHint)
+        (records :+ summary).flatMap(metaInstance).map(_ -> RoleHint.NoHint) ++
+        (fieldTypes(definition, ctors) +: slotTypes(definition).toSeq).map(_ -> RoleHint.NoHint)
     }
 
   /** What a constructor's call states (`docs/meta.md` §13.4): the value it built, whose meta reaches its own slot with
@@ -239,16 +247,25 @@ object StructuralMetaDesugarer {
     * a recursive field's excepted. It ends in `Unit` rather than in the last field, so a function-typed field is never
     * mistaken for more fields.
     */
-  private def fieldTypes(definition: DataDefinition, ctors: Seq[DataConstructor]): FunctionDefinition = {
+  private def fieldTypes(definition: DataDefinition, ctors: Seq[DataConstructor]): FunctionDefinition =
+    typeList(definition, fieldsName(definition.name.value), ctors.flatMap(slotFields(definition, _)))
+
+  /** `D$Slots[<D's binders>]: Type = Function[S1, Function[…, Unit]]`, the types of the slots `definition` declares, for
+    * a type declaring any (§17.2, O5): how many of its summary's fields a bodied value's brace states, and their types.
+    */
+  private def slotTypes(definition: DataDefinition): Option[FunctionDefinition] =
+    Option.when(definition.metaSlots.nonEmpty)(typeList(definition, slotsName(definition.name.value), definition.metaSlots))
+
+  /** `name[<D's binders>]: Type = Function[T1, Function[…, Unit]]` over the types of `arguments`. */
+  private def typeList(definition: DataDefinition, name: QualifiedName, arguments: Seq[ArgumentDefinition]): FunctionDefinition = {
     val s = definition.name
     FunctionDefinition(
-      s.as(fieldsName(s.value)),
+      s.as(name),
       definition.genericParameters,
       Seq.empty,
       typeReference(s.as("Type")),
       Some(
-        ctors
-          .flatMap(slotFields(definition, _))
+        arguments
           .map(_.typeExpression)
           .foldRight(qualifiedType(s, WellKnownTypes.unitTypeFQN, Seq.empty))((field, rest) =>
             qualifiedType(s, WellKnownTypes.functionDataTypeFQN, Seq(field, rest))

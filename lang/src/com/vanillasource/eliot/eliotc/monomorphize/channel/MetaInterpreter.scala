@@ -301,6 +301,13 @@ object MetaInterpreter {
     getFactOrAbort(UnifiedModuleNames.Key(typeName.moduleName, Platform.Compiler))
       .map(_.names.contains(fieldsName(typeName)))
 
+  /** Whether a `data` type declares slots of its own (`docs/meta.md` §17.2, O4b): its module declares its slot-types
+    * signature `D$Slots` ([[StructuralMetaDesugarer]]).
+    */
+  private[channel] def declaresDataSlots(typeName: ValueFQN): CompilerIO[Boolean] =
+    getFactOrAbort(UnifiedModuleNames.Key(typeName.moduleName, Platform.Compiler))
+      .map(_.names.contains(slotsName(typeName)))
+
   /** A parameter's **statement** (`docs/meta.md` §4.4): the companion stating the meta of the value at
     * parameter `parameter`, which is the `position`th of the `arity` its definition takes, handles included.
     */
@@ -586,6 +593,9 @@ object MetaInterpreter {
     *
     * A code argument is passed to the brace as not computed: the body runs it, and what its runs yield is not recorded
     * for the brace yet (`docs/meta.md` §17.2, O2).
+    *
+    * Over a `data` result the brace states the type's declared slots only (§17.2, O5), so it is passed a constructor
+    * that keeps the rest of the derived meta ([[restatingConstructorOf]]), and a value the body built keeps its fields.
     */
   private def restated(
       callee: ValueFQN,
@@ -596,10 +606,74 @@ object MetaInterpreter {
   ): CompilerIO[(Run, Value)] =
     derive(callee, typeArguments, resultType, arguments, run).flatMap {
       case derived @ (after, value) if value == Value.Never || after.cutShort => derived.pure[CompilerIO]
-      case (after, _)                                                         =>
-        reduceTransfer(callee, typeArguments, arguments.map(argument => if (isCode(argument)) None else argument.known))
-          .map(meta => (after, Value.Meta(meta)))
+      case (after, value)                                                     =>
+        reduceTransfer(
+          callee,
+          typeArguments,
+          arguments.map(argument => if (isCode(argument)) None else argument.known),
+          restatingConstructorOf(resultType, value.known)
+        ).map(meta =>
+          value match {
+            case Value.Data(constructor, fields, _) => (after, Value.Data(constructor, fields, meta))
+            case _                                  => (after, Value.Meta(meta))
+          }
+        )
     }
+
+  /** The meta constructor a bodied value's brace over `resultType` is passed. For a `data` type declaring slots it
+    * takes the slots alone and rebuilds `derived` with them: the constructors' reach records stay what the body derived,
+    * so a `match` on the result still hands its arms the fields' metas (`docs/meta.md` §17.2, O5). Not computed when
+    * `derived` is not. Any other type's is its own meta constructor, as for a native ([[plainConstructorOf]]).
+    *
+    * {{{
+    *   def warm: Temperature {Positive} = Temperature(5)
+    *     derived  Temperature$Meta(Positive, Reached(Temperature$Meta$Temperature(5…5)))
+    *     passed   slot$1 -> Temperature$Meta(slot$1, Reached(Temperature$Meta$Temperature(5…5)))
+    * }}}
+    */
+  private def restatingConstructorOf(resultType: GroundValue, derived: Option[GroundValue])(
+      metaType: GroundValue
+  ): CompilerIO[Option[(SemValue, GroundValue)]] =
+    resultType match {
+      case GroundValue.Structure(fqn, typeArguments, _) =>
+        declaresDataSlots(fqn).ifM(
+          (
+            EscalatingReducer.reduceApplied(ValueFQN(fqn.moduleName, slotsName(fqn)), typeArguments, Seq.empty),
+            metaConstructorOf(metaType)
+          ).mapN {
+            case (Some(slots), Some(constructor)) =>
+              derived.collect { case meta: GroundValue.Structure => restating(constructor, fieldTypes(slots), meta, metaType) }
+            case _                                => None
+          },
+          plainConstructorOf(metaType)
+        )
+      case _                                            => plainConstructorOf(metaType)
+    }
+
+  /** `constructor` taking the `slotTypes` first, then the rest of `derived`'s fields, as a function of the slots alone,
+    * with its type.
+    */
+  private def restating(
+      constructor: GroundValue.Structure,
+      slotTypes: Seq[GroundValue],
+      derived: GroundValue.Structure,
+      metaType: GroundValue
+  ): (SemValue, GroundValue) = {
+    val kept = derived.args.takeRight(constructor.valueType.functionArity - slotTypes.size).map(Evaluator.groundToSem)
+    def taking(remaining: Int, slots: Seq[SemValue]): SemValue =
+      if (remaining === 0) (slots ++ kept).foldLeft(Evaluator.groundToSem(constructor))(Evaluator.applyValue)
+      else SemValue.VLam(s"slot$$${slots.size + 1}", slot => taking(remaining - 1, slots :+ slot))
+    (
+      taking(slotTypes.size, Seq.empty),
+      slotTypes.foldRight(metaType)((slot, rest) =>
+        GroundValue.Structure(WellKnownTypes.functionDataTypeFQN, Seq(slot, rest), GroundValue.Type)
+      )
+    )
+  }
+
+  /** The meta constructor of `metaType` ([[metaConstructorOf]]) as a companion is passed it, with its type. */
+  private def plainConstructorOf(metaType: GroundValue): CompilerIO[Option[(SemValue, GroundValue)]] =
+    metaConstructorOf(metaType).map(_.map(constructor => (Evaluator.groundToSem(constructor), constructor.valueType)))
 
   /** A stated transfer over the call's arguments. The code the callee runs is followed run by run ([[runCode]]), each
     * run handed what the callee states it hands it, and the transfer reads each as what it yields: a companion is Eliot
@@ -1294,8 +1368,9 @@ object MetaInterpreter {
     * produced. The companion is reduced at [[companionTypeArguments]] — the callee's own type arguments, then the meta
     * types of its parameters and result — so a generic companion's `join`/arithmetic always lands on a real `Meta`
     * instance rather than a stuck non-existent `T$Meta`. A slot-producing companion also takes the meta *constructor* of
-    * that result meta type, first ([[MetaCompanionLayout.constructorParameterName]]), at its own type
-    * ([[metaConstructorOf]]); a result whose meta type is `Unit` has none, so its transfer is ⊤ — R2 reports a leaf
+    * that result meta type, first ([[MetaCompanionLayout.constructorParameterName]]), at its own type, as
+    * `constructorOf` gives it — [[metaConstructorOf]]'s, but for a bodied value's brace over a slotted `data` result
+    * ([[restatingConstructorOf]]); a result whose meta type is `Unit` has none, so its transfer is ⊤ — R2 reports a leaf
     * stating slots over such a result ([[MetaTransferAccountingProcessor]]).
     *
     * Each argument is passed by [[companionArgument]]. `None` when the result depends on an argument whose meta is not
@@ -1308,7 +1383,8 @@ object MetaInterpreter {
   private def reduceTransfer(
       callee: ValueFQN,
       calleeTypeArgs: Seq[GroundValue],
-      argMetas: Seq[Option[GroundValue]]
+      argMetas: Seq[Option[GroundValue]],
+      constructorOf: GroundValue => CompilerIO[Option[(SemValue, GroundValue)]] = plainConstructorOf
   ): CompilerIO[Option[GroundValue]] = {
     val companion = RefinementChannelProcessor.metaCompanionFqn(callee)
     companionTypeArguments(callee, companion, calleeTypeArgs, argMetas.size, withResult = true).flatMap {
@@ -1319,10 +1395,10 @@ object MetaInterpreter {
             .reduceApplied(companion, typeArguments, leading ++ arguments)
             .map(_.collect { case s: GroundValue.Structure => s })
         takesConstructor(companion).ifM(
-          metaConstructorOf(metaTypes.last).flatMap {
-            case Some(constructor) =>
-              reduce(calleeTypeArgs ++ metaTypes :+ constructor.valueType, Seq(Evaluator.groundToSem(constructor)))
-            case None              => none[GroundValue].pure[CompilerIO]
+          constructorOf(metaTypes.last).flatMap {
+            case Some((constructor, constructorType)) =>
+              reduce(calleeTypeArgs ++ metaTypes :+ constructorType, Seq(constructor))
+            case None                                 => none[GroundValue].pure[CompilerIO]
           },
           reduce(calleeTypeArgs ++ metaTypes, Seq.empty)
         )
@@ -1502,6 +1578,8 @@ object MetaInterpreter {
   private def metaStructureFqn(typeName: ValueFQN): ValueFQN = ValueFQN(typeName.moduleName, metaStructureName(typeName))
 
   private def fieldsName(typeName: ValueFQN): QualifiedName = StructuralMetaDesugarer.fieldsName(typeName.name.name)
+
+  private def slotsName(typeName: ValueFQN): QualifiedName = StructuralMetaDesugarer.slotsName(typeName.name.name)
 
   /** The `BigInteger` type a literal's seed value carries — the only literal-domain constant the interpretation needs,
     * to wrap a raw `n` as a [[GroundValue.Direct]] when reducing a seed companion at it.

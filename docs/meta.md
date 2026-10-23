@@ -1662,6 +1662,24 @@ change in the same stage.
   `data` result; a slotless `data` result stays refused, having nothing to state. Tests: the brace narrows the slot,
   the fields are still read after the call, and ⊥ stays ⊥.
 
+  **Built 2026-10-23.** The channel needs to know how many of `D$Meta`'s fields the brace states, and their types, so
+  `StructuralMetaDesugarer` generates `D$Slots[<D's binders>]: Type = Function[S1, …, Unit]` for a type declaring slots,
+  beside `D$Fields` and shaped like it. That signature is also what tells a slotted `data` from a slotless one.
+  `MetaInterpreter`'s restated arm then picks the constructor (`restatingConstructorOf`): for a slotted `data` result
+  it passes a function of the slots alone, which applies `D$Meta`'s own constructor to them and to the derived meta's
+  remaining fields, the constructors' reach records. So the result is a `D$Meta` built the way a constructor's
+  statement builds one. Every other result gets its plain meta constructor, as before. A value the body built stays a
+  `Value.Data` with its fields, and only its meta is replaced, so a frame or a cell inside it is still followed. When
+  the derived meta is not computed, the restated one is not computed either. `MetaTransferAccountingProcessor` refuses
+  a brace over a `data` result only when the type declares no slots.
+
+  A brace listing the wrong number of slots is refused by the companion's own type check ("Not a function", naming
+  `Temperature$Meta`). That message is poor, but it is the error a `type`'s slot brace already gives
+  (`def lie(x: Int): Int {closed(0, 1), closed(0, 2)} = x`), so it is not O5's to fix. Tests in
+  `DataSlotIntegrationTest`: the brace replaces the derived slot, there is none without a brace, a wider brace is taken
+  as written, a `match` arm still reads the derived field metas (accept and reject), each constructor of a sum, and ⊥
+  stays ⊥. All 47 example jars are byte-identical, and the whole suite (2294) is green.
+
 - **O6: generic and recursive `data` slots.** `MetaOf[A]` in a `data` slot (a binder per carried parameter, as
   `T$Carried` gives a `type`), and slots on recursive `data`, designed with the recursive-data fold (decision J).
   Design only, until a program needs it.
@@ -1679,7 +1697,7 @@ change in the same stage.
   Each earlier stage records itself here as it lands, as T1–T6 did, so O7 is the Part I rewrite and the outside
   documents.
 
-**Order.** O1 (built), then O4b and O5, in that order (O4a was dropped by decision R). O2 and O3 are independent of each other and of O4, and
+**Order.** O1, O4b and O5 are built, in that order (O4a was dropped by decision R). O2 and O3 are independent of each other and of O4, and
 can come whenever a program asks for them. O6 waits on the recursive-data fold. O7 is last.
 
 **The plan's questions**, as answered (Q3–Q6 by Robert on 2026-10-23; Q1, Q2 and Q7 built in O1 as recommended):
@@ -1822,8 +1840,9 @@ byte-identical. **Open: decision I fails eliot-build** (§5.3's note) and waits 
 recommendations for Q1, Q2 and Q7. Q3–Q6 were answered the same day, Q4 with decision P, and the plan was adjusted:
 O4 is split into O4a (a field's meta through its accessor) and O4b (declared slots). Starting O4a found a name clash
 in meta code, and Robert answered it with decision R: no field's meta is read in meta code, so O4a is dropped.
-O4b, a meta declared on a `data` type, is built the same day. **Next: O5**, a brace on a bodied value returning a
-slotted `data`. Next after that is **T7**, the record, which O7 folds into.
+O4b, a meta declared on a `data` type, is built the same day, and so is O5, a brace on a bodied value returning a
+slotted `data`. **Next: O7**, the record (T7 folds into it). O2 and O3 wait for a program that needs them, and O6 for
+the recursive-data fold.
 
 **The `Unit` question (2026-10-21), closed the same day.** Robert: a type declaring no meta gets `Unit` implicitly, and
 *"the rest of the machinery should not know that this was 'default'"*. T3 removed two places that knew: §5.3's type

@@ -127,6 +127,43 @@ class DataSlotIntegrationTest extends FullIntegrationTest {
     rejects(box, "open(Box(\"x\", 0))", "open")
   }
 
+  // O5 (§17.2): a bodied value's brace over a slotted data result states the slots, trusted, and only those; the
+  // fields' metas stay what the body derived.
+  private def warm(brace: String, degrees: Int) = s"def warm: Temperature$brace = Temperature($degrees)\n"
+
+  "a brace on a bodied value returning slotted data" should "replace the slot its body derives" in {
+    accepts(warm(" {Positive}", 0), "warmth(warm)", "0")
+  }
+
+  it should "leave the derived slot in place when there is none" in {
+    rejects(warm("", 0), "warmth(warm)")
+  }
+
+  it should "be taken as written when it is wider than the derivation" in {
+    rejects(warm(" {AnySign}", 5), "warmth(warm)")
+  }
+
+  it should "leave the fields' metas to be read by a match arm" in {
+    accepts(degreesOf + warm(" {Positive}", 5), "useByte(degreesOf(warm))", "5")
+  }
+
+  it should "leave the fields' metas to be checked" in {
+    rejects(degreesOf + warm(" {Positive}", 200), "useByte(degreesOf(warm))", "useByte")
+  }
+
+  it should "state each constructor's slots of a sum" in {
+    accepts(shape + "def dotted: Shape {Positive} = Dot\n", "draw(dotted)", "2")
+  }
+
+  // ⊥ stays ⊥: `stop`'s `AnySign` would spoil the join if the brace made it return.
+  private val stopping =
+    "def stop uses Abort: Temperature {AnySign} = abort\n" +
+      "def g(c: Bool) uses Abort: Int = warmth(fold(c, Temperature(5), stop))\n"
+
+  it should "not make a call that never returns return" in {
+    accepts(stopping, "g(true) else 0", "5")
+  }
+
   "a constructor of a slotted type" should "be refused when it states nothing" in {
     refuses("data Reading {level: Sign}(value: Int)\n", "The constructor 'Reading' does not state the slots of its type 'Reading'.")
   }
