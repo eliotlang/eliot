@@ -98,6 +98,12 @@ Nothing effect-related is tracked here; add it there.
   roots and backend (§10), so the stdlib subgraph is built once per configuration rather than once
   per example. Two *different* compiler builds sharing a target directory still take turns
   replacing the region and both stay cold (§21) — correct, but never warm.
+- **Deeply nested expressions overflow the parser's stack, and in a test that hangs the run.** Found 2026-10-24
+  (`docs/meta.md` §17.3, F3): a body of 500 nested calls (`add(add(…(x, 1)…), 1)`) throws `StackOverflowError` inside
+  `ParserResult.flatMap` on a cats-effect compute thread, and the compile never finishes, so a `ProcessorTest` or jvm
+  integration test waits forever instead of failing (the runner's `out.json` is never written). Two fixes, both
+  owed: the parser's recursion should not grow the JVM stack per nesting level (or a depth limit should be a
+  diagnostic), and a fatal error on a compute thread must fail the compilation rather than leave it waiting.
 - Rename processors to generators?
 
 ## Microcontroller target

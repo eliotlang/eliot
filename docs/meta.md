@@ -1,7 +1,7 @@
 # Meta — the refinement channel
 
-Status (2026-10-23): **three domains shipped and a program may declare its own; R2 armed and R3 reversed; the
-interpretation and in-context demands built** (Part I).
+Status (2026-10-24): **three domains shipped and a program may declare its own; R2 armed and R3 reversed; the
+interpretation and in-context demands built; every call's derived meta is a fact** (Part I).
 **Completing totality is designed and decided, and partly built** (Part II):
 - every leaf states its meta, type-parameter results included;
 - what reaches a native through a frame, a cell or a loop is followed by the interpretation;
@@ -18,6 +18,11 @@ derived one, trusted like a native's (R3, §3). A `data` type declares slots tha
 on a function returning one narrows them. The pivot's remaining stages (O2, O3, O6) wait for a program that needs them
 or for the recursive-data fold (§17.2). Cycles, stack depth and peak memory are not metas (§8.2); they are
 `docs/grades.md`.
+
+**Derived metas are facts (§5.3, §17.3, decision S).** A call's derived meta is a `DerivedMeta` fact, keyed by what
+the call can see, so the step budget counts one definition's own work and a program's size never reaches it:
+eliot-build compiles at the budget of 1024, which decision I could not do before (2026-10-24). Left: where running out
+is reported (F4, Q9) and nothing else.
 
 This document replaces three: `total-meta-transfers.md` (the rules and the interpretation), `string-length-meta.md`
 (the `String` size domain) and `structural-meta.md` (the P6 design). Their full text is at `2a66009a`, and §21 maps
@@ -435,6 +440,10 @@ real monomorphized body:
   them through every step, in Eliot's strict evaluation order, and code a native runs is followed run by run (§14).
 - **A loop** (§11.2) is the fixpoint of its code: a native states it (`looped`, `endless`), and the interpretation runs
   the code from the loop's initial accumulator until neither the accumulator nor any cell changes.
+- **Every call is a fact** (§5.3): the call's answer, its result and what it did to the frames and cells it was
+  handed, is a `DerivedMeta` keyed by the callee, its type arguments and result type, its arguments and the store it
+  can reach, computed once for every derivation that makes it. A call reaches only the frames and cells its arguments
+  hold, so the rest of its caller's store is kept aside and put back (`Reach`, §17.3's F2).
 - **A value a `data` constructor built** is held with its fields as the interpretation holds them, and with its
   structural meta (§13), and a `match` on it runs only the arm its constructor selects. Both are generated statements
   (§13.4), so the channel names no constructor and no eliminator. Within one interpretation a field read is the very
@@ -630,10 +639,10 @@ Each of these is a gap: fail-safe at every demand, and pinned by a test that cha
 | gap | example | closed by |
 |---|---|---|
 | a `data` type recursive other than through a field of its own type | `Rose(kids: Option[Rose], value: Int)`, or `A(b: Option[B])` with `B(a: Option[A])`: the structural map has no finite meta type, so the value's meta is not computed | the recursive group of §13.3, deferred to the recursive-data fold (decision J, §18) |
-| a demand on a closure the walk cannot see applied | `applyTo(y -> useByte(y), 10)`; `useByte(f(x))` with `f` a parameter | a context that can carry a closure (a fact key holding a body and an environment), when a program needs it |
+| a demand on a closure the walk cannot see applied | `applyTo(y -> useByte(y), 10)`; `useByte(f(x))` with `f` a parameter | a context that can carry a closure (a fact key holding a body and an environment), when a program needs it; since §17.3's F1 a closure is that data (`Address` and environment), so what is left is `MetaDemands`' context taking one |
 
-Decision I closed the step budget's row (2026-10-22): running out of it is an error, never a gap (§5.3), though see
-the note there. T6 closed the `List` row the same day: a fold's element is every item's meta (§17.1). T5 closed the
+Decision I closed the step budget's row (2026-10-22): running out of it is an error, never a gap (§5.3), and since
+decision S (2026-10-24) the budget is one definition's, so eliot-build fits it (the note there is closed). T6 closed the `List` row the same day: a fold's element is every item's meta (§17.1). T5 closed the
 three rows above the `List` one: a field read out of a value the interpretation did not build, the join
 of two constructed values, and with them `if … else`. Each was a structure that could not carry what flows through
 it, which is what Part II finds.
@@ -1925,7 +1934,8 @@ kept per meta context, as `MetaDemands` already keeps a demand.
   stack, which hangs a test instead of failing it, a separate gap), and `climb11`, which ran out before, derives.
 - **F4: reporting.** Running out is reported where Q9 decides.
 - **F5: the record.** Part I's §5 and §5.3 state the fact, §5.3's note is closed, and §18.1 says where this left
-  decision I.
+  decision I. *Done 2026-10-24*, ahead of F4: the status, §5, §5.2, §5.3 and §8 state it, §18 records decision S, and §18.1
+  says decision I is closed. F4 adds its own line where it changes the report.
 
 **Questions** (numbered after §17.2's):
 
@@ -2046,7 +2056,7 @@ kept per meta context, as `MetaDemands` already keeps a demand.
   brace otherwise has to restate (§8.1).
 - **An interval intersection**, which `substring`'s index ceiling waits on (§2.2).
 
-### 18.1 Where this was left (2026-10-22)
+### 18.1 Where this was left (2026-10-22, last updated 2026-10-24)
 
 Of Part II, T1 to T4 are built (2026-10-21) and the rest is a design. Every decision in §18 is
 taken: B on 2026-10-21 after the question whether ⊥ is a special value (it is not), then A and C–I as recommended.
