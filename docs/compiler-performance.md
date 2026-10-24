@@ -1,7 +1,9 @@
 # Compiler performance: a cold build in seconds
 
 Status: **proposal, 2026-10-24.** The measurements are real; the ideas are not built, and nothing here is decided.
-Questions P1–P6 (§5) await Robert.
+Questions P1–P6 (§5) await Robert. §6 records the first experiment, the checker on virtual threads: it was **7%
+slower**, and it weakens I2 as a processor-by-processor migration. §6 also corrects how §1's absolute times should be
+read.
 
 The goal (Robert, 2026-10-24): *"A cold compile of the build project should not take 1 minute. It should take a
 couple of seconds actually. We need some very fundamental ideas to break through here."* eliot-build's launcher is
@@ -119,6 +121,10 @@ allocations in the profile have no Eliot frame to attribute them to. The engine 
 while they are migrated, an old one as `IO` and a new one on a virtual thread blocking on a future completed from the
 engine's deferred, so the checker can go first and be measured alone. To check first: that every runtime the compiler
 runs on (the launcher, IntelliJ's for the LSP, CI) is JDK 21 or later.
+
+> **Tried 2026-10-24 (§6): the checker alone on virtual threads is 7% slower.** Its 9 822 checks make 171 017 fact
+> reads, which still run through the `CompilerIO` stack. So the checker cannot be migrated and measured on its own
+> through this bridge, and a gain from I2, if there is one, has to be measured with the fact reads direct too.
 
 ### I3. Twenty cores: a parallel scheduler
 
@@ -255,3 +261,73 @@ cached hashes).
 
 Not proposed, measured: a resident daemon or a native image for the CLI (a warm JVM saves 14%), and AppCDS (declined
 2026-08-06).
+
+## 6. Experiment 1: the checker on virtual threads (2026-10-24)
+
+Robert asked for the checker to be tried on virtual threads and measured, as I2's mixed-mode migration proposed
+(*"the checker first"*). Result: **every jar byte-identical, and 7% slower.** The code is not on `master`; it is kept
+in the local stash *"perf experiment: the checker on virtual threads (docs/compiler-performance.md §6)"*.
+
+### 6.1 What was built
+
+The checker is written against one type alias, `CheckIO[A] = StateT[CompilerIO, CheckState, A]`, through five helpers
+(`get`, `pure`, `modify`, `inspect`, `liftF`), and is run from one place (`TypeStackLoop.process`). The experiment
+changed only those:
+
+- `CheckIO[A] = Context => A`, where `Context` holds the `CheckState` and the accumulated errors as mutable fields. A
+  bind is cats' `Function1` monad, so a `for` is plain function calls; an abort is an exception. The 2 353 lines of
+  checker compiled against it **unchanged**. Two call sites changed: `TypeStackLoop.process` and one test running a
+  `CheckIO` directly.
+- `CheckIO.run` starts the check on a **virtual thread**, and the processor's fiber waits on a one-slot mailbox.
+- `liftF(compilerIO)`, which is how the checker reads a fact or registers an error, runs that `CompilerIO` with the
+  check's own `CompilationProcess` and error chain, so dependency tracking, cycle detection and error accumulation are
+  exactly as before. Version 1 handed every lifted `CompilerIO` to the processor's fiber and parked the virtual thread
+  until the reply came. Version 2 first runs it on the virtual thread with `IO.syncStep`, which runs synchronously up
+  to the first async boundary, so a memo hit completes in place, and hands only the remainder to the fiber.
+
+### 6.2 What was measured
+
+On eliot-build, cold, with jars byte-identical in every run:
+
+- **9 822 checks make 171 017 lifts**, 17 per check. Counted where each closure is built, since a `Function1` monad
+  runs a closure after its builder's frame has returned, which hides the caller as cats-effect does. They are all fact
+  reads: `ensureBinding`'s `fetchBinding` 49 024, `ensureBodyBindings`'s `BodyValueReferences` 49 024,
+  `inferValueReference`'s `SaturatedValue` 37 271, `processValueMono` 13 197, `processSignatureTwin` 9 765,
+  `CarrierKindChecker.recordCarrierFlexes` 5 673, `flippedCalleeSignature` 4 272, the ability resolver's searches
+  2 344, `Track.implBindings` 254, `HandedBinders.read` 193.
+- **Version 1** (every lift handed off) made the checker processors slower in a `--statistics` run: the compile track
+  7.7 → 9.2 s, the runtime track 3.4 → 4.9 s.
+- **Version 2** (`syncStep` first) handed off only 2 685 of the 171 017 lifts (1.6%). Cold compiles alternating
+  baseline and experiment, each from its own copy of `lang`'s classes, no statistics:
+
+| | run 1 | run 2 | run 3 |
+|---|---|---|---|
+| baseline (`8bea273a`) | 37.0 s | 37.7 s | 37.8 s |
+| checker on virtual threads | 40.5 s | 40.5 s | 39.8 s |
+
+### 6.3 What it means, and what it does not
+
+- **Migrating the checker alone does not pay**, and that is the finding: the checker crosses into `CompilerIO` 17 times
+  per check, and every crossing still runs the whole `ReaderT`/`StateT`/`EitherT`/`IO` stack, now through `syncStep`'s
+  interpreter and a `SyncIO` run as well. Whatever the direct-style binds saved, the crossings cost more. So I2 cannot
+  be migrated and measured one processor at a time through a bridge: the fact read is the hot crossing, and it has to
+  be direct as well, which is the engine's part of I2.
+- **Why exactly it is slower is not established.** A JFR profile of both versions was being taken when the work was
+  stopped to record it here. The plausible causes are untested: `syncStep`'s per-call cost on 168 000 synchronous
+  reads, the `Function1` monad's closures and `cats` instance dispatch, and a virtual thread per check (9 822).
+- **It does not refute §1's attribution.** It shows the checker's own binds are not where the run loop's 33% is, or
+  not enough of it to outweigh this bridge. The run loop's samples have no Eliot frame (§1), so they belong to whoever
+  builds `IO` values: processors, the engine and the lifted reads alike.
+- **The next experiment that would decide I2** is the fact read itself: a synchronous memo-hit path in the engine
+  (`getFact` answering an already-computed fact without building an `IO`), measured with the existing processors
+  unchanged.
+
+### 6.4 Correction: §1's absolute times vary with the machine's load
+
+The baseline compiler, unchanged, took 53.7 and 53.9 s at about 15:00 (§1, and `docs/meta.md` §16) and 37.0–37.8 s at
+about 21:00, with nothing else heavy running then. Other jobs ran on the machine during the day, and a busy machine
+lowers a single-threaded compile's clock speed. So an absolute time is only comparable with others taken in the same
+session: the alternated comparisons (v0.18 against `8bea273a` in `docs/meta.md` §16, and §6.2 here) and the shares
+from one profile (§1) stand, while §1's "54 s" and §4's starting point are this machine on a busy afternoon. The goal is
+unchanged: 37 s is still 15–20× from a couple of seconds.
+
