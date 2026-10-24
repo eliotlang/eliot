@@ -295,7 +295,11 @@ subset of its data.
       `channel/MetaTransferAccountingProcessor` (meta transfers: R2 a leaf must state, R3 a bodied value may, its result only), the
       latter a `WovenValue` codegen precondition, and `channel/MetaDemandsProcessor` (P5: every `where` and parameter
       brace checked in each meta context its call is reached in from `main`, one `MetaDemands` fact per context; a
-      body's root context leaves its meta-carrying parameters symbolic and defers what reads them to its callers).
+      body's root context leaves its meta-carrying parameters symbolic and defers what reads them to its callers). Both
+      walks ask `MetaInterpreter` for a call's meta, and every call it interprets is a `DerivedMeta` fact
+      (`docs/meta.md` §17.3, decision S): keyed by callee, type arguments, result type, arguments (a closure named by
+      its `Address`, frames and cells numbered canonically) and the store the call can reach (`Reach`), so the
+      1024-step budget counts one definition's own work, each call one step.
 14. **used** — collects used value names starting from a `main`
 15. **uncurry** — uncurries calls for the backend
 

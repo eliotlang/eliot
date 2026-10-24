@@ -12,6 +12,7 @@ import com.vanillasource.eliot.eliotc.core.fact.CoreAST
 import com.vanillasource.eliot.eliotc.matchdesugar.fact.MatchDesugaredValue
 import com.vanillasource.eliot.eliotc.module.fact.*
 import com.vanillasource.eliot.eliotc.monomorphize.channel.{
+  DerivedMeta,
   MetaTransferAccounting,
   RefinementTable,
   WovenValue
@@ -79,6 +80,7 @@ object LangProgressDescriber extends ProgressDescriber {
       case AbilityImplementationCheck.Key(ability, _, _)   => checking(ability.moduleName)
       case ModuleAbilityOverlapCheck.Key(moduleName, _, _) => checking(moduleName)
       case RefinementTable.Key(vfqn, _)                    => checking(vfqn.moduleName)
+      case DerivedMeta.Key(callee, _, _, _, _)             => checking(callee.moduleName)
       case MetaTransferAccounting.Key(vfqn, _)             => checking(vfqn.moduleName)
       case WovenValue.Key(vfqn, _)                         => checking(vfqn.moduleName)
       case UsedNames.Key(root)                             => lowering(root.moduleName)

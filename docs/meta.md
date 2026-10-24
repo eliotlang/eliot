@@ -486,20 +486,24 @@ because a companion is Eliot over metas. So the closure at a code parameter is a
 which carry no meta (a unit, handles), and **the companion receives the yield**. That is how `fold` and `handleCases`
 join their arms. When a handled statement exists (§4.5), the handler is applied to the stated metas instead.
 
-### 5.3 Budget, gate, memo
+### 5.3 Budget, gate, facts
 
-- **The budget is a step count**, `interpretationBudget = 1024` per call node, threaded through depth *and* fan-out
-  together. It was 256 until T4: a loop runs its code up to about four times, and `forever` over a `putState` and a
-  `raise` took more than 256 steps. Four times as many changed no example's jar or compile time. A hard count bounds a
-  diamond-shaped call DAG absolutely, and the memo below does not: distinct argument metas defeat its key. A call the
-  memo recalls costs one step. **Running out of it is a compiler limit** (decision I, §18, built 2026-10-22): the derivation answers
+- **The budget is a step count**, `interpretationBudget = 1024` per **call's answer** (a `DerivedMeta` fact, below),
+  threaded through depth *and* fan-out together within it. A call the answer makes is a fact of its own, read for one
+  step, so the budget bounds what one definition does in one context, and a program's size never reaches it (decided
+  2026-10-24, Q10 of §17.3; until then it was per call node, so it bounded the whole program a call reached). It was
+  256 until T4: a loop runs its code up to about four times, and `forever` over a `putState` and a `raise` took more
+  than 256 steps. Four times as many changed no example's jar or compile time. **Running out of it is a compiler
+  limit** (decision I, §18, built 2026-10-22): the derivation answers
   that it ran out (`MetaInterpreter.metaOfCall` gives `None`, and a loop cut short before its fixpoint counts too),
   and `RefinementChannelProcessor`, the walk that asks for every call's meta once, reports *"Computing the
   meta-information of this call of 'f' takes more than 1024 steps"* at the call. `MetaDemandsProcessor` asks once per
   context, so it reports nothing of its own: it reads the call as unknown, which fails any demand on it. What the
   derivation had got to is never handed on.
 
-  **Open (2026-10-22): decision I as built makes eliot-build fail to compile.** The limit fires at `main`'s call of
+  **Closed 2026-10-24 by §17.3's F3: eliot-build compiles at the budget of 1024**, its launcher's jar byte-identical
+  to the one a lifted budget built, and its 368 tests pass. What follows is the record of how it was open.
+  *Open (2026-10-22): decision I as built makes eliot-build fail to compile.* The limit fires at `main`'s call of
   `answer`, the whole build tool, at 1024 steps, at 16 384 and at 262 144 alike. Before I such a call was left not
   computed, which nothing read. It is on `master`, unreleased, and every dependent pins `v0.18`, so nothing is broken
   yet, but no release can be cut until it is decided. **Measured 2026-10-23, with the memo below built:** deriving
@@ -520,17 +524,17 @@ join their arms. When a handled statement exists (§4.5), the handler is applied
   `Unit` (`putState`) must be followed, and so must a `Unit` call that never returns. Measured on a cold compile of
   every example, one at a time: 214.2 s before, 219.6 s after (+2.5%), no example more than 1.5 s apart, and every jar
   byte-identical.
-- **The memo** (built 2026-10-23, `MetaInterpreter.Memo`). A call's answer — its value, the store after it and how
-  many frames and cells it made — depends on the callee, its type arguments, its result type, its arguments and the
-  store at the call, and on nothing else, so one derivation keeps every answer it got and recalls it, for one step,
-  when the same call comes again. Since F2 (§17.3) the store in the key is the one the call can reach: the frames and
-  cells its arguments hold, without their earlier exits, and a marker for the rest. The budget does not change an
-  answer, only whether it is got: an answer the budget cut short is not kept. Frames and cells are identities local to the derivation, so an entry is kept with them
-  renumbered in the order the call mentions them, and numbered back when it is recalled; a closure keeps only the
-  parameters its node mentions, so two closures over the same lambda (§5.2's address) are equal when what they read
-  is. It is scoped to
-  one call node's derivation, as the budget is, so whether a call is reported never depends on what was derived
-  before it. Every example's jar is byte-identical with it. P5's contexts are such a memo already, for demands (§6).
+- **Every call is a fact** (`DerivedMeta`, `DerivedMetaProcessor`, built 2026-10-24 as §17.3's F3; it replaced the
+  memo of 2026-10-23, which kept answers within one call node's derivation). A call's answer — its value, the store
+  after it and how many frames and cells it made — depends on the callee, its type arguments, its result type, its
+  arguments and the store it can reach, and on nothing else, so it is a fact keyed by those: computed once and shared
+  by every derivation that makes the call, across call nodes, both walks and, through the incremental cache, builds.
+  The store a call can reach is the frames and cells its arguments hold, without their earlier exits, and two markers
+  standing in for the rest of its caller's store (`MetaInterpreter.Reach`, F2). Frames and cells are numbered in the
+  order the arguments, then that store, mention them, and numbered back when the answer is read; what the call made is
+  numbered after them. A closure is named by its address (§5.2) and keeps only the parameters its node mentions, so two
+  closures over the same lambda are equal when what they read is. An answer the budget cut short says so, and the call
+  reading it is cut short too. P5's contexts are facts of the same kind, for demands (§6).
 - **A loop's meta is a fixpoint** (§11.2, built in T4). A loop lives in a native, which states it through a primitive
   of the transfer language recognised by name (`looped`, `endless`), because the channel names no leaf. *Finite* is
   not *computable at compile time*: `readLines`' size is truthfully `0 .. 2³¹−1`. So the iteration count is never run
@@ -1782,7 +1786,7 @@ Out of scope: a brace on an **ability method declaration** stays §18's open que
 a transfer its implementations must satisfy). An implementation's member is an ordinary bodied value, so O applies to
 it from O1. O1 pins what a brace on each of the two does.
 
-### 17.3 Derived metas as facts (stages F1–F5, proposed 2026-10-24, not decided)
+### 17.3 Derived metas as facts (stages F1–F5, proposed 2026-10-24, decided the same day; F1–F3 built)
 
 **Why.** Decision I fails eliot-build (§5.3's note) because a call's derivation is a walk *inside one call node*: the
 derivation of `main`'s call of `answer` interprets everything `answer` reaches, about 1 960 monomorphic values, and
@@ -1910,7 +1914,15 @@ kept per meta context, as `MetaDemands` already keeps a demand.
   marker frame's exits. Nothing else in the draft changes.
 - **F3: the fact.** `DerivedMeta` and its processor and codec; `metaOfCall` reads it; the memo goes; the budget counts
   per fact. Byte-identical; measured against §16's baseline (examples, cold, sums) and on eliot-build, which then
-  compiles at the budget of 1024.
+  compiles at the budget of 1024. *Built 2026-10-24* (`DerivedMeta`, `DerivedMetaProcessor`,
+  `MetaInterpreter.answerOf`). Every call the interpretation makes is a fact, not only a saturated one: a call is
+  keyed exactly as the memo keyed it (with its result type, which costs nothing and keeps an over-application's rest
+  inside the fact), so nothing had to be decided about arity. **eliot-build compiles at 1024** and its 368 tests pass;
+  its launcher's jar is byte-identical to F1's with the budget lifted, and so are all 47 example jars; the suite is
+  green (2299). Cold compiles of every example, one at a time, summed: F2 262.6 s, F3 274.9 s and 255.3 s on two runs,
+  so within the noise; the cache 205.9 MB against 206.4 and 206.8 MB (+0.3%). The budget test is a single definition
+  doing more than 1024 steps itself (`long`, a balanced tree of 511 `add`s; 500 nested calls overflow the parser's
+  stack, which hangs a test instead of failing it, a separate gap), and `climb11`, which ran out before, derives.
 - **F4: reporting.** Running out is reported where Q9 decides.
 - **F5: the record.** Part I's §5 and §5.3 state the fact, §5.3's note is closed, and §18.1 says where this left
   decision I.
@@ -1919,10 +1931,10 @@ kept per meta context, as `MetaDemands` already keeps a demand.
 
 | | Question | Recommendation |
 |---|---|---|
-| Q8 | Which calls are facts | Every saturated call, natives included: only then is each fact small (the table above). |
+| Q8 | Which calls are facts | Every saturated call, natives included: only then is each fact small (the table above). **Decided 2026-10-24 as recommended.** |
 | Q9 | Where running out is reported | At the definition whose own fact ran out, naming the argument metas, once per fact; a fact reading a callee's that ran out is not computed there, as `MetaDemandsProcessor` reads it today. The alternative keeps today's report at each call node in a walk that reaches it, which reports one cause at every caller above it. |
-| Q10 | The budget per fact | Keep 1024: the largest fact eliot-build makes is 143 steps. |
-| Q11 | The memo (`264691c0`) until F3 | Keep it: F2 is measured against it, and F3 deletes it. |
+| Q10 | The budget per fact | Keep 1024: the largest fact eliot-build makes is 143 steps. **Decided 2026-10-24 as recommended.** |
+| Q11 | The memo (`264691c0`) until F3 | Keep it: F2 is measured against it, and F3 deletes it. **Done: F3 deleted it.** |
 
 ## 18. Decisions
 
@@ -2015,11 +2027,13 @@ kept per meta context, as `MetaDemands` already keeps a demand.
   constructor that does not state its slots is an error (*"Meta values are total"*); a slot on a recursive `data` and
   `MetaOf[A]` in a `data` slot wait for O6. **Built 2026-10-23** (O4b).
 
-**Proposed, not decided (2026-10-24):**
+**Decided 2026-10-24** (Robert took Q8 and Q10 as recommended):
 
-- **Derived metas are facts** (§17.3): a saturated call's derived meta is a `DerivedMeta` fact keyed by its callee,
-  type arguments and arguments, with frames and cells numbered and only those the call can reach, and the budget
-  counted per fact. It is what would make decision I hold on eliot-build. Questions Q8–Q11 there.
+- **S. Derived metas are facts** (§17.3): every call the interpretation makes is a `DerivedMeta` fact keyed by its
+  callee, type arguments, result type and arguments, with frames and cells numbered and only those the call can reach,
+  and the budget counted per fact, at 1024. It changes what decision I's budget bounds (one definition in one context,
+  not the program a call reaches) and keeps its number. **Built 2026-10-24** (F1–F3): eliot-build compiles, so decision
+  I no longer blocks a release. Q9, where running out is reported, is open (F4).
 
 **Open, not blocking anything:**
 
@@ -2053,6 +2067,10 @@ in meta code, and Robert answered it with decision R: no field's meta is read in
 O4b, a meta declared on a `data` type, is built the same day, and so are O5, a brace on a bodied value returning a
 slotted `data`, and O7, the record (T7 folded into it). The pivot is complete: O2 and O3 wait for a program that needs
 them, and O6 for the recursive-data fold. **What blocks a release is decision I** (§5.3's note), still open.
+
+**2026-10-24: decision I is closed by decision S.** Derived metas are facts (§17.3), built in F1–F3 the same day, and
+eliot-build compiles at the budget of 1024 with every jar byte-identical. Left of §17.3: F4 (where running out is
+reported, Q9) and F5 (the record).
 
 **The `Unit` question (2026-10-21), closed the same day.** Robert: a type declaring no meta gets `Unit` implicitly, and
 *"the rest of the machinery should not know that this was 'default'"*. T3 removed two places that knew: §5.3's type

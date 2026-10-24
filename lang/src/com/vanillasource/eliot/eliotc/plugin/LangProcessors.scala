@@ -19,6 +19,7 @@ import com.vanillasource.eliot.eliotc.module.processor.{
   UnifiedModuleValueProcessor
 }
 import com.vanillasource.eliot.eliotc.monomorphize.channel.{
+  DerivedMetaProcessor,
   MetaDemandsProcessor,
   MetaTransferAccountingProcessor,
   RefinementChannelProcessor,
@@ -114,6 +115,7 @@ object LangProcessors {
     CompilerMonomorphicTypeCheckProcessor(),
     RefinementChannelProcessor(),
     MetaDemandsProcessor(),
+    DerivedMetaProcessor(),
     // Meta-transfer accounting (R2, and what a bodied value's brace may say), demanded as a `WovenValue` codegen precondition (docs/meta.md §3).
     MetaTransferAccountingProcessor(),
     WovenValueProcessor(),

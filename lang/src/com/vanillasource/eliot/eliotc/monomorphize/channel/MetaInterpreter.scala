@@ -63,9 +63,10 @@ import scala.annotation.tailrec
   * **Termination is the recursion gate's** (§1): user code cannot express recursion, so the derivation walks a DAG.
   * Every loop lives in a native, which states it (`looped`, `endless`), and its fixpoint is made finite by the meta
   * type's own widening (§11.2). The [[interpretationBudget]] is therefore not what makes this terminate — it is the
-  * §5.3 fail-safe against *cost*: a call DAG is acyclic, but a diamond-shaped one has exponentially many paths. The
-  * [[Memo]] makes a call reached along many of them with the same arguments cost one interpretation; the budget, a
-  * step count threaded through the whole derivation of one call node, bounds the calls that differ. Exhausting it is a
+  * §5.3 fail-safe against *cost*: a call DAG is acyclic, but a diamond-shaped one has exponentially many paths. Every
+  * call is a fact ([[DerivedMeta]], `docs/meta.md` §17.3), so a call reached along many of them with the same
+  * arguments is interpreted once; the budget, a step count threaded through one call's own answer, bounds what that
+  * one definition does, its calls one step each. Exhausting it is a
   * **compiler limit** (decision I): [[metaOfCall]] answers that it ran out, never a value, and the stamping walk
   * reports it at the call.
   *
@@ -259,10 +260,10 @@ object MetaInterpreter {
     }
   }
 
-  /** The interpretation's progress: the steps left of its budget, the next identity to give a frame or a cell, the
-    * frames and cells alive, and the calls already answered in this derivation.
+  /** The interpretation's progress: the steps left of its budget, the next identity to give a frame or a cell, and the
+    * frames and cells alive.
     */
-  private case class Run(budget: Int, fresh: Int, store: Store, memo: Memo) {
+  private case class Run(budget: Int, fresh: Int, store: Store) {
     def spent: Run = copy(budget = budget - 1)
 
     /** The budget is spent, so nothing more is followed: any cell may be written and any frame left through. A budget
@@ -281,74 +282,27 @@ object MetaInterpreter {
       if (!store.isEmpty && arguments.exists(holdsState)) copy(store = store.tainted) else this
   }
 
-  /** **The memo** (`docs/meta.md` §5.3): the calls one derivation has already answered. A call's answer — its value,
-    * the store after it and how many frames and cells it made — is a function of the callee, its type arguments, its
-    * result type, its arguments and the store it can reach ([[Reach]]), and of nothing else, the budget included, unless
-    * the budget ran out on the way. So a diamond-shaped call DAG, which reaches the same call along many paths,
-    * interprets it once, whatever frames and cells enclose it on each.
-    *
-    * Frames and cells are known by identities local to the derivation, so the same call reached twice holds different
-    * ones: an entry is kept with every identity renumbered in the order the call's arguments, then its store, mention
-    * them, and the frames and cells the call made numbered after those. A call reached again is renumbered the same way
-    * and its answer numbered back. An answer mentioning an identity the call neither held nor made is not kept.
+  /** The canonical number of every frame and cell `arguments` and `store` mention, in the order they mention them:
+    * what a call's [[DerivedMeta.Key]] numbers them by, so the same call holding different identities is one key.
     */
-  private final class Memo {
-    private val answers = scala.collection.mutable.HashMap.empty[Memo.Key, Memo.Answer]
+  private def numbering(arguments: Seq[Value], store: Store): Map[Int, Int] =
+    (arguments.flatMap(held) ++ store.cells.keys.toSeq.sorted ++ store.frames.keys.toSeq.sorted ++
+      store.frames.keys.toSeq.sorted.flatMap(store.frames(_).flatMap(_.cells.keys.toSeq.sorted))).distinct.zipWithIndex.toMap
 
-    /** The answer to a call already made with the same arguments and store, numbered as `run` holds them. */
-    def recall(call: Memo.Call, arguments: Seq[Value], run: Run): Option[(Run, Value)] = {
-      val numbering = Memo.numbering(arguments, run.store)
-      answers.get(Memo.Key(call, arguments.map(renumbered(_, numbering)), renumbered(run.store, numbering))).map {
-        answer =>
-          val back  = numbering.map(_.swap)
-          val known = numbering.size
-          val made  = (id: Int) => back.getOrElse(id, run.fresh + id - known)
-          (
-            Run(run.budget, run.fresh + answer.made, renumbered(answer.store, made), this),
-            renumbered(answer.value, made)
-          )
-      }
-    }
-
-    /** Keep `answered`, the answer `run` got to a call with `arguments`, unless the budget ran out on the way. */
-    def remember(call: Memo.Call, arguments: Seq[Value], run: Run, answered: (Run, Value)): Unit = {
-      val (after, value) = answered
-      if (!after.cutShort) {
-        val numbering = Memo.numbering(arguments, run.store)
-        val made      = after.fresh - run.fresh
-        val known     = numbering.size
-        val canonical = (id: Int) =>
-          numbering.get(id).orElse(Option.when(id >= run.fresh && id < after.fresh)(known + id - run.fresh))
-        if (Memo.identities(value, after.store).forall(canonical(_).isDefined)) {
-          val renumber = canonical.andThen(_.get)
-          answers.update(
-            Memo.Key(call, arguments.map(renumbered(_, numbering)), renumbered(run.store, numbering)),
-            Memo.Answer(renumbered(value, renumber), renumbered(after.store, renumber), made)
-          )
-        }
-      }
-    }
+  private def renumbered(value: Value, numbering: Int => Int): Value = value match {
+    case Value.Frame(id)                    => Value.Frame(numbering(id))
+    case Value.Cell(id)                     => Value.Cell(numbering(id))
+    case Value.Data(constructor, fields, m) => Value.Data(constructor, fields.map(renumbered(_, numbering)), m)
+    case Value.Closure(address, env)        => Value.Closure(address, env.view.mapValues(renumbered(_, numbering)).toMap)
+    case other                              => other
   }
 
-  private object Memo {
-
-    /** What is called: the callee at its type arguments, and the type of the call's result. */
-    case class Call(callee: ValueFQN, typeArguments: Seq[GroundValue], resultType: GroundValue)
-
-    case class Key(call: Call, arguments: Seq[Value], store: Store)
-
-    /** An answer, numbered canonically, with how many frames and cells the call made. */
-    case class Answer(value: Value, store: Store, made: Int)
-
-    /** The canonical number of every identity `arguments` and `store` mention, in the order they mention them. */
-    def numbering(arguments: Seq[Value], store: Store): Map[Int, Int] =
-      identities(arguments, store).distinct.zipWithIndex.toMap
-
-    def identities(value: Value, store: Store): Seq[Int] = identities(Seq(value), store)
-
-    private def identities(values: Seq[Value], store: Store): Seq[Int] =
-      values.flatMap(held) ++ store.cells.keys.toSeq.sorted ++ store.frames.keys.toSeq.sorted ++
-        store.frames.keys.toSeq.sorted.flatMap(store.frames(_).flatMap(_.cells.keys.toSeq.sorted))
+  private def renumbered(store: Store, numbering: Int => Int): Store = {
+    def cells(all: Map[Int, Store.Content]) = all.map((id, content) => numbering(id) -> content)
+    Store(
+      cells(store.cells),
+      store.frames.map((id, exits) => numbering(id) -> exits.map(exit => exit.copy(cells = cells(exit.cells))))
+    )
   }
 
   /** **The store a call can reach** (`docs/meta.md` §17.3, F2). Frames and cells are second-class, so a call reaches
@@ -364,8 +318,8 @@ object MetaInterpreter {
     * through as often as the marker frame was. The markers exist only when something is kept aside.
     *
     * A frame's earlier exits are kept aside too, though the frame is reachable: only the native that made it reads
-    * them, after its code returns, and that native is outside the call. So a call is interpreted, and remembered by the
-    * [[Memo]], over the same store however many frames enclose it.
+    * them, after its code returns, and that native is outside the call. So a call is interpreted, and is one
+    * [[DerivedMeta]], over the same store however many frames enclose it.
     *
     * {{{
     *   runThrow(… if(c, v) …)     // `if`'s call holds Abort's frame only
@@ -424,29 +378,14 @@ object MetaInterpreter {
     case _                        => Seq.empty
   }
 
-  private def renumbered(value: Value, numbering: Int => Int): Value = value match {
-    case Value.Frame(id)                    => Value.Frame(numbering(id))
-    case Value.Cell(id)                     => Value.Cell(numbering(id))
-    case Value.Data(constructor, fields, m) => Value.Data(constructor, fields.map(renumbered(_, numbering)), m)
-    case Value.Closure(address, env)        => Value.Closure(address, env.view.mapValues(renumbered(_, numbering)).toMap)
-    case other                              => other
-  }
-
-  private def renumbered(store: Store, numbering: Int => Int): Store = {
-    def cells(all: Map[Int, Store.Content]) = all.map((id, content) => numbering(id) -> content)
-    Store(
-      cells(store.cells),
-      store.frames.map((id, exits) => numbering(id) -> exits.map(exit => exit.copy(cells = cells(exit.cells))))
-    )
-  }
-
   /** Whether a value holds a frame or a cell: is one, has one in a field, or captured one. */
   private def holdsState(value: Value): Boolean = held(value).nonEmpty
 
-  /** The §5.3 cost fail-safe: the number of interpretation steps one call node's derivation may spend, across depth
-    * *and* fan-out together (each node visited costs one, and the budget is threaded through siblings rather than
-    * reset). Running out of it is a compiler limit, reported at the call (decision I, §5.3), never a value handed on.
-    * A call the [[Memo]] recalls costs one step, so this counts the calls that differ, which no memo bounds.
+  /** The §5.3 cost fail-safe: the number of interpretation steps one call's answer ([[DerivedMeta]]) may spend, across
+    * depth *and* fan-out together (each node visited costs one, and the budget is threaded through siblings rather than
+    * reset). A call the answer makes is a fact of its own, read for one step (`docs/meta.md` §17.3), so this bounds what
+    * one definition does in one context, never what a program does. Running out of it is a compiler limit, reported at
+    * the call (decision I, §5.3), never a value handed on.
     *
     * It was 256 until loops (T4): a loop runs its code up to about four times — joined, widened, and once more to see
     * it stable — and an endless loop around a cell and a frame (`forever` over `putState` and `raise`) took more than
@@ -470,8 +409,18 @@ object MetaInterpreter {
       arguments: Seq[Value]
   ): CompilerIO[Option[Value]] =
     ().pure[CompilerIO]
-      .flatMap(_ => metaOf(callee, typeArguments, resultType, arguments, Run(interpretationBudget, 0, Store.empty, Memo())))
+      .flatMap(_ => metaOf(callee, typeArguments, resultType, arguments, Run(interpretationBudget, 0, Store.empty)))
       .map((run, value) => Option.unless(run.cutShort)(settled(value)))
+
+  /** What the call `key` names answers ([[DerivedMetaProcessor]]): the call interpreted under a budget of its own, over
+    * the store its key holds, its frames and cells made numbered after those the key mentions; or nothing when the
+    * budget ran out.
+    */
+  def answerOf(key: DerivedMeta.Key): CompilerIO[Option[DerivedMeta.Answer]] = {
+    val known = numbering(key.arguments, key.store).size
+    answered(key.callee, key.typeArguments, key.resultType, key.arguments, Run(interpretationBudget, known, key.store))
+      .map((after, value) => Option.unless(after.cutShort)(DerivedMeta.Answer(value, after.store, after.fresh - known)))
+  }
 
   /** What a walk hands the interpretation for an argument it walked: a function-typed node is a closure over
     * `captured`, what the walk knows of the parameters in scope; any other node is the `value` the walk computed for it.
@@ -774,9 +723,12 @@ object MetaInterpreter {
     *     result's meta (decision O, [[restated]]);
     *   - anything else is *derived* ([[derive]]).
     *
-    * The body is read after the layer merge, so a brace in one layer over a body in another is the second arm. A
-    * call is interpreted over the store it can reach ([[Reach]]), and one this derivation already answered over that
-    * store is not made again but recalled ([[Memo]]), at the cost of one step.
+    * The body is read after the layer merge, so a brace in one layer over a body in another is the second arm.
+    *
+    * A call is a fact ([[DerivedMeta]], `docs/meta.md` §17.3), read for one step: its key holds the store it can reach
+    * ([[Reach]]), every frame and cell numbered canonically ([[numbering]]), and its answer is numbered back, what it
+    * made after this run's identities, and the rest of the store put back. A call whose answer ran out of the budget
+    * makes this one run out too.
     */
   private def metaOf(
       callee: ValueFQN,
@@ -787,21 +739,30 @@ object MetaInterpreter {
   ): CompilerIO[(Run, Value)] =
     if (arguments.contains(Value.Never)) (run, Value.Never).pure[CompilerIO]
     else {
-      val call           = Memo.Call(callee, typeArguments, resultType)
       val (inner, reach) = Reach.of(arguments, run)
-      ().pure[CompilerIO]
-        .flatMap { _ =>
-          Option.when(inner.budget > 0)(inner.memo.recall(call, arguments, inner.spent)).flatten match {
-            case Some(recalled) => recalled.pure[CompilerIO]
-            case None           =>
-              answered(callee, typeArguments, resultType, arguments, inner)
-                .map(result => { inner.memo.remember(call, arguments, inner, result); result })
+      val canonical      = numbering(arguments, inner.store)
+      val key            = DerivedMeta.Key(
+        callee,
+        typeArguments,
+        resultType,
+        arguments.map(renumbered(_, canonical)),
+        renumbered(inner.store, canonical)
+      )
+      if (inner.budget <= 0) inner.exhausted.pure[CompilerIO]
+      else
+        getFactOrAbort(key).map { derived =>
+          val (after, value) = derived.answer match {
+            case Some(answer) =>
+              val back = canonical.map(_.swap)
+              val made = (id: Int) => back.getOrElse(id, inner.fresh + id - canonical.size)
+              (Run(inner.budget - 1, inner.fresh + answer.made, renumbered(answer.store, made)), renumbered(answer.value, made))
+            case None         => inner.exhausted
           }
+          (after.copy(store = reach.rejoined(after.store)), value)
         }
-        .map((after, value) => (after.copy(store = reach.rejoined(after.store)), value))
     }
 
-  /** [[metaOf]] once the memo has no answer for the call. */
+  /** [[metaOf]]'s answer to the call, interpreted in `run`. */
   private def answered(
       callee: ValueFQN,
       typeArguments: Seq[GroundValue],
@@ -1116,7 +1077,7 @@ object MetaInterpreter {
                       case Handed.NewCell(_)  => Value.Cell(cell.get)
                       case Handed.Accumulator => Value.unknown
                     }
-                    applyValue(closure, handedTo, returned, Run(runs.budget, runs.fresh + 2, prepared, run.memo))
+                    applyValue(closure, handedTo, returned, Run(runs.budget, runs.fresh + 2, prepared))
                       .map { (after, yields) =>
                         val codeRun = CodeRun(
                           yields,
@@ -1164,7 +1125,7 @@ object MetaInterpreter {
               case Handed.Accumulator => acc
               case _                  => Value.unknown
             }
-            applyValue(closure, handedTo, returned, Run(budget, fresh, store, run.memo)).flatMap { (after, yields) =>
+            applyValue(closure, handedTo, returned, Run(budget, fresh, store)).flatMap { (after, yields) =>
               val frames = after.store.frames.view
                 .mapValues(_.map(exit => exit.copy(cells = exit.cells.view.filterKeys(alive.contains).toMap)).distinct)
                 .toMap
@@ -1304,7 +1265,7 @@ object MetaInterpreter {
             val last      = runs.made.view.filterKeys(position => !continued.contains(position)).values.toSeq
             Store.joined(last.map(made => (made.end, made.yields != Value.Never)), run.store).map { store =>
               (
-                Run(runs.budget, runs.fresh, store, run.memo),
+                Run(runs.budget, runs.fresh, store),
                 arguments.indices.map(index => runs.made.get(index).fold(arguments(index))(_.yields))
               )
             }
@@ -1587,8 +1548,8 @@ object MetaInterpreter {
     }
 
   /** A function value written in `env`, which keeps only what it can read: the parameters its node mentions. Two
-    * closures over the same node are then equal whenever what they read is, which is what lets [[Memo]] recall a call
-    * taking one.
+    * closures over the same node are then equal whenever what they read is, which is what lets one [[DerivedMeta]]
+    * answer every call taking one.
     */
   private def closure(located: Located, env: Env): Value.Closure = {
     val mentioned = parametersMentioned(located.node.value.expression)

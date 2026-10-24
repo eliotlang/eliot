@@ -467,9 +467,9 @@ class DerivedMetaTransferIntegrationTest extends FullIntegrationTest {
     ).asserting(_ should include("precondition of 'Test::useByte' is not satisfied"))
   }
 
-  // §5.3's memo: a derivation reaching the same call along many paths interprets it once. Each `twice<n>` calls the
-  // one below it twice with the same argument meta, so `twice11` reaches 2¹¹ calls of `twice0` but derives in a few
-  // dozen steps.
+  // §17.3: every call is a fact, so a derivation reaching the same call along many paths interprets it once. Each
+  // `twice<n>` calls the one below it twice with the same argument meta, so `twice11` reaches 2¹¹ calls of `twice0`
+  // but derives in a dozen facts.
   private val diamond =
     "def twice0(x: Int): Int = x\n" +
       (1 to 11).map(n => s"def twice$n(x: Int): Int = twice${n - 1}(twice${n - 1}(x))\n").mkString
@@ -478,16 +478,28 @@ class DerivedMetaTransferIntegrationTest extends FullIntegrationTest {
     accepts(diamond, "twice11(5)", "5")
   }
 
-  // Decision I (§5.3): a derivation that runs out of the interpretation's budget is an error at the call, never a meta
-  // handed on. Each `climb<n>` calls the one below it twice with different argument metas, so deriving `climb11`
-  // makes more than 2¹¹ distinct calls, which no memo collapses.
+  // Each `climb<n>` calls the one below it twice with different argument metas, so deriving `climb11` makes more than
+  // 2¹¹ distinct calls. Each is a fact of its own, read for one step, so the budget bounds none of them.
   private val climb =
     "def climb0(x: Int): Int = x\n" +
       (1 to 11).map(n => s"def climb$n(x: Int): Int = climb${n - 1}(add(climb${n - 1}(x), 1))\n").mkString
 
-  "a derivation deeper than the step budget" should "be reported at the call it was asked for" in {
-    compileForErrors(useByte + climb + "def main uses Console: Unit = printLine(show(climb11(5)))")
-      .asserting(_ should include("Computing the meta-information of this call of 'climb11' takes more than 1024 steps."))
+  "a derivation making many distinct calls" should "be within the step budget" in {
+    compileAndRun(useByte + climb + "def main uses Console: Unit = printLine(show(climb11(5)))")
+      .asserting(_ shouldBe "2052")
+  }
+
+  // Decision I (§5.3): a derivation that runs out of the interpretation's budget is an error at the call, never a meta
+  // handed on. The budget is one call's own (§17.3), so running out takes one definition doing more than 1024 steps
+  // itself: `long`'s body is a balanced tree of 511 calls of `add` over 512 `x`s (balanced, since the parser's stack
+  // does not take 500 nested calls).
+  private def sums(depth: Int): String = if (depth == 0) "x" else s"add(${sums(depth - 1)}, ${sums(depth - 1)})"
+
+  private val long = s"def long(x: Int): Int = ${sums(9)}\n"
+
+  "a definition doing more than the step budget itself" should "be reported at the call it was asked for" in {
+    compileForErrors(useByte + long + "def main uses Console: Unit = printLine(show(long(5)))")
+      .asserting(_ should include("Computing the meta-information of this call of 'long' takes more than 1024 steps."))
   }
 
   // Decision O (`docs/meta.md` §8.1): a brace on a bodied value replaces the meta its body derives for its result,

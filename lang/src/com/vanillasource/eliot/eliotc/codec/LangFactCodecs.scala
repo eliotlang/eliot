@@ -399,6 +399,24 @@ object LangFactCodecs {
       : FactCodec[com.vanillasource.eliot.eliotc.namedvalues.fact.NamedValuesRewrittenValue] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_namedvalues_fact_NamedValuesRewrittenValue_Key
       : FactCodec[com.vanillasource.eliot.eliotc.namedvalues.fact.NamedValuesRewrittenValue.Key] = FactCodec.derived
+  given codec_com_vanillasource_eliot_eliotc_monomorphize_channel_DerivedMeta
+      : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.channel.DerivedMeta] = FactCodec.derived
+  given codec_com_vanillasource_eliot_eliotc_monomorphize_channel_DerivedMeta_Key
+      : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.channel.DerivedMeta.Key] = FactCodec.derived
+  given codec_com_vanillasource_eliot_eliotc_monomorphize_channel_DerivedMeta_Answer
+      : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.channel.DerivedMeta.Answer] = FactCodec.derived
+  given codec_com_vanillasource_eliot_eliotc_monomorphize_channel_MetaInterpreter_Value
+      : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.channel.MetaInterpreter.Value] = FactCodec.derived
+  given codec_com_vanillasource_eliot_eliotc_monomorphize_channel_MetaInterpreter_Address
+      : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.channel.MetaInterpreter.Address] = FactCodec.derived
+  given codec_com_vanillasource_eliot_eliotc_monomorphize_channel_MetaInterpreter_Address_Step
+      : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.channel.MetaInterpreter.Address.Step] = FactCodec.derived
+  given codec_com_vanillasource_eliot_eliotc_monomorphize_channel_MetaInterpreter_Store
+      : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.channel.MetaInterpreter.Store] = FactCodec.derived
+  given codec_com_vanillasource_eliot_eliotc_monomorphize_channel_MetaInterpreter_Store_Content
+      : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.channel.MetaInterpreter.Store.Content] = FactCodec.derived
+  given codec_com_vanillasource_eliot_eliotc_monomorphize_channel_MetaInterpreter_Store_Exit
+      : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.channel.MetaInterpreter.Store.Exit] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_monomorphize_channel_MetaDemands
       : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.channel.MetaDemands] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_monomorphize_channel_MetaDemands_Key
@@ -504,6 +522,8 @@ object LangFactCodecs {
     codec_com_vanillasource_eliot_eliotc_module_fact_UnifiedModuleNames
   val unifiedModuleValueCodec: FactCodec[com.vanillasource.eliot.eliotc.module.fact.UnifiedModuleValue]                =
     codec_com_vanillasource_eliot_eliotc_module_fact_UnifiedModuleValue
+  val derivedMetaCodec: FactCodec[com.vanillasource.eliot.eliotc.monomorphize.channel.DerivedMeta] =
+    codec_com_vanillasource_eliot_eliotc_monomorphize_channel_DerivedMeta
   val metaDemandsCodec: FactCodec[com.vanillasource.eliot.eliotc.monomorphize.channel.MetaDemands] =
     codec_com_vanillasource_eliot_eliotc_monomorphize_channel_MetaDemands
   val metaTransferAccountingCodec
@@ -590,6 +610,7 @@ object LangFactCodecs {
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_row_fact_RowElaboratedValue_Key),
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_namedvalues_fact_NamedValuesIndex_Key),
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_namedvalues_fact_NamedValuesRewrittenValue_Key),
+    FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_monomorphize_channel_DerivedMeta_Key),
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_monomorphize_channel_MetaDemands_Key),
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_monomorphize_channel_MetaTransferAccounting_Key),
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_monomorphize_channel_RefinementTable_Key),
