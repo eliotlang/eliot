@@ -1385,6 +1385,36 @@ noise, if the channel's share stops being a rounding error, or if any derivation
   near-empty library modules took 10.0 s against 7.5–8.0 s in every other run) and is left out. Every jar of both
   builds is byte-identical to the baseline's, and every exit code the same.
 
+**Measured again on eliot-build, 2026-10-24.** The examples above are small programs; eliot-build's launcher is the
+largest program the compiler builds, and it pins v0.18, the last release before T1. So its sources were compiled by
+v0.18's compiler (`bc6ef7f1`) with v0.18's layers and by `8bea273a` with today's, cold, two runs each, alternating, one
+at a time. Between the two, 57 commits; all but a handful of small ones are this document's (T1–T6, O1–O7, F1–F5):
+
+| | v0.18 | `8bea273a` | |
+|---|---|---|---|
+| cold compile, wall | 31.5, 31.7 s | 53.7, 53.9 s | +70% |
+| warm compile, nothing changed | 5.3, 5.5 s | 8.2, 7.7 s | +48% |
+| cache | 27.6 MB | 66.2 MB | 2.4× |
+| jar | 2 082 975 bytes | 1 833 247 bytes | −12% |
+
+Where the cold time goes, from one `--statistics` run of each (36.2 s and 56.1 s, the flag's own cost included):
+
+| | v0.18 | `8bea273a` |
+|---|---|---|
+| persisting the cache | 9.2 s | 15.7 s |
+| compile-track checking (`CompilerMonomorphicTypeCheckProcessor`) | 3.7 s, 2 388 values | 7.7 s, 7 519 values |
+| `DerivedMetaProcessor` (decision S) | — | 3.7 s, 5 544 facts |
+| the rest of the channel (refinement, P5, accounting, reconcile) | 0.8 s | 0.8 s |
+| engine, plugin setup and i/o | 3.4 s | 5.9 s |
+| name resolution (`ValueResolver`) | 1.4 s, 2 032 values | 2.2 s, 3 554 values |
+
+So the interpretation itself is a small part (4.5 s with its facts). Most of the cost is what Part II generates and
+then checks: each `data` mints its meta structures and `Meta` instances (§13.2), and each companion is a value checked
+on the compiler track. That is three times the compile-track values, a third more names to resolve, and a cache 2.4×
+the size, which persisting and loading pay for. Why eliot-build is hit so much harder than the examples (+7.3% for
+T5) is not measured; the likely reason is that it declares many `data` types, and every named implementation's handle
+is one. None of the generated part has been optimised.
+
 ## 17. Staging
 
 Each stage is verified by the fast example sweep and byte-identity compare (`scripts/example-sweep.sh`), with every
