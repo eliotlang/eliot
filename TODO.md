@@ -112,6 +112,9 @@ Nothing effect-related is tracked here; add it there.
 - **A recursive definition is reported twice.** `RecursionCheckProcessor` is keyed by platform, so a self-recursive
   `def` in a user module is refused once on the runtime track and once on the compiler track, with the same message at
   the same position (probed 2026-10-24, `docs/recursive-data.md` §"Where this stands"). Folded into that design's R3.
+- **A cold build in seconds** (`docs/compiler-performance.md`, proposed 2026-10-24): eliot-build compiles cold in 54 s
+  and ~78% of the CPU is fact administration (the cats-effect run loop 33%, the cache save 33%, the engine 9%), not
+  compiling. Ideas I1–I9 and questions P1–P6 await a decision.
 - Rename processors to generators?
 
 ## Microcontroller target
