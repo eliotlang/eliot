@@ -67,8 +67,8 @@ import scala.annotation.tailrec
   * call is a fact ([[DerivedMeta]], `docs/meta.md` §17.3), so a call reached along many of them with the same
   * arguments is interpreted once; the budget, a step count threaded through one call's own answer, bounds what that
   * one definition does, its calls one step each. Exhausting it is a
-  * **compiler limit** (decision I): [[metaOfCall]] answers that it ran out, never a value, and the stamping walk
-  * reports it at the call.
+  * **compiler limit** (decision I): the call's fact reports it at the callee's definition ([[DerivedMetaProcessor]],
+  * Q9 of `docs/meta.md` §17.3) and declines, and everything reading it declines in turn without a second report.
   *
   * **Higher-order through closures** (§5.2). A function value is a [[Value.Closure]] — the function-typed node, by its
   * [[Address]], and the environment it was written in — and is interpreted only when something applies it: a callee applying one of its own
@@ -267,8 +267,8 @@ object MetaInterpreter {
     def spent: Run = copy(budget = budget - 1)
 
     /** The budget is spent, so nothing more is followed: any cell may be written and any frame left through. A budget
-      * below zero marks the run as cut short, which [[metaOfCall]] reads, since a budget of exactly zero may only mean
-      * the last step was taken.
+      * below zero marks the run as cut short, which [[answerOf]] reads, since a budget of exactly zero may only mean the
+      * last step was taken.
       */
     def exhausted: (Run, Value) = (copy(budget = -1, store = store.tainted), Value.unknown)
 
@@ -394,23 +394,19 @@ object MetaInterpreter {
   val interpretationBudget: Int = 1024
 
   /** The meta of an ordinary call: the callee **states** its transfer (a native leaf — reduce the companion), or it
-    * **derives** one from its body (everything else — interpret it, then apply its brace if it states one, [[metaOf]]). `resultType` is the *call node's* own ground type,
-    * which is what decides whether there is anything to derive at all: an untracked type's meta is the trivial `Unit`
-    * (§1, meta is total on types but not structural), so a call returning one is skipped before any body is fetched.
-    * That gate is what keeps the interpretation off the overwhelming majority of call nodes in a program.
-    *
-    * `None` when the derivation ran out of the [[interpretationBudget]]: what it got that far is not the call's meta,
-    * so it is not handed on (decision I, `docs/meta.md` §5.3).
+    * **derives** one from its body (everything else — interpret it, then apply its brace if it states one, [[metaOf]]).
+    * `resultType` is the *call node's* own ground type. A derivation that ran out of the [[interpretationBudget]]
+    * aborts this, its fact having reported where it ran out (decision I, `docs/meta.md` §5.3).
     */
   def metaOfCall(
       callee: ValueFQN,
       typeArguments: Seq[GroundValue],
       resultType: GroundValue,
       arguments: Seq[Value]
-  ): CompilerIO[Option[Value]] =
+  ): CompilerIO[Value] =
     ().pure[CompilerIO]
       .flatMap(_ => metaOf(callee, typeArguments, resultType, arguments, Run(interpretationBudget, 0, Store.empty)))
-      .map((run, value) => Option.unless(run.cutShort)(settled(value)))
+      .map((_, value) => settled(value))
 
   /** What the call `key` names answers ([[DerivedMetaProcessor]]): the call interpreted under a budget of its own, over
     * the store its key holds, its frames and cells made numbered after those the key mentions; or nothing when the
@@ -728,7 +724,8 @@ object MetaInterpreter {
     * A call is a fact ([[DerivedMeta]], `docs/meta.md` §17.3), read for one step: its key holds the store it can reach
     * ([[Reach]]), every frame and cell numbered canonically ([[numbering]]), and its answer is numbered back, what it
     * made after this run's identities, and the rest of the store put back. A call whose answer ran out of the budget
-    * makes this one run out too.
+    * has no fact, its running out reported at its definition (Q9 of §17.3), so this derivation aborts with nothing more
+    * to report: what depended on it is not produced, down to the jar.
     */
   private def metaOf(
       callee: ValueFQN,
@@ -751,14 +748,12 @@ object MetaInterpreter {
       if (inner.budget <= 0) inner.exhausted.pure[CompilerIO]
       else
         getFactOrAbort(key).map { derived =>
-          val (after, value) = derived.answer match {
-            case Some(answer) =>
-              val back = canonical.map(_.swap)
-              val made = (id: Int) => back.getOrElse(id, inner.fresh + id - canonical.size)
-              (Run(inner.budget - 1, inner.fresh + answer.made, renumbered(answer.store, made)), renumbered(answer.value, made))
-            case None         => inner.exhausted
-          }
-          (after.copy(store = reach.rejoined(after.store)), value)
+          val back = canonical.map(_.swap)
+          val made = (id: Int) => back.getOrElse(id, inner.fresh + id - canonical.size)
+          (
+            Run(inner.budget - 1, inner.fresh + derived.answer.made, reach.rejoined(renumbered(derived.answer.store, made))),
+            renumbered(derived.answer.value, made)
+          )
         }
     }
 

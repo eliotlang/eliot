@@ -213,9 +213,8 @@ class MetaDemandsProcessor
     }
   }
 
-  /** The meta of a call, or unknown when its derivation ran out of the interpretation's budget, which fails any demand
-    * that reads it. The running out itself is reported at the call by [[RefinementChannelProcessor]] (decision I,
-    * `docs/meta.md` §5.3), which asks for every call's meta once, where this walk asks once per context.
+  /** The meta of a call. A derivation that ran out of the interpretation's budget aborts this context, reported once,
+    * at the definition whose own work ran out ([[DerivedMetaProcessor]], decision I, `docs/meta.md` §5.3).
     */
   private def metaOfCall(
       callee: ValueFQN,
@@ -223,9 +222,7 @@ class MetaDemandsProcessor
       resultType: GroundValue,
       arguments: Seq[MetaInterpreter.Value]
   ): CompilerIO[MetaInterpreter.Value] =
-    MetaInterpreter
-      .metaOfCall(callee, typeArguments, resultType, arguments)
-      .map(_.getOrElse(MetaInterpreter.Value.unknown))
+    MetaInterpreter.metaOfCall(callee, typeArguments, resultType, arguments)
 
   /** Walk the arguments of a call to `callee`. A lambda is walked under what the callee states it hands it
     * ([[MetaInterpreter.handedMetas]], `docs/meta.md` §4.5, §13.4) — a `match` arm's field binders, read out of the

@@ -23,8 +23,11 @@ import com.vanillasource.eliot.eliotc.processor.{CompilerFact, CompilerFactKey}
   *     answer   Meta([11, 11]), {}, made 0
   * }}}
   *
+  * A call whose interpretation runs out of the budget has no fact: its processor reports the limit at the callee's
+  * definition and declines, and so does everything reading it (decision I, §5.3; Q9 of §17.3).
+  *
   * @param answer
-  *   What the call answers, or nothing when its interpretation ran out of the budget (decision I, §5.3).
+  *   What the call answers.
   */
 case class DerivedMeta(
     callee: ValueFQN,
@@ -32,7 +35,7 @@ case class DerivedMeta(
     resultType: GroundValue,
     arguments: Seq[Value],
     store: Store,
-    answer: Option[DerivedMeta.Answer]
+    answer: DerivedMeta.Answer
 ) extends CompilerFact {
   override def key(): CompilerFactKey[DerivedMeta] = DerivedMeta.Key(callee, typeArguments, resultType, arguments, store)
 }

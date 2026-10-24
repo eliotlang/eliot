@@ -489,17 +489,17 @@ class DerivedMetaTransferIntegrationTest extends FullIntegrationTest {
       .asserting(_ shouldBe "2052")
   }
 
-  // Decision I (§5.3): a derivation that runs out of the interpretation's budget is an error at the call, never a meta
-  // handed on. The budget is one call's own (§17.3), so running out takes one definition doing more than 1024 steps
+  // Decision I (§5.3): a derivation that runs out of the interpretation's budget is an error at the definition whose
+  // own work ran out (Q9 of §17.3), never a meta handed on. The budget is one call's own (§17.3), so running out takes one definition doing more than 1024 steps
   // itself: `long`'s body is a balanced tree of 511 calls of `add` over 512 `x`s (balanced, since the parser's stack
   // does not take 500 nested calls).
   private def sums(depth: Int): String = if (depth == 0) "x" else s"add(${sums(depth - 1)}, ${sums(depth - 1)})"
 
   private val long = s"def long(x: Int): Int = ${sums(9)}\n"
 
-  "a definition doing more than the step budget itself" should "be reported at the call it was asked for" in {
+  "a definition doing more than the step budget itself" should "be reported at the definition" in {
     compileForErrors(useByte + long + "def main uses Console: Unit = printLine(show(long(5)))")
-      .asserting(_ should include("Computing the meta-information of this call of 'long' takes more than 1024 steps."))
+      .asserting(_ should include("Computing the meta-information of 'long' takes more than 1024 steps of its own."))
   }
 
   // Decision O (`docs/meta.md` §8.1): a brace on a bodied value replaces the meta its body derives for its result,

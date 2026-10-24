@@ -22,6 +22,15 @@ class BuildArtifactTest extends FullIntegrationTest {
       |def asByte(x: Int) where withinByte(range(x)): Int = x
       |def main uses Console: Unit = printLine(show(asByte(1000)))""".stripMargin
 
+  /** Fails only in a derived meta's fact (`docs/meta.md` §17.3, F4): `long` does more than the step budget's worth of
+    * work in its own body, which its fact reports and declines, and nothing reading it is produced.
+    */
+  private val outOfBudget = {
+    def sums(depth: Int): String = if (depth == 0) "x" else s"add(${sums(depth - 1)}, ${sums(depth - 1)})"
+    s"""def long(x: Int): Int = ${sums(9)}
+       |def main uses Console: Unit = printLine(show(long(5)))""".stripMargin
+  }
+
   "a failed compilation" should "leave no jar behind" in {
     (compileAndRun(working) >> compileForErrors(broken) >> exists(jarPath)).asserting(_ shouldBe false)
   }
@@ -36,6 +45,10 @@ class BuildArtifactTest extends FullIntegrationTest {
 
   "a failed where precondition" should "leave no jar behind" in {
     (compileAndRun(working) >> compileForErrors(unmetPrecondition) >> exists(jarPath)).asserting(_ shouldBe false)
+  }
+
+  "a derivation out of its step budget" should "leave no jar behind" in {
+    (compileAndRun(working) >> compileForErrors(outOfBudget) >> exists(jarPath)).asserting(_ shouldBe false)
   }
 
   "a fixed compilation" should "produce the jar again" in {

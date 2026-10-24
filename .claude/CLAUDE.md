@@ -299,7 +299,8 @@ subset of its data.
       walks ask `MetaInterpreter` for a call's meta, and every call it interprets is a `DerivedMeta` fact
       (`docs/meta.md` §17.3, decision S): keyed by callee, type arguments, result type, arguments (a closure named by
       its `Address`, frames and cells numbered canonically) and the store the call can reach (`Reach`), so the
-      1024-step budget counts one definition's own work, each call one step.
+      1024-step budget counts one definition's own work, each call one step. Running out is reported once, by
+      `DerivedMetaProcessor` at the definition that ran out, and everything reading that fact declines (no jar).
 14. **used** — collects used value names starting from a `main`
 15. **uncurry** — uncurries calls for the backend
 

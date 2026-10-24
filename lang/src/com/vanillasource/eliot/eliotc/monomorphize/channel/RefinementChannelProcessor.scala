@@ -95,9 +95,9 @@ class RefinementChannelProcessor
   }
 
   /** The meta of the call at `node`: its callee's statement reduced, or its body interpreted ([[MetaInterpreter]]).
-    * Running out of the interpretation's budget is a compiler limit (decision I, `docs/meta.md` §5.3), reported here,
-    * at the call, and the node keeps no meta. This walk reports it because it is the one that asks for every call's
-    * meta exactly once; [[MetaDemandsProcessor]] reads the same call as unknown, which fails any demand on it.
+    * A call whose derivation ran out of the interpretation's budget leaves this table unproduced, so no code is laid
+    * out from it; the limit is reported once, at the definition whose own work ran out ([[DerivedMetaProcessor]],
+    * decision I, `docs/meta.md` §5.3).
     */
   private def metaOfCall(
       node: Sourced[MonomorphicExpression],
@@ -105,19 +105,7 @@ class RefinementChannelProcessor
       typeArgs: Seq[GroundValue],
       arguments: Seq[MetaInterpreter.Value]
   ): CompilerIO[Option[GroundValue]] =
-    MetaInterpreter.metaOfCall(vfqn.value, typeArgs, node.value.expressionType, arguments).flatMap {
-      case Some(value) => value.known.pure[CompilerIO]
-      case None        =>
-        Sourced
-          .compilerError(
-            node.as(
-              s"Computing the meta-information of this call of '${vfqn.value.name.name}' takes more than " +
-                s"${MetaInterpreter.interpretationBudget} steps."
-            ),
-            Seq("The compiler follows every call a meta-information depends on, up to a fixed number of steps.")
-          )
-          .as(None)
-    }
+    MetaInterpreter.metaOfCall(vfqn.value, typeArgs, node.value.expressionType, arguments).map(_.known)
 
   /** A definition's leading **handle** parameters (`docs/effects.md` D36) are walked through as the parameters they
     * are, not as a lambda: an effect reaches a body as a handle, which neither carries a meta nor makes the body a

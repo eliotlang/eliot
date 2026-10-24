@@ -21,8 +21,8 @@ or for the recursive-data fold (§17.2). Cycles, stack depth and peak memory are
 
 **Derived metas are facts (§5.3, §17.3, decision S).** A call's derived meta is a `DerivedMeta` fact, keyed by what
 the call can see, so the step budget counts one definition's own work and a program's size never reaches it:
-eliot-build compiles at the budget of 1024, which decision I could not do before (2026-10-24). Left: where running out
-is reported (F4, Q9) and nothing else.
+eliot-build compiles at the budget of 1024, which decision I could not do before (2026-10-24). Running out is
+reported once, at the definition whose own work ran out (F4, Q9). §17.3 is complete.
 
 This document replaces three: `total-meta-transfers.md` (the rules and the interpretation), `string-length-meta.md`
 (the `String` size domain) and `structural-meta.md` (the P6 design). Their full text is at `2a66009a`, and §21 maps
@@ -503,12 +503,13 @@ join their arms. When a handled statement exists (§4.5), the handler is applied
   2026-10-24, Q10 of §17.3; until then it was per call node, so it bounded the whole program a call reached). It was
   256 until T4: a loop runs its code up to about four times, and `forever` over a `putState` and a `raise` took more
   than 256 steps. Four times as many changed no example's jar or compile time. **Running out of it is a compiler
-  limit** (decision I, §18, built 2026-10-22): the derivation answers
-  that it ran out (`MetaInterpreter.metaOfCall` gives `None`, and a loop cut short before its fixpoint counts too),
-  and `RefinementChannelProcessor`, the walk that asks for every call's meta once, reports *"Computing the
-  meta-information of this call of 'f' takes more than 1024 steps"* at the call. `MetaDemandsProcessor` asks once per
-  context, so it reports nothing of its own: it reads the call as unknown, which fails any demand on it. What the
-  derivation had got to is never handed on.
+  limit** (decision I, §18, built 2026-10-22): the call's answer has none (a loop cut short before its fixpoint
+  counts too), and `DerivedMetaProcessor` reports it **once, at the definition whose own work ran out**, naming the
+  metas of the arguments it ran out at — *"Computing the meta-information of 'f' takes more than 1024 steps of its
+  own. Its arguments: …"* — and declines the fact (Q9 of §17.3, built 2026-10-24 as F4). Everything reading it, a
+  caller's fact or a walk, aborts in turn without a report of its own, so the build leaves no jar. What the derivation
+  had got to is never handed on. Until F4 the walk reported it at each call node, which named one cause at every
+  caller above it.
 
   **Closed 2026-10-24 by §17.3's F3: eliot-build compiles at the budget of 1024**, its launcher's jar byte-identical
   to the one a lifted budget built, and its 368 tests pass. What follows is the record of how it was open.
@@ -1795,7 +1796,7 @@ Out of scope: a brace on an **ability method declaration** stays §18's open que
 a transfer its implementations must satisfy). An implementation's member is an ordinary bodied value, so O applies to
 it from O1. O1 pins what a brace on each of the two does.
 
-### 17.3 Derived metas as facts (stages F1–F5, proposed 2026-10-24, decided the same day; F1–F3 built)
+### 17.3 Derived metas as facts (stages F1–F5, proposed, decided and built 2026-10-24)
 
 **Why.** Decision I fails eliot-build (§5.3's note) because a call's derivation is a walk *inside one call node*: the
 derivation of `main`'s call of `answer` interprets everything `answer` reaches, about 1 960 monomorphic values, and
@@ -1932,7 +1933,15 @@ kept per meta context, as `MetaDemands` already keeps a demand.
   so within the noise; the cache 205.9 MB against 206.4 and 206.8 MB (+0.3%). The budget test is a single definition
   doing more than 1024 steps itself (`long`, a balanced tree of 511 `add`s; 500 nested calls overflow the parser's
   stack, which hangs a test instead of failing it, a separate gap), and `climb11`, which ran out before, derives.
-- **F4: reporting.** Running out is reported where Q9 decides.
+- **F4: reporting.** Running out is reported where Q9 decides. *Built 2026-10-24*: `DerivedMetaProcessor` reports the
+  limit at the callee's definition (its signature's position, as `MetaTransferAccountingProcessor` reports a
+  definition), naming the argument metas, and declines; the walks report nothing. **One part of Q9's recommendation
+  was not built as written**: a fact reading a callee's that ran out does not read it as not computed but aborts.
+  Read as not computed, both walks still produced their tables, so the backend laid the program out and the build
+  left a jar beside its error; the project rule for an upstream failure already reported is to read with
+  `getFactOrAbort` and produce nothing (`.claude/rules/eliot-design.md`). So the error is still reported once, and
+  nothing downstream of it is produced. `BuildArtifactTest` pins it: a derivation out of its budget leaves no jar.
+  Found on the way, not fixed: a compile error exits 0 when `compiler.Main` is run directly (TODO).
 - **F5: the record.** Part I's §5 and §5.3 state the fact, §5.3's note is closed, and §18.1 says where this left
   decision I. *Done 2026-10-24*, ahead of F4: the status, §5, §5.2, §5.3 and §8 state it, §18 records decision S, and §18.1
   says decision I is closed. F4 adds its own line where it changes the report.
@@ -1942,7 +1951,7 @@ kept per meta context, as `MetaDemands` already keeps a demand.
 | | Question | Recommendation |
 |---|---|---|
 | Q8 | Which calls are facts | Every saturated call, natives included: only then is each fact small (the table above). **Decided 2026-10-24 as recommended.** |
-| Q9 | Where running out is reported | At the definition whose own fact ran out, naming the argument metas, once per fact; a fact reading a callee's that ran out is not computed there, as `MetaDemandsProcessor` reads it today. The alternative keeps today's report at each call node in a walk that reaches it, which reports one cause at every caller above it. |
+| Q9 | Where running out is reported | At the definition whose own fact ran out, naming the argument metas, once per fact; a fact reading a callee's that ran out is not computed there, as `MetaDemandsProcessor` reads it today. The alternative keeps today's report at each call node in a walk that reaches it, which reports one cause at every caller above it. **Decided 2026-10-24 as recommended; built (F4) with the reader aborting instead of reading not computed, which left a jar — see F4.** |
 | Q10 | The budget per fact | Keep 1024: the largest fact eliot-build makes is 143 steps. **Decided 2026-10-24 as recommended.** |
 | Q11 | The memo (`264691c0`) until F3 | Keep it: F2 is measured against it, and F3 deletes it. **Done: F3 deleted it.** |
 
@@ -2043,7 +2052,8 @@ kept per meta context, as `MetaDemands` already keeps a demand.
   callee, type arguments, result type and arguments, with frames and cells numbered and only those the call can reach,
   and the budget counted per fact, at 1024. It changes what decision I's budget bounds (one definition in one context,
   not the program a call reaches) and keeps its number. **Built 2026-10-24** (F1–F3): eliot-build compiles, so decision
-  I no longer blocks a release. Q9, where running out is reported, is open (F4).
+  I no longer blocks a release. Q9 too was taken as recommended the same day and built as F4: running out is
+  reported once, at the definition whose own work ran out, and whatever reads it declines without a report.
 
 **Open, not blocking anything:**
 
@@ -2079,8 +2089,8 @@ slotted `data`, and O7, the record (T7 folded into it). The pivot is complete: O
 them, and O6 for the recursive-data fold. **What blocks a release is decision I** (§5.3's note), still open.
 
 **2026-10-24: decision I is closed by decision S.** Derived metas are facts (§17.3), built in F1–F3 the same day, and
-eliot-build compiles at the budget of 1024 with every jar byte-identical. Left of §17.3: F4 (where running out is
-reported, Q9) and F5 (the record).
+eliot-build compiles at the budget of 1024 with every jar byte-identical. F4 (Q9) and F5 followed the same day, so
+§17.3 is complete: running out is reported at the definition that ran out, and a build that ran out leaves no jar.
 
 **The `Unit` question (2026-10-21), closed the same day.** Robert: a type declaring no meta gets `Unit` implicitly, and
 *"the rest of the machinery should not know that this was 'default'"*. T3 removed two places that knew: §5.3's type

@@ -104,6 +104,11 @@ Nothing effect-related is tracked here; add it there.
   integration test waits forever instead of failing (the runner's `out.json` is never written). Two fixes, both
   owed: the parser's recursion should not grow the JVM stack per nesting level (or a depth limit should be a
   diagnostic), and a fatal error on a compute thread must fail the compilation rather than leave it waiting.
+- **A compile error exits 0 when `compiler.Main` is run directly.** Found 2026-10-24: `java -cp … compiler.Main jvm
+  exe-jar -m Bad src --path …` over `printLine(5)` prints the type mismatch, writes no jar, and exits 0, though
+  `Compiler.runCompiler` answers `ExitCode.Error` for a failed result. cats-effect warns at start that "IOApp `main` is
+  running on a thread other than the main thread", which may be the cause. Not checked through `./mill examples.run`,
+  the launcher or the IntelliJ build task, which gates on the exit code.
 - Rename processors to generators?
 
 ## Microcontroller target
