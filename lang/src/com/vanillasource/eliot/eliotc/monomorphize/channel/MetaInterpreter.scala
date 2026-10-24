@@ -69,8 +69,8 @@ import scala.annotation.tailrec
   * **compiler limit** (decision I): [[metaOfCall]] answers that it ran out, never a value, and the stamping walk
   * reports it at the call.
   *
-  * **Higher-order through closures** (§5.2). A function value is a [[Value.Closure]] — the function-typed node and the
-  * environment it was written in — and is interpreted only when something applies it: a callee applying one of its own
+  * **Higher-order through closures** (§5.2). A function value is a [[Value.Closure]] — the function-typed node, by its
+  * [[Address]], and the environment it was written in — and is interpreted only when something applies it: a callee applying one of its own
   * parameters (`def applyTo(f: Int => Int, x: Int): Int = f(x)`), an over-applied callee whose body returns a lambda,
   * or a pure `val` block, which lowers to an applied lambda (`(x -> rest)(e)`). A **stated** transfer cannot apply a
   * closure — a companion is Eliot over metas — so a code argument reaches it as what its code **yields**, the same
@@ -87,10 +87,11 @@ object MetaInterpreter {
     /** Its meta, or ⊤ (`None`) — always ⊤ for a value whose type carries no meta. */
     case Meta(meta: Option[GroundValue])
 
-    /** A function value, deferred until applied: a function-typed `node` (a lambda, a partial application, a reference
-      * to a def) and the `env` it was written in, which is what the parameters it captures read.
+    /** A function value, deferred until applied: the function-typed node at `address` (a lambda, a partial
+      * application, a reference to a def) and the `env` it was written in, which is what the parameters it captures
+      * read.
       */
-    case Closure(node: Sourced[MonomorphicExpression], env: Env)
+    case Closure(address: Address, env: Env)
 
     /** ⊥ (`docs/meta.md` §12): evaluating this does not produce a value. It is a fact about control, never a meta: no
       * companion receives it, and it originates only where a leaf states `{never}`.
@@ -131,6 +132,65 @@ object MetaInterpreter {
     * readable in its body (see [[bindParameters]], the only place bindings are added).
     */
   type Env = Map[String, Value]
+
+  /** Where a function value is written (`docs/meta.md` §17.3, F1): the monomorphic value whose body holds it, and the
+    * way down to it from that body's root. A closure is named by this, not by its node, so it is data, which a fact can
+    * hold, and two closures over the same lambda are equal whenever what they read is. A source position cannot be the
+    * address: desugaring makes positions ambiguous (§7).
+    *
+    * {{{
+    *   def twice(x: Int): Int = applyTo(y -> y + y, x)
+    *     the lambda   Address(twice, [Target, Argument])   — the first argument of `applyTo(…)(x)`
+    * }}}
+    */
+  case class Address(owner: MonomorphicValue.Key, path: Seq[Address.Step])
+
+  object Address {
+
+    /** One step down a body: into an application's target or argument, or into a lambda's body. */
+    enum Step {
+      case Target, Argument, Body
+    }
+  }
+
+  /** A node of a body, with its [[Address]]: what the interpretation and the walks hold, so that a closure made of any
+    * node they reach can be named.
+    */
+  case class Located(node: Sourced[MonomorphicExpression], address: Address) {
+
+    /** The child `child` of this node, one `step` down. */
+    def down(step: Address.Step, child: Sourced[MonomorphicExpression]): Located =
+      Located(child, address.copy(path = address.path :+ step))
+  }
+
+  object Located {
+
+    /** The root of `value`'s body, typed by its signature, or nothing for a value without one. */
+    def root(value: MonomorphicValue): Option[Located] =
+      value.runtime.map(body =>
+        Located(
+          body.as(MonomorphicExpression(value.signature, body.value)),
+          Address(MonomorphicValue.Key(value.vfqn, value.typeArguments), Vector.empty)
+        )
+      )
+
+    /** The node at `address`: its owner's body, followed down its path. Only a node of that body was ever given the
+      * address, so a path that does not lead to one is an internal error.
+      */
+    def at(address: Address): CompilerIO[Located] =
+      getFactOrAbort(address.owner).map { value =>
+        val root = Located.root(value).getOrElse(throw IllegalStateException(s"A closure's owner has no body: ${address.owner}"))
+        address.path.foldLeft(root)((located, step) =>
+          (step, located.node.value.expression) match {
+            case (Address.Step.Target, MonomorphicExpression.FunctionApplication(target, _))     => located.down(step, target)
+            case (Address.Step.Argument, MonomorphicExpression.FunctionApplication(_, argument)) => located.down(step, argument)
+            case (Address.Step.Body, MonomorphicExpression.FunctionLiteral(_, _, body))         => located.down(step, body)
+            case _                                                                              =>
+              throw IllegalStateException(s"A closure's path leads to no node of its owner's body: $address")
+          }
+        )
+      }
+  }
 
   /** The frames and cells alive in a call being interpreted (`docs/meta.md` §11.1), each by an identity local to the
     * interpretation. A frame and a cell are made by one call of their native, handed to that call's code and gone when
@@ -302,7 +362,7 @@ object MetaInterpreter {
     case Value.Frame(id)                    => Value.Frame(numbering(id))
     case Value.Cell(id)                     => Value.Cell(numbering(id))
     case Value.Data(constructor, fields, m) => Value.Data(constructor, fields.map(renumbered(_, numbering)), m)
-    case Value.Closure(node, env)           => Value.Closure(node, env.view.mapValues(renumbered(_, numbering)).toMap)
+    case Value.Closure(address, env)        => Value.Closure(address, env.view.mapValues(renumbered(_, numbering)).toMap)
     case other                              => other
   }
 
@@ -352,15 +412,15 @@ object MetaInterpreter {
       .flatMap(_ => metaOf(callee, typeArguments, resultType, arguments, Run(interpretationBudget, 0, Store.empty, Memo())))
       .map((run, value) => Option.unless(run.cutShort)(settled(value)))
 
-  /** What a walk hands the interpretation for an argument it walked: a function-typed `node` is a closure over
+  /** What a walk hands the interpretation for an argument it walked: a function-typed node is a closure over
     * `captured`, what the walk knows of the parameters in scope; any other node is the `value` the walk computed for it.
     */
   def argument(
-      node: Sourced[MonomorphicExpression],
+      located: Located,
       value: Value,
       captured: Map[String, Option[GroundValue]]
   ): Value =
-    if (isFunction(node)) closure(node, captured.view.mapValues(Value.Meta(_)).toMap) else value
+    if (isFunction(located.node)) closure(located, captured.view.mapValues(Value.Meta(_)).toMap) else value
 
   /** The α seed of the `Int` domain: a literal `n`'s singleton range, built in Eliot by
     * `eliot.lang.Runtime::integerLiteral`'s `{closed(V, V)}` brace and reduced here through the *same* stated-transfer
@@ -636,14 +696,12 @@ object MetaInterpreter {
       .map(_.contains(stated))
 
   /** Flatten a curried application into its ultimate head and its arguments in source order. */
-  private[channel] def flatten(
-      node: Sourced[MonomorphicExpression]
-  ): (Sourced[MonomorphicExpression], Seq[Sourced[MonomorphicExpression]]) =
-    node.value.expression match {
+  private[channel] def flatten(located: Located): (Located, Seq[Located]) =
+    located.node.value.expression match {
       case MonomorphicExpression.FunctionApplication(target, argument) =>
-        val (head, args) = flatten(target)
-        (head, args :+ argument)
-      case _                                                           => (node, Seq.empty)
+        val (head, args) = flatten(located.down(Address.Step.Target, target))
+        (head, args :+ located.down(Address.Step.Argument, argument))
+      case _                                                           => (located, Seq.empty)
     }
 
   /** The closure invariant of §1, executed, in three arms split on two tests, a `^Meta` companion and a body on this
@@ -948,27 +1006,30 @@ object MetaInterpreter {
         def ensure(position: Int, runs: Runs, visiting: Set[Int]): CompilerIO[Runs] =
           if (runs.made.contains(position) || visiting.contains(position)) runs.pure[CompilerIO]
           else {
-            val closure      = arguments(position).asInstanceOf[Value.Closure]
-            val functionType = closure.node.value.expressionType
-            val domains      = peel(functionType, functionType.functionArity).map(_._1).getOrElse(Seq.empty)
-            val handed       = domains.indices.map(argument => statements.get((position, argument)).map(_._2))
-            handed.flatten
-              .flatMap(readsRuns(_, position))
-              .filter(other => other != position && code.contains(other))
-              .distinct
-              .toList
-              .foldLeftM(runs)((before, other) => ensure(other, before, visiting + position))
-              .flatMap(ready => made(position, closure, domains, handed, ready))
+            val closure = arguments(position).asInstanceOf[Value.Closure]
+            Located.at(closure.address).flatMap { located =>
+              val functionType = located.node.value.expressionType
+              val domains      = peel(functionType, functionType.functionArity).map(_._1).getOrElse(Seq.empty)
+              val handed       = domains.indices.map(argument => statements.get((position, argument)).map(_._2))
+              handed.flatten
+                .flatMap(readsRuns(_, position))
+                .filter(other => other != position && code.contains(other))
+                .distinct
+                .toList
+                .foldLeftM(runs)((before, other) => ensure(other, before, visiting + position))
+                .flatMap(ready => made(position, closure, functionType.deepReturnType, domains, handed, ready))
+            }
           }
 
         def made(
             position: Int,
             closure: Value.Closure,
+            returned: GroundValue,
             domains: Seq[GroundValue],
             handed: Seq[Option[MetaStatement]],
             runs: Runs
         ): CompilerIO[Runs] =
-          if (loops.contains(position)) loop(position, closure, domains, handed, runs)
+          if (loops.contains(position)) loop(position, closure, returned, domains, handed, runs)
           else starts(handed.flatten, position, runs) match {
             case Some(start) =>
               val from = startStore(start, runs)
@@ -990,7 +1051,7 @@ object MetaInterpreter {
                       case Handed.NewCell(_)  => Value.Cell(cell.get)
                       case Handed.Accumulator => Value.unknown
                     }
-                    applyValue(closure, handedTo, functionType(closure).deepReturnType, Run(runs.budget, runs.fresh + 2, prepared, run.memo))
+                    applyValue(closure, handedTo, returned, Run(runs.budget, runs.fresh + 2, prepared, run.memo))
                       .map { (after, yields) =>
                         val codeRun = CodeRun(
                           yields,
@@ -1020,15 +1081,15 @@ object MetaInterpreter {
         def loop(
             position: Int,
             closure: Value.Closure,
+            returned: GroundValue,
             domains: Seq[GroundValue],
             handed: Seq[Option[MetaStatement]],
             runs: Runs
         ): CompilerIO[Runs] = {
-          val initial  = loops(position)
-          val start    = initial.fold[Value](Value.unknown)(index => arguments.lift(index).getOrElse(Value.unknown))
-          val accType  = initial.flatMap(metaTypes.lift)
-          val alive    = run.store.cells.keySet
-          val returned = functionType(closure).deepReturnType
+          val initial = loops(position)
+          val start   = initial.fold[Value](Value.unknown)(index => arguments.lift(index).getOrElse(Value.unknown))
+          val accType = initial.flatMap(metaTypes.lift)
+          val alive   = run.store.cells.keySet
           def ended(yields: Value, end: Store, budget: Int, fresh: Int): Runs =
             Runs(runs.made + (position -> CodeRun(yields, end, Seq.empty, None, Start.AtCall)), budget, fresh)
           def iterate(acc: Value, store: Store, budget: Int, fresh: Int, values: Seq[Handed], first: Boolean)
@@ -1254,8 +1315,6 @@ object MetaInterpreter {
       Seq(previous, next).map(Evaluator.groundToSem)
     )
 
-  private def functionType(closure: Value.Closure): GroundValue = closure.node.value.expressionType
-
   private def isCode(value: Value): Boolean = value.isInstanceOf[Value.Closure]
 
   /** The join of metas of one meta type: not computed when any is, or when the type is not known. */
@@ -1317,9 +1376,9 @@ object MetaInterpreter {
     else
       getFactIfProduced(MonomorphicValue.Key(callee, typeArguments)).flatMap {
         case Some(mv) =>
-          (mv.runtime, mv.naturalArity) match {
+          (Located.root(mv), mv.naturalArity) match {
             case (Some(body), Some(arity)) if arity <= arguments.size =>
-              applyLambda(body.as(MonomorphicExpression(mv.signature, body.value)), Map.empty, arguments, resultType, run.spent)
+              applyLambda(body, Map.empty, arguments, resultType, run.spent)
             case (None, _)                                           =>
               implicitStatement(resultType).map(meta => (run.unfollowed(arguments), Value.Meta(meta)))
             case _                                                   => (run.unfollowed(arguments), Value.unknown).pure[CompilerIO]
@@ -1333,19 +1392,19 @@ object MetaInterpreter {
     * closure, so only a function value that is applied costs anything.
     */
   private def interpret(
-      node: Sourced[MonomorphicExpression],
+      located: Located,
       env: Env,
       run: Run
   ): CompilerIO[(Run, Value)] =
     if (run.budget <= 0) run.exhausted.pure[CompilerIO]
     else
-      node.value.expression match {
+      located.node.value.expression match {
         case MonomorphicExpression.ParameterReference(parameterName)   =>
           // The one point the caller's knowledge enters: a bound parameter *is* the argument. An unbound one (a lambda's
           // own binder that nothing applied) is ⊤.
           (run.spent, env.getOrElse(parameterName.value, Value.unknown)).pure[CompilerIO]
-        case _ if isFunction(node)                                     =>
-          (run.spent, closure(node, env)).pure[CompilerIO]
+        case _ if isFunction(located.node)                             =>
+          (run.spent, closure(located, env)).pure[CompilerIO]
         case MonomorphicExpression.IntegerLiteral(value)               =>
           integerSeed(value.value).map(meta => (run.spent, Value.Meta(meta)))
         case MonomorphicExpression.StringLiteral(value)                =>
@@ -1353,13 +1412,13 @@ object MetaInterpreter {
         case MonomorphicExpression.MonomorphicValueReference(vfqn, ta) =>
           // A bare reference is a *saturated* call when the callee takes no arguments, so a nullary def derives here
           // exactly as an applied one does below.
-          metaOf(vfqn.value, ta, node.value.expressionType, Seq.empty, run.spent)
+          metaOf(vfqn.value, ta, located.node.value.expressionType, Seq.empty, run.spent)
         case MonomorphicExpression.FunctionLiteral(_, _, _)            =>
-          (run.spent, closure(node, env)).pure[CompilerIO]
+          (run.spent, closure(located, env)).pure[CompilerIO]
         case _: MonomorphicExpression.FunctionApplication              =>
-          val (head, args) = flatten(node)
+          val (head, args) = flatten(located)
           interpretAll(args, env, run.spent).flatMap((after, arguments) =>
-            applyHead(head, env, arguments, node.value.expressionType, after)
+            applyHead(head, env, arguments, located.node.value.expressionType, after)
           )
       }
 
@@ -1370,7 +1429,7 @@ object MetaInterpreter {
     * business.
     */
   private def applyHead(
-      head: Sourced[MonomorphicExpression],
+      head: Located,
       env: Env,
       arguments: Seq[Value],
       resultType: GroundValue,
@@ -1378,7 +1437,7 @@ object MetaInterpreter {
   ): CompilerIO[(Run, Value)] =
     if (arguments.contains(Value.Never)) (run, Value.Never).pure[CompilerIO]
     else
-      head.value.expression match {
+      head.node.value.expression match {
         case MonomorphicExpression.MonomorphicValueReference(vfqn, ta) =>
           metaOf(vfqn.value, ta, resultType, arguments, run)
         case MonomorphicExpression.FunctionLiteral(_, _, _)            =>
@@ -1394,13 +1453,13 @@ object MetaInterpreter {
     * interpreted.
     */
   private def applyLambda(
-      node: Sourced[MonomorphicExpression],
+      located: Located,
       env: Env,
       arguments: Seq[Value],
       resultType: GroundValue,
       run: Run
   ): CompilerIO[(Run, Value)] = {
-    val (body, bound, rest) = bindParameters(node, arguments)
+    val (body, bound, rest) = bindParameters(located, arguments)
     interpret(body, env ++ bound, run).flatMap((after, value) =>
       if (rest.isEmpty) (after, value).pure[CompilerIO] else applyValue(value, rest, resultType, after)
     )
@@ -1417,11 +1476,13 @@ object MetaInterpreter {
   ): CompilerIO[(Run, Value)] =
     value match {
       case Value.Closure(_, _) if run.budget <= 0 => run.exhausted.pure[CompilerIO]
-      case Value.Closure(node, env)               =>
-        val (head, applied) = flatten(node)
-        interpretAll(applied, env, run.spent).flatMap((after, values) =>
-          applyHead(head, env, values ++ arguments, resultType, after)
-        )
+      case Value.Closure(address, env)            =>
+        Located.at(address).flatMap { located =>
+          val (head, applied) = flatten(located)
+          interpretAll(applied, env, run.spent).flatMap((after, values) =>
+            applyHead(head, env, values ++ arguments, resultType, after)
+          )
+        }
       case _                                      => (run.unfollowed(value +: arguments), Value.unknown).pure[CompilerIO]
     }
 
@@ -1431,7 +1492,7 @@ object MetaInterpreter {
     * interpreted before any binder is added, which is what keeps a binder from shadowing a name a later argument reads.
     */
   private def interpretAll(
-      nodes: Seq[Sourced[MonomorphicExpression]],
+      nodes: Seq[Located],
       env: Env,
       run: Run
   ): CompilerIO[(Run, Seq[Value])] =
@@ -1450,23 +1511,23 @@ object MetaInterpreter {
     */
   @tailrec
   private def bindParameters(
-      node: Sourced[MonomorphicExpression],
+      located: Located,
       arguments: Seq[Value],
       bound: Env = Map.empty
-  ): (Sourced[MonomorphicExpression], Env, Seq[Value]) =
-    (node.value.expression, arguments) match {
+  ): (Located, Env, Seq[Value]) =
+    (located.node.value.expression, arguments) match {
       case (MonomorphicExpression.FunctionLiteral(parameterName, _, body), argument +: rest) =>
-        bindParameters(body, rest, bound + (parameterName.value -> argument))
-      case _                                                                                 => (node, bound, arguments)
+        bindParameters(located.down(Address.Step.Body, body), rest, bound + (parameterName.value -> argument))
+      case _                                                                                 => (located, bound, arguments)
     }
 
   /** A function value written in `env`, which keeps only what it can read: the parameters its node mentions. Two
     * closures over the same node are then equal whenever what they read is, which is what lets [[Memo]] recall a call
     * taking one.
     */
-  private def closure(node: Sourced[MonomorphicExpression], env: Env): Value.Closure = {
-    val mentioned = parametersMentioned(node.value.expression)
-    Value.Closure(node, env.view.filterKeys(mentioned.contains).toMap)
+  private def closure(located: Located, env: Env): Value.Closure = {
+    val mentioned = parametersMentioned(located.node.value.expression)
+    Value.Closure(located.address, env.view.filterKeys(mentioned.contains).toMap)
   }
 
   private def parametersMentioned(expression: MonomorphicExpression.Expression): Set[String] = expression match {

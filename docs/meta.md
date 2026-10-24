@@ -469,7 +469,10 @@ call site.
 ### 5.2 Closures and code arguments
 
 A function value is a **closure**: the function-typed node and the environment it was written in (`Value.Closure`).
-It is interpreted only when something applies it, so it costs nothing until then.
+It is interpreted only when something applies it, so it costs nothing until then. The node is named by its
+**address** (`MetaInterpreter.Address`, §17.3's F1): the monomorphic value whose body holds it and the path down to it
+from that body's root, and the interpretation fetches it from there when it applies the closure. So a closure is data,
+and two over the same lambda are the same closure whenever what they read is.
 
 ```eliot
 def applyTo(f: Int => Int, x: Int): Int = f(x)
@@ -521,7 +524,8 @@ join their arms. When a handled statement exists (§4.5), the handler is applied
   when the same call comes again. The budget does not change an answer, only whether it is got: an answer the budget
   cut short is not kept. Frames and cells are identities local to the derivation, so an entry is kept with them
   renumbered in the order the call mentions them, and numbered back when it is recalled; a closure keeps only the
-  parameters its node mentions, so two closures over the same code are equal when what they read is. It is scoped to
+  parameters its node mentions, so two closures over the same lambda (§5.2's address) are equal when what they read
+  is. It is scoped to
   one call node's derivation, as the budget is, so whether a call is reported never depends on what was derived
   before it. Every example's jar is byte-identical with it. P5's contexts are such a memo already, for demands (§6).
 - **A loop's meta is a fixpoint** (§11.2, built in T4). A loop lives in a native, which states it through a primitive
@@ -1877,7 +1881,10 @@ kept per meta context, as `MetaDemands` already keeps a demand.
 **Stages.** Each verified as §17 says: the sweep, byte-identity, every suite green, and eliot-build compiled locally.
 
 - **F1: closures by address.** `Value.Closure` names its lambda by owner and path. No behaviour changes, so every jar
-  is byte-identical.
+  is byte-identical. *Built 2026-10-24*: `MetaInterpreter.Address` (owner `MonomorphicValue.Key`, path of
+  `Target`/`Argument`/`Body` steps) and `Located`, a node with its address, which the interpretation and both walks
+  (`RefinementChannelProcessor`, `MetaDemandsProcessor`) hold instead of a bare node; `Located.at` fetches a closure's
+  lambda from its owner's `MonomorphicValue`. Every example's jar is byte-identical.
 - **F2: the reachable store.** Inside today's interpretation, a call runs over the frames and cells its arguments
   hold, and its caller applies what it did. The memo keys on that store only. Byte-identical; measured on eliot-build,
   where a memo ignoring the store altogether would leave about 32 000 of `answer`'s 149 866 steps, a lower bound for

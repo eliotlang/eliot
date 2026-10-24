@@ -4,6 +4,7 @@ import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.feedback.Logging
 import com.vanillasource.eliot.eliotc.module.fact.{UnifiedModuleNames, ValueFQN}
 import com.vanillasource.eliot.eliotc.monomorphize.channel.MetaDemands.{Knowledge, Violation}
+import com.vanillasource.eliot.eliotc.monomorphize.channel.MetaInterpreter.{Address, Located}
 import com.vanillasource.eliot.eliotc.monomorphize.eval.Evaluator
 import com.vanillasource.eliot.eliotc.monomorphize.fact.{
   GroundValue,
@@ -68,14 +69,9 @@ class MetaDemandsProcessor
     for {
       root   <- MetaDemands.rootOf(mv)
       scope   = Scope(key.context == root.context)
-      walked <- mv.runtime.fold(Walked.nothing.pure[CompilerIO])(body =>
-                  referencesDemanding(body.value).ifM(
-                    walkParameters(
-                      scope,
-                      body.as(MonomorphicExpression(mv.signature, body.value)),
-                      key.context.zip(root.context).zipWithIndex.toList,
-                      Map.empty
-                    ),
+      walked <- Located.root(mv).fold(Walked.nothing.pure[CompilerIO])(body =>
+                  referencesDemanding(body.node.value.expression).ifM(
+                    walkParameters(scope, body, key.context.zip(root.context).zipWithIndex.toList, Map.empty),
                     Walked.nothing.pure[CompilerIO]
                   )
                 )
@@ -124,15 +120,20 @@ class MetaDemandsProcessor
   /** Bind the body's leading parameters to what the context says of them, then walk what is under them. */
   private def walkParameters(
       scope: Scope,
-      node: Sourced[MonomorphicExpression],
+      located: Located,
       parameters: List[((Knowledge, Knowledge), Int)],
       env: Env
   ): CompilerIO[Walked] =
-    (node.value.expression, parameters) match {
+    (located.node.value.expression, parameters) match {
       case (MonomorphicExpression.FunctionLiteral(name, _, body), ((entry, root), position) :: rest) =>
-        walkParameters(scope, body, rest, env.updated(name.value, parameterInfo(scope, entry, root, position)))
+        walkParameters(
+          scope,
+          located.down(Address.Step.Body, body),
+          rest,
+          env.updated(name.value, parameterInfo(scope, entry, root, position))
+        )
       case _                                                                                        =>
-        walk(scope, node, env)
+        walk(scope, located, env)
     }
 
   /** What the walk knows of a parameter the context describes. An entry the root context has too is decided the same
@@ -147,7 +148,8 @@ class MetaDemandsProcessor
     }
   }
 
-  private def walk(scope: Scope, node: Sourced[MonomorphicExpression], env: Env): CompilerIO[Walked] =
+  private def walk(scope: Scope, located: Located, env: Env): CompilerIO[Walked] = {
+    val node = located.node
     node.value.expression match {
       case MonomorphicExpression.IntegerLiteral(value)                     =>
         MetaInterpreter.integerSeed(value.value).map(meta => Walked.leaf(Info.of(meta)))
@@ -160,7 +162,8 @@ class MetaDemandsProcessor
         // demand at a code parameter reads ([[Walked.yields]]). The binder is supplied by whoever applies the lambda,
         // which the channel does not see, so it is unknown. A callee applying the lambda reads the parameters it
         // captures, so its own info is theirs ([[captured]]).
-        walk(scope, body, env - name.value).map(inner => inner.copy(info = captured(node, env)))
+        walk(scope, located.down(Address.Step.Body, body), env - name.value)
+          .map(inner => inner.copy(info = captured(node, env)))
       case MonomorphicExpression.MonomorphicValueReference(vfqn, typeArgs) =>
         // A bare reference: a saturated call of a nullary def, or a function value whose arguments the channel never
         // sees — its demands are rejected as a value, and its body's demands are checked with every argument unknown.
@@ -170,8 +173,8 @@ class MetaDemandsProcessor
           value    <- metaOfCall(vfqn.value, typeArgs, node.value.expressionType, Seq.empty)
         } yield Walked(Info.of(value), Info.of(value), internal.deferred, rejected ++ internal.violations)
       case _: MonomorphicExpression.FunctionApplication                    =>
-        val (head, args) = MetaInterpreter.flatten(node)
-        head.value.expression match {
+        val (head, args) = MetaInterpreter.flatten(located)
+        head.node.value.expression match {
           case MonomorphicExpression.MonomorphicValueReference(vfqn, typeArgs) =>
             // A call one of whose arguments does not return is never made (`docs/meta.md` §12), so what it would
             // demand, itself or inside its callee, is vacuous here.
@@ -208,6 +211,7 @@ class MetaDemandsProcessor
               .map(walked => Walked.leaf(Info.unknown).andAll(walked))
         }
     }
+  }
 
   /** The meta of a call, or unknown when its derivation ran out of the interpretation's budget, which fails any demand
     * that reads it. The running out itself is reported at the call by [[RefinementChannelProcessor]] (decision I,
@@ -231,11 +235,11 @@ class MetaDemandsProcessor
       scope: Scope,
       callee: ValueFQN,
       calleeTypeArgs: Seq[GroundValue],
-      args: Seq[Sourced[MonomorphicExpression]],
+      args: Seq[Located],
       env: Env
   ): CompilerIO[Seq[Walked]] = {
-    def isLambda(arg: Sourced[MonomorphicExpression]): Boolean =
-      arg.value.expression.isInstanceOf[MonomorphicExpression.FunctionLiteral]
+    def isLambda(arg: Located): Boolean =
+      arg.node.value.expression.isInstanceOf[MonomorphicExpression.FunctionLiteral]
     args.zipWithIndex
       .filterNot((arg, _) => isLambda(arg))
       .traverse((arg, position) => walk(scope, arg, env).map(position -> _))
@@ -246,9 +250,9 @@ class MetaDemandsProcessor
           values.get(position) match {
             case Some(walked) => walked.pure[CompilerIO]
             case None         =>
-              MetaInterpreter.handedMetas(callee, calleeTypeArgs, position, arg.value.expressionType, known).flatMap { handed =>
+              MetaInterpreter.handedMetas(callee, calleeTypeArgs, position, arg.node.value.expressionType, known).flatMap { handed =>
                 if (handed.forall(_ == MetaInterpreter.Value.unknown)) walk(scope, arg, env)
-                else walkHanded(scope, arg, handed, env).map(inner => inner.copy(info = captured(arg, env)))
+                else walkHanded(scope, arg, handed, env).map(inner => inner.copy(info = captured(arg.node, env)))
               }
           }
         }
@@ -260,18 +264,18 @@ class MetaDemandsProcessor
     */
   private def walkHanded(
       scope: Scope,
-      node: Sourced[MonomorphicExpression],
+      located: Located,
       handed: Seq[MetaInterpreter.Value],
       env: Env
   ): CompilerIO[Walked] =
-    (node.value.expression, handed) match {
+    (located.node.value.expression, handed) match {
       case (MonomorphicExpression.FunctionLiteral(name, _, body), value +: rest) =>
         val bound = value match {
           case MetaInterpreter.Value.Never => env.updated(name.value, Info.never)
           case other                       => other.known.fold(env - name.value)(known => env.updated(name.value, Info.of(Some(known))))
         }
-        walkHanded(scope, body, rest, bound)
-      case _                                                                     => walk(scope, node, env)
+        walkHanded(scope, located.down(Address.Step.Body, body), rest, bound)
+      case _                                                                     => walk(scope, located, env)
     }
 
   /** What is known of a function value written in `env`: the meta of a function value, which its type declares none of,
@@ -297,16 +301,16 @@ class MetaDemandsProcessor
     */
   private def applyLambda(
       scope: Scope,
-      node: Sourced[MonomorphicExpression],
+      located: Located,
       arguments: Seq[Info],
       env: Env
   ): CompilerIO[Walked] =
-    (node.value.expression, arguments) match {
-      case (_, Seq())                                                     => walk(scope, node, env)
+    (located.node.value.expression, arguments) match {
+      case (_, Seq())                                                     => walk(scope, located, env)
       case (MonomorphicExpression.FunctionLiteral(name, _, body), _)      =>
-        applyLambda(scope, body, arguments.tail, env.updated(name.value, arguments.head))
+        applyLambda(scope, located.down(Address.Step.Body, body), arguments.tail, env.updated(name.value, arguments.head))
       case _                                                              =>
-        walk(scope, node, env).map(_.copy(info = Info.unknown, yields = Info.unknown))
+        walk(scope, located, env).map(_.copy(info = Info.unknown, yields = Info.unknown))
     }
 
   /** What a call demands itself: its callee's `where` and the metas its callee's parameters state. */

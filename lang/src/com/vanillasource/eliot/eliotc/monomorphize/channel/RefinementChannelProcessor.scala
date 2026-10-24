@@ -87,8 +87,8 @@ class RefinementChannelProcessor
       // rather than at the `WovenValue` seam keeps a violation from withholding the woven value, whose absence would
       // stop the walk of the used graph and with it every later value's own diagnostics.
       _      <- MetaDemands.rootOf(mv).flatMap(getFactOrAbort)
-      result <- mv.runtime match {
-                  case Some(body) => walkDefinition(body.as(MonomorphicExpression(mv.signature, body.value)))
+      result <- MetaInterpreter.Located.root(mv) match {
+                  case Some(body) => walkDefinition(body)
                   case None       => Flow(None, Seq.empty).pure[CompilerIO]
                 }
     } yield RefinementTable(key.vfqn, key.typeArguments, result.records)
@@ -123,11 +123,12 @@ class RefinementChannelProcessor
     * are, not as a lambda: an effect reaches a body as a handle, which neither carries a meta nor makes the body a
     * lambda's, so a body taking only handles records exactly as one taking nothing (`main`).
     */
-  private def walkDefinition(node: Sourced[MonomorphicExpression]): CompilerIO[Flow] =
-    node.value.expression match {
+  private def walkDefinition(located: MetaInterpreter.Located): CompilerIO[Flow] =
+    located.node.value.expression match {
       case MonomorphicExpression.FunctionLiteral(_, parameterType, body) if isHandle(parameterType) =>
-        walkDefinition(body).map(inner => Flow(None, inner.records ++ recordAt(node, None)))
-      case _                                                                                        => walkFlow(node)
+        walkDefinition(located.down(MetaInterpreter.Address.Step.Body, body))
+          .map(inner => Flow(None, inner.records ++ recordAt(located.node, None)))
+      case _                                                                                        => walkFlow(located)
     }
 
   private def isHandle(tpe: GroundValue): Boolean = tpe match {
@@ -139,7 +140,8 @@ class RefinementChannelProcessor
     * note. Bottom-up: a node's interval is derived from its children's, and a known interval is recorded at the node's
     * source position for representation lowering to read.
     */
-  private def walkFlow(node: Sourced[MonomorphicExpression]): CompilerIO[Flow] =
+  private def walkFlow(located: MetaInterpreter.Located): CompilerIO[Flow] = {
+    val node = located.node
     node.value.expression match {
       case MonomorphicExpression.IntegerLiteral(value)  =>
         // α (the one point a meta *originates*): a literal `n` seeds its singleton range. The seed's construction
@@ -158,8 +160,8 @@ class RefinementChannelProcessor
         MetaInterpreter.stringSeed(value.value).map(meta => Flow(meta, recordAt(node, meta)))
 
       case _: MonomorphicExpression.FunctionApplication =>
-        val (head, args) = MetaInterpreter.flatten(node)
-        head.value.expression match {
+        val (head, args) = MetaInterpreter.flatten(located)
+        head.node.value.expression match {
           case MonomorphicExpression.MonomorphicValueReference(vfqn, typeArgs) =>
             // An ordinary call (or constructor). Descend into the arguments, so a literal/arithmetic argument narrows.
             // The call's own result is whatever the callee's meta is — **stated** by a leaf (`Numeric[Int]::add`'s
@@ -201,6 +203,7 @@ class RefinementChannelProcessor
         // A parameter arrives at the width of its boundary, whatever is known of its value.
         Flow(None, recordAt(node, None)).pure[CompilerIO]
     }
+  }
 
   /** Record this node's verdict — its pinned meta, or ⊤. Every *walked* node records, ⊤ included: a consumer can only
     * match this table against its own tree by source position, and desugaring makes positions non-unique (a pure `val`
