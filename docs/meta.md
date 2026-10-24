@@ -1415,6 +1415,33 @@ the size, which persisting and loading pay for. Why eliot-build is hit so much h
 T5) is not measured; the likely reason is that it declares many `data` types, and every named implementation's handle
 is one. None of the generated part has been optimised.
 
+**Profiled the same day**, with a throwaway probe (reverted) that logged every active generation's processor, key and
+self time, and every cache entry's bytes, on both compilers; each key was classified by the value it names. The
+processors' self time grew from 21.6 s to 36.1 s, and the cache's from 25.0 to 61.3 MB (the probe's own runs; the
+cache's later saves rewrite nothing):
+
+| kind of value | self time | generations | cache |
+|---|---|---|---|
+| `DerivedMeta` facts (decision S) | 5.2 s | 5 544 | ~1 MB |
+| companions (`^Meta`/`^Where` 1.5 s, `$Payload` 1.4 s, `$Handed$` 0.5 s) | 3.3 s | 6 525 | 10.0 MB |
+| structural meta structures (`D$Meta`, `D$Meta$C`, `meta$…`, `reach$…`) | 2.2 s | 9 299 | 8.5 MB |
+| `Meta` instances of those structures (`join`, `widen`, marker) | 1.1 s | 2 659 | 5.8 MB |
+| written values, the growth over v0.18 | +2.2 s | +4 800 | +11 MB |
+
+- **The derivation's cost is the stated natives.** 3.7 s of the 5.2 s are 1 173 facts of five natives:
+  `handleCases` (481 facts, 2.9 ms each), `foldLeftInternal` (216, 4.0 ms), `escapeInternal` (102, 6.3 ms), `append`
+  (207, 2.3 ms) and `Bool::fold` (167, 2.0 ms), so a stated meta costs milliseconds of companion reduction, while a
+  bodied call's fact costs a fraction (`.`, 1 091 facts at 0.19 ms).
+- **Generated values cost through the compile-track check.** 2.6 s of the companions' time and most of the structures'
+  and instances' is `CompilerMonomorphicTypeCheckProcessor`, once per instantiation: a `$Payload` is checked as a value
+  at every callee instantiation only to be reduced (2 873 generations). The structures' cache share is spread evenly
+  over `D$Meta$C`, `D$Meta`, `meta$…`, `join`, `widen` and the marker, about 2 MB each.
+- **The written values' growth is meta code too**: the compile track checks `Reach::handleCases` (204 instantiations,
+  none in v0.18), `Reach::joined`, `eliot.compiler.Meta::joined`, and each user `data`'s `handleCases` at meta types
+  (a structure's `join` is a `match`); P5 adds 0.4 s, the ability processors 0.5 s for the generated instances.
+- **What is not a processor's** grows with the cache and the fact count: persisting it 9.2 → 15.7 s, the engine
+  3.4 → 5.9 s, offering keys to processors 2.2–2.8 → 3.3 s (38 thousand keys → 67 thousand).
+
 ## 17. Staging
 
 Each stage is verified by the fast example sweep and byte-identity compare (`scripts/example-sweep.sh`), with every
