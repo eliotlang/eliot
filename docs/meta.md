@@ -507,7 +507,9 @@ join their arms. When a handled statement exists (§4.5), the handler is applied
   its calls differ in their argument metas. Of the 27 955 calls, only 5 135 are distinct once the store is set aside,
   so a key reading only the frames and cells a call can reach would cut it about fivefold more, though never to
   1024. What waits on Robert is the budget: raised (eliot-build needs about 150 000 steps), counted in calls made
-  rather than steps, or decision I narrowed; any of them changes a decided number or rule.
+  rather than steps, or decision I narrowed; any of them changes a decided number or rule. **Proposed 2026-10-24:**
+  derived metas as facts (§17.3), which keeps I and the budget as decided by making the budget count one definition's
+  work instead of a program's.
 - **There is no type gate (since T3).** A call whose result type carried no meta used to be skipped before any body
   was fetched, which kept the interpretation off most call nodes. T3 removed it: a cell written by a call returning
   `Unit` (`putState`) must be followed, and so must a `Unit` call that never returns. Measured on a cold compile of
@@ -1773,6 +1775,129 @@ Out of scope: a brace on an **ability method declaration** stays §18's open que
 a transfer its implementations must satisfy). An implementation's member is an ordinary bodied value, so O applies to
 it from O1. O1 pins what a brace on each of the two does.
 
+### 17.3 Derived metas as facts (stages F1–F5, proposed 2026-10-24, not decided)
+
+**Why.** Decision I fails eliot-build (§5.3's note) because a call's derivation is a walk *inside one call node*: the
+derivation of `main`'s call of `answer` interprets everything `answer` reaches, about 1 960 monomorphic values, and
+nothing it learns is kept beyond that call node. A meta is a value, computed from values, so the compiler's own answer
+to *"compute this once and share it"* is a fact: `MetaDemands` (§6) already is one, keyed by the metas of a body's
+arguments. Robert asked (2026-10-24) why a derived meta is not one too. This section is the design for that, for
+sign-off. Nothing in it is built.
+
+**What was measured** (2026-10-24, a throwaway probe over eliot-build's launcher, `main`'s call of `answer`, the
+§5.3 memo built). Each call the derivation made, by what its arguments hold:
+
+| arguments | calls interpreted | distinct (callee, type arguments, arguments) |
+|---|---|---|
+| metas only | 11 372 (+7 250 recalled) | 1 874 |
+| a closure, over metas only | 11 328 (+779) | 2 152 |
+| a frame or a cell, in a field of a handle or captured | 5 255 (+1 198) | 4 124 |
+
+Then each kind was made a fact in a simulation over the measured call tree: a fact pays for its own body and the code
+run inline in it, a call that is a fact costs one step, and a call that is not is interpreted inline as today.
+
+| facts for | facts | steps in all | most expensive fact |
+|---|---|---|---|
+| calls over metas only | 1 874 | ~61 000 | `Launcher::attempted` 21 675, `modelled` 10 902, `releasing` 2 354 |
+| + calls passing a closure | 4 026 | ~48 000 | `Throw::escapeInternal` 10 555, `Dep::withCellInternal` 5 330 |
+| + calls passing a frame or a cell | 8 150 | ~61 000 | 143 |
+
+Against 149 866 steps today. Facts over metas alone leave the effectful definitions huge, because every callee below
+them is handed a `Throw` or `Abort` handle, which holds a frame, and is interpreted inline. Only when every saturated
+call is a fact does each fact's own work become small, and then the budget, counted per fact, holds with seven times
+to spare and decision I stands as decided. The last row's distinct count is a little high: the probe did not
+renumber frames there.
+
+**The fact.** `DerivedMeta(callee, typeArguments, arguments)`, produced by one processor, recursive over its own
+fact type only, as `MetaDemands` is (a callee's fact read by its caller's). Its key is a **saturated** call: the
+callee's arguments at the arity its derivation takes today (its body's leading lambdas, or its companion's
+parameters). A partial application stays a function value, and an over-application applies the fact's result to the
+rest in the caller, as `applyLambda` does now. So the key needs no result type: a saturated call's result type is the
+callee's. The value is the call's answer:
+
+- **its result**: ⊥, or a value: a meta, a constructed value with its fields, or a closure;
+- **what it did to the frames and cells it was handed**: per frame, the exits it made, each with what it carried and
+  the cells it was handed as they were then; per cell, its content when the call returned;
+- **whether it tainted**: it left through, or wrote, something it could not place (§11.1's fail-safe), so the caller
+  taints its whole store when the call returns, as the call would have done inside it today.
+
+**What an argument is in a key.** Everything a `Value` is today, written as data:
+
+- **A meta** is its `GroundValue`, or *not computed*.
+- **A constructed value** is its constructor, its fields as arguments, and its structural meta.
+- **A closure is named by its address**, not held as a node: the monomorphic value whose body holds the lambda, the
+  path to the lambda in that body, and its environment restricted to the parameters the lambda mentions (as the memo
+  already restricts it). A closure written in the walked value's own body, the one `RefinementChannelProcessor` or
+  `MetaDemandsProcessor` walks, is addressed in that value. A source position cannot be the address: desugaring makes
+  positions ambiguous (§7).
+- **A frame or a cell is a number**, given in the order the arguments mention them, as the memo numbers them now.
+  A cell's content at the call is part of the key, since the call may read it. A frame's earlier exits are not: only
+  the native that made the frame reads them, after its code returns, and that native is outside the call.
+
+**The store a call sees is the store it can reach.** Frames and cells are second-class: a call reaches one only
+through its arguments (§11.1). So a fact is computed over the frames and cells its arguments hold and nothing else,
+which is what the memo's key lacked: 16 128 of its misses were the same call, its arguments holding no frame or cell,
+under a different set of enclosing frames (§5.3's measurement). The caller applies the answer to its own store: it appends the fact's exits to
+its frames, adding to each exit the cells the call could not reach, as they still are, since the call could not touch
+them; it sets the contents of the cells the call was handed; and it taints its whole store if the fact says so.
+Whatever joins those exits later is unchanged, since a cell a tainting call left not computed is not computed in every
+join it reaches, as today.
+
+**The budget is per fact.** A fact's steps are its own body's and those of the code it runs inline (a closure it
+applies, a code argument a native it states runs); a call to another fact costs one step. So the budget bounds what one
+definition does at one context, which is what a cost fail-safe can name, and a program's size never reaches it. On
+eliot-build the largest fact is 143 steps. Running out of it is still a compiler limit (decision I); where it is
+reported is Q9.
+
+**What else changes.**
+
+- `MetaInterpreter.metaOfCall` reads the fact; `RefinementChannelProcessor` and `MetaDemandsProcessor` keep asking it,
+  so they share one derivation instead of making two. `MetaDemands` itself is unchanged: it is a fact about demands,
+  this one about results.
+- The §5.3 memo is deleted: the fact cache is the memo, across call nodes, processors and builds.
+- `Value.Closure` carries its address, and the interpretation fetches the lambda from its owner's `MonomorphicValue`.
+- `DerivedMeta` needs a codec, as `MetaDemands` has, so it lands in the incremental cache.
+
+**What it must not change.** Every derived meta stays what today's interpretation derives: the reachable store and the
+taint flag are the same rules applied at a call's boundary instead of inside it. Byte-identity of every example's jar,
+and of eliot-build's against a build with the memo, is the check. This is not July's *per-value mono key*, which was
+refused (code monomorphized per meta): code is still monomorphized by type arguments alone, and only a derived meta is
+kept per meta context, as `MetaDemands` already keeps a demand.
+
+**Risks.**
+
+- **The cache.** About 8 000 facts for eliot-build, each holding metas and closure addresses. T5's first build tripled
+  the cache through a field every fact carried (§16); this one adds no field to an existing fact, but is measured the
+  same way.
+- **Per-fact cost.** A fact costs a dispatch, a key, a lookup, and a codec on write. 8 000 facts against 28 000 inline
+  calls should be cheaper; measured with and without `--statistics`, as §16 did.
+- **Equivalence** rests on the reachability argument above. If a probe finds a case it misses, the fallback is to
+  interpret that call inline as today, never a different answer.
+
+**Stages.** Each verified as §17 says: the sweep, byte-identity, every suite green, and eliot-build compiled locally.
+
+- **F1: closures by address.** `Value.Closure` names its lambda by owner and path. No behaviour changes, so every jar
+  is byte-identical.
+- **F2: the reachable store.** Inside today's interpretation, a call runs over the frames and cells its arguments
+  hold, and its caller applies what it did. The memo keys on that store only. Byte-identical; measured on eliot-build,
+  where a memo ignoring the store altogether would leave about 32 000 of `answer`'s 149 866 steps, a lower bound for
+  this one.
+- **F3: the fact.** `DerivedMeta` and its processor and codec; `metaOfCall` reads it; the memo goes; the budget counts
+  per fact. Byte-identical; measured against §16's baseline (examples, cold, sums) and on eliot-build, which then
+  compiles at the budget of 1024.
+- **F4: reporting.** Running out is reported where Q9 decides.
+- **F5: the record.** Part I's §5 and §5.3 state the fact, §5.3's note is closed, and §18.1 says where this left
+  decision I.
+
+**Questions** (numbered after §17.2's):
+
+| | Question | Recommendation |
+|---|---|---|
+| Q8 | Which calls are facts | Every saturated call, natives included: only then is each fact small (the table above). |
+| Q9 | Where running out is reported | At the definition whose own fact ran out, naming the argument metas, once per fact; a fact reading a callee's that ran out is not computed there, as `MetaDemandsProcessor` reads it today. The alternative keeps today's report at each call node in a walk that reaches it, which reports one cause at every caller above it. |
+| Q10 | The budget per fact | Keep 1024: the largest fact eliot-build makes is 143 steps. |
+| Q11 | The memo (`264691c0`) until F3 | Keep it: F2 is measured against it, and F3 deletes it. |
+
 ## 18. Decisions
 
 **Decided 2026-10-20:**
@@ -1863,6 +1988,12 @@ it from O1. O1 pins what a brace on each of the two does.
 - **Q3, Q5, Q6 of §17.2**: the `data` slot spelling is slots on the head and a statement per constructor; a
   constructor that does not state its slots is an error (*"Meta values are total"*); a slot on a recursive `data` and
   `MetaOf[A]` in a `data` slot wait for O6. **Built 2026-10-23** (O4b).
+
+**Proposed, not decided (2026-10-24):**
+
+- **Derived metas are facts** (§17.3): a saturated call's derived meta is a `DerivedMeta` fact keyed by its callee,
+  type arguments and arguments, with frames and cells numbered and only those the call can reach, and the budget
+  counted per fact. It is what would make decision I hold on eliot-build. Questions Q8–Q11 there.
 
 **Open, not blocking anything:**
 
