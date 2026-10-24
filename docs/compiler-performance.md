@@ -103,6 +103,23 @@ side effect of the call, as `DependencyTrackingProcess` does today.
 This is the largest change in the list, since every processor is touched, and it is mechanical: the processors are
 already written as sequences of fact reads.
 
+**Why the engine is on cats-effect, and why Loom changes the answer** (Robert, 2026-10-24): generators are meant to
+run in parallel, and a processor that wants several facts should be able to request them all at once, with thousands
+of facts in flight; OS threads cannot carry that many, fibers can, and the sequential schedule today is only for easier
+debugging. That intent stands, and it separates two things cats-effect currently provides together. **A fiber per
+fact** is what parallelism needs, at a fact's granularity, and 67 000 of them are not the cost. **Every step inside a
+fact written as an `IO` program** is the cost (cats data structures are 36% of all allocated bytes: `EitherT`,
+`IO.FlatMap`, `AndThen`, `IO.Map`, `IndexedStateT`, `Kleisli`), and it exists only because, before Loom, the only way
+to wait for a fact without blocking an OS thread was to suspend a monadic computation. On JDK 25 a virtual thread
+parks cheaply on a blocking read (virtual threads final since 21, no pinning on `synchronized` since 24, `ScopedValue`
+final in 25), so a direct-style `getFactOrAbort` that parks on the fact's in-flight latch keeps the design: parallel
+requests (`getFactsInParallel`, one virtual thread each), thousands in flight, a sequential mode for debugging on one
+carrier thread. A virtual thread also has a real stack trace, which a fiber's work does not: 74% of the cats
+allocations in the profile have no Eliot frame to attribute them to. The engine can serve both kinds of processor
+while they are migrated, an old one as `IO` and a new one on a virtual thread blocking on a future completed from the
+engine's deferred, so the checker can go first and be measured alone. To check first: that every runtime the compiler
+runs on (the launcher, IntelliJ's for the LSP, CI) is JDK 21 or later.
+
 ### I3. Twenty cores: a parallel scheduler
 
 Once a query is a call over interned keys, independent queries can run at the same time. A query becomes a task on a
@@ -230,7 +247,7 @@ cached hashes).
 | | Question | Recommendation |
 |---|---|---|
 | P1 | Is per-phase fact granularity a goal in itself (incrementality, the LSP), or a means? | A means: I4. Fuse a chain where nothing demands its middle; keep facts at the module interface, the instance, the derived meta and the class. |
-| P2 | May the engine's core leave cats-effect: direct-style queries, exceptions for abort, `IO` only at the edges? | Yes (I2). It is a third of the CPU, and the fibers buy no concurrency today. |
+| P2 | May processor code leave cats-effect: direct-style queries on virtual threads, exceptions for abort, `IO` only at the edges, parallel requests kept? | Yes (I2). The per-step `IO` interpretation is a third of the CPU; parallelism needs a fiber per fact, which a virtual thread per fact gives without it. Migrate one processor at a time, the checker first. |
 | P3 | May the compiler become concurrent? | Yes (I3), with sorted error output so a build's report and its jar never depend on the schedule. |
 | P4 | Check once and instantiate by substitution, falling back to today's per-instance check where a generic check stalls? | Yes (I6). Every manifest instantiation still has every residual obligation decided, which is what *Use-Site Verification* requires. |
 | P5 | Generated meta code as one generic definition over a type's shape, rather than per type? | Yes in principle (I7); first find what Eliot lacks to express code generic over `$Fields`. |
