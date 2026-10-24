@@ -512,7 +512,9 @@ join their arms. When a handled statement exists (§4.5), the handler is applied
   1024. What waits on Robert is the budget: raised (eliot-build needs about 150 000 steps), counted in calls made
   rather than steps, or decision I narrowed; any of them changes a decided number or rule. **Proposed 2026-10-24:**
   derived metas as facts (§17.3), which keeps I and the budget as decided by making the budget count one definition's
-  work instead of a program's.
+  work instead of a program's. **Measured 2026-10-24, with §17.3's F2 built** (a call is interpreted, and remembered,
+  over the frames and cells it can reach): `answer` takes 34 208 steps, against about 32 000 for a key ignoring the
+  store altogether, and the launcher's jar is byte-identical.
 - **There is no type gate (since T3).** A call whose result type carried no meta used to be skipped before any body
   was fetched, which kept the interpretation off most call nodes. T3 removed it: a cell written by a call returning
   `Unit` (`putState`) must be followed, and so must a `Unit` call that never returns. Measured on a cold compile of
@@ -521,8 +523,9 @@ join their arms. When a handled statement exists (§4.5), the handler is applied
 - **The memo** (built 2026-10-23, `MetaInterpreter.Memo`). A call's answer — its value, the store after it and how
   many frames and cells it made — depends on the callee, its type arguments, its result type, its arguments and the
   store at the call, and on nothing else, so one derivation keeps every answer it got and recalls it, for one step,
-  when the same call comes again. The budget does not change an answer, only whether it is got: an answer the budget
-  cut short is not kept. Frames and cells are identities local to the derivation, so an entry is kept with them
+  when the same call comes again. Since F2 (§17.3) the store in the key is the one the call can reach: the frames and
+  cells its arguments hold, without their earlier exits, and a marker for the rest. The budget does not change an
+  answer, only whether it is got: an answer the budget cut short is not kept. Frames and cells are identities local to the derivation, so an entry is kept with them
   renumbered in the order the call mentions them, and numbered back when it is recalled; a closure keeps only the
   parameters its node mentions, so two closures over the same lambda (§5.2's address) are equal when what they read
   is. It is scoped to
@@ -1823,7 +1826,8 @@ callee's. The value is the call's answer:
 - **what it did to the frames and cells it was handed**: per frame, the exits it made, each with what it carried and
   the cells it was handed as they were then; per cell, its content when the call returned;
 - **whether it tainted**: it left through, or wrote, something it could not place (§11.1's fail-safe), so the caller
-  taints its whole store when the call returns, as the call would have done inside it today.
+  taints its whole store when the call returns, as the call would have done inside it today. (Not exact: F2's note
+  below, which carries markers instead.)
 
 **What an argument is in a key.** Everything a `Value` is today, written as data:
 
@@ -1888,7 +1892,22 @@ kept per meta context, as `MetaDemands` already keeps a demand.
 - **F2: the reachable store.** Inside today's interpretation, a call runs over the frames and cells its arguments
   hold, and its caller applies what it did. The memo keys on that store only. Byte-identical; measured on eliot-build,
   where a memo ignoring the store altogether would leave about 32 000 of `answer`'s 149 866 steps, a lower bound for
-  this one.
+  this one. *Built 2026-10-24* (`MetaInterpreter.Reach`): at every call, the frames and cells its arguments do not hold,
+  and the earlier exits of the frames they do, are kept aside and put back when it returns. `answer` now takes
+  **34 208** steps (from 149 866), all 47 example jars and eliot-build's launcher jar (budget lifted) are
+  byte-identical, and the suite is green.
+
+  **What F2 found about the taint flag.** The fact as drafted above says whether the call tainted, and the caller
+  taints its whole store when the call returns. That is not what today's interpretation does, so it would not be
+  byte-identical: a taint inside the call makes the kept cells not computed *from that point on*, so an exit the call
+  makes after it records them not computed and one before it records them as they were, and a cell the call reaches
+  and writes after the taint is known again when it returns, which a taint at return would undo. So F2 follows the
+  taint exactly instead, by two markers standing in for what is kept aside: a cell holding `unit`, which a taint makes
+  not computed, and a frame, which a taint leaves through. They join, widen and are recorded in exits as the cells and
+  frames they stand for would be, so on return the kept cells are restored, or made not computed, exit by exit, and
+  every kept frame is left through as often as the marker frame was. In F3 the fact's answer carries the markers'
+  state where the draft had a flag: what its exits recorded of the marker cell, the marker cell at return, and the
+  marker frame's exits. Nothing else in the draft changes.
 - **F3: the fact.** `DerivedMeta` and its processor and codec; `metaOfCall` reads it; the memo goes; the budget counts
   per fact. Byte-identical; measured against §16's baseline (examples, cold, sums) and on eliot-build, which then
   compiles at the budget of 1024.

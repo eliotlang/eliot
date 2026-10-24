@@ -283,8 +283,9 @@ object MetaInterpreter {
 
   /** **The memo** (`docs/meta.md` §5.3): the calls one derivation has already answered. A call's answer — its value,
     * the store after it and how many frames and cells it made — is a function of the callee, its type arguments, its
-    * result type, its arguments and the store at the call, and of nothing else, the budget included, unless the budget
-    * ran out on the way. So a diamond-shaped call DAG, which reaches the same call along many paths, interprets it once.
+    * result type, its arguments and the store it can reach ([[Reach]]), and of nothing else, the budget included, unless
+    * the budget ran out on the way. So a diamond-shaped call DAG, which reaches the same call along many paths,
+    * interprets it once, whatever frames and cells enclose it on each.
     *
     * Frames and cells are known by identities local to the derivation, so the same call reached twice holds different
     * ones: an entry is kept with every identity renumbered in the order the call's arguments, then its store, mention
@@ -346,16 +347,81 @@ object MetaInterpreter {
     def identities(value: Value, store: Store): Seq[Int] = identities(Seq(value), store)
 
     private def identities(values: Seq[Value], store: Store): Seq[Int] =
-      values.flatMap(identities) ++ store.cells.keys.toSeq.sorted ++ store.frames.keys.toSeq.sorted ++
+      values.flatMap(held) ++ store.cells.keys.toSeq.sorted ++ store.frames.keys.toSeq.sorted ++
         store.frames.keys.toSeq.sorted.flatMap(store.frames(_).flatMap(_.cells.keys.toSeq.sorted))
+  }
 
-    private def identities(value: Value): Seq[Int] = value match {
-      case Value.Frame(id)          => Seq(id)
-      case Value.Cell(id)           => Seq(id)
-      case Value.Data(_, fields, _) => fields.flatMap(identities)
-      case Value.Closure(_, env)    => env.keys.toSeq.sorted.flatMap(name => identities(env(name)))
-      case _                        => Seq.empty
+  /** **The store a call can reach** (`docs/meta.md` §17.3, F2). Frames and cells are second-class, so a call reaches
+    * one only through its arguments (§11.1): a call is interpreted over the frames and cells its arguments hold, and
+    * the rest of the store is what this keeps aside, to put back when the call returns. Nothing the call does can
+    * change it, except that code it does not follow is fail-safe: [[Store.tainted]] makes every cell not computed and
+    * leaves through every frame, the ones the call cannot reach included.
+    *
+    * That one exception is followed exactly by two markers standing in for what is kept aside: a cell holding `unit`,
+    * which a taint makes not computed, and a frame, which a taint leaves through. They join, widen and are snapshotted
+    * as the cells and frames they stand for would be, so on return the kept cells are not computed exactly where the
+    * marker cell is not, each exit records them as they were exactly when it was made, and every kept frame is left
+    * through as often as the marker frame was. The markers exist only when something is kept aside.
+    *
+    * A frame's earlier exits are kept aside too, though the frame is reachable: only the native that made it reads
+    * them, after its code returns, and that native is outside the call. So a call is interpreted, and remembered by the
+    * [[Memo]], over the same store however many frames enclose it.
+    *
+    * {{{
+    *   runThrow(… if(c, v) …)     // `if`'s call holds Abort's frame only
+    *     store at the call    frames {throw: [e1], abort: []}, cells {}
+    *     the call sees        frames {abort: [], marker: []}, cells {marker: unit}
+    * }}}
+    */
+  private case class Reach(earlier: Map[Int, Seq[Store.Exit]], aside: Store, markers: Option[(Int, Int)]) {
+
+    /** The store after the call, from `after`, the store the call ended with. */
+    def rejoined(after: Store): Store = markers match {
+      case None               =>
+        Store(after.cells, after.frames.map((id, exits) => id -> (earlier.getOrElse(id, Seq.empty) ++ exits)))
+      case Some((cell, frame)) =>
+        def asideAt(cells: Map[Int, Store.Content]): Map[Int, Store.Content] = cells.get(cell) match {
+          case Some(Store.Content(Some(_), _)) => aside.cells
+          case Some(_)                         => aside.cells.view.mapValues(_.copy(meta = None)).toMap
+          case None                            => Map.empty
+        }
+        def restored(exit: Store.Exit): Store.Exit = Store.Exit(exit.carried, (exit.cells - cell) ++ asideAt(exit.cells))
+        val reached = (after.frames - frame).map((id, exits) => id -> (earlier.getOrElse(id, Seq.empty) ++ exits.map(restored)))
+        val kept    = after.frames.get(frame).fold(Map.empty[Int, Seq[Store.Exit]])(exits =>
+          aside.frames.view.mapValues(_ ++ exits.map(restored)).toMap
+        )
+        Store((after.cells - cell) ++ asideAt(after.cells), reached ++ kept)
     }
+  }
+
+  private object Reach {
+
+    /** The run a call with `arguments` is interpreted in, over the store it can reach, and what is kept aside. */
+    def of(arguments: Seq[Value], run: Run): (Run, Reach) =
+      if (run.store.isEmpty) (run, Reach(Map.empty, Store.empty, None))
+      else {
+        val held    = arguments.flatMap(MetaInterpreter.held).toSet
+        val frames  = run.store.frames.view.filterKeys(held.contains).toMap
+        val reached = Store(run.store.cells.view.filterKeys(held.contains).toMap, frames.view.mapValues(_ => Seq.empty).toMap)
+        val aside   = Store(run.store.cells -- held, run.store.frames -- held)
+        if (aside.isEmpty) (run.copy(store = reached), Reach(frames, aside, None))
+        else {
+          val (cell, frame) = (run.fresh, run.fresh + 1)
+          (
+            run.copy(fresh = run.fresh + 2, store = reached.withCell(cell, Store.Content(Some(untrackedMeta), Some(unitType))).withFrame(frame)),
+            Reach(frames, aside, Some((cell, frame)))
+          )
+        }
+      }
+  }
+
+  /** The frames and cells a value holds: is one, has one in a field, or captured one, in the order it mentions them. */
+  private def held(value: Value): Seq[Int] = value match {
+    case Value.Frame(id)          => Seq(id)
+    case Value.Cell(id)           => Seq(id)
+    case Value.Data(_, fields, _) => fields.flatMap(held)
+    case Value.Closure(_, env)    => env.keys.toSeq.sorted.flatMap(name => held(env(name)))
+    case _                        => Seq.empty
   }
 
   private def renumbered(value: Value, numbering: Int => Int): Value = value match {
@@ -375,12 +441,7 @@ object MetaInterpreter {
   }
 
   /** Whether a value holds a frame or a cell: is one, has one in a field, or captured one. */
-  private def holdsState(value: Value): Boolean = value match {
-    case _: Value.Frame | _: Value.Cell => true
-    case Value.Data(_, fields, _)       => fields.exists(holdsState)
-    case Value.Closure(_, env)          => env.values.exists(holdsState)
-    case _                              => false
-  }
+  private def holdsState(value: Value): Boolean = held(value).nonEmpty
 
   /** The §5.3 cost fail-safe: the number of interpretation steps one call node's derivation may spend, across depth
     * *and* fan-out together (each node visited costs one, and the budget is threaded through siblings rather than
@@ -714,7 +775,8 @@ object MetaInterpreter {
     *   - anything else is *derived* ([[derive]]).
     *
     * The body is read after the layer merge, so a brace in one layer over a body in another is the second arm. A
-    * call this derivation already answered is not made again but recalled ([[Memo]]), at the cost of one step.
+    * call is interpreted over the store it can reach ([[Reach]]), and one this derivation already answered over that
+    * store is not made again but recalled ([[Memo]]), at the cost of one step.
     */
   private def metaOf(
       callee: ValueFQN,
@@ -725,15 +787,18 @@ object MetaInterpreter {
   ): CompilerIO[(Run, Value)] =
     if (arguments.contains(Value.Never)) (run, Value.Never).pure[CompilerIO]
     else {
-      val call = Memo.Call(callee, typeArguments, resultType)
-      ().pure[CompilerIO].flatMap { _ =>
-        Option.when(run.budget > 0)(run.memo.recall(call, arguments, run.spent)).flatten match {
-          case Some(recalled) => recalled.pure[CompilerIO]
-          case None           =>
-            answered(callee, typeArguments, resultType, arguments, run)
-              .map(result => { run.memo.remember(call, arguments, run, result); result })
+      val call           = Memo.Call(callee, typeArguments, resultType)
+      val (inner, reach) = Reach.of(arguments, run)
+      ().pure[CompilerIO]
+        .flatMap { _ =>
+          Option.when(inner.budget > 0)(inner.memo.recall(call, arguments, inner.spent)).flatten match {
+            case Some(recalled) => recalled.pure[CompilerIO]
+            case None           =>
+              answered(callee, typeArguments, resultType, arguments, inner)
+                .map(result => { inner.memo.remember(call, arguments, inner, result); result })
+          }
         }
-      }
+        .map((after, value) => (after.copy(store = reach.rejoined(after.store)), value))
     }
 
   /** [[metaOf]] once the memo has no answer for the call. */
