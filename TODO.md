@@ -109,6 +109,9 @@ Nothing effect-related is tracked here; add it there.
   `Compiler.runCompiler` answers `ExitCode.Error` for a failed result. cats-effect warns at start that "IOApp `main` is
   running on a thread other than the main thread", which may be the cause. Not checked through `./mill examples.run`,
   the launcher or the IntelliJ build task, which gates on the exit code.
+- **A recursive definition is reported twice.** `RecursionCheckProcessor` is keyed by platform, so a self-recursive
+  `def` in a user module is refused once on the runtime track and once on the compiler track, with the same message at
+  the same position (probed 2026-10-24, `docs/recursive-data.md` §"Where this stands"). Folded into that design's R3.
 - Rename processors to generators?
 
 ## Microcontroller target

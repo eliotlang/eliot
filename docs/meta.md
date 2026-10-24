@@ -2092,6 +2092,13 @@ them, and O6 for the recursive-data fold. **What blocks a release is decision I*
 eliot-build compiles at the budget of 1024 with every jar byte-identical. F4 (Q9) and F5 followed the same day, so
 §17.3 is complete: running out is reported at the definition that ran out, and a build that ran out leaves no jar.
 
+**Next: the recursive-data fold.** With decision I closed, what the plan still holds waits on it: decision J's
+recursive group (§13.3) and O6's slots on a recursive `data` (§17.2); O2 and O3 wait for a program. Its gate, `List`
+carrying `size`, shipped with T6, so `docs/recursive-data.md` was re-anchored on 2026-10-24 on D36 and on this
+document's Part II (its section *"Where this stands"*): what moved (an arm is code, so a suspended position must be
+code or the arms pure; the fold's meta is a loop's fixpoint, widened, through one new primitive; depth is a declared
+slot, not a generated one), a staging R1–R6 and questions RQ1–RQ5, awaiting Robert.
+
 **The `Unit` question (2026-10-21), closed the same day.** Robert: a type declaring no meta gets `Unit` implicitly, and
 *"the rest of the machinery should not know that this was 'default'"*. T3 removed two places that knew: §5.3's type
 gate (a call returning a type with no meta was not interpreted) and the stated path's shortcut (a code argument of meta
