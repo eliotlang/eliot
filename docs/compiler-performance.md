@@ -3,7 +3,9 @@
 Status: **proposal, 2026-10-24.** The measurements are real; the ideas are not built, and nothing here is decided.
 Questions P1–P6 (§5) await Robert. §6 records the first experiment, the checker on virtual threads: it was **7%
 slower**, and it weakens I2 as a processor-by-processor migration. §6 also corrects how §1's absolute times should be
-read.
+read. §7 records the second, 2026-10-26: §1's third in the run loop reproduces, and it was mostly the `CompilerIO`
+transformer stack. **One reader over `IO` instead of it makes a cold build 23% faster**, every jar byte-identical, with
+no processor changed.
 
 The goal (Robert, 2026-10-24): *"A cold compile of the build project should not take 1 minute. It should take a
 couple of seconds actually. We need some very fundamental ideas to break through here."* eliot-build's launcher is
@@ -125,6 +127,9 @@ runs on (the launcher, IntelliJ's for the LSP, CI) is JDK 21 or later.
 > **Tried 2026-10-24 (§6): the checker alone on virtual threads is 7% slower.** Its 9 822 checks make 171 017 fact
 > reads, which still run through the `CompilerIO` stack. So the checker cannot be migrated and measured on its own
 > through this bridge, and a gain from I2, if there is one, has to be measured with the fact reads direct too.
+>
+> **Tried 2026-10-26 (§7): `CompilerIO` as one reader over `IO` is 23% faster**, with fibers and `IO` kept. Most of
+> the run loop's third was the transformer stack's binds, so I2's remaining gain is measured from 31 s, not 40 s.
 
 ### I3. Twenty cores: a parallel scheduler
 
@@ -331,3 +336,84 @@ session: the alternated comparisons (v0.18 against `8bea273a` in `docs/meta.md` 
 from one profile (§1) stand, while §1's "54 s" and §4's starting point are this machine on a busy afternoon. The goal is
 unchanged: 37 s is still 15–20× from a couple of seconds.
 
+
+## 7. Experiment 2: one reader over `IO` instead of the transformer stack (2026-10-26)
+
+§6 left two readings open: §1's 33% might not reproduce, or it might be real but not in the checker. This experiment
+re-measures it and then removes the part §6 could not reach. Result: **the 33% is real, and a flat `CompilerIO` takes
+a cold build from 40.1 s to 31.0 s (−23%), every jar byte-identical**, with fibers, `IO` and the engine unchanged. The
+code is not on `master`; it is in the local stash *"perf experiment: flat CompilerIO (docs/compiler-performance.md
+§7)"*.
+
+### 7.1 The 33% reproduces
+
+A JFR profile of `d38d4ac6` (code identical to `8bea273a`), taken on a quiet machine (40.5 s cold, 3 199 samples), with
+each sample classified by the frame it is executing:
+
+| the executing frame | share |
+|---|---|
+| `cats.data` (`IndexedStateT`, `AndThen`, `Kleisli`, `EitherT`), the `IO` run loop, cats-effect tracing (`RingBuffer`, `ClassValue`), lambda allocation | **35%** |
+| structural `hashCode`/`equals`, inside the cache save | 21% |
+| structural `hashCode`/`equals`, elsewhere | 6% |
+| the rest of the cache save (collections, encoding, i/o) | 15% |
+| Scala collections, outside the save | 8% |
+| **Eliot's own code** | **7%** |
+
+Of the 35%, 27 points have **no Eliot frame on the stack** (§1's measure, now 30% against §1's 33%) and only 2.4
+points have the checker on it. So §6's finding is explained: the checker's own `CheckIO` binds were a small part. The
+run loop interprets binds after the frame that built them has returned, and most of them were never the checker's.
+
+### 7.2 What was built
+
+`CompilerIO` was `ReaderT[StateT[EitherT[IO, Chain[CompilerError], *], Chain[CompilerError], *], CompilationProcess, *]`:
+every bind went through three transformer layers, each allocating its own closures. The experiment changed only its
+representation:
+
+- `CompilerIO[T] = Kleisli[IO, Context, T]`, one reader over `IO`. `Context` holds the `CompilationProcess` and the
+  accumulated errors in a mutable field.
+- An abort raises an `Aborted(errors)` exception without a stack trace. `runCompilerIO(process)(io)` gives the engine
+  the same `Either[errors at the abort, (errors, value)]` it read from the stack before, and `recover`/
+  `recoverWithAborted` run their computation in a fresh `Context` and merge its errors back, as the isolated
+  `StateT` run did.
+- `getFactOrAbort` is one `Kleisli` around `process.getFact(key).flatMap`, with no lifting through layers.
+
+Four files changed: `CompilerIO.scala`, one line of `IncrementalFactGenerator.regenerate`, and the two wrappers that
+swap the process under a processor (`TimedCompilerProcessor` for `--statistics`, `TrackedCompilerProcessor` for
+`--visualize-facts`), through a new `withProcess`. **No processor changed**: the `StateT` layers over `CompilerIO`
+(`CheckIO`, `ValueResolverScope`, `UsedNamesState`, `TypeState`) and every `Sync`/`LiftIO` use (`.to[CompilerIO]`,
+`Logging`) compile against it as before. The tests that run a `CompilerIO` by hand (`ProcessorTest`,
+`SequentialCompilerProcessorsTest`, `AbilityResolverBindingTest`, the LSP's `VirtualFileSystemTest`) were not ported,
+so the suites were not run.
+
+### 7.3 What was measured
+
+On eliot-build's launcher, cold, alternating, each compiler from its own copy of the classes, the jar byte-identical
+(`a74475df…`) in every run:
+
+| | run 1 | run 2 | run 3 | mean |
+|---|---|---|---|---|
+| baseline (`d38d4ac6`) | 41.6 s | 40.5 s | 38.2 s | 40.1 s |
+| flat `CompilerIO` | 31.2 s | 30.5 s | 31.3 s | 31.0 s |
+
+- **Diagnostics are the same.** eliot-build with an undefined name in `Command.els`: both compilers print the same
+  three diagnostics (the name, reported twice, and the rejected `usage` that reaches it), byte for byte.
+- **The profile** of the flat version (31.8 s, 2 416 samples): samples executing cats code fall from 1 118 to 463, and
+  the cache save stays at 1 131 to 1 143. The cache save is now **47%** of the build. The cats code that is left is
+  the run loop (7%), `cats.data` (6%, the `StateT` layers above, `CheckIO` the largest), tracing (4%) and lambda
+  allocation (2%).
+- **Tracing off on top** (`-Dcats.effect.tracing.mode=none`): 30.4 → 29.6 s (two alternated pairs), −3%. §1's −10%
+  was mostly the transformer stack's binds being traced.
+
+### 7.4 What it means
+
+- **The transformer stack, not fibers or `IO`, was most of the run loop's third.** Flattening it keeps everything
+  Robert's rationale for cats-effect needs (§3 I2): a fiber per fact, `Deferred`s, parallel requests. So it answers P2
+  partly without leaving cats-effect, and it is a precondition for I2 rather than a rival: whatever a direct-style
+  engine would gain is now measured against 31 s, not 40 s.
+- **It is small enough to adopt as it stands**: four files, the four tests above ported to `runCompilerIO`. One
+  decision: the error buffer is a plain field, which is right while a generation runs sequentially (every one does
+  today), and has to become an atomic reference the day a processor starts sub-computations in parallel within one
+  generation.
+- **The next target is the cache save, now nearly half the build**, and 62% of it is structural hashing and equality
+  (702 of 1 131 samples), mostly of fact keys: I1 (interning), or first §1's cached `hashCode` in the four key classes,
+  which took 5.4 s off the save there.
