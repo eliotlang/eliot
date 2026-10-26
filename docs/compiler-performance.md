@@ -919,3 +919,125 @@ value will have; any rule would be a guess. Which is the next lever is unchanged
 (about half a millisecond even for `B => ((B, A) => B) => List[A] => B`) is now the larger question than how many there
 are.
 
+
+## 13. What one check costs, and who reads what (2026-10-26)
+
+§12.4 left one question: why a check costs about half a millisecond. A JFR profile cannot answer it directly, because
+a quarter of the compilation's samples are the cats-effect run loop with no Eliot frame on the stack, and those
+samples cannot be charged to any processor. So a temporary probe (reverted) marked every generation and every fact read
+with a JFR event (`eliot.Label`, no stack trace), pushed and popped in `TimedCompilerProcessor` and
+`TimedCompilationProcess` under `--statistics`. Each execution sample is then charged to the label running at its
+timestamp, the run loop included. A second label, `read<P>T`, gave every fact read its reader's and its target's key
+types.
+
+**Caveats.** The machine was under load (load average 3–8 on 20 cores), so no wall time here can be compared with
+earlier sections. Plain cold runs took 20.1 s and 16.4 s; with the probe and JFR, 26 s. The probe adds a few `IO`
+steps and two event commits to every read, so **a read's share below is inflated**. Samples inside the probe are
+dropped. Counts (reads, generations, calls) do not depend on load, and every jar was `a74475df…`.
+
+### 13.1 The split
+
+1 738 attributed samples on the compilation (the write-behind worker's 472 excluded):
+
+| | samples | share |
+|---|---|---|
+| a processor's own code | 753 | 43% |
+| the cats-effect run loop, charged to whichever generation or read was running | 661 | 38% |
+| the engine (fact map, dependency tracking, dispatch, names) | 294 | 17% |
+| hashing or equality as the leaf | 30 | 2% |
+
+By where it happened: inside a generation 57%, inside a fact read 32%, dispatching a key to its processor 6%, the
+engine between generations 5%. **A cold build makes 1 040 000 fact reads**, 15.5 for each of its 67 000 facts. Without
+the probe (the `p13` profile of the same commit), samples with a read-path frame on the stack are a 9.8% lower bound,
+since a read's run-loop steps carry no frame.
+
+### 13.2 A check is half bind interpretation, and its code has no hot spot
+
+394 samples ran inside a check on either track, reads excluded:
+
+| | share of a check |
+|---|---|
+| the run loop | 45% |
+| `CheckIO`'s own constructors (`inspect`, `pure`, `modify`, `get`) | 6% |
+| everything else: no method above 2% (`Checker`, `TypeStackLoop`, `HandleHoleResolver`, `PostDrainQuoter`, `Quoter`, `Env`, …) | 49% |
+
+Reads come on top of that. A runtime check reads 32 facts (74 417 reads over 2 303 checks: `NativeBinding`,
+`BodyValueReferences`, `SaturatedValue`, its signature twin), a compile-track check 17.5 (131 323 over 7 519). Read
+time inside a check is 14% (signature twins) to 26% (runtime values) of its samples.
+
+So the half millisecond is **not** an expensive algorithm somewhere. Half of it is `CheckIO = StateT[CompilerIO, …]`
+interpreted step by step, and the other half is spread evenly over the checker. Nothing local makes a check fast. I2 is
+what removes that half, applied to `CheckIO` together with the fact reads, since §6 showed the checker cannot be moved
+alone. It is a ceiling on I2's gain for checks, not an estimate.
+
+### 13.3 The largest key type is the derived meta, and most of it is re-linking
+
+| key type | samples | share | generations | reads it makes |
+|---|---|---|---|---|
+| **`DerivedMeta`** | 299 | **17.2%** | 5 544 | **431 426** (78 each) |
+| `CompilerMonomorphicValue`, signature twins | 258 | 14.8% | ~4 300 | 84 188 |
+| `MonomorphicValue` | 149 | 8.6% | 2 303 | 74 417 |
+| `GeneratedModule` | 115 | 6.6% | 50 | 19 004 |
+| `ResolvedValue` | 104 | 6.0% | 3 554 | 27 249 |
+| `CompilerMonomorphicValue`, values | 98 | 5.6% | ~3 200 | 47 135 |
+| `RowElaboratedValue` | 79 | 4.5% | 2 814 | 42 423 |
+
+**41% of all fact reads are made by derived metas**, and three targets account for nearly all of them:
+`CompilerMonomorphicValue` 175 865, `NativeBinding` 121 581 and `UnifiedModuleNames` 95 339. The first two come from
+one place. Every `EscalatingReducer.reduceApplied` (a meta's `join`, a data type's slots, a stated companion, a carried
+meta) links its callee's reduced body with `ReducedBindingClosure.collectBindings(deep = true)`. That links each
+reference as `reduceInstance`, which reads the reference's `CompilerMonomorphicValue` and links *its* references the same
+way, down the whole transitive closure. Nothing is remembered between calls. Counted with temporary counters (reverted):
+
+| | calls | distinct `(value, type arguments)` | repeated |
+|---|---|---|---|
+| `reduceApplied` | 28 907 | 1 240 | 23× |
+| `reduceInstance` | 139 573 | 1 379 | **101×** |
+
+The same 1 379 instances are linked 139 573 times: each link re-reads the instance's facts, renames it apart
+(`instanceNamed`), collects its references (`valueReferences`), asks for the request chain (`activeFactKeys`) and
+allocates a fresh `VTopDef` thunk. The evaluation that follows does differ per call, since it applies that call's
+argument metas. The linking does not, because it depends only on the instance, apart from the cycle guard (below).
+
+Without the probe, samples with a `ReducedBindingClosure` or `EscalatingReducer` frame on the stack are a 3.8% lower
+bound (their run-loop steps and reads carry no such frame). With the probe, linking's code plus the derived metas'
+`CompilerMonomorphicValue` and `NativeBinding` reads come to about 8%. Discounting the inflated reads gives an
+**estimated 5–9% of a cold build, 0.8–1.4 s**. The last two estimates in this document were twice what was measured,
+so plan for half of that. It would also remove 29% of all fact reads, which shrinks what I1 and I2 have to make cheap.
+
+**The obvious shape: a fact.** `ReducedInstance(vfqn, typeArguments)` holds the linked binding, so `reduceInstance`
+becomes one memoized read. A fact holding a `SemValue` with no value codec has a precedent: `NativeBinding` declines
+its codec for the same reason. One question needs an answer before it is built. `collectBindings` leaves out a
+reference that is an **ancestor on the active request chain**, so today's link depends on who asked. As a fact, the
+first reader's chain would decide it for every later reader. Either the cases where the guard fires must be shown to
+give the same binding, or a link that skipped an ancestor must not be shared. That is exactly the "soundness by
+argument" §12.4 was reverted for, so it needs the probe-first treatment §12.2 had: compare every memoized link with a
+fresh one across eliot-build, the examples and both test suites before trusting it. The third target,
+`UnifiedModuleNames` (95 339 reads, 17 per derived meta), comes from `declaresSlots`, `declaresFields`,
+`parameterStatements` and `handedStatementsOf`, each asking the module's names again. That repetition is cheap per read,
+and I1/I2 make it cheaper still.
+
+Other readers that read the same facts many times, for later: `AbilityImplementationCheck` makes 47 050 reads of
+`OperatorResolvedValue` over 268 generations (175 each), `AbilityImplementation` 21 981 over 425, `RecursionCheckedValue`
+39 646 of `NamedValuesRewrittenValue` (14 each), and `MetaDemands` 22 984 of `UnifiedModuleNames`.
+
+### 13.4 Bytecode has no hot spot
+
+`GeneratedModule` is 6.6% of the samples (115) for 50 modules: 23% run loop, then `JvmIdentifier.encode`/`encodeChar`
+(9%), and nothing else above 3%. 25 ms a module is the sum of many small steps. It is not a lever on its own.
+
+### 13.5 What it means
+
+The ranking from §12.1, revised:
+
+| lever | what it removes | rough gain | needs |
+|---|---|---|---|
+| **memoize the linked reduced instance** (§13.3) | 138 000 of 139 573 links, 29% of all fact reads | 0.8–1.4 s estimated, plan for half | a correctness argument for the cycle guard, then a probe |
+| I2, direct-style queries | the run loop: 45% of a check, 38% of the compilation | the largest, ≤2.5 s and likely more for checks | the largest refactor |
+| I1, interning | the remaining hashing and equality on reads | ≤2 s, shrinks if reads are fewer | mechanical |
+| I9, a hand-written lexer and parser | most of parsing | ~1 s | nothing |
+| bytecode | nothing found | — | — |
+
+I2 is still the largest lever. The memoized link is the largest lever that does not touch every processor. It also has
+a clear first step: an isolated probe comparing memoized links with fresh ones, the same as §12.2, which costs an
+afternoon and decides it.
