@@ -1,6 +1,7 @@
 package com.vanillasource.eliot.eliotc.compiler.cache.codec
 
 import java.io.{ByteArrayOutputStream, DataOutput, DataOutputStream, OutputStream}
+import java.util.IdentityHashMap
 import scala.collection.mutable
 
 /** A [[FactCodec.Output]] that carves the encoding into separately addressed objects instead of one stream — the write
@@ -29,7 +30,11 @@ import scala.collection.mutable
   * correctly for each. What must *not* be shared is a reader's cache of decoded values, which is why
   * [[ContentAddressedInput]] keys its memo by codec as well as offset.
   *
-  * Hashing is memoized by value, so encoding costs one digest per *distinct* object rather than one per occurrence.
+  * Encoding is memoized by **identity**, so an instance written from many places is encoded and digested once. An equal
+  * but distinct instance is encoded again, comes to the same id, and so to the bytes already stored: the memo saves
+  * work, and storing nothing twice is the id's job. Memoizing by value instead hashed and compared the value
+  * structurally at every level of every tree, so a deep value cost its size once per ancestor, which was 29% of a cold
+  * build's CPU (`docs/compiler-performance.md` §8).
   *
   * @param existing
   *   where the objects already in the store live, so an encoding reuses them instead of appending them again
@@ -39,27 +44,23 @@ import scala.collection.mutable
 final class ContentAddressedOutput(existing: Map[ObjectId, Int], firstOffset: Int) extends FactCodec.Output {
   private val added   = new ByteArrayOutputStream()
   private val offsets = mutable.HashMap.from(existing)
-  private val ids     = mutable.HashMap.empty[Any, ObjectId]
+  private val placed  = new IdentityHashMap[Any, ContentAddressedOutput.Placed]()
   private var current = ContentAddressedOutput.Frame()
 
   override def raw: DataOutput = current.tee
 
   override def shared(value: Any)(body: => Unit): Unit = {
-    val id = ids.getOrElse(value, remember(value, store(value, body)))
+    val known = Option(placed.get(value)).getOrElse(remember(value, store(body)))
 
-    FactCodec.writeVarInt(current.bodyOut, offsets(id))
-    current.hash.write(id.bytes)
+    FactCodec.writeVarInt(current.bodyOut, known.offset)
+    current.hash.write(known.id.bytes)
   }
 
   /** Encode one value as an object of its own and answer what it is and where it now lives — the store's entry point,
     * as opposed to [[FactCodec.Output.shared]], which is what codecs call on their way down. A value whose content is
     * already in the store is not appended again, so this may well point back into what was there before.
     */
-  def write[A](value: A)(using codec: FactCodec[A]): ContentAddressedOutput.Placed = {
-    val id = store(value, codec.write(this, value))
-
-    ContentAddressedOutput.Placed(id, offsets(id))
-  }
+  def write[A](value: A)(using codec: FactCodec[A]): ContentAddressedOutput.Placed = store(codec.write(this, value))
 
   /** Everything this encoding adds to the body region, to be appended at `firstOffset`. Objects found already present
     * contribute nothing, which is what makes a save write only what is new.
@@ -69,15 +70,15 @@ final class ContentAddressedOutput(existing: Map[ObjectId, Int], firstOffset: In
   /** Where every object now lives, the pre-existing ones included — the dedup index the next run starts from. */
   def objectOffsets: Map[ObjectId, Int] = offsets.toMap
 
-  /** Not `getOrElseUpdate`: computing the id writes the value's children, which inserts into this very map, and a
-    * `mutable.HashMap` may not be modified while it is deciding where to put an entry.
+  /** Not `computeIfAbsent`: placing a value places its children, which inserts into this very map, and a map may not
+    * be modified while it is deciding where to put an entry.
     */
-  private def remember(value: Any, id: ObjectId): ObjectId = {
-    ids.update(value, id)
-    id
+  private def remember(value: Any, known: ContentAddressedOutput.Placed): ContentAddressedOutput.Placed = {
+    placed.put(value, known)
+    known
   }
 
-  private def store(value: Any, body: => Unit): ObjectId = {
+  private def store(body: => Unit): ContentAddressedOutput.Placed = {
     val frame    = ContentAddressedOutput.Frame()
     val previous = current
 
@@ -85,14 +86,18 @@ final class ContentAddressedOutput(existing: Map[ObjectId, Int], firstOffset: In
     try body
     finally current = previous
 
-    val id = ObjectId.of(frame.hash.toByteArray)
+    val id     = ObjectId.of(frame.hash.toByteArray)
+    val offset = offsets.get(id) match {
+      case Some(existing) => existing
+      case None           =>
+        val appended = firstOffset + added.size()
 
-    if (!offsets.contains(id)) {
-      offsets.update(id, firstOffset + added.size())
-      added.write(frame.body.toByteArray)
+        offsets.update(id, appended)
+        added.write(frame.body.toByteArray)
+        appended
     }
 
-    id
+    ContentAddressedOutput.Placed(id, offset)
   }
 }
 

@@ -38,10 +38,15 @@ object ObjectId {
 
   /** SHA-256 over the object's hash image, truncated to [[WIDTH]] bytes. */
   def of(image: Array[Byte]): ObjectId = {
-    val hash = MessageDigest.getInstance("SHA-256").digest(image)
+    val hash = digest.get().digest(image)
 
     ObjectId(longAt(hash, 0), longAt(hash, 8))
   }
+
+  /** One digest per thread, since a save asks for one per object, millions of them, and looking an algorithm up by name
+    * costs a provider search each time. `digest` leaves it reset.
+    */
+  private val digest: ThreadLocal[MessageDigest] = ThreadLocal.withInitial(() => MessageDigest.getInstance("SHA-256"))
 
   private def longAt(bytes: Array[Byte], offset: Int): Long =
     (0 until 8).foldLeft(0L)((acc, index) => (acc << 8) | (bytes(offset + index) & 0xffL))

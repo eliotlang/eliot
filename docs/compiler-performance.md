@@ -5,7 +5,8 @@ Questions P1–P6 (§5) await Robert. §6 records the first experiment, the chec
 slower**, and it weakens I2 as a processor-by-processor migration. §6 also corrects how §1's absolute times should be
 read. §7 records the second, 2026-10-26: §1's third in the run loop reproduces, and it was mostly the `CompilerIO`
 transformer stack. **One reader over `IO` instead of it makes a cold build 23% faster**, every jar byte-identical, with
-no processor changed; it is adopted.
+no processor changed; it is adopted. §8 records the third, the cache save's hashing: it was the save's memo of values,
+not fact keys, and memoizing by identity instead makes a cold build **16% faster**; adopted.
 
 The goal (Robert, 2026-10-24): *"A cold compile of the build project should not take 1 minute. It should take a
 couple of seconds actually. We need some very fundamental ideas to break through here."* eliot-build's launcher is
@@ -446,3 +447,79 @@ decline, on `master` as with this change. Which keys fail **differs between two 
 `d38d4ac6`: `Abort::escapeInternal` 5 then 2, `Throw::escapeInternal` 0 then 3, `Function::.` 10 then 6), so a
 derived meta's outcome depends on something besides its key. The suites stay green because nothing asserts on it. It
 belongs to `docs/meta.md` §17.3 (closure addresses), not here, and is open.
+
+## 8. The hashing fix: the save memoizes by identity (2026-10-26)
+
+§7.4 named the next target: the cache save, 47% of a cold build, 62% of it structural hashing and equality, which §1
+read as mostly fact keys. **It was not the keys.** It was the store's own memo of the values it encodes, and keying that
+memo by identity takes a cold build from 32.1 s to 26.9 s (**−16%**), every jar byte-identical.
+
+### 8.1 Where the hashing was
+
+A profile of `39029d1f` (34.7 s cold, 2 648 samples), each hashing sample attributed to the nearest Eliot frame above
+the outermost `hashCode`/`equals`:
+
+| where the save hashes | samples |
+|---|---|
+| `ContentAddressedOutput.shared` and `remember`: the memo `HashMap[Any, ObjectId]` of every value written | 627 of 779 |
+| case classes' own `hashCode`, reached from those (`Sourced`, the expression trees) | ~130 |
+| `Located.keyLocation`: the map from fact keys to their offsets | 13 |
+
+`shared` is called on every product and sum on the way down a value, and looked the value up in a map keyed by
+**structure**. A case class's hash walks the whole value and a hit compares it field by field, so a value's subtree
+was walked once for itself and once more for each of its ancestors: the cost of a tree of depth *d* was its size times
+*d*. Fact keys already cache their hash (`CompilerFactKey`), which is why keys barely show.
+
+Removing it does not remove all of that time: an equal but distinct instance, which the structural memo found, is now
+encoded and digested again. By sample share the save took about 15.1 s, 11.7 s with the identity memo (−3.4 s, close to
+§1's −2.8 s for the same experiment), and 9.5 s with §8.2's other two changes; samples in SHA-256 rose from 45 to 98.
+
+### 8.2 What changed
+
+Three files of `compiler/cache/codec`, nothing outside the cache:
+
+- `ContentAddressedOutput` memoizes by **identity** (`java.util.IdentityHashMap`), and keeps the offset beside the id,
+  so a repeated instance costs one lookup where it cost two. An equal but distinct instance is
+  encoded again, comes to the same id, and is stored nowhere twice: dedup was always the id's job (`offsets`), and the
+  memo only saves work. Encoding is now linear in the number of distinct instances.
+- `ObjectIdOutput`, which hashes a recomputed value for the warm build's equality cutoff, memoizes the same way.
+- `ObjectId.of` keeps one `MessageDigest` per thread instead of looking SHA-256 up by name for every object, a
+  provider search that showed in the profile once the hashing was gone.
+
+### 8.3 What was measured
+
+Verified: every suite green (`./mill __.test`), and the example sweep (`scripts/example-sweep.sh`, 52 modules, 46 with a
+jar) identical, line for line, to `39029d1f`'s. eliot-build's launcher, alternated in one session, jar `a74475df…` every
+time:
+
+| | run 1 | run 2 | run 3 | mean |
+|---|---|---|---|---|
+| `39029d1f` | 32.0 s | 31.4 s | 33.0 s | 32.1 s |
+| identity memo only | 28.3 s | 27.8 s | 29.1 s | 28.4 s (−12%) |
+| + offset beside the id, one digest per thread | 27.2 s | 26.7 s | 26.9 s | 26.9 s (−16%) |
+
+- **Warm, nothing changed**: 5.8–5.9 s against 5.9–6.1 s, the same; a warm build saves almost nothing.
+- **Incremental**, one string literal changed in `Command.els` and changed back: 13.4 and 13.4 s before, 10.6 and
+  11.1 s after, with the same jars as a cold build of each source.
+- **The save** falls from 44% of the samples to 32% (673 of 2 091). Hashing is gone from it; what is left is the
+  per-object cost of 61 MB of small objects: a `Frame` of four streams per object, every byte through two
+  synchronized `ByteArrayOutputStream`s, the identity map's memory traffic, and a SHA-256 per object.
+- **Cached hashes in the engine's key classes do not pay any more.** `ValueFQN`, `ModuleName`, `QualifiedName` and
+  `GroundValue.Structure` with a cached hash, plus a hash check before a fact key's structural `equals`: 27.7 s
+  against 27.8 s, noise. §1's 8% from them was the save's structural memo hashing those classes. Not adopted; the
+  remaining structural hashing outside the save is 8% of the samples, spread over the engine's maps and the active
+  chain's `List.contains`, and interning (I1) rather than more cached hashes is what would remove it.
+- **The cache store is not deterministic between two runs of the same compiler**: two cold builds of `39029d1f` wrote
+  61.3 MB and 62.6 MB of objects, with the same jar. Which facts a run produces differs, the same nondeterminism as
+  §7.5's, so the store's bytes cannot serve as an identity oracle for a cache change; the jars, warm hits and
+  incremental jars above are the check instead.
+
+### 8.4 What it means
+
+- §1 to §7 counted the save's hashing as "mostly fact keys" and pointed I1 at it. Most of it went with a memo keyed
+  the way the store's design already implied: the id answers *is this stored?*, the memo only *have I encoded this
+  instance?*. What identity gives up, finding an equal value without encoding it, is what interning (I1) would give
+  back, since equal values would then be the same instance.
+- The save is still a third of the build, now for its encoding mechanics rather than its hashing. That is I5's ground:
+  writing fewer entries (a fact type cached only when recomputing costs more than loading), writing behind on another
+  core, and a cheaper object encoding.
