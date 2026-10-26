@@ -677,3 +677,32 @@ first megabyte, where a zig-zag varint takes 4 bytes instead of 3 (712 785 of th
   compiling.
 - **A CPU profile does not see the kernel.** Wall-clock timestamps around a phase are the check that a profile's
   share is the whole of it.
+
+## 11. Where 17.5 seconds go, and what is next (2026-10-26)
+
+A profile of `98244409`: eliot-build cold 17.3–17.9 s, jar `a74475df…`. With the save written behind, the samples
+split by thread: 1 237 on the compilation, 415 on the write-behind worker (off the critical path), 43 in the save's
+last half second (the index and the files). The compilation runs on about **0.75 of one core** of twenty: 65–90
+samples a second, spread over up to twenty compute threads, one at a time. Its 1 237 samples:
+
+| what the compilation's CPU is doing | share |
+|---|---|
+| a fact read's bookkeeping: `DependencyTrackingProcess.getFact` and `IncrementalFactGenerator.modifyAtomicallyFor`, with the key hashing and equality they cause | ~15% |
+| the cats-effect run loop with no Eliot frame on the stack | 17% |
+| the rest of the engine, and names hashed or compared elsewhere | ~7% |
+| the lexer and the parser | 11% |
+| compiling: `monomorphize` 21% (the meta interpreter 4%), the rest of the phases and bytecode ~24% | ~45% |
+
+**A fact read** costs, besides its `IO` binds: a `Deferred` allocated before the fact map is even looked up, a CAS on
+the one `Ref[Map]` of every fact; `chain.contains(dependency)`, a linear scan of the request chain with structural
+equality of keys; and an update of the one global `Ref[Map[key, Set[key]]]` of dependencies, hashing both keys into an
+immutable map of 67 000 entries. 196 samples (16%) have a key's `hashCode`/`equals` as their leaf, and 95 of those are
+under these two methods. All of it is engine-local: no processor is involved, and a per-generation dependency set
+merged once at the generation's end, a chain the read can test in constant time, and a hit answered before anything
+is allocated keep its semantics. It is also what parallelism (I3) would contend on first, since every read of every
+fiber updates the same two maps.
+
+**Half of the lexer is parsley recompiling a parser per token.** `TokenParser.sourcedLexeme` is a monadic `for`, and
+parsley's `flatMap` builds and compiles its continuation at each token (`DynCall` ⤳ `LazyParsley.computeInstrs`: 70
+samples). Written applicatively (`lift3(…, position, markAsToken(parser), position) <* whiteSpace`), the build is
+**0.8 s faster** (17.5/17.8 s against 16.5/17.1 s, alternated) and the jar is identical. Not adopted yet.
