@@ -61,7 +61,7 @@ final class IncrementalFactGenerator(
     strictAccounting: Boolean,
     errors: Ref[IO, Chain[AttributedError]],
     facts: Ref[IO, Map[CompilerFactKey[?], Deferred[IO, Option[CompilerFact]]]],
-    directDependencies: Ref[IO, Map[CompilerFactKey[?], Set[CompilerFactKey[?]]]],
+    directDependencies: Ref[IO, Map[CompilerFactKey[?], Ref[IO, Set[CompilerFactKey[?]]]]],
     producedDuring: Ref[IO, Map[CompilerFactKey[?], CompilerFactKey[?]]],
     carriedForward: Ref[IO, Map[CompilerFactKey[?], CacheEntry]],
     unchangedChecks: Ref[IO, Map[CompilerFactKey[?], Deferred[IO, Boolean]]],
@@ -252,7 +252,9 @@ final class IncrementalFactGenerator(
       entry: CacheEntry,
       deferred: Deferred[IO, Option[CompilerFact]]
   ): IO[Unit] =
-    directDependencies.update(_.updated(key, entry.directDeps)) >>
+    Ref.of[IO, Set[CompilerFactKey[?]]](entry.directDeps).flatMap(recorded =>
+      directDependencies.update(_.updated(key, recorded))
+    ) >>
       delivered(key, fromCache = true) >>
       deferred.complete(entry.value).flatMap(won => entry.value.traverse_(registered).whenA(won))
 
@@ -283,9 +285,11 @@ final class IncrementalFactGenerator(
     * dependencies. The processor completes the fact's [[Deferred]] itself via [[registerFact]]; the caller's safety net
     * handles the "produced nothing" case.
     *
-    * The key is marked present in `directDependencies` up front (empty), so that even a generated leaf — which makes no
-    * `getFact` calls — is recorded as *generated* (not mistaken for an injected fact, see [[buildCacheData]]). Reads
-    * then accumulate into the same entry as they happen, before the fact becomes observable.
+    * The key's own dependency set is entered in `directDependencies` up front (empty), so that even a generated leaf —
+    * which makes no `getFact` calls — is recorded as *generated* (not mistaken for an injected fact, see
+    * [[buildCacheData]]). Reads then accumulate into that set as they happen, before the fact becomes observable, and
+    * touch nothing another generation updates: a read is the engine's most frequent operation, and one map of every
+    * key's dependencies updated at each read was a tenth of a build's fact administration.
     *
     * The generation must account for its outcome: it ends with the fact registered, at least one error recorded, an
     * explicit abort (the sanctioned *decline*), or a missing dependency read (the failure is attributable upstream). A
@@ -295,7 +299,10 @@ final class IncrementalFactGenerator(
   private def regenerate(key: CompilerFactKey[?], ancestors: List[CompilerFactKey[?]]): IO[Unit] =
     for {
       _                <- regeneratedKeysRef.update(_ + key)
-      _                <- directDependencies.update(deps => deps.updated(key, deps.getOrElse(key, Set.empty)))
+      dependencies     <- Ref.of[IO, Set[CompilerFactKey[?]]](Set.empty)
+      recorded         <- directDependencies.modify(deps =>
+                            deps.get(key).fold((deps.updated(key, dependencies), dependencies))(existing => (deps, existing))
+                          )
       sawMissing       <- Ref.of[IO, Boolean](false)
       // The engine-level diagnostics the tracking wrapper records (a refused cyclic read) belong to this generation
       // exactly as the processor's own do, so they are collected here and attributed with them.
@@ -303,7 +310,7 @@ final class IncrementalFactGenerator(
       tracking          = new DependencyTrackingProcess(
                             this,
                             key,
-                            directDependencies,
+                            recorded,
                             producedDuring,
                             generationErrors,
                             sawMissing,
@@ -348,17 +355,26 @@ final class IncrementalFactGenerator(
   private def getFactUntyped(key: CompilerFactKey[?], resolving: CompilerFactKey[?]): IO[Option[CompilerFact]] =
     request(key, Nil, Some(resolving))
 
+  /** The [[Deferred]] of `key`, and whether this call created it. A key already present — every read of a fact asked for
+    * before, which is most reads — is answered from one look at the map, allocating nothing; only a key seen for the
+    * first time pays for a new [[Deferred]] and the atomic update, which re-checks, since another fiber may have added
+    * it in between.
+    */
   private def modifyAtomicallyFor(
       key: CompilerFactKey[?]
   ): IO[(Deferred[IO, Option[CompilerFact]], Boolean)] =
-    for {
-      newValue <- Deferred[IO, Option[CompilerFact]]
-      result   <- facts.modify { internalMap =>
-                    internalMap.get(key) match
-                      case Some(alreadyPresentValue) => (internalMap, (alreadyPresentValue, false))
-                      case None                      => (internalMap.updated(key, newValue), (newValue, true))
-                  }
-    } yield result
+    facts.get.flatMap(_.get(key) match {
+      case Some(alreadyPresentValue) => IO.pure((alreadyPresentValue, false))
+      case None                      =>
+        for {
+          newValue <- Deferred[IO, Option[CompilerFact]]
+          result   <- facts.modify { internalMap =>
+                        internalMap.get(key) match
+                          case Some(alreadyPresentValue) => (internalMap, (alreadyPresentValue, false))
+                          case None                      => (internalMap.updated(key, newValue), (newValue, true))
+                      }
+        } yield result
+    })
 
   def currentFacts(): IO[Map[CompilerFactKey[?], CompilerFact]] =
     for {
@@ -406,7 +422,7 @@ final class IncrementalFactGenerator(
     for {
       attributed <- errors.get
       roots      <- demandedRoots.get
-      deps       <- directDependencies.get
+      deps       <- dependencyGraph
     } yield {
       val live = reachableFrom(roots, deps)
 
@@ -480,7 +496,7 @@ final class IncrementalFactGenerator(
   def buildCacheData(): IO[FactCacheData] =
     for {
       factMap     <- currentFacts()
-      deps        <- directDependencies.get
+      deps        <- dependencyGraph
       pushedBy    <- producedDuring.get
       carried     <- carriedForward.get
       drilled     <- provenUnchanged
@@ -544,6 +560,10 @@ final class IncrementalFactGenerator(
       }
     }
 
+  /** Every key this run resolved, with the dependencies recorded for it so far. */
+  private def dependencyGraph: IO[Map[CompilerFactKey[?], Set[CompilerFactKey[?]]]] =
+    directDependencies.get.flatMap(_.toList.traverse((key, recorded) => recorded.get.map(key -> _))).map(_.toMap)
+
   /** The keys this run's validation proved unchanged. A check still pending proves nothing. */
   private def provenUnchanged: IO[Set[CompilerFactKey[?]]] =
     unchangedChecks.get
@@ -574,7 +594,7 @@ object IncrementalFactGenerator {
     for {
       errors          <- Ref.of[IO, Chain[AttributedError]](Chain.empty)
       facts           <- Ref.of[IO, Map[CompilerFactKey[?], Deferred[IO, Option[CompilerFact]]]](Map.empty)
-      deps            <- Ref.of[IO, Map[CompilerFactKey[?], Set[CompilerFactKey[?]]]](Map.empty)
+      deps            <- Ref.of[IO, Map[CompilerFactKey[?], Ref[IO, Set[CompilerFactKey[?]]]]](Map.empty)
       producedDuring  <- Ref.of[IO, Map[CompilerFactKey[?], CompilerFactKey[?]]](Map.empty)
       carriedForward  <- Ref.of[IO, Map[CompilerFactKey[?], CacheEntry]](Map.empty)
       unchangedChecks <- Ref.of[IO, Map[CompilerFactKey[?], Deferred[IO, Boolean]]](Map.empty)

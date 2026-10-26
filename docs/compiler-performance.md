@@ -705,4 +705,42 @@ fiber updates the same two maps.
 **Half of the lexer is parsley recompiling a parser per token.** `TokenParser.sourcedLexeme` is a monadic `for`, and
 parsley's `flatMap` builds and compiles its continuation at each token (`DynCall` ⤳ `LazyParsley.computeInstrs`: 70
 samples). Written applicatively (`lift3(…, position, markAsToken(parser), position) <* whiteSpace`), the build is
-**0.8 s faster** (17.5/17.8 s against 16.5/17.1 s, alternated) and the jar is identical. Not adopted yet.
+**0.8 s faster** (17.5/17.8 s against 16.5/17.1 s, alternated) and the jar is identical. Adopted in `47848a12`.
+
+### 11.1 The read path, done (2026-10-26)
+
+**Most fact keys shared their hash with ten others.** A key's hash was the synthesized case class hash, which tells
+classes apart only by `productPrefix`, and nearly every key is a class named `Key` in its fact's companion:
+`ResolvedValue.Key(vfqn, platform)`, `UnifiedModuleValue.Key(vfqn, platform)` and nine more phases of the same value
+hashed alike. Of eliot-build's 74 162 keys only 38 284 hashes were distinct, and 43 248 keys sat in collision buckets
+of up to eleven, which every map and set of keys scanned with `equals`. `CompilerFactKey.hashCode` now seeds the hash
+with the class name (not the `Class`'s identity hash, so it is the same in every run): 74 160 distinct hashes.
+
+**A read touches only its own generation.** Three changes, all in the engine, no processor touched:
+
+- each generation records its reads into a dependency set of its own, which the generator holds under the key from the
+  generation's start (so recording is still eager), instead of every read updating the one map of every key's
+  dependencies; the map is read as a whole only at the end, for the diagnostics and the cache;
+- a fact already present is answered from one look at the fact map, with no `Deferred` allocated and no atomic update;
+- the cycle check compares a key's remembered hash before its structure.
+
+Measured, alternated, eliot-build, every jar identical, suites and the example sweep identical:
+
+| | cold (9 runs each) | warm | edit | back |
+|---|---|---|---|---|
+| lexer fix only (`47848a12`) | 16.80 s | 2.80, 2.83 s | 6.26, 6.23 s | 6.38, 6.41 s |
+| + key hash + read path | 16.47 s (**−2%**) | 2.74, 2.74 s | 6.26, 6.23 s | 6.07, 6.24 s |
+
+**Far less than §11 estimated**, and the reason is in the profile after it: the read path's samples fell only from
+~180 to ~150. What is left is the comparison itself, which no engine change removes. A processor builds a fresh key
+for each read, so `HashMap.get` and `Set.+` on a hit compare it field by field with the equal key already stored
+(`ValueFQN`, `ModuleName`'s list, a monomorphic key's ground types); and the cycle check still walks a request chain
+hundreds of keys deep, testing hashes now instead of structures. Both are what interning (I1) is for: an interned key
+compares by reference, and a chain of ids is a bit set. The changes are kept because the per-read update of one shared
+map is what parallel fact generation (I3) would have contended on first.
+
+**The CPU the profile does not see is the JVM's, not the scheduler's.** A cold build spends 58–60 s of CPU in 17 s,
+while the compilation runs on about 0.75 of a core. Capping the processors with `-XX:ActiveProcessorCount=4` cuts that
+to 46–48 s, so most of it is the JIT's and the collector's threads, and leaves the wall time unchanged (16.9/17.1/17.1 s
+against 16.9/16.8/18.5 s, alternated): handing a fact's fiber to another worker thread is not where the idle quarter of
+a core goes.

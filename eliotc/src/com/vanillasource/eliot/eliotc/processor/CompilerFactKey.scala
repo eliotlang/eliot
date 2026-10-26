@@ -2,7 +2,7 @@ package com.vanillasource.eliot.eliotc.processor
 
 import com.vanillasource.eliot.eliotc.compiler.cache.codec.FactCodec
 
-import scala.runtime.ScalaRunTime
+import scala.util.hashing.MurmurHash3
 
 /** The handle by which a fact is stored and looked up in the running engine.
   *
@@ -12,8 +12,14 @@ import scala.runtime.ScalaRunTime
   * once per instance and remembered.
   *
   * The hash is `final` here precisely so that the case classes extending it do **not** synthesize their own, which
-  * would override this one and quietly restore the recomputation. It computes exactly what the synthesized one would,
-  * so key equality and hashing are unchanged; `CompilerFactKeyTest` guards both of those properties.
+  * would override this one and quietly restore the recomputation.
+  *
+  * It is the synthesized hash seeded with the key's **class name**, because the synthesized one tells classes apart
+  * only by their `productPrefix`, and nearly every key is a class named `Key` nested in its fact's companion:
+  * `ResolvedValue.Key(vfqn, platform)` and `UnifiedModuleValue.Key(vfqn, platform)` hashed alike, and so did nine more
+  * phases of the same name, so most of a build's keys sat in collision buckets every lookup scanned with `equals`. The
+  * name, not the `Class`'s identity hash, so that a key hashes the same in every run and anything ordered by hash stays
+  * reproducible. `CompilerFactKeyTest` guards both properties.
   */
 trait CompilerFactKey[V] extends Product {
 
@@ -44,7 +50,7 @@ trait CompilerFactKey[V] extends Product {
 
   final override def hashCode(): Int = {
     if (cachedHashCode == 0) {
-      val hash = ScalaRunTime._hashCode(this)
+      val hash = MurmurHash3.productHash(this, getClass.getName.hashCode)
 
       cachedHashCode = if (hash == 0) 1 else hash
     }

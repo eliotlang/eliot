@@ -25,25 +25,25 @@ class DependencyTrackingProcessTest extends AsyncFlatSpec with AsyncIOSpec with 
   it should "record a read key as the owner's dependency" in {
     tracked(Map(Key("a") -> Fact("a"))) { ctx =>
       ctx.process.getFact(Key("a")) >> ctx.deps.get
-    }.asserting(_ shouldBe Map(owner -> Set(Key("a"))))
+    }.asserting(_ shouldBe Set(Key("a")))
   }
 
   it should "record the dependency even when the read is a miss" in {
     tracked(Map.empty) { ctx =>
       ctx.process.getFact(Key("missing")) >> ctx.deps.get
-    }.asserting(_ shouldBe Map(owner -> Set(Key("missing"))))
+    }.asserting(_ shouldBe Set(Key("missing")))
   }
 
   it should "accumulate every read key under the owner" in {
     tracked(Map(Key("a") -> Fact("a"), Key("b") -> Fact("b"))) { ctx =>
       ctx.process.getFact(Key("a")) >> ctx.process.getFact(Key("b")) >> ctx.deps.get
-    }.asserting(_ shouldBe Map(owner -> Set(Key("a"), Key("b"))))
+    }.asserting(_ shouldBe Set(Key("a"), Key("b")))
   }
 
   it should "delegate registerFact to the underlying process without recording a dependency" in {
     tracked(Map.empty) { ctx =>
       ctx.process.registerFact(Fact("x")) >> (ctx.deps.get, ctx.registered.get).tupled
-    }.asserting(_ shouldBe (Map.empty, List(Fact("x"))))
+    }.asserting(_ shouldBe (Set.empty, List(Fact("x"))))
   }
 
   it should "expose its own key prepended to the ancestor chain as the active fact keys" in {
@@ -67,7 +67,7 @@ class DependencyTrackingProcessTest extends AsyncFlatSpec with AsyncIOSpec with 
   it should "not record the refused cyclic read as a dependency" in {
     tracked(Map.empty) { ctx =>
       ctx.process.getFact(owner) >> ctx.deps.get
-    }.asserting(_ shouldBe Map.empty)
+    }.asserting(_ shouldBe Set.empty)
   }
 
   it should "attribute a pushed fact to the generating key" in {
@@ -110,7 +110,7 @@ class DependencyTrackingProcessTest extends AsyncFlatSpec with AsyncIOSpec with 
                          ): IO[Option[V]]                                          = seen.set(ancestors).as(None)
                          override def registerFact(value: CompilerFact): IO[Unit] = IO.unit
                        }
-      deps          <- Ref.of[IO, Map[CompilerFactKey[?], Set[CompilerFactKey[?]]]](Map.empty)
+      deps          <- Ref.of[IO, Set[CompilerFactKey[?]]](Set.empty)
       producedDuring <- Ref.of[IO, Map[CompilerFactKey[?], CompilerFactKey[?]]](Map.empty)
       errors        <- Ref.of[IO, Chain[CompilerError]](Chain.empty)
       sawMissing    <- Ref.of[IO, Boolean](false)
@@ -127,7 +127,7 @@ class DependencyTrackingProcessTest extends AsyncFlatSpec with AsyncIOSpec with 
       body: TrackedContext => IO[A]
   ): IO[A] =
     for {
-      deps           <- Ref.of[IO, Map[CompilerFactKey[?], Set[CompilerFactKey[?]]]](Map.empty)
+      deps           <- Ref.of[IO, Set[CompilerFactKey[?]]](Set.empty)
       producedDuring <- Ref.of[IO, Map[CompilerFactKey[?], CompilerFactKey[?]]](Map.empty)
       errors         <- Ref.of[IO, Chain[CompilerError]](Chain.empty)
       registered     <- Ref.of[IO, List[CompilerFact]](List.empty)
@@ -146,7 +146,7 @@ class DependencyTrackingProcessTest extends AsyncFlatSpec with AsyncIOSpec with 
 
   private case class TrackedContext(
       process: DependencyTrackingProcess,
-      deps: Ref[IO, Map[CompilerFactKey[?], Set[CompilerFactKey[?]]]],
+      deps: Ref[IO, Set[CompilerFactKey[?]]],
       producedDuring: Ref[IO, Map[CompilerFactKey[?], CompilerFactKey[?]]],
       errors: Ref[IO, Chain[CompilerError]],
       registered: Ref[IO, List[CompilerFact]],

@@ -1,10 +1,12 @@
 package com.vanillasource.eliot.eliotc.processor
 
-import com.vanillasource.eliot.eliotc.processor.ProcessorTest.{DifferentKey, TestFactKey}
+import com.vanillasource.eliot.eliotc.compiler.cache.codec.FactCodec
+import com.vanillasource.eliot.eliotc.processor.CompilerFactKeyTest.{First, Second}
+import com.vanillasource.eliot.eliotc.processor.ProcessorTest.{DifferentKey, TestFact, TestFactKey}
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 
-import scala.runtime.ScalaRunTime
+import scala.util.hashing.MurmurHash3
 
 class CompilerFactKeyTest extends AnyFlatSpec with Matchers {
 
@@ -23,8 +25,8 @@ class CompilerFactKeyTest extends AnyFlatSpec with Matchers {
     cachedHashCodeOf(key) shouldBe hash
   }
 
-  it should "hash exactly as the synthesized case class hash would" in {
-    TestFactKey("some-key").hashCode() shouldBe ScalaRunTime._hashCode(TestFactKey("some-key"))
+  it should "hash the same in every run, from the class name rather than the class's identity" in {
+    TestFactKey("some-key").hashCode() shouldBe MurmurHash3.productHash(TestFactKey("some-key"), classOf[TestFactKey].getName.hashCode)
   }
 
   it should "give equal keys equal hashes" in {
@@ -37,6 +39,10 @@ class CompilerFactKeyTest extends AnyFlatSpec with Matchers {
 
   it should "distinguish keys of different types carrying the same value" in {
     TestFactKey("x").hashCode() should not be DifferentKey("x").hashCode()
+  }
+
+  it should "distinguish keys of different types with the same name carrying the same value" in {
+    First.Key("x").hashCode() should not be Second.Key("x").hashCode()
   }
 
   it should "return the same hash on every call" in {
@@ -59,5 +65,21 @@ class CompilerFactKeyTest extends AnyFlatSpec with Matchers {
     field.setAccessible(true)
 
     field.getInt(key)
+  }
+}
+
+object CompilerFactKeyTest {
+
+  /** Two keys named alike, as every phase's `Key` is, in companions of their own. */
+  object First {
+    case class Key(value: String) extends CompilerFactKey[TestFact] {
+      override def valueCodec: Option[FactCodec[TestFact]] = None
+    }
+  }
+
+  object Second {
+    case class Key(value: String) extends CompilerFactKey[TestFact] {
+      override def valueCodec: Option[FactCodec[TestFact]] = None
+    }
   }
 }

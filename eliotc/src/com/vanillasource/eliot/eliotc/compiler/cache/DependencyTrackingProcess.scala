@@ -7,7 +7,7 @@ import com.vanillasource.eliot.eliotc.feedback.CompilerError
 import com.vanillasource.eliot.eliotc.processor.{CompilationProcess, CompilerFact, CompilerFactKey}
 
 /** Wraps a [[CompilationProcess]] so that every fact read via `getFact` while `key` is being generated is recorded into
-  * `directDependencies` as one of `key`'s direct dependencies.
+  * `dependencies`, `key`'s own set of direct dependencies, which the generator holds under `key`.
   *
   * Recording happens **eagerly, on each read** — before the generated fact's [[cats.effect.Deferred]] is completed (a
   * processor reads its inputs before registering its output). This matters for correctness: a fact's dependency set
@@ -36,7 +36,7 @@ import com.vanillasource.eliot.eliotc.processor.{CompilationProcess, CompilerFac
 final class DependencyTrackingProcess(
     underlying: CompilationProcess,
     key: CompilerFactKey[?],
-    directDependencies: Ref[IO, Map[CompilerFactKey[?], Set[CompilerFactKey[?]]]],
+    dependencies: Ref[IO, Set[CompilerFactKey[?]]],
     producedDuring: Ref[IO, Map[CompilerFactKey[?], CompilerFactKey[?]]],
     errors: Ref[IO, Chain[CompilerError]],
     sawMissing: Ref[IO, Boolean],
@@ -57,12 +57,21 @@ final class DependencyTrackingProcess(
       dependency: K,
       ancestors: List[CompilerFactKey[?]]
   ): IO[Option[V]] =
-    if (chain.contains(dependency)) {
+    if (onChain(dependency)) {
       errors.update(_ :+ CompilerError.global(cyclicDemandMessage(dependency))) >> sawMissing.set(true).as(None)
     } else {
-      directDependencies.update(deps => deps.updated(key, deps.getOrElse(key, Set.empty) + dependency)) >>
+      dependencies.update(_ + dependency) >>
         underlying.getFact(dependency, chain).flatTap(result => sawMissing.set(true).whenA(result.isEmpty))
     }
+
+  /** Whether `dependency` is on the chain, comparing a key's remembered hash before its structure: the chain can be
+    * hundreds of keys deep, and most of them are of the same kind as the dependency and differ only deep inside.
+    */
+  private def onChain(dependency: CompilerFactKey[?]): Boolean = {
+    val hash = dependency.hashCode()
+
+    chain.exists(ancestor => ancestor.hashCode() == hash && ancestor == dependency)
+  }
 
   private def cyclicDemandMessage(dependency: CompilerFactKey[?]): String =
     s"Cyclic fact demand: ${(dependency :: chain.takeWhile(_ != dependency) ::: List(dependency)).mkString(" <- ")}"
