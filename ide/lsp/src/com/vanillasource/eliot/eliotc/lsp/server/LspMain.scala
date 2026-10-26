@@ -10,10 +10,16 @@ import org.eclipse.lsp4j.launch.LSPLauncher
   * The configuration is named explicitly, before anything logs: the server's classpath also carries the apidoc jar,
   * whose own `log4j2.xml` logs to stdout, and which of two same-named resources log4j finds first is up to the
   * classpath order.
+  *
+  * cats-effect's fiber tracing is turned off unless the command line set it, before the runtime exists, as the
+  * compiler's own `Main` does: it costs a compilation 10% (`docs/compiler-performance.md` §10).
   */
 object LspMain {
   def main(args: Array[String]): Unit = {
     val _        = System.setProperty("log4j2.configurationFile", "eliot-lsp-log4j2.xml")
+    if (System.getProperty("cats.effect.tracing.mode") == null) {
+      val _ = System.setProperty("cats.effect.tracing.mode", "none")
+    }
     val service  = new EliotCompilationService(IORuntime.global)
     val server   = new EliotLanguageServer(service)
     val launcher = LSPLauncher.createServerLauncher(server, System.in, System.out)

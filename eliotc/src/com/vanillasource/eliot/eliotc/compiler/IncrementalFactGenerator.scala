@@ -51,6 +51,9 @@ import scala.annotation.tailrec
   * it parsed, and a warm one only those the program uses, and the two counts would not compare. The tracker is also
   * told when working out a fact starts and ends, which generation asked for it, when a generation waits for a fact,
   * and when a fact recomputed for validation came out different — what it needs to say what the run is doing.
+  *
+  * `registered` is handed each fact the moment it has its value, registered by a generation or accepted from the cache,
+  * which is every value [[buildCacheData]] will hold: a cache written behind the compilation encodes them as they come.
   */
 final class IncrementalFactGenerator(
     generator: CompilerProcessor,
@@ -64,7 +67,8 @@ final class IncrementalFactGenerator(
     unchangedChecks: Ref[IO, Map[CompilerFactKey[?], Deferred[IO, Boolean]]],
     regeneratedKeysRef: Ref[IO, Set[CompilerFactKey[?]]],
     demandedRoots: Ref[IO, Set[CompilerFactKey[?]]],
-    progress: Option[ProgressTracker]
+    progress: Option[ProgressTracker],
+    registered: CompilerFact => IO[Unit]
 ) extends CompilationProcess
     with Logging {
 
@@ -151,7 +155,7 @@ final class IncrementalFactGenerator(
                 )
               )
           }
-          .unlessA(won)
+          .unlessA(won) >> registered(fact).whenA(won)
       }
     }
 
@@ -250,7 +254,7 @@ final class IncrementalFactGenerator(
   ): IO[Unit] =
     directDependencies.update(_.updated(key, entry.directDeps)) >>
       delivered(key, fromCache = true) >>
-      deferred.complete(entry.value).void
+      deferred.complete(entry.value).flatMap(won => entry.value.traverse_(registered).whenA(won))
 
   private def delivered(key: CompilerFactKey[?], fromCache: Boolean): IO[Unit] =
     progressed(_.delivered(key, fromCache))
@@ -557,12 +561,15 @@ object IncrementalFactGenerator {
     *   instead of carrying their processors).
     * @param progress
     *   told each fact the run comes to have, for `--progress`.
+    * @param registered
+    *   handed each fact the moment it has its value, for a cache written behind the compilation.
     */
   def create(
       generator: CompilerProcessor,
       prior: Option[FactCacheData],
       strictAccounting: Boolean = false,
-      progress: Option[ProgressTracker] = None
+      progress: Option[ProgressTracker] = None,
+      registered: CompilerFact => IO[Unit] = _ => IO.unit
   ): IO[IncrementalFactGenerator] =
     for {
       errors          <- Ref.of[IO, Chain[AttributedError]](Chain.empty)
@@ -585,6 +592,7 @@ object IncrementalFactGenerator {
       unchangedChecks,
       regenerated,
       demandedRoots,
-      progress
+      progress,
+      registered
     )
 }

@@ -8,7 +8,10 @@ transformer stack. **One reader over `IO` instead of it makes a cold build 23% f
 no processor changed; it is adopted. §8 records the third, the cache save's hashing: it was the save's memo of values,
 not fact keys, and memoizing by identity instead makes a cold build **16% faster**; adopted. §9 sizes the cache by fact
 type: 83% of it was the `Map` codec writing each file's dictionary into every value, and sharing it makes the store
-79% smaller and a cold build **12% faster**; adopted. Storing no value for a pure one-to-one stage saves little.
+79% smaller and a cold build **12% faster**; adopted. Storing no value for a pure one-to-one stage saves little. §10
+profiles what was left and adopts three changes: cats-effect tracing off, the cache encoded behind the compilation on
+a thread of its own, and the index read and written through a buffer. A cold build is **23–27% faster**, a warm one
+**47%** and an edited one **33%**.
 
 The goal (Robert, 2026-10-24): *"A cold compile of the build project should not take 1 minute. It should take a
 couple of seconds actually. We need some very fundamental ideas to break through here."* eliot-build's launcher is
@@ -607,3 +610,70 @@ session; every jar identical to A's.
   object and the engine's tax whether or not it has a value, and dropping values only shrinks the smallest of those.
 - The save's remaining time is per-object encoding of what is now 13 MB, and writing it behind on another core (I5)
   removes it from the wall time whatever its size.
+
+## 10. Tracing off, the save written behind, the index buffered (2026-10-26)
+
+### 10.1 Where 22.5 seconds went
+
+A profile of `ef5efcf0` (22.5 s cold, 1 691 samples), each sample attributed to the nearest Eliot frame:
+
+| what the CPU is doing | share of samples |
+|---|---|
+| the cats-effect run loop with no Eliot frame on the stack, tracing's 6% included | 24% |
+| the cache save, serially after the compilation; three quarters of it `ContentAddressedOutput.store` | 21% |
+| the engine's bookkeeping: the fact map, `DependencyTrackingProcess`'s shared dependency map, name hashing | ~19% |
+| the lexer and the parser, inside parsley | ~7% |
+| compiling: checking, the meta channel, resolution, bytecode | ~29% |
+
+### 10.2 What changed
+
+- **Tracing is off** unless the command line sets `cats.effect.tracing.mode`: `Main` and `LspMain` set it before
+  anything touches `IO`, since cats-effect reads it once, when its tracing class loads. §1 measured it at −10%, and it
+  still is: 24.4 s against 21.8 s, alternated.
+- **The cache is encoded behind the compilation.** A fact is immutable once it has its value, so the generator hands
+  each one, registered or accepted from the cache, to a `ContentAddressedCacheBackend.WriteBehind`, which encodes it
+  into the store's buffer on another thread. The save finds those facts already placed and only encodes what is left
+  and writes the files. The encoding is made for the region the save expects to extend, read without the lock; the
+  save checks under the lock that this is still so, and encodes from scratch when another compiler appended in between
+  (`ContentAddressedCacheBackendTest` covers both paths). Only the CLI uses it: a server persists once, on shutdown,
+  and would encode every run for the last one's save.
+- **The index is read and written through a 64 KB buffer.** It was written through a `DataOutputStream` straight on
+  the file stream, so each of its few million varint bytes was a `write` system call: **2.0 s** of the save, measured
+  with timestamps once the write-behind had taken the encoding away. §1's and §8's profiles never showed it, because a
+  JFR execution sample does not cover a thread in native code. The load read it the same way, byte by byte, which is
+  most of what the warm build gained.
+
+**The first write-behind made the compilation slower than the save it took off it.** It ran as a fiber on the compute
+pool behind a cats `Queue`: each `offer` woke the waiting worker, and a worker busy with a batch held a compute thread
+the compilation's fibers were queued on. The compilation's own CPU rose by a third (the checker's samples from 98 to
+178), and a cold build was 5–10% slower although the save fell from 5.9 s to 2.5 s. A worker on a blocking-pool
+thread that polls a `ConcurrentLinkedQueue` every 2 ms, so an `offer` is one lock-free enqueue and wakes nothing,
+keeps up with the compilation (its queue is empty when the save asks it to finish) and costs the compilation nothing
+measurable.
+
+### 10.3 What was measured
+
+eliot-build's launcher, alternated in one session, every jar identical to its baseline's (`a74475df…` cold, warm and
+changed back, `073f213d…` edited):
+
+| | cold | warm | edit | back |
+|---|---|---|---|---|
+| `ef5efcf0` | 24.1, 24.4 s | 5.8, 5.9 s | 10.3, 10.6 s | 10.6, 10.7 s |
+| adopted | 18.5, 18.7 s (**−23%**) | 3.0, 3.2 s (**−47%**) | 6.8, 7.2 s (**−33%**) | 6.9, 6.7 s |
+
+Three more alternated cold pairs: 26.1/25.0/26.1 s against 19.5/18.7/18.2 s (**−27%**); the machine's load drifts, so
+only the pairs compare. Every suite is green, and the example sweep is identical to `ef5efcf0`'s, line for line.
+
+**The store is 7% larger and the index 15%** (13.9 MB against 12.9, 5.5 against 4.8) with exactly the same entries
+and edges (74 171 and 732 995, from parsing both indexes). Only the layout moved: the write-behind places objects in
+the order facts are registered, so the front end's large values come first and the keys most edges name land past the
+first megabyte, where a zig-zag varint takes 4 bytes instead of 3 (712 785 of the edges, against 106 175 before).
+
+### 10.4 What it means
+
+- The save is now 0.3 s of encoding what was not offered plus the files, and no longer worth a target of its own.
+- The run loop's 24% (I2) and the engine's ~19% (I1, and the cheap fixes: a dependency set per generation instead of
+  one shared map updated at every read, the chain's `List.contains`) are what is left of the tax, beside ~29% of
+  compiling.
+- **A CPU profile does not see the kernel.** Wall-clock timestamps around a phase are the check that a profile's
+  share is the whole of it.

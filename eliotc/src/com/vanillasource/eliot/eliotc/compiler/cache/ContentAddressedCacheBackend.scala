@@ -1,6 +1,6 @@
 package com.vanillasource.eliot.eliotc.compiler.cache
 
-import cats.effect.{IO, Ref, Resource}
+import cats.effect.{Fiber, IO, Ref, Resource}
 import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.compiler.cache.codec.{
   ContentAddressedInput,
@@ -13,9 +13,14 @@ import com.vanillasource.eliot.eliotc.compiler.cache.codec.{
 import com.vanillasource.eliot.eliotc.feedback.Logging
 import com.vanillasource.eliot.eliotc.processor.{CompilerFact, CompilerFactKey}
 
-import java.io.{DataInputStream, DataOutputStream}
+import java.io.{BufferedInputStream, BufferedOutputStream, DataInputStream, DataOutputStream}
 import java.nio.channels.{FileChannel, FileLock, OverlappingFileLockException}
 import java.nio.file.{Files, Path, StandardCopyOption, StandardOpenOption}
+import java.util.IdentityHashMap
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.locks.LockSupport
+import scala.annotation.tailrec
 
 import scala.concurrent.duration.*
 import scala.util.Random
@@ -57,6 +62,12 @@ import scala.util.Random
   *   - the index is published by **atomic rename** after the bodies are appended, so a reader never sees half of one
   *     and an interrupted save leaves the previous cache intact.
   *
+  * **A save can be written behind the compilation** ([[writeBehind]]): the facts are immutable once registered, so a
+  * second core encodes each one into the store's buffer while the compilation goes on, and the save itself only
+  * finishes what is left and writes the files. The encoding is made against the region it expects to extend, read
+  * without the lock; the save checks under the lock that this is still the region it extends, and encodes from scratch
+  * when it is not, so a pre-encoding never lands at an offset that means something else.
+  *
   * Both directions are fail-safe: `load` answers `None` on any problem (missing file, format or fingerprint mismatch, a
   * body region shorter than the index it was written with), and `save` warns rather than failing the build. The worst
   * either can do is cost a full compilation.
@@ -77,16 +88,54 @@ final class ContentAddressedCacheBackend private (
     )(busy("doing a full compilation.").as(None))
       .handleErrorWith(t => warn[IO]("Could not read the incremental cache; doing a full compilation.", t).as(None))
 
-  def save(data: FactCacheData): IO[Unit] =
-    withLock(shared = false)(
-      placement.get
-        .flatMap(current => IO.blocking(writeFiles(data, current)))
-        .flatMap {
-          case Some((next, written, dropped)) => placement.set(next) >> reportSave(data, next, written, dropped)
-          case None                           => debug[IO]("The incremental cache was replaced by another compiler; not writing it.")
-        }
-    )(busy("not writing it."))
+  /** Start encoding this run's facts while it runs. Hand every fact the run registers to [[WriteBehind.offer]], and the
+    * write-behind to the [[save]] of what the run produced.
+    *
+    * The encoding continues the region this backend loaded, from its length on disk now, or starts a new one when
+    * nothing was loaded. Both are read without the lock, so they are only what the save expects to find: it checks them
+    * under the lock and discards the encoding if another compiler moved the region in between.
+    */
+  def writeBehind(): IO[ContentAddressedCacheBackend.WriteBehind] =
+    for {
+      current          <- placement.get
+      (regionId, base) <- IO.blocking(provisionalContinuation(current))
+      located           = ContentAddressedCacheBackend.Located(
+                              new ContentAddressedOutput(current.values, base),
+                              current,
+                              keyCodecs
+                            )
+      offered           = new ConcurrentLinkedQueue[CompilerFact]()
+      finishing         = new AtomicBoolean(false)
+      worker           <- IO.blocking(ContentAddressedCacheBackend.encodeOffered(offered, finishing, located)).start
+    } yield new ContentAddressedCacheBackend.WriteBehind(current, regionId, base, located, offered, finishing, worker)
+
+  /** Write `data`, finishing what `behind` already encoded of it, if it is given and still applies. */
+  def save(data: FactCacheData, behind: Option[ContentAddressedCacheBackend.WriteBehind] = None): IO[Unit] =
+    behind
+      .flatTraverse(finished) // before the lock: another compiler waits for a save, never for its encoding
+      .flatMap(encoded =>
+        withLock(shared = false)(
+          placement.get
+            .flatMap(current => IO.blocking(writeFiles(data, current, encoded)))
+            .flatMap {
+              case Some((next, written, dropped)) => placement.set(next) >> reportSave(data, next, written, dropped)
+              case None                           =>
+                debug[IO]("The incremental cache was replaced by another compiler; not writing it.")
+            }
+        )(busy("not writing it."))
+      )
       .handleErrorWith(t => warn[IO]("Could not write the incremental cache; the next build will be a full one.", t))
+
+  /** What `behind` encoded, once it has encoded everything it was offered, or nothing if its encoding failed: the save
+    * then encodes from scratch, and fails or not exactly as it would have without one.
+    */
+  private def finished(
+      behind: ContentAddressedCacheBackend.WriteBehind
+  ): IO[Option[ContentAddressedCacheBackend.WriteBehind]] =
+    behind.finish.flatMap {
+      case true  => IO.pure(Some(behind))
+      case false => debug[IO]("Encoding the incremental cache behind the compilation failed; encoding it now.").as(None)
+    }
 
   private def busy(consequence: String): IO[Unit] =
     debug[IO](
@@ -137,7 +186,7 @@ final class ContentAddressedCacheBackend private (
       .when(Files.exists(indexFile) && Files.exists(objectsFile))(())
       .flatMap { _ =>
         val bodies = Files.readAllBytes(objectsFile)
-        val in     = new DataInputStream(Files.newInputStream(indexFile))
+        val in     = readingIndex()
 
         try readIndex(in, bodies)
         finally in.close()
@@ -249,13 +298,17 @@ final class ContentAddressedCacheBackend private (
     */
   private def writeFiles(
       data: FactCacheData,
-      current: ContentAddressedCacheBackend.Placement
+      current: ContentAddressedCacheBackend.Placement,
+      behind: Option[ContentAddressedCacheBackend.WriteBehind]
   ): Option[(ContentAddressedCacheBackend.Placement, Int, Int)] =
-    continuation(current).map { case (regionId, base) =>
-      val out      = new ContentAddressedOutput(current.values, base)
-      val located  = Located(out, current)
+    continuation(current).map { case (freshRegionId, base) =>
+      val ahead    = behind.filter(_.continues(current, base))
+      val regionId = ahead.fold(freshRegionId)(_.regionId)
+      val located  = ahead.fold(
+        ContentAddressedCacheBackend.Located(new ContentAddressedOutput(current.values, base), current, keyCodecs)
+      )(_.located)
       val encoded  = data.entries.toSeq.flatMap { case (key, entry) => located.entry(key, entry) }
-      val appended = out.appendedBytes
+      val appended = located.out.appendedBytes
 
       Files.createDirectories(objectsFile.getParent)
       if (base === 0) Files.write(objectsFile, appended)
@@ -295,10 +348,17 @@ final class ContentAddressedCacheBackend private (
       case Some(regionId) => Option.when(regionOnDisk().contains(regionId))((regionId, currentBodyLength()))
     }
 
+  /** The region a write-behind encodes for and its offset, as [[continuation]] would answer if the save were now;
+    * read without the lock, so the save checks it again. A region that is gone is answered with its id all the same:
+    * the save will not write, and the encoding is wasted.
+    */
+  private def provisionalContinuation(current: ContentAddressedCacheBackend.Placement): (Long, Int) =
+    current.region.fold((Random.nextLong(), 0))(regionId => (regionId, currentBodyLength()))
+
   /** The id of the region the published index describes, if there is one this compiler could have written. */
   private def regionOnDisk(): Option[Long] =
     Option.when(Files.exists(indexFile))(()).flatMap { _ =>
-      val in = new DataInputStream(Files.newInputStream(indexFile))
+      val in = readingIndex()
 
       try readHeader(in).filter(acceptable(_, currentBodyLength())).map(_.regionId)
       catch { case _: Exception => None }
@@ -319,7 +379,7 @@ final class ContentAddressedCacheBackend private (
     val index     = names.zipWithIndex.toMap
     val temporary =
       indexFile.resolveSibling(s"${indexFile.getFileName}${ContentAddressedCacheBackend.TEMPORARY_SUFFIX}")
-    val out       = new DataOutputStream(Files.newOutputStream(temporary))
+    val out       = writing(temporary)
 
     try {
       out.writeUTF(ContentAddressedCacheBackend.MAGIC)
@@ -351,6 +411,16 @@ final class ContentAddressedCacheBackend private (
     val _ = Files.move(temporary, indexFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
   }
 
+  private def readingIndex(): DataInputStream =
+    new DataInputStream(
+      new BufferedInputStream(Files.newInputStream(indexFile), ContentAddressedCacheBackend.INDEX_BUFFER)
+    )
+
+  private def writing(file: Path): DataOutputStream =
+    new DataOutputStream(
+      new BufferedOutputStream(Files.newOutputStream(file), ContentAddressedCacheBackend.INDEX_BUFFER)
+    )
+
   private def reportSave(
       data: FactCacheData,
       next: ContentAddressedCacheBackend.Placement,
@@ -361,69 +431,6 @@ final class ContentAddressedCacheBackend private (
       s"Incremental cache: ${data.entries.size - dropped}/${data.entries.size} entries persisted, " +
         s"$written bytes appended (${next.bodyLength} total)."
     ) >> warn[IO](s"$dropped cache entries had a fact key type with no registered codec.").whenA(dropped > 0)
-
-  /** Places each key and value in the store, reusing where it already lives and encoding only what is new.
-    *
-    * An entry is placed **whole or not at all**. A key type with no registered codec cannot be read back, and dropping
-    * merely the *dependency* that names it would leave an entry claiming fewer inputs than it has — under-invalidation,
-    * the one failure direction that produces a wrong build rather than a slow one.
-    */
-  private final class Located(out: ContentAddressedOutput, prior: ContentAddressedCacheBackend.Placement) {
-    private var keyOffsets: Map[CompilerFactKey[?], Int] = prior.keys
-
-    def keys: Map[CompilerFactKey[?], Int] = keyOffsets
-
-    def entry(key: CompilerFactKey[?], entry: CacheEntry): Option[ContentAddressedCacheBackend.Encoded] =
-      for {
-        keyOffset  <- keyLocation(key)
-        depOffsets <- entry.directDeps.toSeq.traverse(dep => keyLocation(dep).map(FactKeyCodecs.nameOf(dep) -> _))
-      } yield ContentAddressedCacheBackend.Encoded(
-        FactKeyCodecs.nameOf(key),
-        keyOffset,
-        Option.when(key.valueCodec.isDefined)(entry.stored).flatMap(valueLocation(key, _)),
-        depOffsets
-      )
-
-    private def keyLocation(key: CompilerFactKey[?]): Option[Int] =
-      keyOffsets.get(key).orElse {
-        keyCodecs.get(FactKeyCodecs.nameOf(key)).map { codec =>
-          val offset = out.write(key)(using codec.asInstanceOf[FactCodec[CompilerFactKey[?]]]).offset
-
-          keyOffsets = keyOffsets.updated(key, offset)
-          offset
-        }
-      }
-
-    /** Where a value goes, **without reading it unless it has to, and without writing it unless it is new**.
-      *
-      * A value still in the store is placed from its id alone — materialising it merely to write it back is precisely
-      * the cost the lazy read exists to avoid.
-      *
-      * One held in memory is **identified before it is placed**, and that order is the point. Encoding descends into a
-      * value's children and appends each as it goes, so by the time the writer can tell that the value as a whole is
-      * one it already holds, it has already appended the whole subtree underneath it. Hashing first — which costs no
-      * bytes and no buffers — asks the only question that matters: is this exactly what is on disk already? On a warm
-      * build the answer is yes for every world leaf, which is otherwise the one thing that grows the store every run.
-      */
-    private def valueLocation(key: CompilerFactKey[?], value: CachedValue): Option[ContentAddressedOutput.Placed] =
-      value match {
-        case CachedValue.Absent         => None
-        case stored: CachedValue.Stored =>
-          prior.values.get(stored.id).map(ContentAddressedOutput.Placed(stored.id, _))
-        case CachedValue.InMemory(fact) =>
-          val codec = key.valueCodec.get.asInstanceOf[FactCodec[CompilerFact]]
-
-          Some(held(fact, codec).getOrElse(out.write(fact)(using codec)))
-      }
-
-    /** The value's existing place, if the store already holds exactly it. Skipped when there is nothing to match
-      * against, so a cold build does not hash everything twice.
-      */
-    private def held(fact: CompilerFact, codec: FactCodec[CompilerFact]): Option[ContentAddressedOutput.Placed] =
-      Option
-        .when(prior.values.nonEmpty)(new ObjectIdOutput().identify(fact)(using codec))
-        .flatMap(id => prior.values.get(id).map(ContentAddressedOutput.Placed(id, _)))
-  }
 }
 
 object ContentAddressedCacheBackend {
@@ -433,6 +440,12 @@ object ContentAddressedCacheBackend {
   private val INDEX_FILE: String       = ".eliot-index"
   private val LOCK_FILE: String        = ".eliot-lock"
   private val TEMPORARY_SUFFIX: String = ".tmp"
+
+  /** The buffer the index is read and written through. The index is a few megabytes of varints, a byte or two each,
+    * and written to the file stream unbuffered every one was a system call: two seconds of a cold build's save, which a
+    * CPU profile does not see because the time is spent in the kernel (`docs/compiler-performance.md` §10).
+    */
+  private val INDEX_BUFFER: Int = 1 << 16
 
   /** How long a load or a save will wait for the cache lock before giving up on the cache entirely. A save is ~100–150
     * ms, so contention outlasting this is a hung compiler and not a busy one — and waiting on that would be the
@@ -506,5 +519,142 @@ object ContentAddressedCacheBackend {
 
     /** Nothing loaded: no region to extend, and no offset that means anything. */
     val empty: Placement = Placement(None, 0, Map.empty, Map.empty)
+  }
+
+  /** How long the write-behind's worker sleeps when it has encoded everything offered so far. */
+  private val WRITE_BEHIND_POLL: FiniteDuration = 2.millis
+
+  /** A save being written behind the compilation ([[ContentAddressedCacheBackend.writeBehind]]): a worker encoding each
+    * fact it is offered, on a thread of its own, into the store's buffer for the region it expects the save to extend.
+    *
+    * The worker **polls** rather than waits to be woken. Offering a fact then costs the compilation one lock-free
+    * enqueue and never a thread wake-up, and the worker never holds one of the compute pool's threads, which the
+    * compilation's fibers run on: a worker on the pool woken per fact made the compilation slower than the save it took
+    * off it (`docs/compiler-performance.md` §10).
+    */
+  final class WriteBehind private[ContentAddressedCacheBackend] (
+      startedFrom: Placement,
+      private[ContentAddressedCacheBackend] val regionId: Long,
+      base: Int,
+      private[ContentAddressedCacheBackend] val located: Located,
+      offered: ConcurrentLinkedQueue[CompilerFact],
+      finishing: AtomicBoolean,
+      worker: Fiber[IO, Throwable, Unit]
+  ) {
+
+    /** Hand a registered fact to the encoding. It is encoded later, on the worker, so it must not change, which a fact
+      * never does.
+      */
+    def offer(fact: CompilerFact): IO[Unit] = IO.delay(offered.add(fact)).void
+
+    /** Wait until everything offered is encoded, and answer whether it all was. Nothing touches the encoding after
+      * this but the save, so it may read it from any thread. Also what stops a write-behind no save will use.
+      */
+    def finish: IO[Boolean] =
+      IO.delay(finishing.set(true)) >> worker.join.map(_.isSuccess)
+
+    /** Whether the save of `current` at `offset` extends exactly what this encoded for. */
+    private[ContentAddressedCacheBackend] def continues(current: Placement, offset: Int): Boolean =
+      (current eq startedFrom) && offset === base
+  }
+
+  /** Encode what is `offered` until `finishing` is set and everything offered before it is encoded. The flag is read
+    * before the queue is drained, so a fact offered before the finish is never left behind.
+    */
+  @tailrec
+  private def encodeOffered(
+      offered: ConcurrentLinkedQueue[CompilerFact],
+      finishing: AtomicBoolean,
+      located: Located
+  ): Unit = {
+    val last = finishing.get()
+
+    Iterator.continually(offered.poll()).takeWhile(_ != null).foreach(located.prepare)
+    if (!last) {
+      LockSupport.parkNanos(WRITE_BEHIND_POLL.toNanos)
+      encodeOffered(offered, finishing, located)
+    }
+  }
+
+  /** Places each key and value in the store, reusing where it already lives and encoding only what is new.
+    *
+    * An entry is placed **whole or not at all**. A key type with no registered codec cannot be read back, and dropping
+    * merely the *dependency* that names it would leave an entry claiming fewer inputs than it has — under-invalidation,
+    * the one failure direction that produces a wrong build rather than a slow one.
+    */
+  private final class Located(
+      val out: ContentAddressedOutput,
+      prior: Placement,
+      keyCodecs: FactKeyCodecs.Registry
+  ) {
+    private var keyOffsets: Map[CompilerFactKey[?], Int] = prior.keys
+    private val prepared = new IdentityHashMap[CompilerFact, ContentAddressedOutput.Placed]()
+
+    def keys: Map[CompilerFactKey[?], Int] = keyOffsets
+
+    /** Place a fact's key and value ahead of the save, which then finds them placed: a write-behind's work. A fact
+      * whose key type has no codec is left for the save, which drops it.
+      */
+    def prepare(fact: CompilerFact): Unit = {
+      val key = fact.key()
+
+      if (keyLocation(key).isDefined && key.valueCodec.isDefined) {
+        val _ = prepared.put(fact, inMemory(key, fact))
+      }
+    }
+
+    def entry(key: CompilerFactKey[?], entry: CacheEntry): Option[Encoded] =
+      for {
+        keyOffset  <- keyLocation(key)
+        depOffsets <- entry.directDeps.toSeq.traverse(dep => keyLocation(dep).map(FactKeyCodecs.nameOf(dep) -> _))
+      } yield Encoded(
+        FactKeyCodecs.nameOf(key),
+        keyOffset,
+        Option.when(key.valueCodec.isDefined)(entry.stored).flatMap(valueLocation(key, _)),
+        depOffsets
+      )
+
+    private def keyLocation(key: CompilerFactKey[?]): Option[Int] =
+      keyOffsets.get(key).orElse {
+        keyCodecs.get(FactKeyCodecs.nameOf(key)).map { codec =>
+          val offset = out.write(key)(using codec.asInstanceOf[FactCodec[CompilerFactKey[?]]]).offset
+
+          keyOffsets = keyOffsets.updated(key, offset)
+          offset
+        }
+      }
+
+    /** Where a value goes, **without reading it unless it has to, and without writing it unless it is new**.
+      *
+      * A value still in the store is placed from its id alone — materialising it merely to write it back is precisely
+      * the cost the lazy read exists to avoid.
+      *
+      * One held in memory is **identified before it is placed**, and that order is the point. Encoding descends into a
+      * value's children and appends each as it goes, so by the time the writer can tell that the value as a whole is
+      * one it already holds, it has already appended the whole subtree underneath it. Hashing first — which costs no
+      * bytes and no buffers — asks the only question that matters: is this exactly what is on disk already? On a warm
+      * build the answer is yes for every world leaf, which is otherwise the one thing that grows the store every run.
+      */
+    private def valueLocation(key: CompilerFactKey[?], value: CachedValue): Option[ContentAddressedOutput.Placed] =
+      value match {
+        case CachedValue.Absent         => None
+        case stored: CachedValue.Stored =>
+          prior.values.get(stored.id).map(ContentAddressedOutput.Placed(stored.id, _))
+        case CachedValue.InMemory(fact) => Some(Option(prepared.get(fact)).getOrElse(inMemory(key, fact)))
+      }
+
+    private def inMemory(key: CompilerFactKey[?], fact: CompilerFact): ContentAddressedOutput.Placed = {
+      val codec = key.valueCodec.get.asInstanceOf[FactCodec[CompilerFact]]
+
+      held(fact, codec).getOrElse(out.write(fact)(using codec))
+    }
+
+    /** The value's existing place, if the store already holds exactly it. Skipped when there is nothing to match
+      * against, so a cold build does not hash everything twice.
+      */
+    private def held(fact: CompilerFact, codec: FactCodec[CompilerFact]): Option[ContentAddressedOutput.Placed] =
+      Option
+        .when(prior.values.nonEmpty)(new ObjectIdOutput().identify(fact)(using codec))
+        .flatMap(id => prior.values.get(id).map(ContentAddressedOutput.Placed(id, _)))
   }
 }

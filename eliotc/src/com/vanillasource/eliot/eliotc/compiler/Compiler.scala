@@ -238,7 +238,7 @@ object Compiler extends Logging {
       tracker    <- visualizationPath.traverse(_ => FactVisualizationTracker.create())
       statistics <- Option.when(statisticsAsked)(ProcessorStatistics.create()).sequence
       _          <- debug[IO]("Compiler starting...")
-      result     <- session.compileOnce(tracker, statistics, progress)
+      result     <- session.compileOnce(tracker, statistics, progress, writeBehind = true)
       _          <- session.persist()
     } yield Compiled(session, result, tracker, statistics)
   }

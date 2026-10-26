@@ -35,6 +35,7 @@ final class CompilationSession private (
     configFingerprint: String,
     backend: ContentAddressedCacheBackend,
     cache: Ref[IO, Option[FactCacheData]],
+    writing: Ref[IO, Option[ContentAddressedCacheBackend.WriteBehind]],
     compileLock: Mutex[IO],
     phaseTimings: PhaseTimings
 ) extends Logging {
@@ -53,23 +54,38 @@ final class CompilationSession private (
     * @param progress
     *   optional progress counting, for `--progress`; omit in server mode. The run is `working` until its cache graph is
     *   built, which belongs to `saving cache`.
+    * @param writeBehind
+    *   encode the cache on another core while the compilation runs, for the [[persist]] that follows it. Only for a
+    *   compilation that is persisted next, as the CLI's is: a server persists once, on shutdown, and would encode every
+    *   run for the last one's save.
     * @return
     *   the live generator (queryable for LSP features) plus the run's diagnostics.
     */
   def compileOnce(
       tracker: Option[FactVisualizationTracker] = None,
       statistics: Option[ProcessorStatistics] = None,
-      progress: Option[ProgressTracker] = None
+      progress: Option[ProgressTracker] = None,
+      writeBehind: Boolean = false
   ): IO[CompilationResult] =
     compileLock.lock.surround {
       for {
         prior     <- cache.get
         wrapped   <- IO.delay(wrap(processors, tracker, statistics))
-        generator <- IncrementalFactGenerator.create(wrapped, prior, strictAccounting = true, progress)
+        behind    <- Option.when(writeBehind)(backend.writeBehind()).sequence
+        generator <- IncrementalFactGenerator.create(
+                       wrapped,
+                       prior,
+                       strictAccounting = true,
+                       progress,
+                       behind.fold((_: CompilerFact) => IO.unit)(_.offer)
+                     )
         _         <- progress.traverse_(_.enter(ProgressPhase.Working))
-        produced  <- targetPlugin.run(effectiveConfiguration, generator)
+        produced  <- targetPlugin
+                       .run(effectiveConfiguration, generator)
+                       .guaranteeCase(outcome => behind.traverse_(_.finish).unlessA(outcome.isSuccess))
         _         <- progress.traverse_(_.enter(ProgressPhase.SavingCache))
         nextCache <- phaseTimings.time(PhaseTimings.buildCache)(generator.buildCacheData())
+        _         <- writing.getAndSet(behind).flatMap(_.traverse_(_.finish)) // one no save will use stops
         _         <- cache.set(Some(nextCache)) // last effect ⇒ a cancelled run keeps the old cache
         errors    <- generator.currentErrors()
       } yield CompilationResult(generator, errors, produced)
@@ -98,11 +114,12 @@ final class CompilationSession private (
     }
 
   /** Flush the in-memory cache to disk so the next *process* start is warm. Call from the CLI after its single compile,
-    * and from a server on shutdown. Fail-safe: the save warns rather than failing.
+    * and from a server on shutdown. Fail-safe: the save warns rather than failing. What the last compilation encoded
+    * behind itself is finished rather than encoded again.
     */
   def persist(): IO[Unit] =
-    cache.get.flatMap(
-      _.traverse_(data => phaseTimings.time(PhaseTimings.cacheSave)(backend.save(data)))
+    (cache.get, writing.getAndSet(None)).flatMapN((data, behind) =>
+      data.traverse_(data => phaseTimings.time(PhaseTimings.cacheSave)(backend.save(data, behind)))
     )
 
   /** Hand what the last compilation produced to the target plugin, and answer the exit code it reports (see
@@ -151,6 +168,7 @@ object CompilationSession {
       seeded          <- phaseTimings.time(PhaseTimings.cacheLoad)(backend.load())
       _               <- progress.traverse_(_.cacheLoaded(seeded.exists(_.entries.nonEmpty)))
       cache           <- Ref.of[IO, Option[FactCacheData]](seeded)
+      writing         <- Ref.of[IO, Option[ContentAddressedCacheBackend.WriteBehind]](None)
       lock            <- Mutex[IO]
     } yield new CompilationSession(
       targetPlugin,
@@ -161,6 +179,7 @@ object CompilationSession {
       configFp,
       backend,
       cache,
+      writing,
       lock,
       phaseTimings
     )

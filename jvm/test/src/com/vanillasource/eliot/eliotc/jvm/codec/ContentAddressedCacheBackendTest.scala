@@ -54,7 +54,7 @@ class ContentAddressedCacheBackendTest extends AsyncFlatSpec with AsyncIOSpec wi
       for {
         _      <- open(cacheDir).flatMap(_.save(data))
         first  <- storeSize(cacheDir)
-        _      <- open(cacheDir).flatMap(backend => backend.load().flatMap(_.traverse_(backend.save)))
+        _      <- open(cacheDir).flatMap(backend => backend.load().flatMap(_.traverse_(backend.save(_))))
         after  <- storeSize(cacheDir)
       } yield after shouldBe first
     }
@@ -106,6 +106,39 @@ class ContentAddressedCacheBackendTest extends AsyncFlatSpec with AsyncIOSpec wi
         _      <- stale.save(data)
         loaded <- open(cacheDir).flatMap(_.load())
       } yield loaded.map(sameAs(replacement)) shouldBe Some(true)
+    }
+  }
+
+  it should "read back every entry it wrote behind the compilation" in {
+    withCache { (data, cacheDir) =>
+      for {
+        backend <- open(cacheDir)
+        behind  <- backend.writeBehind()
+        _       <- offerAll(data, behind)
+        _       <- backend.save(data, Some(behind))
+        loaded  <- open(cacheDir).flatMap(_.load())
+      } yield loaded.map(sameAs(data)) shouldBe Some(true)
+    }
+  }
+
+  /** A write-behind encodes for the region's length when it started, read without the lock. Another compiler appending
+    * before the save moves that length, and the encoding's offsets would then address the other compiler's bytes, so
+    * the save encodes from scratch at the region's real end.
+    */
+  it should "encode from scratch when another compiler appended while it wrote behind" in {
+    withCache { (data, cacheDir) =>
+      for {
+        _      <- open(cacheDir).flatMap(_.save(firstEntries(data, 10)))
+        first  <- open(cacheDir)
+        second <- open(cacheDir)
+        _      <- first.load()
+        _      <- second.load()
+        behind <- first.writeBehind()
+        _      <- offerAll(data, behind)
+        _      <- second.save(firstEntries(data, 20))
+        _      <- first.save(data, Some(behind))
+        loaded <- open(cacheDir).flatMap(_.load())
+      } yield loaded.map(sameAs(data)) shouldBe Some(true)
     }
   }
 
@@ -168,6 +201,10 @@ class ContentAddressedCacheBackendTest extends AsyncFlatSpec with AsyncIOSpec wi
 
   private def storeSize(cacheDir: Path): IO[Long] =
     IO.blocking(Files.list(cacheDir).toList.stream().mapToLong(Files.size).sum())
+
+  /** Offer every value a run holds, as its generator does while the run registers them. */
+  private def offerAll(data: FactCacheData, behind: ContentAddressedCacheBackend.WriteBehind): IO[Unit] =
+    data.entries.values.flatMap(_.value).toList.traverse_(behind.offer)
 
   /** A prefix of a run's facts, standing in for a compiler that holds different facts from another one. */
   private def firstEntries(data: FactCacheData, count: Int): FactCacheData =
