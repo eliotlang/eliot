@@ -35,6 +35,7 @@ import com.vanillasource.eliot.eliotc.monomorphize.processor.{
   DataTypeNativesProcessor,
   MatchNativesProcessor,
   MonomorphicTypeCheckProcessor,
+  ParametricSignatureProcessor,
   SystemNativesProcessor,
   UserValueNativesProcessor
 }
@@ -113,6 +114,7 @@ object LangProcessors {
     ),
     MonomorphicTypeCheckProcessor(),
     CompilerMonomorphicTypeCheckProcessor(),
+    ParametricSignatureProcessor(),
     RefinementChannelProcessor(),
     MetaDemandsProcessor(),
     DerivedMetaProcessor(),

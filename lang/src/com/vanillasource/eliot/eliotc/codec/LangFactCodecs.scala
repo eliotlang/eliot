@@ -447,6 +447,10 @@ object LangFactCodecs {
       : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.fact.CompilerMonomorphicValue] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_monomorphize_fact_CompilerMonomorphicValue_Key
       : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.fact.CompilerMonomorphicValue.Key] = FactCodec.derived
+  given codec_com_vanillasource_eliot_eliotc_monomorphize_fact_ParametricSignature
+      : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.fact.ParametricSignature] = FactCodec.derived
+  given codec_com_vanillasource_eliot_eliotc_monomorphize_fact_ParametricSignature_Key
+      : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.fact.ParametricSignature.Key] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_monomorphize_fact_GroundValue
       : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.fact.GroundValue] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_monomorphize_fact_GroundValue_Literal
@@ -538,6 +542,8 @@ object LangFactCodecs {
   val compilerMonomorphicValueCodec
       : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.fact.CompilerMonomorphicValue] =
     codec_com_vanillasource_eliot_eliotc_monomorphize_fact_CompilerMonomorphicValue
+  val parametricSignatureCodec: FactCodec[com.vanillasource.eliot.eliotc.monomorphize.fact.ParametricSignature] =
+    codec_com_vanillasource_eliot_eliotc_monomorphize_fact_ParametricSignature
   val monomorphicValueCodec: FactCodec[com.vanillasource.eliot.eliotc.monomorphize.fact.MonomorphicValue]              =
     codec_com_vanillasource_eliot_eliotc_monomorphize_fact_MonomorphicValue
   val namedValuesIndexCodec: FactCodec[com.vanillasource.eliot.eliotc.namedvalues.fact.NamedValuesIndex]               =
@@ -617,6 +623,7 @@ object LangFactCodecs {
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_monomorphize_channel_WovenValue_Key),
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_monomorphize_fact_BodyValueReferences_Key),
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_monomorphize_fact_CompilerMonomorphicValue_Key),
+    FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_monomorphize_fact_ParametricSignature_Key),
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_monomorphize_fact_MonomorphicValue_Key)
   )
 }

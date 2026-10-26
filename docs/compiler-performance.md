@@ -13,8 +13,9 @@ profiles what was left and adopts three changes: cats-effect tracing off, the ca
 a thread of its own, and the index read and written through a buffer. A cold build is **23–27% faster**, a warm one
 **47%** and an edited one **33%**. §11 profiles the result and fixes the fact keys' hash and the read path (−2%). §12
 ranks what is left on **one core**: parallel compilation (I3) is the last step by Robert's decision, and a sequential
-mode stays even then. §12 also measures I6 for signatures: every signature check of an instance is the substitution of
-its type arguments into the value's parametric signature, except a guard's verdict.
+mode stays even then. §12 also measures I6 for signatures: almost every signature check of an instance is the substitution
+of its type arguments into the value's parametric signature, and §12.4 builds that: a cold build **3–4% faster**, warm
+flat, every jar identical.
 
 The goal (Robert, 2026-10-24): *"A cold compile of the build project should not take 1 minute. It should take a
 couple of seconds actually. We need some very fundamental ideas to break through here."* eliot-build's launcher is
@@ -777,7 +778,7 @@ near the leaf (the top frames `CompilerFactKey.hashCode`, still structural at ev
 
 | lever | what it removes | rough gain | needs |
 |---|---|---|---|
-| **I6 for signatures** (§12.2) | ~3 400 of the ~4 100 signature checks of an instance | **1.2–1.5 s** | P4 |
+| **I6 for signatures** (§12.2) | ~3 400 of the ~4 100 signature checks of an instance | **1.2–1.5 s** (built in §12.4: 0.5–0.7 s) | P4 |
 | I2, direct-style queries | the run loop | ≤2.5 s | the largest refactor in the list |
 | I1, interning | the hashing and equality | ≤2 s | nothing; mechanical |
 | I9, a hand-written lexer and parser | most of the front end's 1.1 s of parsing | ~1 s | nothing |
@@ -803,12 +804,14 @@ check failed, to catch an instance whose own check rejects what the parametric o
 | eliot-build | 4 101 | 3 382 | 719 | 0 | 0 | 0 |
 | the 52 examples | 2 602 | 2 194 | 403 | 4 | 1 | not probed |
 | `lang.test` (1 061 tests) | 155 | 125 | 20 | 10 | 0 | 0 |
-| `jvm.test` (1 632 tests) | 12 412 | 10 543 | 1 820 | 41 | 7 (+1 both fail) | 0 |
+| `jvm.test` (816 tests) | 12 412 | 10 543 | 1 820 | 41 | 7 (+1 both fail) | 0 |
 
-**Every difference is a guard's verdict**, from one arm, `publishStuckGuardCarrier`: with the binders neutral a guard
-cannot decide, so the parametric check publishes its undischarged carrier (`Bool` for an `implement … where` marker
-such as `Route`, `Coerce` or `InRange`; `Either[String, Type]` for a return guard such as `head`), and each instance
-publishes its own verdict (`true`, `Right(String)`, `Left("empty")`). **Every parametric failure computes on a binder**:
+**Every difference is a guard's verdict.** Mostly from one arm, `publishStuckGuardCarrier`: with the binders neutral a
+guard cannot decide, so the parametric check publishes its undischarged carrier (`Bool` for an `implement … where`
+marker such as `Route`, `Coerce` or `InRange`; `Either[String, Type]` for a return guard such as `head`), and each
+instance publishes its own verdict (`true`, `Right(String)`, `Left("empty")`). **But two are not**, and this section
+first said they were (corrected in §12.4): `Route[S] where accepted(S)`, whose `accepted` runs `runThrow` over a
+`raise`, read back as a definite `false` and a definite `true` through the *escalation*, each wrong for one instance. **Every parametric failure computes on a binder**:
 `Box[I + 1]` over a value binder `I: BigInteger`, `pick[C: Bool]`. Both are cases a rule can recognise and leave to
 today's check per instance.
 
@@ -831,7 +834,8 @@ falls back, and so does anything that computes on a binder.
 Why it should be sound, for P4: a `GroundValue` can hold a binder only as a `Param` heading a spine. Anything that
 **eliminates** a binder (a `match`, arithmetic, an ability dispatched on it, a guard's `fold`) leaves a stuck neutral,
 which does not read back, so the parametric check fails and the instance falls back. An evaluation under a neutral that
-nothing eliminated commutes with substitution. The measurements agree: 19 270 instances, no difference outside the guard
+nothing eliminated commutes with substitution. **That holds for plain evaluation only** (§12.4): the escalation threads
+control effects and dispatches abilities, and settled `accepted(S)` to a verdict with `S` a placeholder. The measurements agree: 19 270 instances, no difference outside the guard
 arm, and no instance whose own check rejected what the parametric check accepted, though that last column is thin,
 since the failing programs in the suites mostly fail before their signature twins. Open for P4:
 
@@ -845,3 +849,63 @@ Estimate: the ~1.8 s those 4 101 checks cost becomes ~719 parametric checks (~0.
 microseconds, so **1.2–1.5 s, 8–10% of a cold build**, and a larger share in a larger program, whose instances grow
 faster than its definitions. It is the one-signature step of I6. A body checked once is the rest of I6, and it is not
 measured here.
+
+### 12.4 Built: a signature checked once, instances by substitution (2026-10-26)
+
+Robert decided P4 for signatures (2026-10-26): reuse a signature checked with placeholders wherever that check
+succeeded without computing on a placeholder. Built in the processor, as §12.3's smallest change:
+
+- **`ParametricSignature(vfqn, signature: Option[GroundValue])`**, one per value, made by `ParametricSignatureProcessor`
+  running the same compile-track check an instance's twin runs (`CompilerMonomorphicTypeCheckProcessor
+  .checkOnCompilerTrack`), at no type arguments. A `Signature`-role instance with type arguments reads it and
+  substitutes (`GroundValue.substituteParams`); everything else, and an instance whose value has `None`, is checked as
+  before. The instance facts stay, so no reader changed.
+- **What is substituted into**: only a read-back by the **raw quote**, plain evaluation, whose checked type is not a
+  guard carrier (`TypeStackLoop.Result.substitutable`). The escalation and the stuck-guard arm never are.
+- **What the parametric check may not read** (`PlaceholderRefusingProcess`): a fact whose key holds a `Param`, or one
+  already in progress on the chain. Either read is answered `None` and the result discarded, and its errors are never
+  reported, since they are not the program's. An instance does not read the parametric signature while that is itself
+  being computed up the chain (`activeFactKeys`), which would close a cycle.
+- **`None`, not a decline**: the first version declined, and the 13 declined values were regenerated by every warm
+  build, with the instances behind them (warm +12%). An answer of `None` is cached like any other.
+
+**The first version miscompiled.** Substituting into the escalation's read-back made
+`EffectIntrinsicsIntegrationTest` ("let an exit pass through a discharger of another effect to its own frame") print
+`inner/inner` for `outer/inner`: `implement Route[S] where accepted(S)` read back as one verdict for every `S`. §12.2's
+probe had recorded that difference and the analysis had misattributed it; the raw-quote rule is what closes it.
+
+Measured, eliot-build, every jar identical (`a74475df…` cold/warm/back, `073f213d…` edited), the example sweep
+identical, every suite green (2 310 tests, 7 new):
+
+| | before (`6b442ee4`) | after | |
+|---|---|---|---|
+| cold, 8 alternated pairs | 17.77 s mean, 17.93 median | 17.30 s mean, 17.25 median | −0.47 s (pairwise sd 0.73) |
+| cold, all 20 pairs today | | | −0.74 s mean, **−3 to −4%** |
+| warm, 4 rounds | 2.92 s | 2.90 s | flat |
+| edit / back, 4 rounds | 6.54 / 6.36 s | 6.61 / 6.49 s | within noise |
+
+919 values get a parametric signature, 906 of them substitutable; an instance's signature costs 63 µs instead of
+~450 µs, so the ~4 100 instance checks fall from ~1.8 s to ~0.26 s. **The estimate (1.2–1.5 s) was twice the result**,
+for two reasons it missed:
+
+| instances per value | values | instances | parametric checks | the instances' own checks, before |
+|---|---|---|---|---|
+| 1 | 697 | 695 | 540 ms | ~313 ms |
+| 2–4 | 93 | 244 | 66 ms | ~110 ms |
+| 5–20 | 102 | 1 136 | 81 ms | ~511 ms |
+| more than 20 | 27 | 1 283 | 24 ms | ~577 ms |
+
+(one `--statistics` run on a loaded machine, so the absolute times are high; the proportions hold.)
+
+- **Most values have one instance.** An effectful definition is generic in its handle types and usually has one
+  instance (`Launcher.main`, `StandardProcess$Handle`), and §12.2 counted 719 values by name where there are 919 by
+  name and qualifier. For a value with one instance, the parametric check replaces one concrete check, and costs more.
+- **A parametric check costs more than a concrete one** (median 0.57 ms against ~0.45 ms): the values with one instance
+  are the large effectful signatures.
+
+The values with more than one instance gain what §12 predicted (~1.2 s of checks become ~0.34 s). Taking the path only
+for them would recover most of the ~0.25 s the others lose, but nothing a processor can read says how many instances a
+value will have; any rule would be a guess. Which is the next lever is unchanged from §12.1: what a single check costs
+(about half a millisecond even for `B => ((B, A) => B) => List[A] => B`) is now the larger question than how many there
+are.
+

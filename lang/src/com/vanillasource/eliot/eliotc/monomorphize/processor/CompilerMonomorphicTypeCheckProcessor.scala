@@ -7,7 +7,7 @@ import com.vanillasource.eliot.eliotc.core.processor.MetaWhereDesugarer
 import com.vanillasource.eliot.eliotc.module.fact.{QualifiedName, Qualifier, Role, UnifiedModuleNames, ValueFQN}
 import com.vanillasource.eliot.eliotc.monomorphize.check.{MarkerGuardSignature, Track, TypeStackLoop}
 import com.vanillasource.eliot.eliotc.monomorphize.domain.SemValue
-import com.vanillasource.eliot.eliotc.monomorphize.fact.{CompilerMonomorphicValue, GroundValue, NativeBinding}
+import com.vanillasource.eliot.eliotc.monomorphize.fact.{CompilerMonomorphicValue, GroundValue, NativeBinding, ParametricSignature}
 import com.vanillasource.eliot.eliotc.platform.Platform
 import com.vanillasource.eliot.eliotc.processor.CompilerIO.*
 import com.vanillasource.eliot.eliotc.processor.common.TransformationProcessor
@@ -36,55 +36,6 @@ class CompilerMonomorphicTypeCheckProcessor
       SaturatedValue.Key(key.vfqn.copy(name = key.vfqn.name.copy(role = Role.Runtime)), Platform.Compiler)
     ) {
 
-  /** Fetch a name's compile-time reduction from the compiler pool, enforcing the **native-leaf boundary** (CP-C step
-    * c).
-    *
-    * A name with a compiler-platform [[NativeBinding]] reduces normally. A name with *none* is one of two things, and
-    * they must be told apart — silently treating both as a stuck [[SemValue.VTopDef]] (the runtime track's correct
-    * fallback, where the backend later emits the call) would let a runtime-only leaf corrupt a compile-time-computed
-    * type, exactly the silent-wrong-typing the cornerstone forbids:
-    *
-    *   - **runtime-concrete / compiler-abstract** — it *has* a runtime realization (a jvm body or a runtime native
-    *     leaf) but no compiler-platform definition. This is a *runtime-only value*; reaching it while reducing
-    *     compile-time code is a hard error ("there is no backend here"), reported against the value being checked.
-    *   - **body-less on both platforms** — an abstract type constructor (`Int`, body-less everywhere), an unresolved
-    *     generic obligation, or an abstract ability method: no runtime binding either. These are legitimate
-    *     compile-time normal forms / use-site-deferred obligations, so `None` is returned and evaluation leaves them
-    *     stuck.
-    *
-    * The runtime-concreteness probe reads `NativeBinding(vfqn, Runtime)` — accessing runtime-defined source to *detect*
-    * the leaf, never to *reduce* with it, so the `compiler-mono → runtime-mono` fact edge is not created (this
-    * processor still cannot name `MonomorphicValue.Key`). It is gated on runtime-pool *membership* (a name-set read,
-    * like [[CompilerNativesProcessor.inCompilerPool]]) so a compiler-only name — absent from the runtime pool entirely
-    * — is not probed and does not trigger the runtime pool's "Could not find" abort; such a name is genuinely
-    * compiler-side and stays `None`.
-    */
-  private def fetchBinding(source: Sourced[?])(vfqn: ValueFQN): CompilerIO[Option[SemValue]] =
-    getFactOrAbort(NativeBinding.Key(vfqn, Platform.Compiler)).flatMap {
-      case NativeBinding(_, some @ Some(_), _) => some.pure[CompilerIO]
-      case NativeBinding(_, None, _)           =>
-        inRuntimePool(vfqn).ifM(
-          getFactOrAbort(NativeBinding.Key(vfqn, Platform.Runtime)).flatMap {
-            case NativeBinding(_, Some(_), _) =>
-              compilerError(
-                source.as(s"Cannot use runtime-only value '${vfqn.name.name}' at compile time."),
-                Seq(
-                  s"'${vfqn.name.name}' has a runtime implementation but no compile-time definition on the compiler platform."
-                )
-              ) >> abort[Option[SemValue]]
-            case NativeBinding(_, None, _)    => Option.empty[SemValue].pure[CompilerIO] // abstract on *both* platforms
-          },
-          Option.empty[SemValue].pure[CompilerIO] // compiler-only, not a leaf
-        )
-    }
-
-  /** Whether `vfqn` is declared by its module in the runtime pool. Reads the [[UnifiedModuleNames]] name set (never the
-    * value), so a name absent from the runtime pool yields `false` quietly instead of the "Could not find" abort a
-    * direct value/binding request would raise.
-    */
-  private def inRuntimePool(vfqn: ValueFQN): CompilerIO[Boolean] =
-    getFactOrAbort(UnifiedModuleNames.Key(vfqn.moduleName, Platform.Runtime)).map(_.names.contains(vfqn.name))
-
   override protected def generateFromKeyAndFact(
       key: CompilerMonomorphicValue.Key,
       saturatedValue: SaturatedValue
@@ -106,19 +57,13 @@ class CompilerMonomorphicTypeCheckProcessor
       // rather than walking the signature in place. Absent (the signature twin computing itself, or a W3 twin that
       // declined) leaves the in-place walk. Acyclic: the signature twin never reads a runtime-role mono here.
       injectedSignature <- signatureTwinSignature(signatureOnly, key)
-      result            <- TypeStackLoop.process(
-                             key.typeArguments,
-                             value,
-                             fetchBinding = fetchBinding(value.name),
-                             resolveAbility = resolveAbilityImpl,
-                             track = Track.Compiler,
-                             reduceInstance = ReducedBindingClosure.reduceInstance(_, _),
-                             signatureOnly = signatureOnly,
-                             injectedSignature = injectedSignature,
-                             readHanded = Some((callee, arguments) =>
-                               getFactOrAbort(CompilerMonomorphicValue.Key(callee, arguments)).map(_.handed)
-                             )
-                           )
+      substituted       <- substitutedSignature(signatureOnly, key)
+      result            <- substituted match {
+                             case Some(signature) => TypeStackLoop.Result(signature, None).pure[CompilerIO]
+                             case None            =>
+                               CompilerMonomorphicTypeCheckProcessor
+                                 .checkOnCompilerTrack(key.typeArguments, value, signatureOnly, injectedSignature)
+                           }
     } yield CompilerMonomorphicValue(
       key.vfqn,
       key.typeArguments,
@@ -181,6 +126,103 @@ class CompilerMonomorphicTypeCheckProcessor
   private def hasWhereCompanion(callee: ValueFQN): CompilerIO[Boolean] =
     getFactOrAbort(UnifiedModuleNames.Key(callee.moduleName, Platform.Compiler))
       .map(_.names.contains(MetaWhereDesugarer.companionName(callee.name)))
+
+  /** An instance's signature read off its value's [[ParametricSignature]], the value's signature checked once with its
+    * binders as placeholders, with this instance's type arguments substituted (`docs/compiler-performance.md` §12):
+    * the same ground signature its own check would read back, without the check. `None` — check the instance as before
+    * — for a value mono or a key with no type arguments, where the value's signature is not one to substitute into (a
+    * guard, or a signature computing on a binder), and while that parametric signature is itself being computed up this
+    * request chain, which reading it would close into a cycle.
+    */
+  private def substitutedSignature(
+      signatureOnly: Boolean,
+      key: CompilerMonomorphicValue.Key
+  ): CompilerIO[Option[GroundValue]] = {
+    val parametricKey = ParametricSignature.Key(key.vfqn)
+    if (!signatureOnly || key.typeArguments.isEmpty) none[GroundValue].pure[CompilerIO]
+    else
+      activeFactKeys.flatMap { active =>
+        if (active.contains(parametricKey)) none[GroundValue].pure[CompilerIO]
+        else
+          getFactOrAbort(parametricKey).map(_.signature.flatMap(_.substituteParams(key.typeArguments)))
+      }
+  }
+}
+
+object CompilerMonomorphicTypeCheckProcessor {
+
+  /** The compiler track's check of `value` at `typeArguments`: the one [[TypeStackLoop]] run both
+    * [[CompilerMonomorphicTypeCheckProcessor]] and [[ParametricSignatureProcessor]] make, so a parametric signature is
+    * exactly what an instance's own check would read back with its binders left as placeholders.
+    */
+  def checkOnCompilerTrack(
+      typeArguments: Seq[GroundValue],
+      value: OperatorResolvedValue,
+      signatureOnly: Boolean,
+      injectedSignature: Option[GroundValue]
+  ): CompilerIO[TypeStackLoop.Result] =
+    TypeStackLoop.process(
+      typeArguments,
+      value,
+      fetchBinding = fetchBinding(value.name),
+      resolveAbility = resolveAbilityImpl,
+      track = Track.Compiler,
+      reduceInstance = ReducedBindingClosure.reduceInstance(_, _),
+      signatureOnly = signatureOnly,
+      injectedSignature = injectedSignature,
+      readHanded = Some((callee, arguments) =>
+        getFactOrAbort(CompilerMonomorphicValue.Key(callee, arguments)).map(_.handed)
+      )
+    )
+
+  /** Fetch a name's compile-time reduction from the compiler pool, enforcing the **native-leaf boundary** (CP-C step
+    * c).
+    *
+    * A name with a compiler-platform [[NativeBinding]] reduces normally. A name with *none* is one of two things, and
+    * they must be told apart — silently treating both as a stuck [[SemValue.VTopDef]] (the runtime track's correct
+    * fallback, where the backend later emits the call) would let a runtime-only leaf corrupt a compile-time-computed
+    * type, exactly the silent-wrong-typing the cornerstone forbids:
+    *
+    *   - **runtime-concrete / compiler-abstract** — it *has* a runtime realization (a jvm body or a runtime native
+    *     leaf) but no compiler-platform definition. This is a *runtime-only value*; reaching it while reducing
+    *     compile-time code is a hard error ("there is no backend here"), reported against the value being checked.
+    *   - **body-less on both platforms** — an abstract type constructor (`Int`, body-less everywhere), an unresolved
+    *     generic obligation, or an abstract ability method: no runtime binding either. These are legitimate
+    *     compile-time normal forms / use-site-deferred obligations, so `None` is returned and evaluation leaves them
+    *     stuck.
+    *
+    * The runtime-concreteness probe reads `NativeBinding(vfqn, Runtime)` — accessing runtime-defined source to *detect*
+    * the leaf, never to *reduce* with it, so the `compiler-mono → runtime-mono` fact edge is not created (this
+    * processor still cannot name `MonomorphicValue.Key`). It is gated on runtime-pool *membership* (a name-set read,
+    * like [[CompilerNativesProcessor.inCompilerPool]]) so a compiler-only name — absent from the runtime pool entirely
+    * — is not probed and does not trigger the runtime pool's "Could not find" abort; such a name is genuinely
+    * compiler-side and stays `None`.
+    */
+  private def fetchBinding(source: Sourced[?])(vfqn: ValueFQN): CompilerIO[Option[SemValue]] =
+    getFactOrAbort(NativeBinding.Key(vfqn, Platform.Compiler)).flatMap {
+      case NativeBinding(_, some @ Some(_), _) => some.pure[CompilerIO]
+      case NativeBinding(_, None, _)           =>
+        inRuntimePool(vfqn).ifM(
+          getFactOrAbort(NativeBinding.Key(vfqn, Platform.Runtime)).flatMap {
+            case NativeBinding(_, Some(_), _) =>
+              compilerError(
+                source.as(s"Cannot use runtime-only value '${vfqn.name.name}' at compile time."),
+                Seq(
+                  s"'${vfqn.name.name}' has a runtime implementation but no compile-time definition on the compiler platform."
+                )
+              ) >> abort[Option[SemValue]]
+            case NativeBinding(_, None, _)    => Option.empty[SemValue].pure[CompilerIO] // abstract on *both* platforms
+          },
+          Option.empty[SemValue].pure[CompilerIO] // compiler-only, not a leaf
+        )
+    }
+
+  /** Whether `vfqn` is declared by its module in the runtime pool. Reads the [[UnifiedModuleNames]] name set (never the
+    * value), so a name absent from the runtime pool yields `false` quietly instead of the "Could not find" abort a
+    * direct value/binding request would raise.
+    */
+  private def inRuntimePool(vfqn: ValueFQN): CompilerIO[Boolean] =
+    getFactOrAbort(UnifiedModuleNames.Key(vfqn.moduleName, Platform.Runtime)).map(_.names.contains(vfqn.name))
 
   /** Resolve an ability in the **compiler** pool: a compiler-track value is entirely compile-time, so all of its
     * ability references belong to the compiler platform.

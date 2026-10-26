@@ -180,7 +180,12 @@ class TypeStackLoop(
                           case None         => publishStuckGuardCarrier(view, checked, quoter, resolvedValue)
                         }
                     }
-    } yield TypeStackLoop.Result(groundSig, None)
+      // Only the raw read-back is plain evaluation, which leaves anything computing on a binder stuck (unquotable). The
+      // escalation threads control effects and dispatches abilities, and with a binder a placeholder it can settle a
+      // guard to a definite but wrong verdict (`accepted(S)`'s `runThrow` answered `false` for every `S`), so neither it
+      // nor the stuck-guard arm is ever substituted into; nor is any guard, whichever arm read it back.
+      guard      <- checker.guards.isGuardCarrier(checked.expressionType)
+    } yield TypeStackLoop.Result(groundSig, None, substitutable = rawSig.isDefined && !guard)
   }
 
   /** A guard whose verdict depends on a *leftover generic binder* (a [[GroundValue.Param]]) is stuck as a value — its
@@ -487,14 +492,17 @@ class TypeStackLoop(
 object TypeStackLoop {
 
   /** The platform-agnostic output of checking one value's type stack and body: the quoted signature and the optional
-    * quoted body. Each track wraps this into its own fact ([[MonomorphicValue]] /
+    * quoted body. `substitutable` marks a signature twin's signature as one an instance's arguments may be substituted
+    * into (`ParametricSignature`): read back by plain evaluation, and not a guard, whose verdict each instance decides
+    * for itself. A value mono's result never is. Each track wraps this into its own fact ([[MonomorphicValue]] /
     * [[com.vanillasource.eliot.eliotc.monomorphize.fact.CompilerMonomorphicValue]]), so [[TypeStackLoop]] never names
     * either fact type — which is what keeps the two tracks acyclic by construction.
     */
   case class Result(
       signature: GroundValue,
       body: Option[Sourced[MonomorphicExpression.Expression]],
-      handed: Seq[GroundValue] = Seq.empty
+      handed: Seq[GroundValue] = Seq.empty,
+      substitutable: Boolean = false
   )
 
   /** Static convenience wrapper — constructs a [[TypeStackLoop]] and runs its [[process]]. */
