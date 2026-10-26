@@ -15,7 +15,7 @@ import com.vanillasource.eliot.eliotc.module.fact.{ModuleName, QualifiedName, Qu
 import com.vanillasource.eliot.eliotc.plugin.Configuration.namedKey
 import com.vanillasource.eliot.eliotc.plugin.{CompilerPlugin, Configuration, LangPlugin}
 import com.vanillasource.eliot.eliotc.processor.common.SequentialCompilerProcessors
-import com.vanillasource.eliot.eliotc.processor.{CompilationProcess, CompilerProcessor}
+import com.vanillasource.eliot.eliotc.processor.{CompilerProcessor, FactDemand}
 import com.vanillasource.eliot.eliotc.stdlib.plugin.StdlibPlugin
 import scopt.{OParser, OParserBuilder}
 
@@ -67,7 +67,7 @@ class ApiDocPlugin extends CompilerPlugin with Logging {
       SequentialCompilerProcessors(Seq(superProcessor, ValueDocProcessor(rootsWithLayer(configuration))))
     )
 
-  override def run(configuration: Configuration, compilation: CompilationProcess): IO[Boolean] =
+  override def run(configuration: Configuration, compilation: FactDemand): IO[Boolean] =
     for {
       outDir     <- IO.pure(configuration.getOrElse(Compiler.targetPathKey, Path.of("target")).resolve("apidoc"))
       // Discard the previous site before anything is read: this run regenerates it unconditionally, so from here on
@@ -89,7 +89,7 @@ class ApiDocPlugin extends CompilerPlugin with Logging {
     * undocumented.
     */
   private def docLookup(
-      compilation: CompilationProcess,
+      compilation: FactDemand,
       layerFiles: Seq[(ModuleName, String, AST)]
   ): IO[ValueFQN => DocText.Selected] = {
     val fqns = layerFiles.flatMap { case (moduleName, _, ast) =>
@@ -107,7 +107,7 @@ class ApiDocPlugin extends CompilerPlugin with Logging {
     */
   private def collectLayerFiles(
       configuration: Configuration,
-      compilation: CompilationProcess
+      compilation: FactDemand
   ): IO[Seq[(ModuleName, String, AST)]] =
     rootsWithLayer(configuration).flatTraverse { case (root, layer) =>
       eliotFilesUnder(root).flatMap(_.flatTraverse { file =>

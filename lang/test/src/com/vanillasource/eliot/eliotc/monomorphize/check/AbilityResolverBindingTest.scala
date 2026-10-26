@@ -70,14 +70,12 @@ class AbilityResolverBindingTest extends AnyFlatSpec with Matchers {
     override def getFact[V <: CompilerFact, K <: CompilerFactKey[V]](
         key: K,
         ancestors: List[CompilerFactKey[?]]
-    ): IO[Option[V]] =
-      IO.pure(
-        Seq(abilities)
-          .find(_.key() == key)
-          .map(_.asInstanceOf[V])
-      )
+    ): Option[V] =
+      Seq(abilities)
+        .find(_.key() == key)
+        .map(_.asInstanceOf[V])
 
-    override def registerFact(value: CompilerFact): IO[Unit] = IO.unit
+    override def registerFact(value: CompilerFact): Unit = ()
   }
 
   /** Run the saturation pass over one reference carrying `args`, returning the recorded resolutions and every argument
@@ -99,7 +97,7 @@ class AbilityResolverBindingTest extends AnyFlatSpec with Matchers {
     }
     val resolver = new AbilityResolver(search, Platform.Runtime)
     val pass     = resolver.resolveAbilities(Seq((raise, args.map(Evaluator.groundToSem))))
-    runCompilerIO(implementation)(pass.run(CheckState.initial)).unsafeRunSync().map {
+    runCompilerIO(implementation)(pass.run(CheckState.initial)).map {
       case (_, (state, _)) => (state.abilityResolutions, searched)
     }
   }

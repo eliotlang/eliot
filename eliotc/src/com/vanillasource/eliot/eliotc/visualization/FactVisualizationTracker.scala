@@ -1,12 +1,13 @@
 package com.vanillasource.eliot.eliotc.visualization
 
-import cats.effect.{IO, Ref}
+import cats.effect.IO
 import FactVisualizationTracker.GraphData
 import com.vanillasource.eliot.eliotc.design.DesignTokens
 import com.vanillasource.eliot.eliotc.feedback.Logging
 import com.vanillasource.eliot.eliotc.processor.CompilerFactKey
 
 import java.nio.file.{Files, Path}
+import java.util.concurrent.atomic.AtomicReference
 import scala.collection.mutable
 
 /** Tracks fact generation and consumption between processors to build a visualization graph. Nodes represent
@@ -14,54 +15,41 @@ import scala.collection.mutable
   */
 final class FactVisualizationTracker(
     // Mapping: FactTypeName -> (Processors that were requested, Processors that just produced without being asked)
-    factProducers: Ref[IO, Map[String, (Set[String], Set[String])]],
+    factProducers: AtomicReference[Map[String, (Set[String], Set[String])]],
     // Mapping: (Processor, FactTypeName) -> how many times that processor requested that kind of fact. Counted rather
     // than listed: a request is recorded on every single fact read of a compilation, so anything that grows with the
     // number of requests (an append to a list, notably) makes the whole compiler quadratic in the size of the program.
-    factRequests: Ref[IO, Map[(String, String), Int]],
+    factRequests: AtomicReference[Map[(String, String), Int]],
     // Keys that were requested up until now (for determining whether fact was asked for)
-    factRequestedKeys: Ref[IO, Set[CompilerFactKey[?]]]
+    factRequestedKeys: AtomicReference[Set[CompilerFactKey[?]]]
 ) extends Logging {
 
-  /** Record that a processor produced a fact */
-  def recordFactProduction(processorName: String, factKey: CompilerFactKey[?]): IO[Unit] = {
+  /** Record that a processor produced a fact. It runs on the compilation's thread, inside the fact's generation. */
+  def recordFactProduction(processorName: String, factKey: CompilerFactKey[?]): Unit = {
     val factTypeName = getFactTypeName(factKey)
-    for {
-      requestedKeys <- factRequestedKeys.get
-      _             <- if (requestedKeys.contains(factKey)) {
-                         // This key was previously requested, so we assume this processor is fulfilling a request
-                         factProducers.update(
-                           _.updatedWith(factTypeName) { processorsMaybe =>
-                             val processors = processorsMaybe.getOrElse((Set.empty, Set.empty))
+    // A key requested before is a processor fulfilling a request; any other starts a new workflow of sorts.
+    val requested    = factRequestedKeys.get().contains(factKey)
+    factProducers.updateAndGet(
+      _.updatedWith(factTypeName) { processorsMaybe =>
+        val processors = processorsMaybe.getOrElse((Set.empty, Set.empty))
 
-                             Some((processors._1 + processorName, processors._2))
-                           }
-                         )
-                       } else {
-                         // This key was not requested, we assume this processor initiates a new workflow of sorts
-                         factProducers.update(
-                           _.updatedWith(factTypeName) { processorsMaybe =>
-                             val processors = processorsMaybe.getOrElse((Set.empty, Set.empty))
-
-                             Some((processors._1, processors._2 + processorName))
-                           }
-                         )
-                       }
-    } yield ()
+        Some(if (requested) (processors._1 + processorName, processors._2) else (processors._1, processors._2 + processorName))
+      }
+    ): Unit
   }
 
-  /** Record that a processor requested a fact */
-  def recordFactRequest(processorName: String, factKey: CompilerFactKey[?]): IO[Unit] = {
+  /** Record that a processor requested a fact. It runs on the compilation's thread, inside the reader's generation. */
+  def recordFactRequest(processorName: String, factKey: CompilerFactKey[?]): Unit = {
     val factTypeName = getFactTypeName(factKey)
-    factRequestedKeys.update(_ + factKey) >>
-      factRequests.update(_.updatedWith((processorName, factTypeName))(count => Some(count.getOrElse(0) + 1)))
+    factRequestedKeys.updateAndGet(_ + factKey)
+    factRequests.updateAndGet(_.updatedWith((processorName, factTypeName))(count => Some(count.getOrElse(0) + 1))): Unit
   }
 
   /** Generate HTML visualization using Cytoscape.js */
   def generateVisualization(outputPath: Path): IO[Unit] =
     for {
-      producers <- factProducers.get
-      requests  <- factRequests.get
+      producers <- IO.delay(factProducers.get())
+      requests  <- IO.delay(factRequests.get())
       graphData <- buildGraphData(producers, requests)
       html       = generateHTML(graphData)
       _         <- IO.blocking(Files.writeString(outputPath, html))
@@ -442,9 +430,5 @@ object FactVisualizationTracker {
   case class GraphData(nodes: Set[String], edges: Map[(String, String, String), Int])
 
   def create(): IO[FactVisualizationTracker] =
-    for {
-      producers         <- Ref.of[IO, Map[String, (Set[String], Set[String])]](Map.empty)
-      requests          <- Ref.of[IO, Map[(String, String), Int]](Map.empty)
-      requestedFactKeys <- Ref.of[IO, Set[CompilerFactKey[?]]](Set.empty)
-    } yield new FactVisualizationTracker(producers, requests, requestedFactKeys)
+    IO.delay(new FactVisualizationTracker(AtomicReference(Map.empty), AtomicReference(Map.empty), AtomicReference(Set.empty)))
 }

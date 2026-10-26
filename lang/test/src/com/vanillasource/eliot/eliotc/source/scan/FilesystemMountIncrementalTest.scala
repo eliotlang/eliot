@@ -27,7 +27,7 @@ class FilesystemMountIncrementalTest extends AsyncFlatSpec with AsyncIOSpec with
   private def modulesOf(root: Path, prior: Option[FactCacheData]): IO[(Set[ModuleName], FactCacheData)] =
     for {
       generator <- IncrementalFactGenerator.create(processors(root), prior)
-      modules   <- generator.getFact(PoolModules.Key(Platform.Runtime))
+      modules   <- generator.demand.getFact(PoolModules.Key(Platform.Runtime))
       cache     <- generator.buildCacheData()
     } yield (modules.map(_.modules).getOrElse(Set.empty), cache)
 

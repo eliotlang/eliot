@@ -528,9 +528,8 @@ object ContentAddressedCacheBackend {
     * fact it is offered, on a thread of its own, into the store's buffer for the region it expects the save to extend.
     *
     * The worker **polls** rather than waits to be woken. Offering a fact then costs the compilation one lock-free
-    * enqueue and never a thread wake-up, and the worker never holds one of the compute pool's threads, which the
-    * compilation's fibers run on: a worker on the pool woken per fact made the compilation slower than the save it took
-    * off it (`docs/compiler-performance.md` §10).
+    * enqueue and never a thread wake-up: a worker on the compute pool woken per fact, when the compilation's fibers ran
+    * there, made the compilation slower than the save it took off it (`docs/compiler-performance.md` §10).
     */
   final class WriteBehind private[ContentAddressedCacheBackend] (
       startedFrom: Placement,
@@ -545,7 +544,7 @@ object ContentAddressedCacheBackend {
     /** Hand a registered fact to the encoding. It is encoded later, on the worker, so it must not change, which a fact
       * never does.
       */
-    def offer(fact: CompilerFact): IO[Unit] = IO.delay(offered.add(fact)).void
+    def offer(fact: CompilerFact): Unit = offered.add(fact): Unit
 
     /** Wait until everything offered is encoded, and answer whether it all was. Nothing touches the encoding after
       * this but the save, so it may read it from any thread. Also what stops a write-behind no save will use.

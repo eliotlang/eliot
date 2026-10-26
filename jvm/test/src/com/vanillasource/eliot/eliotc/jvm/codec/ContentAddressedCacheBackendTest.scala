@@ -204,7 +204,7 @@ class ContentAddressedCacheBackendTest extends AsyncFlatSpec with AsyncIOSpec wi
 
   /** Offer every value a run holds, as its generator does while the run registers them. */
   private def offerAll(data: FactCacheData, behind: ContentAddressedCacheBackend.WriteBehind): IO[Unit] =
-    data.entries.values.flatMap(_.value).toList.traverse_(behind.offer)
+    IO.delay(data.entries.values.flatMap(_.value).foreach(behind.offer))
 
   /** A prefix of a run's facts, standing in for a compiler that holds different facts from another one. */
   private def firstEntries(data: FactCacheData, count: Int): FactCacheData =

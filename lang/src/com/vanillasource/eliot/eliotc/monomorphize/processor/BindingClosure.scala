@@ -97,10 +97,10 @@ object BindingClosure {
     * ancestor on the active fact-request chain
     * ([[com.vanillasource.eliot.eliotc.processor.CompilerIO.activeFactKeys]]). The ancestor check is what breaks
     * mutual-recursion deadlocks (a covariant `data` cycle, a monad-transformer lift): fetching a [[NativeBinding]] that
-    * is currently being generated up this chain would block on its not-yet-completed `Deferred`. Using the runtime's
-    * per-fiber chain — rather than a shared mutable "currently generating" set — keeps the scope correct (only *this*
-    * request's ancestors are skipped, not values merely generating concurrently in an unrelated chain) and keeps the
-    * collection pure.
+    * is currently being generated up this chain asks for a fact this very request is in the middle of generating, which
+    * the engine refuses. Using the request's own chain — rather than a shared mutable "currently generating" set — keeps
+    * the scope correct (only *this* request's ancestors are skipped, not values generating in an unrelated chain) and
+    * keeps the collection pure.
     */
   private def collectBindings(
       ore: OperatorResolvedExpression,

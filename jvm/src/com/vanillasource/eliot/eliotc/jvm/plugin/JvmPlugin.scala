@@ -22,7 +22,7 @@ import com.vanillasource.eliot.eliotc.module.fact.{ModuleName, ValueFQN}
 import com.vanillasource.eliot.eliotc.plugin.Configuration.{demandScopedKey, diagnosticKey}
 import com.vanillasource.eliot.eliotc.plugin.{CompilerPlugin, Configuration}
 import com.vanillasource.eliot.eliotc.processor.common.SequentialCompilerProcessors
-import com.vanillasource.eliot.eliotc.processor.{CompilationProcess, CompilerProcessor}
+import com.vanillasource.eliot.eliotc.processor.{CompilerProcessor, FactDemand}
 import com.vanillasource.eliot.eliotc.progress.{ProgressDescriber, ProgressMeasure}
 import com.vanillasource.eliot.eliotc.source.scan.PathScanner
 import scopt.{OParser, OParserBuilder}
@@ -132,7 +132,7 @@ class JvmPlugin extends CompilerPlugin {
     classOf[StdlibPlugin]
   )
 
-  override def run(configuration: Configuration, compilation: CompilationProcess): IO[Boolean] =
+  override def run(configuration: Configuration, compilation: FactDemand): IO[Boolean] =
     compilation.getFact(GenerateExecutableJar.Key(configuration.get(mainKey).get)).map(_.isDefined)
 
   /** The `run` mode: `java -jar` on the jar this compilation produced, with this process's streams and working

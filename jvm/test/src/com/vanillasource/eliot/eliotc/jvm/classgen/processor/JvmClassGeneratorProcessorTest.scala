@@ -46,11 +46,11 @@ class JvmClassGeneratorProcessorTest extends AsyncFlatSpec with AsyncIOSpec with
   ): IO[(Seq[CompilerError], Map[CompilerFactKey[?], CompilerFact])] =
     for {
       generator <- IncrementalFactGenerator.create(processors, None)
-      _         <- generator.registerFact(SourceContent(file, Sourced(file, PositionRange.zero, source)))
+      _         <- IO.delay(generator.registerFact(SourceContent(file, Sourced(file, PositionRange.zero, source))))
       // Register each source under both pools: the value mono reads its signature twin (compiler pool) mandatorily since
       // signature-unification C1/C2, mirroring a real build where the compiler pool borrows the whole runtime track.
-      _         <- generator.registerFact(PathScan(Path.of("Test.els"), Seq(file)))
-      _         <- generator.registerFact(PathScan(Path.of("Test.els"), Seq(file), Platform.Compiler))
+      _         <- IO.delay(generator.registerFact(PathScan(Path.of("Test.els"), Seq(file))))
+      _         <- IO.delay(generator.registerFact(PathScan(Path.of("Test.els"), Seq(file), Platform.Compiler)))
       _         <- Seq(
                      ModuleName(ModuleName.defaultSystemPackage, "Function") -> "type Function[A, B]",
                      ModuleName(ModuleName.compilerPackage, "Type")          -> "type Type",
@@ -84,11 +84,11 @@ class JvmClassGeneratorProcessorTest extends AsyncFlatSpec with AsyncIOSpec with
                    ).traverse { (moduleName, content) =>
                      val path    = moduleName.toPath
                      val impFile = URI.create(path.toString)
-                     generator.registerFact(PathScan(path, Seq(impFile))) >>
-                       generator.registerFact(PathScan(path, Seq(impFile), Platform.Compiler)) >>
-                       generator.registerFact(SourceContent(impFile, Sourced(impFile, PositionRange.zero, content)))
+                     IO.delay(generator.registerFact(PathScan(path, Seq(impFile)))) >>
+                       IO.delay(generator.registerFact(PathScan(path, Seq(impFile), Platform.Compiler))) >>
+                       IO.delay(generator.registerFact(SourceContent(impFile, Sourced(impFile, PositionRange.zero, content))))
                    }
-      _         <- generator.getFact(trigger)
+      _         <- generator.demand.getFact(trigger)
       facts     <- generator.currentFacts()
       errors    <- generator.currentErrors()
     } yield (errors, facts)

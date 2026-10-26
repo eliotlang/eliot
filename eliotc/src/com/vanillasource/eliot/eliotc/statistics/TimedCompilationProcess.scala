@@ -1,7 +1,5 @@
 package com.vanillasource.eliot.eliotc.statistics
 
-import cats.effect.IO
-import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.processor.{CompilationProcess, CompilerFact, CompilerFactKey}
 
 import java.util.concurrent.atomic.AtomicLong
@@ -17,27 +15,26 @@ final class TimedCompilationProcess(underlying: CompilationProcess) extends Comp
   private val requests      = AtomicLong(0)
   private val registrations = AtomicLong(0)
 
-  /** A fact request is a wait: the engine generates the fact on another fiber and blocks this one until it is done, so
-    * the whole call belongs to the *other* processor, which measures it itself.
+  /** A fact request is a wait: the engine generates the fact inside the call, so the whole call belongs to the *other*
+    * processor, which measures it itself.
     */
   override def getFact[V <: CompilerFact, K <: CompilerFactKey[V]](
       key: K,
       ancestors: List[CompilerFactKey[?]]
-  ): IO[Option[V]] =
-    for {
-      start  <- IO.monotonic
-      result <- underlying.getFact(key, ancestors)
-      end    <- IO.monotonic
-      _      <- IO.delay {
-                  waitedNanos.addAndGet((end - start).toNanos)
-                  requests.incrementAndGet()
-                }
-    } yield result
+  ): Option[V] = {
+    val start  = System.nanoTime()
+    val result = underlying.getFact(key, ancestors)
+    waitedNanos.addAndGet(System.nanoTime() - start)
+    requests.incrementAndGet()
+    result
+  }
 
-  override def registerFact(value: CompilerFact): IO[Unit] =
-    IO.delay(registrations.incrementAndGet()) >> underlying.registerFact(value)
+  override def registerFact(value: CompilerFact): Unit = {
+    registrations.incrementAndGet()
+    underlying.registerFact(value)
+  }
 
-  override def activeFactKeys: IO[List[CompilerFactKey[?]]] = underlying.activeFactKeys
+  override def activeFactKeys: List[CompilerFactKey[?]] = underlying.activeFactKeys
 
   def waited: FiniteDuration = FiniteDuration(waitedNanos.get(), NANOSECONDS)
 

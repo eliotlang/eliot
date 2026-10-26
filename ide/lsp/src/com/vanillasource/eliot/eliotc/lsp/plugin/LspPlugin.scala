@@ -19,7 +19,7 @@ import com.vanillasource.eliot.eliotc.module.fact.{ModuleName, QualifiedName, Qu
 import com.vanillasource.eliot.eliotc.platform.Platform
 import com.vanillasource.eliot.eliotc.monomorphize.channel.RefinementTable
 import com.vanillasource.eliot.eliotc.plugin.{CompilerPlugin, Configuration, LangPlugin}
-import com.vanillasource.eliot.eliotc.processor.{CompilationProcess, CompilerProcessor}
+import com.vanillasource.eliot.eliotc.processor.{CompilerProcessor, FactDemand}
 import com.vanillasource.eliot.eliotc.processor.common.SequentialCompilerProcessors
 import com.vanillasource.eliot.eliotc.saturate.fact.SaturatedValue
 import com.vanillasource.eliot.eliotc.source.scan.PathScanner
@@ -81,7 +81,7 @@ class LspPlugin(vfs: VirtualFileSystem) extends CompilerPlugin with Logging {
       )
     )
 
-  override def run(configuration: Configuration, compilation: CompilationProcess): IO[Boolean] =
+  override def run(configuration: Configuration, compilation: FactDemand): IO[Boolean] =
     for {
       modules <- checkedModules(configuration)
       _       <- debug[IO](s"LSP checking ${modules.size} workspace module(s): ${modules.map(_.show).mkString(", ")}")
@@ -95,7 +95,7 @@ class LspPlugin(vfs: VirtualFileSystem) extends CompilerPlugin with Logging {
     * reaches). Docs come from the parsed AST only, so this forces at most a parse of each layer file (cached across
     * recompiles); it never resolves or type-checks the bundled dependencies.
     */
-  private def documentAllLayers(configuration: Configuration, compilation: CompilationProcess): IO[Unit] =
+  private def documentAllLayers(configuration: Configuration, compilation: FactDemand): IO[Unit] =
     layerSourceFiles(configuration).flatMap(_.traverse_ { case (base, file) => demandDocs(compilation, base, file) })
 
   /** Every `.els` under every (distinct) layer root, paired with the base directory its module name is relative to.
@@ -122,7 +122,7 @@ class LspPlugin(vfs: VirtualFileSystem) extends CompilerPlugin with Logging {
     * path) and the qualifier the front end assigns — plain functions and ability methods carry theirs on the parsed
     * name; a `data`/`type` type constructor lives in the type namespace.
     */
-  private def demandDocs(compilation: CompilationProcess, base: Path, file: Path): IO[Unit] =
+  private def demandDocs(compilation: FactDemand, base: Path, file: Path): IO[Unit] =
     compilation.getFact(SourceAST.Key(file.toFile.toURI)).flatMap {
       case None            => IO.unit
       case Some(sourceAst) =>
@@ -140,7 +140,7 @@ class LspPlugin(vfs: VirtualFileSystem) extends CompilerPlugin with Logging {
     * what only the compiler platform declares (`eliot.lang.Reach`), so it is checked on the compiler track, and so is a
     * slot accessor's namespace, whose generated readers of an item slot name it too (`docs/meta.md` §17.1).
     */
-  private def checkModule(compilation: CompilationProcess, moduleName: ModuleName): IO[Unit] =
+  private def checkModule(compilation: FactDemand, moduleName: ModuleName): IO[Unit] =
     compilation.getFact(UnifiedModuleNames.Key(moduleName)).flatMap {
       case None        => IO.unit // unification itself failed; its error is already reported
       case Some(names) =>
@@ -169,7 +169,7 @@ class LspPlugin(vfs: VirtualFileSystem) extends CompilerPlugin with Logging {
     * so hints degrade rather than disappear.
     */
   private def monomorphizeMain(
-      compilation: CompilationProcess,
+      compilation: FactDemand,
       moduleName: ModuleName,
       names: UnifiedModuleNames
   ): IO[Unit] = {
@@ -187,7 +187,7 @@ class LspPlugin(vfs: VirtualFileSystem) extends CompilerPlugin with Logging {
     * [[UsedNames]] already records exactly those instantiations. A table that fails to produce simply yields no fact,
     * so a hint degrades to no range rather than a wrong one.
     */
-  private def demandRefinementTables(compilation: CompilationProcess, used: UsedNames): IO[Unit] =
+  private def demandRefinementTables(compilation: FactDemand, used: UsedNames): IO[Unit] =
     used.usedNames.toList.traverse_ { case (vfqn, stats) =>
       stats.monomorphicTypeParameters.distinct.traverse_(typeArgs =>
         compilation.getFact(RefinementTable.Key(vfqn, typeArgs)).void

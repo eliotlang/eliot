@@ -1,7 +1,6 @@
 package com.vanillasource.eliot.eliotc.processor.common
 
 import cats.Monad
-import cats.data.Kleisli
 import cats.effect.IO
 import cats.effect.std.AtomicCell
 import cats.syntax.all.*
@@ -165,7 +164,7 @@ class SequentialCompilerProcessorsTest extends ProcessorTest {
       success: Boolean
   ): CompilerProcessor = (factKey: CompilerFactKey[?]) =>
     for {
-      _ <- Kleisli.liftF(tracker.update(list => list :+ id))
+      _ <- tracker.update(list => list :+ id).to[CompilerIO]
       _ <- if (success) Monad[CompilerIO].unit
            else registerCompilerError(error(s"Processor $id failed"))
     } yield ()

@@ -117,7 +117,7 @@ class VirtualFileSystemTest extends AsyncFlatSpec with AsyncIOSpec with Matchers
 
   /** Run a CompilerIO against an in-memory process that stores registered facts, returning errors or the result. */
   private def runCompilerIO[T](value: CompilerIO[T]): IO[Either[Chain[CompilerError], T]] =
-    com.vanillasource.eliot.eliotc.processor.CompilerIO.runCompilerIO(new VirtualFileSystemTest.InMemoryProcess())(value).map(_.map(_._2))
+    com.vanillasource.eliot.eliotc.processor.CompilerIO.runCompilerIO(new VirtualFileSystemTest.InMemoryProcess())(value).map(_._2).pure[IO]
 }
 
 object VirtualFileSystemTest {
@@ -127,9 +127,9 @@ object VirtualFileSystemTest {
     override def getFact[V <: CompilerFact, K <: CompilerFactKey[V]](
         key: K,
         ancestors: List[CompilerFactKey[?]]
-    ): IO[Option[V]] =
-      IO(facts.get(key).map(_.asInstanceOf[V]))
+    ): Option[V] =
+      facts.get(key).map(_.asInstanceOf[V])
 
-    override def registerFact(value: CompilerFact): IO[Unit] = IO { facts = facts.updated(value.key(), value) }
+    override def registerFact(value: CompilerFact): Unit = facts = facts.updated(value.key(), value)
   }
 }

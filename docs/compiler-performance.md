@@ -17,7 +17,9 @@ mode stays even then. §12 also measures I6 for signatures: almost every signatu
 of its type arguments into the value's parametric signature. §12.4 built that, measured a cold build **3–4% faster**,
 and **reverted it**: the gain does not pay for a second path to a signature whose soundness is an argument. §14
 sizes I2 and finds, on the way, that cats-effect's **twenty worker threads handing each fact's fiber to one another**
-cost a quarter of a cold build: one worker makes it **23% faster**, with no other change.
+cost a quarter of a cold build: one worker makes it **23% faster**, with no other change. §14.4 builds I2 as a
+synchronous engine with `CompilerIO` a plain function: another **16% faster**, adopted. Both together take eliot-build
+from 17.9 s to 10.9 s cold.
 
 The goal (Robert, 2026-10-24): *"A cold compile of the build project should not take 1 minute. It should take a
 couple of seconds actually. We need some very fundamental ideas to break through here."* eliot-build's launcher is
@@ -1207,3 +1209,56 @@ experiment, measured alternated against §14.1, and kept only if it beats the no
 **Risks:** stack depth (the dedicated thread's stack size; a `traverse` over a long list nests binds, which a
 trampolined monad would not); LSP cancellation, which becomes cooperative instead of a fiber cancel; and the error
 buffer's discipline under exceptions, which §7.5 already had to get right once.
+
+### 14.4 Built and adopted: the synchronous engine (2026-10-26)
+
+Robert decided to adopt §14.1 (`d2172c39`) and then to build §14.3. It is built as §14.3 describes, with one more
+member: the outside asks for facts through `FactDemand` (`generator.demand`), an `IO` whose `getFact` runs the
+compilation on a `CompileThread` and waits for it. That is what the target plugins' `run` and the tests' harnesses now
+receive, so their code is unchanged but for that type. No processor changed. `CheckIO` and the other `StateT`s were
+left as they are.
+
+- **`CompilerIO`** is `opaque type CompilerIO[T] = Context => T`. `map` and `flatMap` are extension methods, so a `for`
+  needs no cats syntax and builds no syntax wrapper, and a hand-written `Sync` and `LiftIO` instance serves the jvm
+  backend's `[F[_]: Sync]` code, `Logging`, and the `.to[CompilerIO]` sites. A lifted `IO` runs in place through
+  `syncStep`, `IO.blocking` included, and only one with an asynchronous boundary (a test's `IO.sleep`) goes to the
+  runtime and is waited for.
+- **The engine** (`IncrementalFactGenerator`, `DependencyTrackingProcess`) keeps its logic step for step. A `Deferred`
+  became a `Slot` that is completed once, a `Ref` a mutable map confined to the compilation's thread, and a fiber per
+  fact a call. Two waits that could never end on one thread now answer at once: a fact found in progress (a cycle that
+  a validation's fresh chain hides) is an internal error and `None`, and a validation check found in progress is
+  "changed", the fail-safe answer. Before, both waited on a `Deferred` that would never complete.
+- **Cancellation** (the LSP's cancel-restart) interrupts the thread. Every fact read checks for the interrupt, and an
+  `InterruptedException` is not `NonFatal`, so no handler catches it. The cancellation completes once the thread has
+  stopped.
+- **The stack:** eliot-build needs between 256 and 512 KB (256 KB overflows, 512 KB does not). `CompileThread` reserves
+  1 GB, which costs only address space. An overflow fails the compilation with an error; it is never silent.
+
+One bug was found by the suites before any timing was trusted: `runCompilerIO` read the context's errors before running
+the computation, so a computation that registered errors and then succeeded lost them. It is fixed, and the cold timing
+below was taken again afterwards.
+
+Verified: every suite green (`./mill __.test`, 2 303 tests, the same count as before); the example sweep identical to
+the baseline; eliot-build's jar `a74475df…` cold/warm/back and `073f213d…` edited; a build with an undefined name
+prints the same diagnostics, byte for byte, as the one-worker compiler; and `--statistics`, `--progress` and
+`--visualize-facts` work.
+
+Measured on eliot-build, alternated against the one-worker compiler of §14.1:
+
+| | cold | warm | edit | back |
+|---|---|---|---|---|
+| one worker (4 rounds) | 12.90 s | 2.67 s | 5.93 s | 5.82 s |
+| synchronous engine (4 rounds) | 10.73 s (**−17%**) | 2.43 s (−9%) | 5.38 s (−9%) | 5.41 s (−7%) |
+| cold again, after the `runCompilerIO` fix (4 pairs) | 12.95 → 10.86 s (**−16%**) | | | |
+
+That is −2.1 s, at the top of §14.3's planning range (1.5–2.5 s) and about half of its ceiling. The compile thread's
+profile now has 721 samples, against 933 with one worker and 1 374 with twenty. The run loop is gone: samples with no
+Eliot frame fell from 22.5% to 0.7%. What is left of cats is 14%: syntax wrappers, `StateT` (`CheckIO`), `Chain`, and
+`Eval` under `traverse`. The engine's own map and set work is 22% (hashing and equality of keys, which is I1). The other
+63% is compiling.
+
+**Found on the way, not caused by this:** on JDK 25 the CLI **exits 0 when a build fails**. cats-effect 3.5.2's `IOApp`
+treats the thread whose `getId()` is 1 as the main thread, and JDK 25's main thread has id 3. So `IOApp` takes its
+"not forked" path, warns that `main` runs on another thread, and never calls `System.exit` with the code. The same
+build exits 1 on JDK 21. Every compiler before today behaves the same way on this machine. Open.
+

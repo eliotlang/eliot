@@ -1,28 +1,27 @@
 package com.vanillasource.eliot.eliotc.compiler.cache
 
 import cats.data.Chain
-import cats.effect.{IO, Ref}
-import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.feedback.CompilerError
 import com.vanillasource.eliot.eliotc.processor.{CompilationProcess, CompilerFact, CompilerFactKey}
+
+import scala.collection.mutable
 
 /** Wraps a [[CompilationProcess]] so that every fact read via `getFact` while `key` is being generated is recorded into
   * `dependencies`, `key`'s own set of direct dependencies, which the generator holds under `key`.
   *
-  * Recording happens **eagerly, on each read** — before the generated fact's [[cats.effect.Deferred]] is completed (a
-  * processor reads its inputs before registering its output). This matters for correctness: a fact's dependency set
-  * must be fully recorded by the time the fact becomes observable, otherwise a concurrent consumer (or the end-of-run
-  * cache build) could see an incomplete set. A fresh wrapper is used per generation, so recording is per-fiber.
+  * Recording happens **eagerly, on each read** — before the generated fact is registered (a processor reads its inputs
+  * before registering its output). This matters for correctness: a fact's dependency set must be fully recorded by the
+  * time the fact becomes observable, otherwise a consumer (or the end-of-run cache build) could see an incomplete set. A
+  * fresh wrapper is used per generation, so recording is per generation.
   *
   * This wrapper is also the explicit home of the **active fact-request chain**: built once per generation with `key`
   * and the `ancestors` it was requested under, it precomputes `chain = key :: ancestors` (innermost first). It serves
   * that chain as [[activeFactKeys]] and threads it as the `ancestors` of every read it forwards, so the next generation
   * down sees `key` as its ancestor. The chain therefore flows explicitly through ordinary values — no ambient
-  * fiber-local state.
+  * thread-local state.
   *
-  * The chain is enforced here, not just published: a read of a key **already on the chain** would dead-lock the
-  * [[cats.effect.Deferred]]-based fact cache (the in-progress computation would end up waiting on itself), so such a
-  * read is refused — a "cyclic fact demand" error is recorded and `None` is returned, which the demanding processor's
+  * The chain is enforced here, not just published: a read of a key **already on the chain** asks for a fact the reading
+  * computation is itself in the middle of generating, so such a read is refused — a "cyclic fact demand" error is recorded and `None` is returned, which the demanding processor's
   * `getFactOrAbort` turns into an abort. Processors that legitimately walk potentially-cyclic graphs still consult
   * [[activeFactKeys]] *before* demanding, so they can report a domain-specific error; this refusal is the engine-level
   * backstop for the unguarded case. The refused edge is deliberately **not** recorded as a dependency, so a cyclic edge
@@ -32,16 +31,23 @@ import com.vanillasource.eliot.eliotc.processor.{CompilationProcess, CompilerFac
   * registering every name's value) — are recorded in `producedDuring` as produced by this generation. The cache build
   * gives them this generation's dependency set: a pushed fact is a function of exactly what the generation that pushed
   * it read.
+  *
+  * What the generation itself caused is kept here for the engine to read when it ends: the engine-level [[errors]] (a
+  * refused cyclic read) and whether a read came back empty ([[sawMissing]]).
   */
 final class DependencyTrackingProcess(
     underlying: CompilationProcess,
     key: CompilerFactKey[?],
-    dependencies: Ref[IO, Set[CompilerFactKey[?]]],
-    producedDuring: Ref[IO, Map[CompilerFactKey[?], CompilerFactKey[?]]],
-    errors: Ref[IO, Chain[CompilerError]],
-    sawMissing: Ref[IO, Boolean],
+    dependencies: mutable.Set[CompilerFactKey[?]],
+    producedDuring: mutable.Map[CompilerFactKey[?], CompilerFactKey[?]],
     ancestors: List[CompilerFactKey[?]]
 ) extends CompilationProcess {
+
+  /** The diagnostics the engine records for this generation: a refused cyclic read. */
+  var errors: Chain[CompilerError] = Chain.empty
+
+  /** Whether a read of this generation came back empty, including a refused cyclic read. */
+  var sawMissing: Boolean = false
 
   /** The active fact-request chain for the generation this wrapper tracks: `key` plus its ancestors, innermost first.
     */
@@ -56,12 +62,16 @@ final class DependencyTrackingProcess(
   override def getFact[V <: CompilerFact, K <: CompilerFactKey[V]](
       dependency: K,
       ancestors: List[CompilerFactKey[?]]
-  ): IO[Option[V]] =
+  ): Option[V] =
     if (onChain(dependency)) {
-      errors.update(_ :+ CompilerError.global(cyclicDemandMessage(dependency))) >> sawMissing.set(true).as(None)
+      errors = errors :+ CompilerError.global(cyclicDemandMessage(dependency))
+      sawMissing = true
+      None
     } else {
-      dependencies.update(_ + dependency) >>
-        underlying.getFact(dependency, chain).flatTap(result => sawMissing.set(true).whenA(result.isEmpty))
+      dependencies += dependency
+      val result = underlying.getFact(dependency, chain)
+      if (result.isEmpty) sawMissing = true
+      result
     }
 
   /** Whether `dependency` is on the chain, comparing a key's remembered hash before its structure: the chain can be
@@ -76,10 +86,10 @@ final class DependencyTrackingProcess(
   private def cyclicDemandMessage(dependency: CompilerFactKey[?]): String =
     s"Cyclic fact demand: ${(dependency :: chain.takeWhile(_ != dependency) ::: List(dependency)).mkString(" <- ")}"
 
-  override def registerFact(value: CompilerFact): IO[Unit] =
-    producedDuring.update(m =>
-      if (value.key() == key || m.contains(value.key())) m else m.updated(value.key(), key)
-    ) >> underlying.registerFact(value)
+  override def registerFact(value: CompilerFact): Unit = {
+    if (value.key() != key && !producedDuring.contains(value.key())) producedDuring(value.key()) = key
+    underlying.registerFact(value)
+  }
 
-  override def activeFactKeys: IO[List[CompilerFactKey[?]]] = IO.pure(chain)
+  override def activeFactKeys: List[CompilerFactKey[?]] = chain
 }

@@ -23,7 +23,7 @@ class FileStatProcessorTest extends AsyncFlatSpec with AsyncIOSpec with Matchers
   private def statOf(file: File, settleMargin: Duration): IO[Option[FileStat]] =
     IncrementalFactGenerator
       .create(SequentialCompilerProcessors(Seq(FileStatProcessor(settleMargin))), None)
-      .flatMap(_.getFact(FileStat.Key(file)))
+      .flatMap(_.demand.getFact(FileStat.Key(file)))
 
   "a file stat" should "compare on the mtime alone once it is settled" in {
     withTempFile(file =>

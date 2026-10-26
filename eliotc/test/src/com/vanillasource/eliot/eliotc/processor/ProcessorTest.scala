@@ -24,7 +24,7 @@ abstract class ProcessorTest extends AsyncFlatSpec with AsyncIOSpec with Matcher
     *   An IO containing either errors or the result
     */
   protected def runCompilerIO[T](value: CompilerIO[T]): IO[Either[Chain[CompilerError], T]] =
-    CompilerIOs.runCompilerIO(new ProcessorTest.TestCompilationProcess())(value).map(_.map(_._2))
+    IO.delay(CompilerIOs.runCompilerIO(new ProcessorTest.TestCompilationProcess())(value).map(_._2))
 }
 
 object ProcessorTest {
@@ -69,12 +69,10 @@ object ProcessorTest {
     override def getFact[V <: CompilerFact, K <: CompilerFactKey[V]](
         key: K,
         ancestors: List[CompilerFactKey[?]]
-    ): IO[Option[V]] =
-      IO.pure(facts.get(key).map(_.asInstanceOf[V]))
+    ): Option[V] =
+      facts.get(key).map(_.asInstanceOf[V])
 
-    override def registerFact(value: CompilerFact): IO[Unit] =
-      IO {
-        registerFactSync(value)
-      }
+    override def registerFact(value: CompilerFact): Unit =
+      registerFactSync(value)
   }
 }

@@ -2,7 +2,7 @@ package com.vanillasource.eliot.eliotc.plugin
 
 import cats.data.StateT
 import cats.effect.IO
-import com.vanillasource.eliot.eliotc.processor.{CompilationProcess, CompilerProcessor}
+import com.vanillasource.eliot.eliotc.processor.{CompilerProcessor, FactDemand}
 import com.vanillasource.eliot.eliotc.progress.{ProgressDescriber, ProgressMeasure}
 import scopt.{OParser, OParserBuilder}
 
@@ -51,7 +51,7 @@ trait CompilerPlugin {
     * a successful build — so this, not just the error count, is what decides the compiler's exit code. Plugins with no
     * single artefact to produce (a whole-workspace check) always succeed.
     */
-  def run(@unused configuration: Configuration, @unused compilation: CompilationProcess): IO[Boolean] = IO.pure(true)
+  def run(@unused configuration: Configuration, @unused compilation: FactDemand): IO[Boolean] = IO.pure(true)
 
   /** What the selected target does with what it produced, once the compilation has succeeded and its diagnostics and
     * cache are written — the compiler's exit code is its result. A backend's `run` mode executes its own artefact here,

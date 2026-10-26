@@ -77,11 +77,11 @@ final class CompilationSession private (
                        prior,
                        strictAccounting = true,
                        progress,
-                       behind.fold((_: CompilerFact) => IO.unit)(_.offer)
+                       behind.fold((_: CompilerFact) => ())(_.offer)
                      )
         _         <- progress.traverse_(_.enter(ProgressPhase.Working))
         produced  <- targetPlugin
-                       .run(effectiveConfiguration, generator)
+                       .run(effectiveConfiguration, generator.demand)
                        .guaranteeCase(outcome => behind.traverse_(_.finish).unlessA(outcome.isSuccess))
         _         <- progress.traverse_(_.enter(ProgressPhase.SavingCache))
         nextCache <- phaseTimings.time(PhaseTimings.buildCache)(generator.buildCacheData())

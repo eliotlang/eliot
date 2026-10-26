@@ -50,9 +50,9 @@ class ImplementationNameResolverTest extends AnyFlatSpec with Matchers {
     override def getFact[V <: CompilerFact, K <: CompilerFactKey[V]](
         key: K,
         ancestors: List[CompilerFactKey[?]]
-    ): IO[Option[V]] = IO.pure(facts.get(key).map(_.asInstanceOf[V]))
+    ): Option[V] = facts.get(key).map(_.asInstanceOf[V])
 
-    override def registerFact(value: CompilerFact): IO[Unit] = IO.unit
+    override def registerFact(value: CompilerFact): Unit = ()
   }
 
   private def resolve(
@@ -61,7 +61,6 @@ class ImplementationNameResolverTest extends AnyFlatSpec with Matchers {
   ): Either[Seq[String], ValueFQN] = {
     val scope = ValueResolverScope(fake, dictionary, Map.empty, Set.empty)
     runCompilerIO(process(facts))(ImplementationNameResolver.resolve(at("recordingConsole")).runA(scope))
-      .unsafeRunSync()
       .bimap(_.toList.map(_.message), _._2)
   }
 

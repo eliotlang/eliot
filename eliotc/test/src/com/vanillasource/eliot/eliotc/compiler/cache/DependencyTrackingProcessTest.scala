@@ -2,14 +2,13 @@ package com.vanillasource.eliot.eliotc.compiler.cache
 
 import com.vanillasource.eliot.eliotc.compiler.cache.codec.FactCodec
 
-import cats.data.Chain
+import cats.effect.IO
 import cats.effect.testing.scalatest.AsyncIOSpec
-import cats.effect.{IO, Ref}
-import cats.syntax.all.*
-import com.vanillasource.eliot.eliotc.feedback.CompilerError
 import com.vanillasource.eliot.eliotc.processor.{CompilationProcess, CompilerFact, CompilerFactKey}
 import org.scalatest.flatspec.AsyncFlatSpec
 import org.scalatest.matchers.should.Matchers
+
+import scala.collection.mutable
 
 class DependencyTrackingProcessTest extends AsyncFlatSpec with AsyncIOSpec with Matchers {
   import DependencyTrackingProcessTest.*
@@ -24,25 +23,30 @@ class DependencyTrackingProcessTest extends AsyncFlatSpec with AsyncIOSpec with 
 
   it should "record a read key as the owner's dependency" in {
     tracked(Map(Key("a") -> Fact("a"))) { ctx =>
-      ctx.process.getFact(Key("a")) >> ctx.deps.get
+      ctx.process.getFact(Key("a"))
+      ctx.deps.toSet
     }.asserting(_ shouldBe Set(Key("a")))
   }
 
   it should "record the dependency even when the read is a miss" in {
     tracked(Map.empty) { ctx =>
-      ctx.process.getFact(Key("missing")) >> ctx.deps.get
+      ctx.process.getFact(Key("missing"))
+      ctx.deps.toSet
     }.asserting(_ shouldBe Set(Key("missing")))
   }
 
   it should "accumulate every read key under the owner" in {
     tracked(Map(Key("a") -> Fact("a"), Key("b") -> Fact("b"))) { ctx =>
-      ctx.process.getFact(Key("a")) >> ctx.process.getFact(Key("b")) >> ctx.deps.get
+      ctx.process.getFact(Key("a"))
+      ctx.process.getFact(Key("b"))
+      ctx.deps.toSet
     }.asserting(_ shouldBe Set(Key("a"), Key("b")))
   }
 
   it should "delegate registerFact to the underlying process without recording a dependency" in {
     tracked(Map.empty) { ctx =>
-      ctx.process.registerFact(Fact("x")) >> (ctx.deps.get, ctx.registered.get).tupled
+      ctx.process.registerFact(Fact("x"))
+      (ctx.deps.toSet, ctx.registered.toList)
     }.asserting(_ shouldBe (Set.empty, List(Fact("x"))))
   }
 
@@ -60,97 +64,100 @@ class DependencyTrackingProcessTest extends AsyncFlatSpec with AsyncIOSpec with 
 
   it should "record a cyclic fact demand error when refusing an on-chain read" in {
     tracked(Map.empty) { ctx =>
-      ctx.process.getFact(owner) >> ctx.errors.get.map(_.toList.map(_.message))
+      ctx.process.getFact(owner)
+      ctx.process.errors.toList.map(_.message)
     }.asserting(_ shouldBe List(s"Cyclic fact demand: $owner <- $owner"))
   }
 
   it should "not record the refused cyclic read as a dependency" in {
     tracked(Map.empty) { ctx =>
-      ctx.process.getFact(owner) >> ctx.deps.get
+      ctx.process.getFact(owner)
+      ctx.deps.toSet
     }.asserting(_ shouldBe Set.empty)
   }
 
   it should "attribute a pushed fact to the generating key" in {
     tracked(Map.empty) { ctx =>
-      ctx.process.registerFact(Fact("pushed")) >> ctx.producedDuring.get
+      ctx.process.registerFact(Fact("pushed"))
+      ctx.producedDuring.toMap
     }.asserting(_ shouldBe Map(Key("pushed") -> owner))
   }
 
   it should "not attribute a fact registered for the generated key itself" in {
     tracked(Map.empty) { ctx =>
-      ctx.process.registerFact(Fact("owner")) >> ctx.producedDuring.get
+      ctx.process.registerFact(Fact("owner"))
+      ctx.producedDuring.toMap
     }.asserting(_ shouldBe Map.empty)
   }
 
   it should "note a missing read in sawMissing" in {
     tracked(Map.empty) { ctx =>
-      ctx.process.getFact(Key("missing")) >> ctx.sawMissing.get
+      ctx.process.getFact(Key("missing"))
+      ctx.process.sawMissing
     }.asserting(_ shouldBe true)
   }
 
   it should "note a refused cyclic read in sawMissing" in {
     tracked(Map.empty) { ctx =>
-      ctx.process.getFact(owner) >> ctx.sawMissing.get
+      ctx.process.getFact(owner)
+      ctx.process.sawMissing
     }.asserting(_ shouldBe true)
   }
 
   it should "not note a successful read in sawMissing" in {
     tracked(Map(Key("a") -> Fact("a"))) { ctx =>
-      ctx.process.getFact(Key("a")) >> ctx.sawMissing.get
+      ctx.process.getFact(Key("a"))
+      ctx.process.sawMissing
     }.asserting(_ shouldBe false)
   }
 
   it should "forward its own key and ancestor chain as the ancestors of reads on the underlying process" in {
-    for {
-      seen          <- Ref.of[IO, List[CompilerFactKey[?]]](Nil)
-      underlying     = new CompilationProcess {
-                         override def getFact[V <: CompilerFact, K <: CompilerFactKey[V]](
-                             key: K,
-                             ancestors: List[CompilerFactKey[?]]
-                         ): IO[Option[V]]                                          = seen.set(ancestors).as(None)
-                         override def registerFact(value: CompilerFact): IO[Unit] = IO.unit
-                       }
-      deps          <- Ref.of[IO, Set[CompilerFactKey[?]]](Set.empty)
-      producedDuring <- Ref.of[IO, Map[CompilerFactKey[?], CompilerFactKey[?]]](Map.empty)
-      errors        <- Ref.of[IO, Chain[CompilerError]](Chain.empty)
-      sawMissing    <- Ref.of[IO, Boolean](false)
-      process        = new DependencyTrackingProcess(underlying, owner, deps, producedDuring, errors, sawMissing, List(Key("ancestor")))
-      _             <- process.getFact(Key("a"))
-      result        <- seen.get
-    } yield result
+    IO.delay {
+      var seen: List[CompilerFactKey[?]] = Nil
+      val underlying                     = new CompilationProcess {
+        override def getFact[V <: CompilerFact, K <: CompilerFactKey[V]](
+            key: K,
+            ancestors: List[CompilerFactKey[?]]
+        ): Option[V] = {
+          seen = ancestors
+          None
+        }
+        override def registerFact(value: CompilerFact): Unit = ()
+      }
+      val process                        =
+        new DependencyTrackingProcess(underlying, owner, mutable.Set.empty, mutable.Map.empty, List(Key("ancestor")))
+      process.getFact(Key("a"))
+      seen
+    }
   }.asserting(_ shouldBe List(owner, Key("ancestor")))
 
   /** Build a [[DependencyTrackingProcess]] for `owner` (requested under `ancestors`) over a stub process with the given
     * facts, exposing all recording state.
     */
   private def tracked[A](facts: Map[CompilerFactKey[?], CompilerFact], ancestors: List[CompilerFactKey[?]] = Nil)(
-      body: TrackedContext => IO[A]
+      body: TrackedContext => A
   ): IO[A] =
-    for {
-      deps           <- Ref.of[IO, Set[CompilerFactKey[?]]](Set.empty)
-      producedDuring <- Ref.of[IO, Map[CompilerFactKey[?], CompilerFactKey[?]]](Map.empty)
-      errors         <- Ref.of[IO, Chain[CompilerError]](Chain.empty)
-      registered     <- Ref.of[IO, List[CompilerFact]](List.empty)
-      sawMissing     <- Ref.of[IO, Boolean](false)
-      underlying      = new CompilationProcess {
-                          override def getFact[V <: CompilerFact, K <: CompilerFactKey[V]](
-                              key: K,
-                              ancestors: List[CompilerFactKey[?]]
-                          ): IO[Option[V]]                                                  =
-                            IO.pure(facts.get(key).map(_.asInstanceOf[V]))
-                          override def registerFact(value: CompilerFact): IO[Unit] = registered.update(_ :+ value)
-                        }
-      process         = new DependencyTrackingProcess(underlying, owner, deps, producedDuring, errors, sawMissing, ancestors)
-      result         <- body(TrackedContext(process, deps, producedDuring, errors, registered, sawMissing))
-    } yield result
+    IO.delay {
+      val deps           = mutable.Set.empty[CompilerFactKey[?]]
+      val producedDuring = mutable.Map.empty[CompilerFactKey[?], CompilerFactKey[?]]
+      val registered     = mutable.ListBuffer.empty[CompilerFact]
+      val underlying     = new CompilationProcess {
+        override def getFact[V <: CompilerFact, K <: CompilerFactKey[V]](
+            key: K,
+            ancestors: List[CompilerFactKey[?]]
+        ): Option[V]                                         =
+          facts.get(key).map(_.asInstanceOf[V])
+        override def registerFact(value: CompilerFact): Unit = registered += value
+      }
+      val process        = new DependencyTrackingProcess(underlying, owner, deps, producedDuring, ancestors)
+      body(TrackedContext(process, deps, producedDuring, registered))
+    }
 
   private case class TrackedContext(
       process: DependencyTrackingProcess,
-      deps: Ref[IO, Set[CompilerFactKey[?]]],
-      producedDuring: Ref[IO, Map[CompilerFactKey[?], CompilerFactKey[?]]],
-      errors: Ref[IO, Chain[CompilerError]],
-      registered: Ref[IO, List[CompilerFact]],
-      sawMissing: Ref[IO, Boolean]
+      deps: mutable.Set[CompilerFactKey[?]],
+      producedDuring: mutable.Map[CompilerFactKey[?], CompilerFactKey[?]],
+      registered: mutable.ListBuffer[CompilerFact]
   )
 }
 

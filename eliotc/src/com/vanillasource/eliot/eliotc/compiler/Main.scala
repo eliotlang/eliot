@@ -12,10 +12,10 @@ import com.vanillasource.eliot.eliotc.feedback.Logging
   * was created, for nicer stack traces of the compiler's own failures, and costs a cold build 10%
   * (`docs/compiler-performance.md` §10).
   *
-  * The compute pool has **one** worker. The compilation is sequential, yet every fact is a fiber of its own, and with a
-  * worker per core each new fiber woke an idle worker that took it to another core with cold caches: a quarter of a
-  * cold build (`docs/compiler-performance.md` §14.1). Blocking work, such as the cache written behind the compilation,
-  * runs on the blocking pool as before.
+  * The compute pool has **one** worker. When every fact was a fiber of its own, a worker per core meant each new fiber
+  * woke an idle worker that took it to another core with cold caches: a quarter of a cold build
+  * (`docs/compiler-performance.md` §14.1). The compilation now runs on a thread of its own
+  * ([[CompileThread]]), and what is left on the pool is the edge around it.
   */
 object Main extends IOApp with Logging {
   if (System.getProperty("cats.effect.tracing.mode") == null) {

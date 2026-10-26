@@ -658,13 +658,22 @@ object IncrementalFactGeneratorTest {
   ): CompilerProcessor = new GraphProcessor(defs, counts, capture)
 
   def runBuild[A](processor: CompilerProcessor, prior: Option[FactCacheData])(
-      body: IncrementalFactGenerator => IO[A]
+      body: Build => IO[A]
   ): IO[(A, FactCacheData)] =
     for {
       generator <- IncrementalFactGenerator.create(processor, prior, strictAccounting = true)
-      a         <- body(generator)
+      a         <- body(Build(generator))
       cache     <- generator.buildCacheData()
     } yield (a, cache)
+
+  /** One build as a test drives it from outside: every demand a root, each an `IO`. */
+  final case class Build(generator: IncrementalFactGenerator) {
+    def getFact[V <: CompilerFact, K <: CompilerFactKey[V]](key: K): IO[Option[V]] = generator.demand.getFact(key)
+
+    def registerFact(fact: CompilerFact): IO[Unit] = IO.delay(generator.registerFact(fact))
+
+    def currentErrors(): IO[Seq[CompilerError]] = generator.currentErrors()
+  }
 
   class GraphProcessor(
       defs: Map[String, Node],

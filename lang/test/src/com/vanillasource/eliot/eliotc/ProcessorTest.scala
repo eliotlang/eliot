@@ -113,8 +113,8 @@ abstract class ProcessorTest(val processors: CompilerProcessor*) extends AsyncFl
   def createGenerator(facts: Seq[CompilerFact]): IO[IncrementalFactGenerator] =
     for {
       generator <- IncrementalFactGenerator.create(SequentialCompilerProcessors(processors), None)
-      _         <- generator.registerFact(sourceContent)
-      _         <- facts.traverse_(generator.registerFact)
+      _         <- IO.delay(generator.registerFact(sourceContent))
+      _         <- IO.delay(facts.foreach(generator.registerFact))
     } yield generator
 
   def runGeneratorWithFacts[K <: CompilerFact](
@@ -123,7 +123,7 @@ abstract class ProcessorTest(val processors: CompilerProcessor*) extends AsyncFl
   ): IO[(Option[K], Seq[CompilerError])] =
     for {
       generator <- createGenerator(facts)
-      result    <- generator.getFact(trigger)
+      result    <- generator.demand.getFact(trigger)
       errors    <- generator.currentErrors()
     } yield (result, errors)
 
@@ -141,22 +141,22 @@ abstract class ProcessorTest(val processors: CompilerProcessor*) extends AsyncFl
     for {
       generator <- IncrementalFactGenerator.create(SequentialCompilerProcessors(processors), None)
       _         <- (files zip (source +: layers.toList)).traverse((uri, content) =>
-                     generator.registerFact(SourceContent(uri, Sourced(uri, PositionRange.zero, content)))
+                     IO.delay(generator.registerFact(SourceContent(uri, Sourced(uri, PositionRange.zero, content))))
                    )
       // Register each source under **both** platform pools: the runtime pool (the value monos) and the compiler pool.
       // Since signature-unification C1/C2 the value mono reads its signature twin (`CompilerMonomorphicValue(v@Signature)`)
       // **mandatorily**, and the compiler pool borrows the whole runtime track in a real build (`PathScanner`), so the
       // harness must mirror that — otherwise the twin never produces and the mandatory read aborts.
-      _         <- generator.registerFact(PathScan(Path.of("Test.els"), files))
-      _         <- generator.registerFact(PathScan(Path.of("Test.els"), files, Platform.Compiler))
+      _         <- IO.delay(generator.registerFact(PathScan(Path.of("Test.els"), files)))
+      _         <- IO.delay(generator.registerFact(PathScan(Path.of("Test.els"), files, Platform.Compiler)))
       _         <- imports.traverse { imp =>
                      val modulePath = imp.moduleName.toPath
                      val impFile    = URI.create(modulePath.toString)
-                     generator.registerFact(PathScan(modulePath, Seq(impFile))) >>
-                       generator.registerFact(PathScan(modulePath, Seq(impFile), Platform.Compiler)) >>
-                       generator.registerFact(SourceContent(impFile, Sourced(impFile, PositionRange.zero, imp.content)))
+                     IO.delay(generator.registerFact(PathScan(modulePath, Seq(impFile)))) >>
+                       IO.delay(generator.registerFact(PathScan(modulePath, Seq(impFile), Platform.Compiler))) >>
+                       IO.delay(generator.registerFact(SourceContent(impFile, Sourced(impFile, PositionRange.zero, imp.content))))
                    }
-      _         <- generator.getFact(trigger)
+      _         <- generator.demand.getFact(trigger)
       facts     <- generator.currentFacts()
       errors    <- generator.currentErrors()
     } yield (errors, facts)

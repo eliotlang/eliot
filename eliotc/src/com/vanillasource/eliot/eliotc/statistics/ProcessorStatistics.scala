@@ -33,12 +33,8 @@ final class ProcessorStatistics private (counters: ConcurrentHashMap[String, Pro
   def wrapTree(processorTree: CompilerProcessor): CompilerProcessor =
     wrap(processorTree, ProcessorStatistics.dispatchName)
 
-  /** All measurements so far, slowest first.
-    *
-    * "So far" is meant literally: a generation makes its fact available from *inside* the processor, so the generating
-    * fiber still has a tail to run — including its own measurement — after its requester has already moved on. Take the
-    * snapshot once the run has quiesced (the compiler does it after persisting the cache and printing diagnostics), or
-    * the last generations in flight are missing from it.
+  /** All measurements so far, slowest first. Take the snapshot once the run has ended (the compiler does it after
+    * persisting the cache and printing diagnostics), or the generations still running are missing from it.
     */
   def snapshot: IO[Seq[ProcessorStatistic]] = IO.delay(
     counters.asScala.toSeq

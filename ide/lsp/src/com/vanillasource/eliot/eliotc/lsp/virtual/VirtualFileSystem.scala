@@ -21,7 +21,7 @@ import java.util.concurrent.atomic.{AtomicLong, AtomicReference}
   * collide with a real on-disk mtime: dropping an override (on close) flips the stat back to the disk time, which
   * differs from any stamp, so the file is re-read from disk.
   *
-  * The overlay is mutated from the lsp4j notification threads and read from compile fibers; an [[AtomicReference]] CAS
+  * The overlay is mutated from the lsp4j notification threads and read from compilation threads; an [[AtomicReference]] CAS
   * loop keeps those consistent without locking.
   */
 final class VirtualFileSystem {

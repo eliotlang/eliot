@@ -82,8 +82,8 @@ class SignatureTwinMonoTest extends ProcessorTest(LangProcessors(systemModules =
   ): IO[(Option[GroundValue], Option[GroundValue], Seq[TestError])] =
     for {
       generator <- createGenerator(facts)
-      runtime   <- generator.getFact(CompilerMonomorphicValue.Key(value, args))
-      signature <- generator.getFact(CompilerMonomorphicValue.Key(value.copy(name = value.name.signatureTwin), args))
+      runtime   <- generator.demand.getFact(CompilerMonomorphicValue.Key(value, args))
+      signature <- generator.demand.getFact(CompilerMonomorphicValue.Key(value.copy(name = value.name.signatureTwin), args))
       errors    <- generator.currentErrors()
     } yield (runtime.map(_.signature), signature.map(_.signature), toTestErrors(errors))
 

@@ -70,7 +70,7 @@ class ProcessorStatisticsTest extends AsyncFlatSpec with AsyncIOSpec with Matche
       statistics <- ProcessorStatistics.create()
       wrapped     = SequentialCompilerProcessors(processors).wrapWith(p => statistics.wrap(p, p.getClass.getName))
       generator  <- IncrementalFactGenerator.create(wrapped, None)
-      _          <- generator.getFact(TestFactKey("a").asInstanceOf[CompilerFactKey[CompilerFact]])
+      _          <- generator.demand.getFact(TestFactKey("a").asInstanceOf[CompilerFactKey[CompilerFact]])
       _          <- IO.sleep(100.millis)
       snapshot   <- statistics.snapshot
     } yield snapshot.map(statistic => statistic.processorName.takeRight(1) -> statistic).toMap

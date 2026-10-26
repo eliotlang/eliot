@@ -86,8 +86,8 @@ class ProgressTrackerTest extends AsyncFlatSpec with AsyncIOSpec with Matchers {
   it should "let the total follow a run that delivered more than expected" in {
     val test = for {
       tracker  <- ProgressTracker.create(ProgressProfile(Some(1)))
-      _        <- tracker.delivered(NumberKey("a"), fromCache = false)
-      _        <- tracker.delivered(NumberKey("b"), fromCache = false)
+      _        <- IO.delay(tracker.delivered(NumberKey("a"), fromCache = false))
+      _        <- IO.delay(tracker.delivered(NumberKey("b"), fromCache = false))
       snapshot <- tracker.snapshot
     } yield snapshot.total
     test.asserting(_ shouldBe Some(2))
@@ -101,7 +101,7 @@ class ProgressTrackerTest extends AsyncFlatSpec with AsyncIOSpec with Matchers {
     val test = for {
       clock    <- IO.delay(AtomicLong())
       tracker  <- ProgressTracker.create(describer = describeAll, clock = () => clock.get())
-      _        <- tracker.started(top, None)
+      _        <- IO.delay(tracker.started(top, None))
       _        <- IO.delay(clock.set(2.seconds.toNanos))
       snapshot <- tracker.snapshot
     } yield (snapshot.activity, snapshot.activityTime)
@@ -111,8 +111,8 @@ class ProgressTrackerTest extends AsyncFlatSpec with AsyncIOSpec with Matchers {
   it should "show the nearest described fact that asked for an undescribed one" in {
     val test = for {
       tracker  <- ProgressTracker.create(describer = describeAll)
-      _        <- tracker.started(top, None)
-      _        <- tracker.started(hidden, Some(top))
+      _        <- IO.delay(tracker.started(top, None))
+      _        <- IO.delay(tracker.started(hidden, Some(top)))
       snapshot <- tracker.snapshot
     } yield snapshot.activity
     test.asserting(_ shouldBe Some(ProgressActivity("making", "top")))
@@ -121,8 +121,8 @@ class ProgressTrackerTest extends AsyncFlatSpec with AsyncIOSpec with Matchers {
   it should "show the fact being waited for, not the one waiting" in {
     val test = for {
       tracker  <- ProgressTracker.create(describer = describeAll)
-      _        <- tracker.started(top, None)
-      _        <- tracker.started(inner, Some(top))
+      _        <- IO.delay(tracker.started(top, None))
+      _        <- IO.delay(tracker.started(inner, Some(top)))
       snapshot <- tracker.snapshot
     } yield snapshot.activity
     test.asserting(_ shouldBe Some(ProgressActivity("making", "inner")))
@@ -132,11 +132,11 @@ class ProgressTrackerTest extends AsyncFlatSpec with AsyncIOSpec with Matchers {
     val test = for {
       clock    <- IO.delay(AtomicLong())
       tracker  <- ProgressTracker.create(describer = describeAll, clock = () => clock.get())
-      _        <- tracker.started(top, None)
+      _        <- IO.delay(tracker.started(top, None))
       _        <- advance(clock, 400.millis)
       _        <- child(tracker, clock, "hidden", 700.millis)
       _        <- child(tracker, clock, "inner", 5.seconds)
-      _        <- tracker.ended(top)
+      _        <- IO.delay(tracker.ended(top))
       snapshot <- tracker.snapshot
     } yield snapshot.slowSteps
     test.asserting(
@@ -151,10 +151,10 @@ class ProgressTrackerTest extends AsyncFlatSpec with AsyncIOSpec with Matchers {
     val test = for {
       clock    <- IO.delay(AtomicLong())
       tracker  <- ProgressTracker.create(describer = describeAll, clock = () => clock.get())
-      _        <- tracker.started(top, None)
-      _        <- tracker.waiting(top)
+      _        <- IO.delay(tracker.started(top, None))
+      _        <- IO.delay(tracker.waiting(top))
       _        <- advance(clock, 5.seconds)
-      _        <- tracker.resumed(top)
+      _        <- IO.delay(tracker.resumed(top))
       _        <- advance(clock, 200.millis)
       snapshot <- tracker.snapshot
     } yield snapshot.activityTime
@@ -165,10 +165,10 @@ class ProgressTrackerTest extends AsyncFlatSpec with AsyncIOSpec with Matchers {
     val test = for {
       clock    <- IO.delay(AtomicLong())
       tracker  <- ProgressTracker.create(describer = describeAll, clock = () => clock.get())
-      _        <- tracker.started(top, None)
+      _        <- IO.delay(tracker.started(top, None))
       _        <- child(tracker, clock, "inner", 5.seconds)
       _        <- advance(clock, 900.millis)
-      _        <- tracker.ended(top)
+      _        <- IO.delay(tracker.ended(top))
       snapshot <- tracker.snapshot
     } yield snapshot.slowSteps.map(_.activity.subject)
     test.asserting(_ shouldBe Seq("inner"))
@@ -182,7 +182,7 @@ class ProgressTrackerTest extends AsyncFlatSpec with AsyncIOSpec with Matchers {
       _         <- src.set(20)
       tracker   <- ProgressTracker.create(describer = describeInputs("src", "mid"))
       generator <- IncrementalFactGenerator.create(proc, Some(cold._2), strictAccounting = true, Some(tracker))
-      _         <- generator.getFact(top)
+      _         <- generator.demand.getFact(top)
       snapshot  <- tracker.snapshot
     } yield snapshot.changed
     test.asserting(_ shouldBe Seq("src", "mid"))
@@ -196,7 +196,7 @@ class ProgressTrackerTest extends AsyncFlatSpec with AsyncIOSpec with Matchers {
       _         <- src.set(20)
       tracker   <- ProgressTracker.create(describer = describeInputs("mid"))
       generator <- IncrementalFactGenerator.create(proc, Some(cold._2), strictAccounting = true, Some(tracker))
-      _         <- generator.getFact(top)
+      _         <- generator.demand.getFact(top)
       snapshot  <- tracker.snapshot
     } yield snapshot.changed
     test.asserting(_ shouldBe Seq("mid"))
@@ -206,10 +206,10 @@ class ProgressTrackerTest extends AsyncFlatSpec with AsyncIOSpec with Matchers {
     val test = for {
       clock    <- IO.delay(AtomicLong())
       tracker  <- ProgressTracker.create(describer = describeAll, clock = () => clock.get())
-      _        <- tracker.started(top, None)
+      _        <- IO.delay(tracker.started(top, None))
       _        <- advance(clock, 400.millis)
       _        <- child(tracker, clock, "hidden", 700.millis)
-      _        <- tracker.ended(top)
+      _        <- IO.delay(tracker.ended(top))
       snapshot <- tracker.snapshot
     } yield snapshot.worked
     test.asserting(_ shouldBe Map(classOf[NumberKey].getName -> ProgressCost(2, 1100.millis.toNanos.toDouble)))
@@ -219,11 +219,11 @@ class ProgressTrackerTest extends AsyncFlatSpec with AsyncIOSpec with Matchers {
     val test = for {
       clock    <- IO.delay(AtomicLong())
       tracker  <- ProgressTracker.create(describer = describeAll, clock = () => clock.get())
-      _        <- tracker.started(top, None)
+      _        <- IO.delay(tracker.started(top, None))
       _        <- advance(clock, 400.millis)
       _        <- child(tracker, clock, "hidden", 700.millis)
       _        <- child(tracker, clock, "inner", 5.seconds)
-      _        <- tracker.ended(top)
+      _        <- IO.delay(tracker.ended(top))
       snapshot <- tracker.snapshot
     } yield snapshot.verbTimes
     test.asserting(_ shouldBe Map("making" -> 6100.millis, "working" -> Duration.Zero))
@@ -233,9 +233,9 @@ class ProgressTrackerTest extends AsyncFlatSpec with AsyncIOSpec with Matchers {
     val test = for {
       clock    <- IO.delay(AtomicLong())
       tracker  <- ProgressTracker.create(describer = describeAll, clock = () => clock.get())
-      _        <- tracker.started(hidden, None)
+      _        <- IO.delay(tracker.started(hidden, None))
       _        <- advance(clock, 300.millis)
-      _        <- tracker.ended(hidden)
+      _        <- IO.delay(tracker.ended(hidden))
       snapshot <- tracker.snapshot
     } yield snapshot.verbTimes
     test.asserting(_ shouldBe Map("working" -> 300.millis))
@@ -245,9 +245,9 @@ class ProgressTrackerTest extends AsyncFlatSpec with AsyncIOSpec with Matchers {
     val test = for {
       clock    <- IO.delay(AtomicLong())
       tracker  <- ProgressTracker.create(clock = () => clock.get())
-      _        <- tracker.started(top, None)
+      _        <- IO.delay(tracker.started(top, None))
       _        <- advance(clock, 2.seconds)
-      _        <- tracker.started(inner, Some(top))
+      _        <- IO.delay(tracker.started(inner, Some(top)))
       _        <- advance(clock, 1.second)
       snapshot <- tracker.snapshot
     } yield snapshot.inFlight.toSet
@@ -316,7 +316,7 @@ class ProgressTrackerTest extends AsyncFlatSpec with AsyncIOSpec with Matchers {
       tracker   <- ProgressTracker.create()
       _         <- tracker.cacheLoaded(true)
       generator <- IncrementalFactGenerator.create(proc, Some(cold._2), strictAccounting = true, Some(tracker))
-      _         <- generator.getFact(top)
+      _         <- generator.demand.getFact(top)
       snapshot  <- tracker.snapshot
     } yield snapshot.runClass
 
@@ -342,7 +342,7 @@ class ProgressTrackerTest extends AsyncFlatSpec with AsyncIOSpec with Matchers {
   private def child(tracker: ProgressTracker, clock: AtomicLong, name: String, took: FiniteDuration): IO[Unit] = {
     val key = NumberKey(name)
 
-    tracker.started(key, Some(top)) >> advance(clock, took) >> tracker.ended(key)
+    IO.delay(tracker.started(key, Some(top))) >> advance(clock, took) >> IO.delay(tracker.ended(key))
   }
 
   private def threeLevels(src: Ref[IO, Int]): CompilerProcessor =
@@ -360,7 +360,7 @@ class ProgressTrackerTest extends AsyncFlatSpec with AsyncIOSpec with Matchers {
     for {
       tracker   <- ProgressTracker.create()
       generator <- IncrementalFactGenerator.create(processor, prior, strictAccounting = true, Some(tracker))
-      _         <- generator.getFact(NumberKey(root))
+      _         <- generator.demand.getFact(NumberKey(root))
       cache     <- generator.buildCacheData()
       snapshot  <- tracker.snapshot
     } yield ((snapshot.delivered, snapshot.fromCache), cache)

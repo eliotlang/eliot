@@ -10,11 +10,9 @@ import com.vanillasource.eliot.eliotc.processor.{CompilerFactKey, CompilerProces
   * time.
   *
   * The remainder is the processor's own time, and it is CPU time in practice: the compiler does no parallel work, and
-  * although the engine generates each fact on its own fiber, the requesting fiber immediately blocks on it — so at most
-  * one processor is running at any instant. There is also no double counting: a nested generation is measured by its
-  * own wrapper, and its full duration is subtracted from the generation that asked for it. A wall clock is used rather
-  * than a per-thread CPU clock because fibers migrate between pool threads, which would make the start and end reads of
-  * a thread clock come from different threads.
+  * the engine generates a fact inside the read that asks for it — so at most one processor is running at any instant.
+  * There is also no double counting: a nested generation is measured by its own wrapper, and its full duration is
+  * subtracted from the generation that asked for it.
   *
   * A generation that *aborts* — the sanctioned way for a processor to decline, and how an error propagates — would
   * short-circuit past the measurement, so the generation is run through `recoverWithAborted` and the abort re-raised

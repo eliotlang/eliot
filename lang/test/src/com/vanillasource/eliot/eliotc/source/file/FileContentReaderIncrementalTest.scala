@@ -29,7 +29,7 @@ class FileContentReaderIncrementalTest extends AsyncFlatSpec with AsyncIOSpec wi
   ): IO[(Option[FileContent], FactCacheData)] =
     for {
       generator <- IncrementalFactGenerator.create(processors, prior)
-      content   <- generator.getFact(FileContent.Key(file))
+      content   <- generator.demand.getFact(FileContent.Key(file))
       cache     <- generator.buildCacheData()
     } yield (content, cache)
 

@@ -55,73 +55,69 @@ final class ProgressTracker private (
     IO.delay(runClassRef.set(Some(if (present) ProgressRunClass.Unchanged else ProgressRunClass.Cold)))
 
   /** Record that the run has the fact of `key`; a key it already had is not counted again. */
-  def delivered(key: CompilerFactKey[?], fromCache: Boolean): IO[Unit] =
-    IO.delay {
-      if (keys.add(key)) {
-        deliveredCount.incrementAndGet()
-        if (fromCache) fromCacheCount.incrementAndGet(): Unit
-      }
+  def delivered(key: CompilerFactKey[?], fromCache: Boolean): Unit = {
+    if (keys.add(key)) {
+      deliveredCount.incrementAndGet()
+      if (fromCache) fromCacheCount.incrementAndGet(): Unit
     }
+  }
 
   /** Record that the run started working out `key`'s fact — from the cache or by generating it — for `parent`, the
     * generation that asked for it, if any. The parent waits for it until it [[ended]].
     */
-  def started(key: CompilerFactKey[?], parent: Option[CompilerFactKey[?]]): IO[Unit] =
-    IO.delay {
-      val now        = clock()
-      val parentNode = parent.flatMap(p => Option(inFlight.get(p)))
+  def started(key: CompilerFactKey[?], parent: Option[CompilerFactKey[?]]): Unit = {
+    val now        = clock()
+    val parentNode = parent.flatMap(p => Option(inFlight.get(p)))
 
-      parentNode.foreach(_.waitFrom(now))
-      inFlight.put(key, new Generation(key.getClass, describer.describe(key), parentNode, now, unowned)): Unit
-    }
+    parentNode.foreach(_.waitFrom(now))
+    inFlight.put(key, new Generation(key.getClass, describer.describe(key), parentNode, now, unowned)): Unit
+  }
 
   /** Record that the run finished working out `key`'s fact, so the generation that asked for it waits no more. Its own
     * time is added to its key type's cost, and a described fact's time to its verb; one that took
     * [[ProgressTracker.slowStep]] or more becomes a slow step.
     */
-  def ended(key: CompilerFactKey[?]): IO[Unit] =
-    IO.delay {
-      Option(inFlight.remove(key)).foreach { generation =>
-        val now  = clock()
-        val self = generation.synchronized(generation.selfAt(now, charged = true))
+  def ended(key: CompilerFactKey[?]): Unit = {
+    Option(inFlight.remove(key)).foreach { generation =>
+      val now  = clock()
+      val self = generation.synchronized(generation.selfAt(now, charged = true))
 
-        generation.parent.foreach(_.resumeAt(now))
-        typeCosts.computeIfAbsent(generation.keyType, _ => TypeCounter()).record(self)
-        generation.activity.foreach { activity =>
-          val took = generation.spent.get()
+      generation.parent.foreach(_.resumeAt(now))
+      typeCosts.computeIfAbsent(generation.keyType, _ => TypeCounter()).record(self)
+      generation.activity.foreach { activity =>
+        val took = generation.spent.get()
 
-          verbNanos.computeIfAbsent(activity.verb, _ => LongAdder()).add(took)
-          if (took.nanos >= ProgressTracker.slowStep) slowStepsRef.updateAndGet(_ :+ ProgressStep(activity, took.nanos)): Unit
-        }
+        verbNanos.computeIfAbsent(activity.verb, _ => LongAdder()).add(took)
+        if (took.nanos >= ProgressTracker.slowStep) slowStepsRef.updateAndGet(_ :+ ProgressStep(activity, took.nanos)): Unit
       }
     }
+  }
 
   /** Record that the generation of `key` is waiting for a fact it did not start, so its time is not its own until
     * [[resumed]].
     */
-  def waiting(key: CompilerFactKey[?]): IO[Unit] =
-    IO.delay(Option(inFlight.get(key)).foreach(_.waitFrom(clock())))
+  def waiting(key: CompilerFactKey[?]): Unit =
+    Option(inFlight.get(key)).foreach(_.waitFrom(clock()))
 
   /** Record that a fact the generation of `key` waited for, and did not start, has arrived. */
-  def resumed(key: CompilerFactKey[?]): IO[Unit] =
-    IO.delay(Option(inFlight.get(key)).foreach(_.resumeAt(clock())))
+  def resumed(key: CompilerFactKey[?]): Unit =
+    Option(inFlight.get(key)).foreach(_.resumeAt(clock()))
 
   /** Record that the fact of `key` came out different from what the cache held. Only an [[ProgressActivity.input]] is
     * worth telling the user about, and each subject once.
     */
-  def changed(key: CompilerFactKey[?]): IO[Unit] =
-    IO.delay {
-      runClassRef.updateAndGet {
-        case Some(ProgressRunClass.Unchanged) => Some(ProgressRunClass.Changed)
-        case other                            => other
-      }
-      describer
-        .describe(key)
-        .filter(_.input)
-        .foreach(activity =>
-          changedRef.updateAndGet(seen => if (seen.contains(activity.subject)) seen else seen :+ activity.subject)
-        )
+  def changed(key: CompilerFactKey[?]): Unit = {
+    runClassRef.updateAndGet {
+      case Some(ProgressRunClass.Unchanged) => Some(ProgressRunClass.Changed)
+      case other                            => other
     }
+    describer
+      .describe(key)
+      .filter(_.input)
+      .foreach(activity =>
+        changedRef.updateAndGet(seen => if (seen.contains(activity.subject)) seen else seen :+ activity.subject)
+      )
+  }
 
   /** The progress so far. `fromCache` is read before `delivered`, and incremented after it, so a snapshot never shows
     * more facts from the cache than facts delivered. A run that has grown past the expected total is measured against
