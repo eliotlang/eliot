@@ -1081,3 +1081,40 @@ makes the fail-safe design cost nothing:
 What it should remove, from §13.3: 138 000 of the 139 573 links and their ~300 000 reads, about 29% of all fact reads,
 and the evaluation of each linked body's thunk, which a shared binding forces once instead of once per link.
 Estimated 0.8–1.4 s; plan for half.
+
+### 13.7 Built and measured: no measurable gain (2026-10-26)
+
+Built as §13.6 designed it (kept in the local stash *"perf experiment: ReducedInstance fact"*, not on master):
+`ReducedInstance` and `ReducedInstanceProcessor`; `reduceInstance` and `reduceApplied` read it and link afresh only on
+`Unshared` or a refused read; `Linked` moved into the fact. In eliot-build, 2 614 instances are linked once each: 1 927
+shared, 687 absent, **none** unshared and no fresh link at all (the 2 614 are §13.3's 1 379 `reduceInstance` targets
+plus the `reduceApplied` targets, which were linked outside `reduceInstance`). Every jar is identical (`a74475df…`
+cold/warm/back, `073f213d…` edited), the example sweep is identical, and every suite is green; one test lists the fact
+types that decline a value codec and had `ReducedInstance` added to it.
+
+Measured on an otherwise quiet machine, alternated, eliot-build:
+
+| | base (`d39f064b`) | `ReducedInstance` | difference |
+|---|---|---|---|
+| cold, 10 pairs (with warm/edit/back between) | 17.76 s | 17.24 s | −0.52 s, pairwise sd 1.0 |
+| cold, 10 more pairs (GC logged) | 17.79 s | 17.74 s | **−0.05 s ± 0.17** (standard error) |
+| warm / edit / back, 4 rounds each | 2.93 / 6.71 / 6.75 s | 2.89 / 6.65 / 6.61 s | within noise |
+| GC pauses, cold | 735 ms | 780 ms | +45 ms |
+
+Pooled, about **−0.3 s ± 0.2 s, at most 2%**, against the 0.8–1.4 s §13.5 estimated (and half of that planned). Under
+`--statistics` (6 pairs) the derived metas' own time fell as expected, 1 676 → 1 232 ms, and the new processor costs
+152 ms, but the two type checks rose by about as much (compile track 2 904 → 3 232 ms, runtime 1 316 → 1 415 ms), so the
+total did not move (19.7 vs 20.1 s). Why the checks rose is **not established**: their links now come from the fact, and
+the shared bindings stay alive for the whole compile (the extra GC above). Not chased further.
+
+What it means for the estimates in this document: **a fact read that hits is cheap**. Removing 300 000 of them, and
+138 000 links, removed about what the derived metas' self time showed (0.4 s), and that was absorbed elsewhere. The
+per-read cost behind §13.3's estimate came from a probe that inflated every read (§13, caveats), and that is the third
+estimate here to come out at half or less of what was measured. A count of removed work times a per-unit cost taken from
+a profile is not a forecast; only an A/B is.
+
+Kept off master by the same test as §12.4: a fact type, a processor and a fallback path for a gain that the noise
+cannot tell from zero.
+
+The ranking in §13.5 therefore has I2 alone at the top: the run loop is 45% of a check and 38% of the compilation, and
+it is the one cost every measurement so far agrees on.
