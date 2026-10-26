@@ -15,7 +15,9 @@ a thread of its own, and the index read and written through a buffer. A cold bui
 ranks what is left on **one core**: parallel compilation (I3) is the last step by Robert's decision, and a sequential
 mode stays even then. §12 also measures I6 for signatures: almost every signature check of an instance is the substitution
 of its type arguments into the value's parametric signature. §12.4 built that, measured a cold build **3–4% faster**,
-and **reverted it**: the gain does not pay for a second path to a signature whose soundness is an argument.
+and **reverted it**: the gain does not pay for a second path to a signature whose soundness is an argument. §14
+sizes I2 and finds, on the way, that cats-effect's **twenty worker threads handing each fact's fiber to one another**
+cost a quarter of a cold build: one worker makes it **23% faster**, with no other change.
 
 The goal (Robert, 2026-10-24): *"A cold compile of the build project should not take 1 minute. It should take a
 couple of seconds actually. We need some very fundamental ideas to break through here."* eliot-build's launcher is
@@ -749,6 +751,9 @@ to 46–48 s, so most of it is the JIT's and the collector's threads, and leaves
 against 16.9/16.8/18.5 s, alternated): handing a fact's fiber to another worker thread is not where the idle quarter of
 a core goes.
 
+> **Corrected 2026-10-26 (§14):** four processors still leave four workers handing fibers to each other. With **one**
+> compute worker a cold build is 23% faster, so the handoffs were a quarter of the build after all.
+
 ## 12. One core: what is left, and whether a signature check is a substitution (2026-10-26)
 
 Robert, 2026-10-26: parallel compilation (I3) is the **last** step, after everything else, and even then a sequential
@@ -1121,3 +1126,84 @@ tell from zero.
 
 The ranking in §13.5 therefore has I2 alone at the top: the run loop is 45% of a check and 38% of the compilation, and
 it is the one cost every measurement so far agrees on.
+
+## 14. I2 sized: one worker first, then a synchronous engine (2026-10-26)
+
+Robert asked what I2 can do and what it would gain. To answer, master (`78ed1b17`) was profiled again. Before the profile,
+a one-line test of the scheduler turned out to be worth more than any estimate.
+
+### 14.1 One compute worker: −23%, with nothing else changed
+
+Every fact is `start`ed as a fiber, and its reader suspends on the fact's `Deferred`. The work-stealing pool wakes an idle
+worker for the new fiber, so a cold build's 67 000 facts mean on the order of a hundred thousand thread wake-ups. Each
+one moves a fiber to another core and to cold caches. §11.1 capped the JVM at four processors, but four workers still
+hand fibers to each other, so it could not see this. The test: `Main` overrides `IOApp.computeWorkerThreadCount` from
+a system property, and is reverted afterwards. The write-behind save runs on the blocking pool and is unaffected.
+
+eliot-build, alternated, each round cold → warm → edit → back, jars `a74475df…`/`073f213d…` in every run, index
+identical (the object store differs by a few bytes, as it does between any two runs, §8):
+
+| | cold (4 rounds) | warm | edit | back |
+|---|---|---|---|---|
+| twenty workers (today) | 18.95, 17.25, 18.21, 17.00 = **17.85 s** | 2.93 s | 6.70 s | 6.72 s |
+| one worker | 13.85, 13.65, 13.50, 14.11 = **13.78 s (−23%)** | 2.91 s | 6.24 s (−7%) | 6.18 s (−8%) |
+
+Four earlier cold pairs agree (18.56 → 14.04 s). The compilation also needs **less CPU**: its thread has 1 374 samples
+with twenty workers and 933 with one, because the same work runs on one warm core. Warm builds do not move, since they
+generate almost nothing.
+
+For the CLI this is `computeWorkerThreadCount = 1` in `Main`. Nothing in a processor forks today, so it is the
+sequential mode made explicit. It does not settle I3: parallel facts need a different structure anyway (§14.3). The LSP
+runs on `IORuntime.global` with one compile session per package. There the equivalent is each session's compile
+running on a single-thread executor of its own (`evalOn`), which has not been measured.
+
+### 14.2 What is left of the run loop
+
+The profile with one worker (933 compile-thread samples, classified as in §11):
+
+| | share |
+|---|---|
+| no Eliot frame on the stack: `IOFiber.runLoop`, `succeeded`, `IO` node allocation, continuations | 22.5% |
+| a cats leaf called by Eliot code: building `Kleisli`/`IO`/`StateT` binds | 9.1% |
+| inside a cats call made by Eliot code (`traverse`, `Eval`, `Chain`) | 2.9% |
+| the engine (fact map, dependency sets, chain), including its `Ref`/`Deferred` plumbing | 14.3% |
+| everything else: compiling | 51.2% |
+
+So cats-effect is about **35%** of the remaining compilation, roughly 4.3 s of 13.8 s, and part of the engine's 14% is
+`IO` plumbing. That is I2's ceiling: what direct style would save if a bind cost nothing. The `StateT` samples under
+`ast.parser` are the hand-written parser's own `StateT`, which is I9's, not I2's.
+
+### 14.3 The proposal: a synchronous engine, processors unchanged
+
+§6 showed that one processor cannot be moved through a bridge, because the fact read is the hot crossing. §7 showed that
+changing what `CompilerIO` *is* changes no processor. So the step is both at once:
+
+- **`CompilerIO[T]` becomes a plain function of the `Context`**: a bind is a call, an abort an exception (as now), and
+  errors stay in the `Context` (as now). It gets a stack-safe `tailRecM` and a hand-written `Sync` instance (`delay` and
+  `blocking` are calls), so the jvm backend's `[F[_]: Sync]` code generation and `Logging` compile unchanged. The nine
+  `.to[CompilerIO]` sites (file reads, the jar) run their `IO` synchronously at the edge. The conservative variant is
+  `Kleisli[SyncIO, Context, *]`, which comes with a `Sync` instance but still interprets every bind, only more cheaply.
+- **The engine is synchronous**: a mutable map from key to *in progress* or *done*; a missing fact is generated on the
+  reader's own stack; the chain and the cycle refusal stay exactly as `DependencyTrackingProcess` has them. The
+  validation drill becomes plain recursion. The compile runs on one dedicated thread with a large stack (a request chain
+  is hundreds of keys deep, each a few dozen frames), and `IO` stays at the edge: `CompilationSession`, the CLI, the
+  LSP's cancel-restart, which becomes a thread interrupt checked at each read.
+- **`CheckIO` and the other `StateT`s stay** at first. Flattening `CheckIO` as §6 did, with its code in the stash, is a
+  second, separately measured step.
+- **Parallelism is kept, and gets easier.** Direct-style code is what virtual threads need. A parallel I3 is a latch per
+  key and a virtual thread per parallel request, and a read blocks, which a virtual thread does cheaply. The sequential
+  engine stays as the debugging mode Robert asked for (§12).
+
+What changes: `CompilerIO`, `IncrementalFactGenerator`, `DependencyTrackingProcess`, the statistics, visualization and
+progress wrappers, `CompilationSession`/`CompilationServer`, the nine edge sites, and the tests that run a `CompilerIO`
+by hand. No processor logic changes.
+
+**The gain, honestly:** the ceiling is §14.2's ~35% plus part of the engine's 14%, about **4–4.5 s of 13.8 s**. A
+function-based monad still allocates one closure per bind, so not all of it comes back. The last three estimates in this
+document came out at half or less, so the planning figure is **1.5–2.5 s (−10–18%)**, cold, on top of §14.1. Warm builds
+gain little: they generate almost nothing, and 2.9 s is mostly startup. Only an A/B decides, as for §7: built as an
+experiment, measured alternated against §14.1, and kept only if it beats the noise.
+
+**Risks:** stack depth (the dedicated thread's stack size; a `traverse` over a long list nests binds, which a
+trampolined monad would not); LSP cancellation, which becomes cooperative instead of a fiber cancel; and the error
+buffer's discipline under exceptions, which §7.5 already had to get right once.
