@@ -1,31 +1,69 @@
 package com.vanillasource.eliot.eliotc.processor
 
-import cats.Monad
-import cats.data.{Chain, EitherT, ReaderT, StateT}
+import cats.data.{Chain, Kleisli}
 import cats.effect.IO
 import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.feedback.CompilerError
 
+import scala.util.control.NoStackTrace
+
 object CompilerIO {
-  private type EitherStage[T] = EitherT[IO, Chain[CompilerError], T]
-  private type StateStage[T]  = StateT[EitherStage, Chain[CompilerError], T]
-  private type ReaderStage[T] = ReaderT[StateStage, CompilationProcess, T]
+
+  /** What a running [[CompilerIO]] reads: the compilation process it asks for facts, and the errors it has accumulated.
+    *
+    * The errors are a plain field, not a `Ref`, because a generation runs sequentially: nothing inside one computation
+    * forks. A processor that starts sub-computations in parallel within one generation would have to make it atomic.
+    * Every read of it is deferred to run time (`IO.delay`/`IO.defer`), never done when a [[Kleisli]] is applied, since
+    * combinators such as `map2` apply the second computation's function before the first one's effects have run.
+    */
+  final class Context(val process: CompilationProcess) {
+    var errors: Chain[CompilerError] = Chain.empty
+  }
+
+  /** An aborted computation, carrying the errors accumulated up to the abort. It never escapes [[runCompilerIO]]. */
+  private final class Aborted(val errors: Chain[CompilerError]) extends RuntimeException with NoStackTrace
 
   /** The effect all compiler processors run in. It is capable of accumulating errors, short-circuiting, and has access
     * to the CompilationProcess.
+    *
+    * It is one reader over `IO`: the errors accumulate in the [[Context]], and an abort is an exception. It used to be
+    * `ReaderT[StateT[EitherT[IO, …]]]`, whose three layers of binds were a quarter of a cold build's CPU
+    * (`docs/compiler-performance.md` §7).
     */
-  type CompilerIO[T] = ReaderStage[T]
+  type CompilerIO[T] = Kleisli[IO, Context, T]
+
+  /** Run a computation against `process`: `Left` with the errors it aborted with, else `Right` with the errors it
+    * accumulated and its value.
+    */
+  def runCompilerIO[T](
+      process: CompilationProcess
+  )(computation: CompilerIO[T]): IO[Either[Chain[CompilerError], (Chain[CompilerError], T)]] =
+    IO.defer {
+      val context = new Context(process)
+      computation.run(context).attempt.flatMap {
+        case Right(value)      => IO.pure(Right((context.errors, value)))
+        case Left(a: Aborted)  => IO.pure(Left(a.errors))
+        case Left(throwable)   => IO.raiseError(throwable)
+      }
+    }
+
+  /** Run `body` against the process `wrap` makes of the current one, keeping the current errors. This is how a wrapper
+    * observes what one processor does, e.g. timing its fact reads.
+    */
+  def withProcess[P <: CompilationProcess, T](wrap: CompilationProcess => P)(body: P => CompilerIO[T]): CompilerIO[T] =
+    Kleisli { context =>
+      IO.defer {
+        val wrapped = wrap(context.process)
+        val inner   = new Context(wrapped)
+        inner.errors = context.errors
+        body(wrapped).run(inner).guarantee(IO { context.errors = inner.errors })
+      }
+    }
 
   /** Returns the fact from the running compiler as an Option, without aborting.
     */
   private def getFact[V <: CompilerFact, K <: CompilerFactKey[V]](key: K): CompilerIO[Option[V]] =
-    for {
-      process <- ReaderT.ask[StateStage, CompilationProcess]
-      fact    <-
-        ReaderT.liftF[StateStage, CompilationProcess, Option[V]](
-          StateT.liftF(EitherT.liftF(process.getFact(key)))
-        )
-    } yield fact
+    Kleisli(context => context.process.getFact(key))
 
   /** Returns the fact from the running compiler or short circuits.
     *
@@ -35,10 +73,12 @@ object CompilerIO {
     * fact (the engine treats an explicit abort as a decline, never as an internal error).
     */
   def getFactOrAbort[V <: CompilerFact, K <: CompilerFactKey[V]](key: K): CompilerIO[V] =
-    getFact(key).flatMap {
-      case Some(fact) => fact.pure[CompilerIO]
-      case None       => abort[V]
-    }
+    Kleisli(context =>
+      context.process.getFact(key).flatMap {
+        case Some(fact) => IO.pure(fact)
+        case None       => IO.raiseError(new Aborted(context.errors))
+      }
+    )
 
   /** Returns the fact from the running compiler, or registers the given error and short circuits. Use when the caller
     * owns a user-facing message for the missing fact (e.g. "Could not find imported module").
@@ -63,19 +103,12 @@ object CompilerIO {
     * chain before it dead-locks on the [[cats.effect.Deferred]]-based fact cache.
     */
   def activeFactKeys: CompilerIO[List[CompilerFactKey[?]]] =
-    for {
-      process <- ReaderT.ask[StateStage, CompilationProcess]
-      keys    <- ReaderT.liftF[StateStage, CompilationProcess, List[CompilerFactKey[?]]](
-                   StateT.liftF(EitherT.liftF(process.activeFactKeys))
-                 )
-    } yield keys
+    Kleisli(context => context.process.activeFactKeys)
 
   /** Register an error.
     */
   def registerCompilerError(error: CompilerError): CompilerIO[Unit] =
-    ReaderT.liftF[StateStage, CompilationProcess, Unit](
-      StateT.modify[EitherStage, Chain[CompilerError]](errors => errors :+ error)
-    )
+    Kleisli(context => IO { context.errors = context.errors :+ error })
 
   /** Returns true if there are no errors accumulated in the CompilerIO.
     */
@@ -84,36 +117,20 @@ object CompilerIO {
   /** Returns the currently accumulated errors.
     */
   def currentErrors: CompilerIO[Chain[CompilerError]] =
-    ReaderT.liftF[StateStage, CompilationProcess, Chain[CompilerError]](
-      StateT.get[EitherStage, Chain[CompilerError]]
-    )
+    Kleisli(context => IO(context.errors))
 
   /** Registers the fact, but only if the current compiler process is clean of errors!
     */
   def registerFactIfClear(value: CompilerFact): CompilerIO[Unit] =
-    for {
-      process <- ReaderT.ask[StateStage, CompilationProcess]
-      _       <- isClear.ifM(
-                   ReaderT.liftF[StateStage, CompilationProcess, Unit](
-                     StateT.liftF(EitherT.liftF(process.registerFact(value)))
-                   ),
-                   Monad[CompilerIO].unit
-                 )
-    } yield ()
+    Kleisli(context => IO.defer(if (context.errors.isEmpty) context.process.registerFact(value) else IO.unit))
 
-  /** Aborts the computation by copying errors from state into the Either's left side.
+  /** Aborts the computation with the errors accumulated so far.
     */
   def abort[T]: CompilerIO[T] =
-    for {
-      errors <- currentErrors
-      result <- ReaderT.liftF[StateStage, CompilationProcess, T](
-                  StateT.liftF(EitherT.leftT[IO, T](errors))
-                )
-    } yield result
+    Kleisli(context => IO.defer(IO.raiseError(new Aborted(context.errors))))
 
-  /** Recovers from a potentially aborted computation by moving any errors from the Either's left side back into the
-    * state. This is the opposite of abort - it ensures the computation continues (unaborted) while preserving all
-    * errors. The computation runs in an isolated error context and all errors are merged back into the current context.
+  /** Recovers from a potentially aborted computation, keeping its errors. The computation runs in an isolated error
+    * context, and all of its errors are merged back into the current context, whether it aborted or not.
     *
     * @param computation
     *   The computation to run in isolation
@@ -129,17 +146,14 @@ object CompilerIO {
     * abort (decline) signal of its children for the engine while still running every child and keeping all errors.
     */
   def recoverWithAborted[T](computation: CompilerIO[T])(default: T): CompilerIO[(T, Boolean)] =
-    for {
-      process <- ReaderT.ask[StateStage, CompilationProcess]
-      result  <- ReaderT.liftF[StateStage, CompilationProcess, Either[Chain[CompilerError], (Chain[CompilerError], T)]](
-                   StateT.liftF(
-                     EitherT.liftF(computation.run(process).run(Chain.empty).value)
-                   )
-                 )
-      value   <- result match {
-                   case Left(errors)           => errors.traverse_(registerCompilerError).as((default, true))
-                   case Right((errors, value)) => errors.traverse_(registerCompilerError).as((value, false))
-                 }
-    } yield value
-
+    Kleisli(context =>
+      runCompilerIO(context.process)(computation).map {
+        case Left(errors)           =>
+          context.errors = context.errors ++ errors
+          (default, true)
+        case Right((errors, value)) =>
+          context.errors = context.errors ++ errors
+          (value, false)
+      }
+    )
 }

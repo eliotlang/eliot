@@ -20,7 +20,7 @@ import com.vanillasource.eliot.eliotc.monomorphize.fact.GroundValue
 import com.vanillasource.eliot.eliotc.operator.fact.{OperatorResolvedExpression, OperatorResolvedValue}
 import com.vanillasource.eliot.eliotc.platform.Platform
 import com.vanillasource.eliot.eliotc.pos.PositionRange
-import com.vanillasource.eliot.eliotc.processor.CompilerIO.CompilerIO
+import com.vanillasource.eliot.eliotc.processor.CompilerIO.{runCompilerIO, CompilerIO}
 import com.vanillasource.eliot.eliotc.resolve.fact.{
   AbilityFQN,
   QualifiedName as ResolvedQualifiedName,
@@ -99,7 +99,7 @@ class AbilityResolverBindingTest extends AnyFlatSpec with Matchers {
     }
     val resolver = new AbilityResolver(search, Platform.Runtime)
     val pass     = resolver.resolveAbilities(Seq((raise, args.map(Evaluator.groundToSem))))
-    pass.run(CheckState.initial).run(implementation).run(Chain.empty).value.unsafeRunSync().map {
+    runCompilerIO(implementation)(pass.run(CheckState.initial)).unsafeRunSync().map {
       case (_, (state, _)) => (state.abilityResolutions, searched)
     }
   }

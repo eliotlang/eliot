@@ -5,7 +5,7 @@ Questions P1–P6 (§5) await Robert. §6 records the first experiment, the chec
 slower**, and it weakens I2 as a processor-by-processor migration. §6 also corrects how §1's absolute times should be
 read. §7 records the second, 2026-10-26: §1's third in the run loop reproduces, and it was mostly the `CompilerIO`
 transformer stack. **One reader over `IO` instead of it makes a cold build 23% faster**, every jar byte-identical, with
-no processor changed.
+no processor changed; it is adopted.
 
 The goal (Robert, 2026-10-24): *"A cold compile of the build project should not take 1 minute. It should take a
 couple of seconds actually. We need some very fundamental ideas to break through here."* eliot-build's launcher is
@@ -341,9 +341,8 @@ unchanged: 37 s is still 15–20× from a couple of seconds.
 
 §6 left two readings open: §1's 33% might not reproduce, or it might be real but not in the checker. This experiment
 re-measures it and then removes the part §6 could not reach. Result: **the 33% is real, and a flat `CompilerIO` takes
-a cold build from 40.1 s to 31.0 s (−23%), every jar byte-identical**, with fibers, `IO` and the engine unchanged. The
-code is not on `master`; it is in the local stash *"perf experiment: flat CompilerIO (docs/compiler-performance.md
-§7)"*.
+a cold build from 40.1 s to 31.0 s (−23%), every jar byte-identical**, with fibers, `IO` and the engine unchanged.
+**Adopted on `master` 2026-10-26** (§7.5), as Robert decided.
 
 ### 7.1 The 33% reproduces
 
@@ -417,3 +416,33 @@ On eliot-build's launcher, cold, alternating, each compiler from its own copy of
 - **The next target is the cache save, now nearly half the build**, and 62% of it is structural hashing and equality
   (702 of 1 131 samples), mostly of fact keys: I1 (interning), or first §1's cached `hashCode` in the four key classes,
   which took 5.4 s off the save there.
+
+### 7.5 Adopted (2026-10-26)
+
+Robert decided to adopt it. What changed from the experiment:
+
+- **Every read of the error buffer is deferred to run time**: `registerFactIfClear`, `abort`, `currentErrors` and
+  `withProcess` read it inside `IO.delay`/`IO.defer`. Applying a `Kleisli` is not running it, and combinators such as
+  `map2` apply the second computation's function before the first one's effects have run, so an eager read could have
+  seen errors not yet registered. The experiment had this hole in `registerFactIfClear`; its jars did not show it.
+- `withProcess(wrap)(body)` hands `body` the wrapped process, so `TimedCompilerProcessor` reads its timings from the
+  process it made rather than from a variable set on the side.
+- `Aborted` is private to `CompilerIO`; only `runCompilerIO` turns it into the `Left` the engine reads.
+- The five tests that ran a `CompilerIO` by hand (§7.2's four, plus `ImplementationNameResolverTest`) run it through
+  `runCompilerIO`.
+
+Verified: every suite green (`./mill __.test`); the example sweep (`scripts/example-sweep.sh`, 47 modules) identical,
+line for line, to the baseline's, jars, instruction counts, exit codes and output included; `--statistics` and
+`--visualize-facts` work. eliot-build's launcher, cold, alternating, jar `a74475df…` every time:
+
+| | run 1 | run 2 | run 3 | mean |
+|---|---|---|---|---|
+| baseline (`d38d4ac6`) | 38.7 s | 38.4 s | 38.1 s | 38.4 s |
+| adopted | 30.9 s | 30.4 s | 30.3 s | 30.5 s (−21%) |
+
+**Found on the way, not caused by it:** `jvm.test` logs 19–25 `IllegalStateException`s from `MetaInterpreter` ("A
+closure's path leads to no node of its owner's body"), each a `DerivedMeta` generation that the engine turns into a
+decline, on `master` as with this change. Which keys fail **differs between two runs of the same code** (two runs of
+`d38d4ac6`: `Abort::escapeInternal` 5 then 2, `Throw::escapeInternal` 0 then 3, `Function::.` 10 then 6), so a
+derived meta's outcome depends on something besides its key. The suites stay green because nothing asserts on it. It
+belongs to `docs/meta.md` §17.3 (closure addresses), not here, and is open.

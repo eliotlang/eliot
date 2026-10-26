@@ -1,12 +1,12 @@
 package com.vanillasource.eliot.eliotc.resolve.processor
 
-import cats.data.Chain
 import cats.syntax.all.*
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import com.vanillasource.eliot.eliotc.module.fact.{ModuleAbilities, ModuleName, QualifiedName, Qualifier, ValueFQN}
 import com.vanillasource.eliot.eliotc.platform.Platform
 import com.vanillasource.eliot.eliotc.pos.PositionRange
+import com.vanillasource.eliot.eliotc.processor.CompilerIO.runCompilerIO
 import com.vanillasource.eliot.eliotc.processor.{CompilationProcess, CompilerFact, CompilerFactKey}
 import com.vanillasource.eliot.eliotc.source.content.Sourced
 import org.scalatest.flatspec.AnyFlatSpec
@@ -60,12 +60,7 @@ class ImplementationNameResolverTest extends AnyFlatSpec with Matchers {
       facts: Map[CompilerFactKey[?], CompilerFact]
   ): Either[Seq[String], ValueFQN] = {
     val scope = ValueResolverScope(fake, dictionary, Map.empty, Set.empty)
-    ImplementationNameResolver
-      .resolve(at("recordingConsole"))
-      .runA(scope)
-      .run(process(facts))
-      .run(Chain.empty)
-      .value
+    runCompilerIO(process(facts))(ImplementationNameResolver.resolve(at("recordingConsole")).runA(scope))
       .unsafeRunSync()
       .bimap(_.toList.map(_.message), _._2)
   }

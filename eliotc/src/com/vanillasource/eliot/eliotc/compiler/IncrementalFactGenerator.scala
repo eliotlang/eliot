@@ -5,6 +5,7 @@ import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.compiler.cache.{CacheEntry, DependencyTrackingProcess, FactCacheData}
 import com.vanillasource.eliot.eliotc.feedback.{CompilerError, Logging}
+import com.vanillasource.eliot.eliotc.processor.CompilerIO.runCompilerIO
 import com.vanillasource.eliot.eliotc.processor.{CompilationProcess, CompilerFact, CompilerFactKey, CompilerProcessor}
 import com.vanillasource.eliot.eliotc.progress.ProgressTracker
 
@@ -304,7 +305,7 @@ final class IncrementalFactGenerator(
                             sawMissing,
                             ancestors
                           )
-      outcome          <- generator.generate(key).run(tracking).runS(Chain.empty).value
+      outcome          <- runCompilerIO(tracking)(generator.generate(key)).map(_.map(_._1))
       es                = outcome.fold(identity, identity)
       tracked          <- generationErrors.get
       _                <- errors.update(_ ++ (tracked ++ es).map(AttributedError(Some(key), _)))

@@ -1,9 +1,8 @@
 package com.vanillasource.eliot.eliotc.statistics
 
-import cats.data.ReaderT
 import cats.effect.{Clock, Sync}
 import cats.syntax.all.*
-import com.vanillasource.eliot.eliotc.processor.CompilerIO.{abort, recoverWithAborted, CompilerIO}
+import com.vanillasource.eliot.eliotc.processor.CompilerIO.{abort, recoverWithAborted, withProcess, CompilerIO}
 import com.vanillasource.eliot.eliotc.processor.{CompilerFactKey, CompilerProcessor}
 
 /** Wraps a processor to measure how often and for how long it runs. Intercepts the compilation process (see
@@ -31,15 +30,12 @@ final class TimedCompilerProcessor(underlying: CompilerProcessor, counters: Proc
   override def handles(factKey: CompilerFactKey[?]): Boolean = underlying.handles(factKey)
 
   override def generate(factKey: CompilerFactKey[?]): CompilerIO[Unit] =
-    ReaderT { process =>
-      val timed = TimedCompilationProcess(process)
-
+    withProcess(TimedCompilationProcess(_)) { timed =>
       Clock[CompilerIO]
         .timed(recoverWithAborted(underlying.generate(factKey))(()))
         .flatMap { case (elapsed, (_, aborted)) =>
           Sync[CompilerIO].delay(counters.record(elapsed - timed.waited, timed.wasActive, timed.factsRegistered)) >>
             abort[Unit].whenA(aborted)
         }
-        .run(timed)
     }
 }

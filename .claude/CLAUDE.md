@@ -309,6 +309,11 @@ subset of its data.
 Errors go through the `CompilationIO` monad (lang). `SourcedError` carries source position; `User` and `Logging`
 provide user-facing messages and debug logging.
 
+`CompilerIO` is **one reader over `IO`** (`Kleisli[IO, CompilerIO.Context, *]`): errors accumulate in the context, an
+abort is a private exception, and `runCompilerIO` is the only way to run one. It replaced a
+`ReaderT[StateT[EitherT[IO]]]` stack whose binds were a fifth of a cold build (`docs/compiler-performance.md` §7), so
+do not wrap it back into transformers; a processor's own `StateT` over it is fine.
+
 ## Testing
 
 - Tests extend `AsyncFlatSpec` with `AsyncIOSpec` with `Matchers`; files live in `<module>/test/src/`.

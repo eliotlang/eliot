@@ -1,15 +1,14 @@
 package com.vanillasource.eliot.eliotc.processor.common
 
 import cats.Monad
-import cats.data.{Chain, EitherT, ReaderT, StateT}
+import cats.data.Kleisli
 import cats.effect.IO
 import cats.effect.std.AtomicCell
 import cats.syntax.all.*
-import com.vanillasource.eliot.eliotc.feedback.CompilerError
 import com.vanillasource.eliot.eliotc.processor.CompilerIO.*
 import com.vanillasource.eliot.eliotc.processor.ProcessorTest
 import com.vanillasource.eliot.eliotc.processor.ProcessorTest.*
-import com.vanillasource.eliot.eliotc.processor.{CompilationProcess, CompilerFactKey, CompilerProcessor}
+import com.vanillasource.eliot.eliotc.processor.{CompilerFactKey, CompilerProcessor}
 
 class SequentialCompilerProcessorsTest extends ProcessorTest {
   val testKey = TestFactKey("test")
@@ -166,9 +165,7 @@ class SequentialCompilerProcessorsTest extends ProcessorTest {
       success: Boolean
   ): CompilerProcessor = (factKey: CompilerFactKey[?]) =>
     for {
-      _ <- ReaderT.liftF[StateStage, CompilationProcess, Unit](
-             StateT.liftF(EitherT.liftF(tracker.update(list => list :+ id)))
-           )
+      _ <- Kleisli.liftF(tracker.update(list => list :+ id))
       _ <- if (success) Monad[CompilerIO].unit
            else registerCompilerError(error(s"Processor $id failed"))
     } yield ()
@@ -188,7 +185,4 @@ class SequentialCompilerProcessorsTest extends ProcessorTest {
     registerCompilerError(error(errorMessage))
 
   private def successfulProcessor(): CompilerProcessor = (factKey: CompilerFactKey[?]) => Monad[CompilerIO].unit
-
-  private type EitherStage[T] = EitherT[IO, Chain[CompilerError], T]
-  private type StateStage[T]  = StateT[EitherStage, Chain[CompilerError], T]
 }

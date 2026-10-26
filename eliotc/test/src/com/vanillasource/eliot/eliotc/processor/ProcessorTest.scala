@@ -8,6 +8,7 @@ import cats.effect.testing.scalatest.AsyncIOSpec
 import com.vanillasource.eliot.eliotc.feedback.CompilerError
 import com.vanillasource.eliot.eliotc.pos.PositionRange
 import com.vanillasource.eliot.eliotc.processor.CompilerIO.CompilerIO
+import com.vanillasource.eliot.eliotc.processor.CompilerIO as CompilerIOs
 import org.scalatest.flatspec.AsyncFlatSpec
 import org.scalatest.matchers.should.Matchers
 
@@ -23,10 +24,7 @@ abstract class ProcessorTest extends AsyncFlatSpec with AsyncIOSpec with Matcher
     *   An IO containing either errors or the result
     */
   protected def runCompilerIO[T](value: CompilerIO[T]): IO[Either[Chain[CompilerError], T]] =
-    value.run(new ProcessorTest.TestCompilationProcess()).run(Chain.empty).value.map {
-      case Left(errors)  => Left(errors)
-      case Right((_, t)) => Right(t)
-    }
+    CompilerIOs.runCompilerIO(new ProcessorTest.TestCompilationProcess())(value).map(_.map(_._2))
 }
 
 object ProcessorTest {

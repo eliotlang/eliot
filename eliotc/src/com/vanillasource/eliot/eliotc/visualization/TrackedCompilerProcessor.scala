@@ -1,7 +1,6 @@
 package com.vanillasource.eliot.eliotc.visualization
 
-import cats.data.ReaderT
-import com.vanillasource.eliot.eliotc.processor.CompilerIO.CompilerIO
+import com.vanillasource.eliot.eliotc.processor.CompilerIO.{withProcess, CompilerIO}
 import com.vanillasource.eliot.eliotc.processor.{CompilationProcess, CompilerFactKey, CompilerProcessor}
 
 /** Wraps a CompilerProcessor to track its fact interactions. Intercepts the CompilationProcess to record which facts
@@ -17,10 +16,7 @@ final class TrackedCompilerProcessor(
   override def handles(factKey: CompilerFactKey[?]): Boolean = underlying.handles(factKey)
 
   override def generate(factKey: CompilerFactKey[?]): CompilerIO[Unit] =
-    ReaderT { process =>
-      val trackedProcess = new TrackedCompilationProcess(process, tracker, processorName)
-      underlying.generate(factKey).run(trackedProcess)
-    }
+    withProcess(new TrackedCompilationProcess(_, tracker, processorName))(_ => underlying.generate(factKey))
 }
 
 object TrackedCompilerProcessor {
