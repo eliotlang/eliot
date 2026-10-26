@@ -8,7 +8,7 @@ transformer stack. **One reader over `IO` instead of it makes a cold build 23% f
 no processor changed; it is adopted. §8 records the third, the cache save's hashing: it was the save's memo of values,
 not fact keys, and memoizing by identity instead makes a cold build **16% faster**; adopted. §9 sizes the cache by fact
 type: 83% of it was the `Map` codec writing each file's dictionary into every value, and sharing it makes the store
-79% smaller and a cold build **12% faster**; storing no value for pure one-to-one stages saves little.
+79% smaller and a cold build **12% faster**; adopted. Storing no value for a pure one-to-one stage saves little.
 
 The goal (Robert, 2026-10-24): *"A cold compile of the build project should not take 1 minute. It should take a
 couple of seconds actually. We need some very fundamental ideas to break through here."* eliot-build's launcher is
@@ -556,7 +556,8 @@ addressing could not dedup because the dictionary was never a separate object. R
 
 Alternated in one session, jar `a74475df…` every time, the incremental jar below identical to it. The probe's value
 encoding fell from 6.1 s to 3.2 s. Sharing every other collection too (`Seq`, `List`, `Set`, `Vector`) changes nothing
-(12.9 MB, 23.3 s): no other collection repeats across objects. Not adopted yet: it needs the suites and the sweep.
+(12.9 MB, 23.3 s): no other collection repeats across objects. **Adopted** (2026-10-26): every suite green, the
+example sweep identical to `f811acc0`'s, and eliot-build cold, warm, edited and changed back with the jars above.
 
 ### 9.2 Dropping values the next stage could recompute
 

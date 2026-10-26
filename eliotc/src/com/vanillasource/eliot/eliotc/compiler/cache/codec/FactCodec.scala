@@ -214,12 +214,17 @@ object FactCodec {
 
   given [A](using codec: FactCodec[A]): FactCodec[Set[A]] = collection(_.toSet)
 
-  given [K, V](using keyCodec: FactCodec[K], valueCodec: FactCodec[V]): FactCodec[Map[K, V]] = instance(
-    (out, value) => {
-      writeVarInt(out.raw, value.size)
-      value.foreach { case (k, v) => keyCodec.write(out, k); valueCodec.write(out, v) }
-    },
-    in => Seq.fill(readVarInt(in.raw))(keyCodec.read(in) -> valueCodec.read(in)).toMap
+  /** Shared, unlike the other collections: a file's dictionary rides on every value of the file, and written inline it
+    * was 83% of the store (`docs/compiler-performance.md` §9). Sharing the other collections measured no gain.
+    */
+  given [K, V](using keyCodec: FactCodec[K], valueCodec: FactCodec[V]): FactCodec[Map[K, V]] = shared(
+    instance(
+      (out, value) => {
+        writeVarInt(out.raw, value.size)
+        value.foreach { case (k, v) => keyCodec.write(out, k); valueCodec.write(out, v) }
+      },
+      in => Seq.fill(readVarInt(in.raw))(keyCodec.read(in) -> valueCodec.read(in)).toMap
+    )
   )
 
   given [A, B](using leftCodec: FactCodec[A], rightCodec: FactCodec[B]): FactCodec[(A, B)] = instance(
