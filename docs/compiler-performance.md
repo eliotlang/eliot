@@ -11,7 +11,10 @@ type: 83% of it was the `Map` codec writing each file's dictionary into every va
 79% smaller and a cold build **12% faster**; adopted. Storing no value for a pure one-to-one stage saves little. §10
 profiles what was left and adopts three changes: cats-effect tracing off, the cache encoded behind the compilation on
 a thread of its own, and the index read and written through a buffer. A cold build is **23–27% faster**, a warm one
-**47%** and an edited one **33%**.
+**47%** and an edited one **33%**. §11 profiles the result and fixes the fact keys' hash and the read path (−2%). §12
+ranks what is left on **one core**: parallel compilation (I3) is the last step by Robert's decision, and a sequential
+mode stays even then. §12 also measures I6 for signatures: every signature check of an instance is the substitution of
+its type arguments into the value's parametric signature, except a guard's verdict.
 
 The goal (Robert, 2026-10-24): *"A cold compile of the build project should not take 1 minute. It should take a
 couple of seconds actually. We need some very fundamental ideas to break through here."* eliot-build's launcher is
@@ -744,3 +747,101 @@ while the compilation runs on about 0.75 of a core. Capping the processors with 
 to 46–48 s, so most of it is the JIT's and the collector's threads, and leaves the wall time unchanged (16.9/17.1/17.1 s
 against 16.9/16.8/18.5 s, alternated): handing a fact's fiber to another worker thread is not where the idle quarter of
 a core goes.
+
+## 12. One core: what is left, and whether a signature check is a substitution (2026-10-26)
+
+Robert, 2026-10-26: parallel compilation (I3) is the **last** step, after everything else, and even then a sequential
+mode stays, because a parallel build's wall clock is harder to measure and every step so far was judged by alternated
+sequential runs. So this section ranks single-core levers only.
+
+### 12.1 Where 15.4 seconds go, per fact
+
+eliot-build cold at `6b442ee4`: 15.4 s, jar `a74475df…`. A temporary print in `TimedCompilerProcessor` (reverted)
+recorded each generation's self time under `--statistics`: 13.0 s of processor self time in that run, the facts told
+apart by key (counts from the key's first 400 characters, so a few long keys merge). By fact:
+
+| what | self time | facts | per fact |
+|---|---|---|---|
+| **type checking, both tracks** | **≈4.3 s** | | |
+| ↳ compile track, `Signature` role (the signature of an instance, on either track) | 1.9 s | ~4 300 | 0.2–0.5 ms |
+| ↳ runtime track, values | 1.1 s | 2 303 | 0.49 ms |
+| ↳ compile track, values (generated and `$Payload` included) | 1.2 s | ~2 400 | 0.4–0.6 ms |
+| resolution, row elaboration, operators, match desugaring, recursion check, blocks | ≈2.9 s | 3 554 each | 0.03–0.35 ms |
+| front end: `SourceAST`, `SourceTokens`, `CoreAST`, `ModuleValue` | ≈1.7 s | 99 files | parse 6.7 ms, tokenize 4.7 ms a file |
+| bytecode: `GeneratedModule` | 1.25 s | 50 | 25 ms a module |
+| derived metas and meta demands | ≈0.8 s | ~2 900 | |
+
+The same build's JFR profile (`rp.json`, after §11.1) puts 13.7% of the compilation's samples in a `hashCode`/`equals`
+near the leaf (the top frames `CompilerFactKey.hashCode`, still structural at every call, and `BoxesRunTime.equals`) and
+~17% in the cats-effect run loop. Ranked, on one core:
+
+| lever | what it removes | rough gain | needs |
+|---|---|---|---|
+| **I6 for signatures** (§12.2) | ~3 400 of the ~4 100 signature checks of an instance | **1.2–1.5 s** | P4 |
+| I2, direct-style queries | the run loop | ≤2.5 s | the largest refactor in the list |
+| I1, interning | the hashing and equality | ≤2 s | nothing; mechanical |
+| I9, a hand-written lexer and parser | most of the front end's 1.1 s of parsing | ~1 s | nothing |
+| bytecode | unexamined: 25 ms a module | ? | a profile |
+
+### 12.2 A signature check of an instance is a substitution
+
+Every instance `(value, type arguments)` on either track has its signature checked as a fact of its own, a
+`Signature`-role `CompilerMonomorphicValue`, and each one runs the whole `TypeStackLoop` again: `.`'s signature is
+checked 231 times in eliot-build, `Option::handleCases`'s 110. A partial-arity signature twin already reads back a
+**parametric** signature, a binder with no type argument coming back as a `GroundValue.Param` (`bindTwinBinders`), so
+there is an exact test of whether the instances needed their own check:
+
+> for every concrete signature check with type arguments, also run the same check with none (once per value, its
+> errors discarded), substitute the instance's arguments into the `Param`s, and compare with the concrete result.
+
+The fact holds nothing else that depends on the arguments: a signature twin's fact is its key, its name, the signature,
+no body and no `handed`. The probe (in `CompilerMonomorphicTypeCheckProcessor`, reverted) also ran when the concrete
+check failed, to catch an instance whose own check rejects what the parametric one accepts:
+
+| corpus | instances | same after substitution | binder-free (no `Param`) | different | parametric check fails | concrete fails, parametric accepts |
+|---|---|---|---|---|---|---|
+| eliot-build | 4 101 | 3 382 | 719 | 0 | 0 | 0 |
+| the 52 examples | 2 602 | 2 194 | 403 | 4 | 1 | not probed |
+| `lang.test` (1 061 tests) | 155 | 125 | 20 | 10 | 0 | 0 |
+| `jvm.test` (1 632 tests) | 12 412 | 10 543 | 1 820 | 41 | 7 (+1 both fail) | 0 |
+
+**Every difference is a guard's verdict**, from one arm, `publishStuckGuardCarrier`: with the binders neutral a guard
+cannot decide, so the parametric check publishes its undischarged carrier (`Bool` for an `implement … where` marker
+such as `Route`, `Coerce` or `InRange`; `Either[String, Type]` for a return guard such as `head`), and each instance
+publishes its own verdict (`true`, `Right(String)`, `Left("empty")`). **Every parametric failure computes on a binder**:
+`Box[I + 1]` over a value binder `I: BigInteger`, `pick[C: Bool]`. Both are cases a rule can recognise and leave to
+today's check per instance.
+
+In eliot-build the 4 101 instances belong to 719 values: 499 have one instance, 176 have two to twenty (1 234
+instances), and 44 have more than twenty (2 368 instances). A parametric check costs about what a concrete one does
+(median 0.28 ms).
+
+**The probe found one trap.** The facts a parametric check demands report their own errors, outside the probe's
+isolation: one jvm test ("a user constant from a value-position literal in a where guard") failed with *"Too many type
+arguments."* while the probe ran, and passes without it. A parametric check is a guess the compiler makes for itself,
+so its failure must decline silently and fall back, never reach the program's diagnostics.
+
+### 12.3 What it means
+
+The rule it suggests: check a value's signature **once**, with its binders neutral. If that read-back came from the raw
+quote or the escalation (not the stuck-guard arm), every instance's signature is the substitution of its arguments;
+otherwise, or if the parametric check fails, the instance is checked as today. Both ways out are fail-safe: a guard
+falls back, and so does anything that computes on a binder.
+
+Why it should be sound, for P4: a `GroundValue` can hold a binder only as a `Param` heading a spine. Anything that
+**eliminates** a binder (a `match`, arithmetic, an ability dispatched on it, a guard's `fold`) leaves a stuck neutral,
+which does not read back, so the parametric check fails and the instance falls back. An evaluation under a neutral that
+nothing eliminated commutes with substitution. The measurements agree: 19 270 instances, no difference outside the guard
+arm, and no instance whose own check rejected what the parametric check accepted, though that last column is thin,
+since the failing programs in the suites mostly fail before their signature twins. Open for P4:
+
+- **a higher-kinded binder's argument**: substituting `Int` for `F` in `F[Unit]` builds `Int[Unit]`; the concrete twin
+  does not reject it either, and `CarrierKindChecker` in the value mono does and still would;
+- **an error only a concrete twin would report**: none was seen;
+- **where the substitution happens**: in the processor, keeping the 4 101 facts (the smallest change), or in the readers
+  of the signature, which also removes the facts and their tax.
+
+Estimate: the ~1.8 s those 4 101 checks cost becomes ~719 parametric checks (~0.3 s) and 4 101 substitutions of
+microseconds, so **1.2–1.5 s, 8–10% of a cold build**, and a larger share in a larger program, whose instances grow
+faster than its definitions. It is the one-signature step of I6. A body checked once is the rest of I6, and it is not
+measured here.
