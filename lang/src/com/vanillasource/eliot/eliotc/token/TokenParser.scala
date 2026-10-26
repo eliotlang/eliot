@@ -145,10 +145,11 @@ class TokenParser(sourced: Sourced[?]) {
 
   private lazy val position: Parsley[Position] = pos.map(Position.apply.tupled)
 
-  private def sourcedLexeme[T](parser: Parsley[T]): Parsley[Sourced[T]] = for {
-    from <- position
-    t    <- markAsToken(parser)
-    to   <- position
-    _    <- lexer.space.whiteSpace
-  } yield sourced.as(t).reFocus(PositionRange(from, to))
+  private def sourcedLexeme[T](parser: Parsley[T]): Parsley[Sourced[T]] =
+    parsley.lift.lift3(
+      (from: Position, t: T, to: Position) => sourced.as(t).reFocus(PositionRange(from, to)),
+      position,
+      markAsToken(parser),
+      position
+    ) <* lexer.space.whiteSpace
 }
