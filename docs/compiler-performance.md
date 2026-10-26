@@ -6,7 +6,9 @@ slower**, and it weakens I2 as a processor-by-processor migration. §6 also corr
 read. §7 records the second, 2026-10-26: §1's third in the run loop reproduces, and it was mostly the `CompilerIO`
 transformer stack. **One reader over `IO` instead of it makes a cold build 23% faster**, every jar byte-identical, with
 no processor changed; it is adopted. §8 records the third, the cache save's hashing: it was the save's memo of values,
-not fact keys, and memoizing by identity instead makes a cold build **16% faster**; adopted.
+not fact keys, and memoizing by identity instead makes a cold build **16% faster**; adopted. §9 sizes the cache by fact
+type: 83% of it was the `Map` codec writing each file's dictionary into every value, and sharing it makes the store
+79% smaller and a cold build **12% faster**; storing no value for pure one-to-one stages saves little.
 
 The goal (Robert, 2026-10-24): *"A cold compile of the build project should not take 1 minute. It should take a
 couple of seconds actually. We need some very fundamental ideas to break through here."* eliot-build's launcher is
@@ -523,3 +525,81 @@ time:
 - The save is still a third of the build, now for its encoding mechanics rather than its hashing. That is I5's ground:
   writing fewer entries (a fact type cached only when recomputing costs more than loading), writing behind on another
   core, and a cheaper object encoding.
+
+## 9. What the cache holds, and which values pay (2026-10-26)
+
+Robert's question: a pure step from one fact to the next adds nothing a recomputation could not give back, so can the
+cache stop storing those? A probe in the save (env-gated, thrown away afterwards) recorded, per fact key type, its
+entries, the bytes its values appended and its dependency edges, on a cold build of eliot-build at `f811acc0`.
+
+### 9.1 Where the 61 MB was
+
+| fact | entries | value bytes | edges |
+|---|---|---|---|
+| `ModuleValue` | 7 269 | 32.1 MB | 230 179 |
+| `UnifiedModuleValue` | 3 999 | 18.2 MB | 13 821 |
+| `GeneratedModule` (the bytecode) | 50 | 3.3 MB | 8 332 |
+| everything else, 40 types | 62 844 | 7.0 MB | 480 441 |
+| total | 74 162 | 60.6 MB | 732 773 |
+
+**83% of the store was two facts, and neither for its content.** Both carry their file's `dictionary`, and the
+`Map` codec wrote its entries **inline**, into the body of the object holding it, rather than as an object of its
+own (`FactCodec`'s `given FactCodec[Map[K, V]]`, unlike a product, a sum or a `String`, never passed through
+`Output.shared`). So every value of a file wrote the file's whole dictionary again, about 4 KB a value, which content
+addressing could not dedup because the dictionary was never a separate object. Routing the `Map` codec through
+`shared`, one line, changes it:
+
+| | cold | warm | objects | index |
+|---|---|---|---|---|
+| `f811acc0` | 26.2, 26.6 s | 5.9 s | 61.3 MB | 4.8 MB |
+| `Map` shared | 23.2, 23.3 s (**−12%**) | 5.6 s | 12.9 MB (**−79%**) | 4.8 MB |
+
+Alternated in one session, jar `a74475df…` every time, the incremental jar below identical to it. The probe's value
+encoding fell from 6.1 s to 3.2 s. Sharing every other collection too (`Seq`, `List`, `Set`, `Vector`) changes nothing
+(12.9 MB, 23.3 s): no other collection repeats across objects. Not adopted yet: it needs the suites and the sweep.
+
+### 9.2 Dropping values the next stage could recompute
+
+On top of the shared `Map`, a switch (`ELIOT_NO_VALUE`, experiment only) saved selected key types with no value, the
+entry keeping its edges, which is the existing path for a fact without a codec: the drill validates through it, and
+a dependent that must recompute regenerates it. Measured cold, warm with nothing changed, after one string literal
+in `Command.els` changed (`edit`), and after it changed back (`back`). Each variant alternated with A in one
+session; every jar identical to A's.
+
+| variant: values not stored | store | cold | warm | edit |
+|---|---|---|---|---|
+| A: none | 17.7 MB | 22.9–23.6 s | 5.6 s | 10.0–10.5 s |
+| B: 15 middle stages (front end, per definition, post-mono) | 11.2 MB | 20.5–20.6 s (−11%) | 5.3 s | 12.0–12.2 s (**+20%**) |
+| C: B, but `ModuleValue` kept | 13.8 MB | 21.4–21.5 s | 5.4 s | 12.2–12.5 s |
+| D: the 9 read only by the next stage of the same definition or file | 15.3 MB | 22.0–22.2 s (−4%) | 5.6 s | 10.8–11.0 s (+7%) |
+| E: the 6 with one dependency each (`SourceTokens`, `SourceAST`, `CoreAST`, `BlockDesugaredValue`, `MatchDesugaredValue`, `ReconciledMonomorphicValue`) | 15.6 MB | 22.6–23.1 s | 5.7 s | 10.1–10.3 s |
+
+- **A truly one-to-one step is free to drop, and worth little** (E): −2 MB and no time either way. Content addressing
+  already took most of the saving the idea expects: a stage that changes a few nodes of a tree stores only those
+  nodes and refers to its predecessor's objects for the rest, so a one-to-one fact costs what it changed, not what it
+  holds (`BlockDesugaredValue`: 0.04 MB for 3 554 values).
+- **Most "middle" facts are not one-to-one, and their values do two jobs the edges cannot.** A value is what other
+  definitions read (`UnifiedModuleValue`, `OperatorResolvedValue`, `SaturatedValue`, `WovenValue` and
+  `UncurriedMonomorphicValue` are read by ten processors or more), and it is the **equality cutoff** wherever a
+  dependency moves while the value does not. `RecursionCheckedValue` has 13 edges a definition, to the bodies it
+  reaches; an edit anywhere among them moves a dependency, a stored value recomputes equal and stops there, and a
+  value-less one cannot be compared, so it counts as changed and everything after it recomputes for every definition
+  that reaches the edit. That is D's +7% and most of B's +20%.
+- So the rule for **I5's "cache what pays"** is three questions, not one: is the value read across definitions, is it
+  a cutoff point (a fact with several dependencies, or one fanning a file out into definitions), and does it cost
+  more to recompute than to load? Only a fact answering no to all three should go value-less. rustc's query system
+  splits the same thing into two knobs, `cache_on_disk_if` (store the value) and `no_hash` (no fingerprint, so no
+  cutoff). A fingerprint without a body, which this cache has no state for, would give D's size without its edit
+  cost; at 2 MB it is not worth the state.
+
+### 9.3 What it means
+
+- The size question had one answer, and it was a codec, not a policy. With it, the store is 18 MB, and **the index is
+  now 27% of it**: 733 000 edges. `ModuleValue` alone has 230 000, because each value builds its file's dictionary
+  from the names of every module the file imports (`ModuleValueProcessor` reads `UnifiedModuleNames` of each, about
+  30). One dictionary fact per file would take that to about 15 000 edges and build each dictionary once rather than
+  once per value; that is I4's coarse granularity at the one place the probe points to.
+- Fewer facts, not fewer values, is the aggressive direction (I4): an entry costs an index record, its edges, a key
+  object and the engine's tax whether or not it has a value, and dropping values only shrinks the smallest of those.
+- The save's remaining time is per-object encoding of what is now 13 MB, and writing it behind on another core (I5)
+  removes it from the wall time whatever its size.
