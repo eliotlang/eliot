@@ -596,10 +596,13 @@ session; every jar identical to A's.
 ### 9.3 What it means
 
 - The size question had one answer, and it was a codec, not a policy. With it, the store is 18 MB, and **the index is
-  now 27% of it**: 733 000 edges. `ModuleValue` alone has 230 000, because each value builds its file's dictionary
-  from the names of every module the file imports (`ModuleValueProcessor` reads `UnifiedModuleNames` of each, about
-  30). One dictionary fact per file would take that to about 15 000 edges and build each dictionary once rather than
-  once per value; that is I4's coarse granularity at the one place the probe points to.
+  now 27% of it**: 733 000 edges. `ModuleValue` alone has 230 000. `ModuleValueProcessor` builds a file's dictionary
+  once, from its `CoreAST`, its `ModuleNames` and the `UnifiedModuleNames` of every module it imports (about 30), and
+  registers all of the file's values from that one generation; a fact registered during a generation is recorded with
+  the generation's whole read set (`DependencyTrackingProcess.producedDuring`), so each value carries all ~32 edges.
+  One dictionary fact per file would carry the 30 once, and leave each value two (`CoreAST` and the dictionary): about
+  18 000 edges instead of 230 000, roughly 1 MB of index. The dictionary is already built once per file, so the gain
+  is the index and its validation, not compiling.
 - Fewer facts, not fewer values, is the aggressive direction (I4): an entry costs an index record, its edges, a key
   object and the engine's tax whether or not it has a value, and dropping values only shrinks the smallest of those.
 - The save's remaining time is per-object encoding of what is now 13 MB, and writing it behind on another core (I5)
