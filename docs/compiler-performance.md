@@ -1082,9 +1082,12 @@ What it should remove, from §13.3: 138 000 of the 139 573 links and their ~300 
 and the evaluation of each linked body's thunk, which a shared binding forces once instead of once per link.
 Estimated 0.8–1.4 s; plan for half.
 
-### 13.7 Built and measured: no measurable gain (2026-10-26)
+### 13.7 Built, measured at no gain, and reverted (2026-10-26)
 
-Built as §13.6 designed it (kept in the local stash *"perf experiment: ReducedInstance fact"*, not on master):
+> **Reverted** (Robert, 2026-10-26): built in `7d0f90b4`, reverted in `3efa5c22`. Do not re-propose memoizing these
+> links without a new fact that says hit reads are what costs.
+
+Built as §13.6 designed it:
 `ReducedInstance` and `ReducedInstanceProcessor`; `reduceInstance` and `reduceApplied` read it and link afresh only on
 `Unshared` or a refused read; `Linked` moved into the fact. In eliot-build, 2 614 instances are linked once each: 1 927
 shared, 687 absent, **none** unshared and no fresh link at all (the 2 614 are §13.3's 1 379 `reduceInstance` targets
@@ -1113,8 +1116,8 @@ per-read cost behind §13.3's estimate came from a probe that inflated every rea
 estimate here to come out at half or less of what was measured. A count of removed work times a per-unit cost taken from
 a profile is not a forecast; only an A/B is.
 
-Kept off master by the same test as §12.4: a fact type, a processor and a fallback path for a gain that the noise
-cannot tell from zero.
+Reverted by the same test as §12.4: a fact type, a processor and a fallback path for a gain that the noise cannot
+tell from zero.
 
 The ranking in §13.5 therefore has I2 alone at the top: the run loop is 45% of a check and 38% of the compilation, and
 it is the one cost every measurement so far agrees on.
