@@ -14,8 +14,8 @@ a thread of its own, and the index read and written through a buffer. A cold bui
 **47%** and an edited one **33%**. §11 profiles the result and fixes the fact keys' hash and the read path (−2%). §12
 ranks what is left on **one core**: parallel compilation (I3) is the last step by Robert's decision, and a sequential
 mode stays even then. §12 also measures I6 for signatures: almost every signature check of an instance is the substitution
-of its type arguments into the value's parametric signature, and §12.4 builds that: a cold build **3–4% faster**, warm
-flat, every jar identical.
+of its type arguments into the value's parametric signature. §12.4 built that, measured a cold build **3–4% faster**,
+and **reverted it**: the gain does not pay for a second path to a signature whose soundness is an argument.
 
 The goal (Robert, 2026-10-24): *"A cold compile of the build project should not take 1 minute. It should take a
 couple of seconds actually. We need some very fundamental ideas to break through here."* eliot-build's launcher is
@@ -778,7 +778,7 @@ near the leaf (the top frames `CompilerFactKey.hashCode`, still structural at ev
 
 | lever | what it removes | rough gain | needs |
 |---|---|---|---|
-| **I6 for signatures** (§12.2) | ~3 400 of the ~4 100 signature checks of an instance | **1.2–1.5 s** (built in §12.4: 0.5–0.7 s) | P4 |
+| **I6 for signatures** (§12.2) | ~3 400 of the ~4 100 signature checks of an instance | **1.2–1.5 s** (built in §12.4: 0.5–0.7 s; reverted) | P4 |
 | I2, direct-style queries | the run loop | ≤2.5 s | the largest refactor in the list |
 | I1, interning | the hashing and equality | ≤2 s | nothing; mechanical |
 | I9, a hand-written lexer and parser | most of the front end's 1.1 s of parsing | ~1 s | nothing |
@@ -850,7 +850,17 @@ microseconds, so **1.2–1.5 s, 8–10% of a cold build**, and a larger share in
 faster than its definitions. It is the one-signature step of I6. A body checked once is the rest of I6, and it is not
 measured here.
 
-### 12.4 Built: a signature checked once, instances by substitution (2026-10-26)
+### 12.4 Built, measured and reverted: a signature checked once, instances by substitution (2026-10-26)
+
+> **Reverted** (Robert, 2026-10-26), in the commit after `38937a26`, which built it. 0.5–0.7 s of a 17 s cold build,
+> within the run-to-run spread and nothing warm, does not pay for what it adds: a **second path** to an instance's
+> signature, where signature unification left one at every arity; a soundness argument that **already failed once**
+> (the miscompile below) and that the next native answering a placeholder definitely would break **silently**, not
+> loudly; and three mechanisms the engine did not have (a process refusing reads, a flag tied to one arm of
+> `processSignatureTwin`, a cycle check the per-value fact itself creates). Its gain also shrinks with every lever that
+> cheapens a check (I1, I2, below), which is the larger question it found: what *one* check costs. Do not re-propose it
+> without a new fact, such as a program whose values have many instances each, where the multi-instance rows below
+> would dominate. The record stays as it was built:
 
 Robert decided P4 for signatures (2026-10-26): reuse a signature checked with placeholders wherever that check
 succeeded without computing on a placeholder. Built in the processor, as §12.3's smallest change:

@@ -137,30 +137,6 @@ object GroundValue {
             case _                                             => WellKnownTypes.anyFQN
           }
       }
-
-    /** This value with `arguments(i)` in place of every `Param(i)` — how an instance's signature is read off its value's
-      * [[ParametricSignature]]. A `Param` past the arguments stays, as a partial-arity read-back keeps it. An applied
-      * `Param(i, spine)` appends the spine to its argument's own arguments (`F[Unit]` at `F := List` is `List[Unit]`),
-      * and is `None` when the argument is not a structure the spine can extend.
-      */
-    def substituteParams(arguments: Seq[GroundValue]): Option[GroundValue] =
-      gv match {
-        case Param(index, spine, valueType) if index < arguments.size =>
-          (spine.traverse(_.substituteParams(arguments)), valueType.substituteParams(arguments)).tupled.flatMap {
-            case (Seq(), _)                 => Some(arguments(index))
-            case (applied, appliedType)     =>
-              arguments(index) match {
-                case Structure(name, args, _) => Some(Structure(name, args ++ applied, appliedType))
-                case _                        => None
-              }
-          }
-        case Param(index, spine, valueType)                           =>
-          (spine.traverse(_.substituteParams(arguments)), valueType.substituteParams(arguments)).mapN(Param(index, _, _))
-        case Structure(name, args, valueType)                         =>
-          (args.traverse(_.substituteParams(arguments)), valueType.substituteParams(arguments)).mapN(Structure(name, _, _))
-        case Direct(value, valueType)                                 => valueType.substituteParams(arguments).map(Direct(value, _))
-        case Type                                                     => Some(Type)
-      }
   }
 
   given Eq[GroundValue] = Eq.fromUniversalEquals

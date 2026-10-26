@@ -76,7 +76,6 @@ object LangProgressDescriber extends ProgressDescriber {
       case NativeBinding.Key(vfqn, _)                      => checking(vfqn.moduleName)
       case MonomorphicValue.Key(vfqn, _)                   => checking(vfqn.moduleName)
       case CompilerMonomorphicValue.Key(vfqn, _)           => checking(vfqn.moduleName)
-      case ParametricSignature.Key(vfqn)                   => checking(vfqn.moduleName)
       case AbilityImplementation.Key(ability, _, _)        => checking(ability.moduleName)
       case AbilityImplementationCheck.Key(ability, _, _)   => checking(ability.moduleName)
       case ModuleAbilityOverlapCheck.Key(moduleName, _, _) => checking(moduleName)
