@@ -1041,3 +1041,43 @@ The ranking from §12.1, revised:
 I2 is still the largest lever. The memoized link is the largest lever that does not touch every processor. It also has
 a clear first step: an isolated probe comparing memoized links with fresh ones, the same as §12.2, which costs an
 afternoon and decides it.
+
+### 13.6 The probe: a link never depends on who asked (2026-10-26)
+
+§13.3's open question was whether the request chain ever changes a link. Two things in a link read it:
+`collectBindings` skips a reference whose `NativeBinding` is an ancestor, and the engine refuses a read of a
+`CompilerMonomorphicValue` that is in progress, which `reduceInstance` takes as "no reduced form". The probe (in
+`ReducedBindingClosure`, reverted) recorded every link's **shape**: for each reference, in traversal order, whether it
+was skipped as an ancestor, linked raw (with or without a binding) or linked deep, and the deep link's own shape,
+recursively. The first shape of each `(value, type arguments)` was kept per compilation session (keyed by the engine
+instance, so tests sharing a JVM never meet), and every later link was compared with it:
+
+| corpus | links | first in session | same shape | different | ancestor skip anywhere | no `CompilerMonomorphicValue` |
+|---|---|---|---|---|---|---|
+| eliot-build | 139 573 | 1 379 | 138 194 | **0** | **0** | 0 |
+| the 52 examples | 9 735 | 1 679 | 8 056 | **0** | **0** | 3 |
+| `lang.test` | 25 | 14 | 11 | **0** | **0** | 0 |
+| `jvm.test` | 148 887 | 20 919 | 127 968 | **0** | **0** | 46 |
+
+All 49 links with no `CompilerMonomorphicValue` are genuine, **none** on the chain: a type constructor
+(`Test::Box^Type` and four more) or `eliot.lang.Any::Any`, which have no compile-track value at all. The eliot-build jar
+stayed `a74475df…` and both suites passed under the probe.
+
+**So in every program we have, a link is a function of `(value, type arguments)` alone.** The guards exist for a cycle
+that no corpus reaches. That does not make sharing sound by itself, since a future program could reach one, but it
+makes the fail-safe design cost nothing:
+
+- `ReducedInstance(vfqn, typeArguments)` holds the `Linked` (body, bindings, instance names), with no value codec, as
+  `NativeBinding` has none. `reduceInstance` returns its binding; `reduceApplied` takes its `Linked` instead of linking
+  the callee's body itself, since that is the same `collectBindings(…, deep = true)` of the same body. A deep reference
+  is a read of the reference's own `ReducedInstance`, so each instance is linked once in total.
+- **A link that touched the chain is not shared.** If any guard fires while a `ReducedInstance` is generated (an ancestor
+  skipped, a `CompilerMonomorphicValue` or a `ReducedInstance` refused as on the chain), it is answered as "not
+  shareable", and every reader links fresh, exactly as today. A reader whose own chain holds the instance's
+  `CompilerMonomorphicValue` does not read the fact, and gets today's "no reduced form". On the corpora above the
+  fallback is never taken, so the fact always answers; in a program that does reach a cycle, the answer is today's.
+- That answer is a value (`None`), not a decline: §12.4 found that a decline is regenerated on every warm build.
+
+What it should remove, from §13.3: 138 000 of the 139 573 links and their ~300 000 reads, about 29% of all fact reads,
+and the evaluation of each linked body's thunk, which a shared binding forces once instead of once per link.
+Estimated 0.8–1.4 s; plan for half.
