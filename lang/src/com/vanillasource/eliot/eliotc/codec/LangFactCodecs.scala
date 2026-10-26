@@ -225,8 +225,6 @@ object LangFactCodecs {
       : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.fact.ContributedBinding.Key] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_monomorphize_fact_NativeBinding_Key
       : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.fact.NativeBinding.Key] = FactCodec.derived
-  given codec_com_vanillasource_eliot_eliotc_monomorphize_fact_ReducedInstance_Key
-      : FactCodec[com.vanillasource.eliot.eliotc.monomorphize.fact.ReducedInstance.Key] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_token_SourceTokens
       : FactCodec[com.vanillasource.eliot.eliotc.token.SourceTokens] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_token_SourceTokens_Key
@@ -583,7 +581,6 @@ object LangFactCodecs {
   val keyCodecs: FactKeyCodecs.Registry = Map(
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_monomorphize_fact_ContributedBinding_Key),
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_monomorphize_fact_NativeBinding_Key),
-    FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_monomorphize_fact_ReducedInstance_Key),
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_uncurry_fact_UncurriedMonomorphicValue_Key),
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_resolve_fact_ResolvedValue_Key),
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_used_UsedNames_Key),

@@ -45,7 +45,7 @@ class FactCodecConformanceTest extends AsyncFlatSpec with AsyncIOSpec with Match
       |
       |def main uses Console: Unit = printLine(greet("world"))""".stripMargin
 
-  private val expectedDeclines = Set("ContributedBinding", "NativeBinding", "ReducedInstance")
+  private val expectedDeclines = Set("ContributedBinding", "NativeBinding")
 
   "the fact model" should "decline to persist only the values that cannot be equality-stable" in {
     withFacts(facts => IO.pure(facts.filter(_.key().valueCodec.isEmpty).map(simpleName).toSet shouldBe expectedDeclines))
