@@ -1152,7 +1152,7 @@ Four earlier cold pairs agree (18.56 → 14.04 s). The compilation also needs **
 with twenty workers and 933 with one, because the same work runs on one warm core. Warm builds do not move, since they
 generate almost nothing.
 
-For the CLI this is `computeWorkerThreadCount = 1` in `Main`. Nothing in a processor forks today, so it is the
+**Adopted for the CLI (2026-10-26)**: `computeWorkerThreadCount = 1` in `Main`; the example sweep is identical. Nothing in a processor forks today, so it is the
 sequential mode made explicit. It does not settle I3: parallel facts need a different structure anyway (§14.3). The LSP
 runs on `IORuntime.global` with one compile session per package. There the equivalent is each session's compile
 running on a single-thread executor of its own (`evalOn`), which has not been measured.
