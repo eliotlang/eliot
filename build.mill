@@ -147,7 +147,7 @@ object `package` extends Module {
      override def scalaVersion = "3.7.4"
 
      override def mvnDeps = Seq(
-       mvn"org.typelevel::cats-effect:3.5.2",
+       mvn"org.typelevel::cats-effect:3.6.3",
        mvn"org.typelevel::cats-collections-core:0.9.9",
        mvn"org.apache.logging.log4j:log4j-core:2.22.1",
        mvn"com.github.scopt::scopt:4.1.0",
