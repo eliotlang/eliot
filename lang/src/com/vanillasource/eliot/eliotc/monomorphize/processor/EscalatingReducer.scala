@@ -35,10 +35,10 @@ object EscalatingReducer {
   /** Reduce compiler-track value `vfqn` at concrete `typeArguments`, applied to `argMetas`, to a ground value — linking
     * only monomorphized callees.
     *
-    *   1. fetch `CompilerMonomorphicValue(vfqn, typeArguments)`'s reduced body;
-    *   1. link each of its value references **reduced at its own ground type arguments**
-    *      ([[ReducedBindingClosure.collectBindings]], `deep = true`): linked raw, one hop at a time, a `where` over
-    *      `rangeWithin[0, 255](range(x))` does not evaluate (`WhereOnDefIntegrationTest`);
+    *   1. take `CompilerMonomorphicValue(vfqn, typeArguments)`'s reduced body with each of its value references linked
+    *      **reduced at its own ground type arguments** ([[ReducedBindingClosure.linkedInstance]], linked once per
+    *      instance): linked raw, one hop at a time, a `where` over `rangeWithin[0, 255](range(x))` does not evaluate
+    *      (`WhereOnDefIntegrationTest`);
     *   1. evaluate the reduced body, apply `argMetas`, and `renormalize` (re-fires natives; empty store), and quote.
     *
     * [[None]] when the value produced no `CompilerMonomorphicValue`, has no reduced body, or the final result does not
@@ -49,26 +49,24 @@ object EscalatingReducer {
       typeArguments: Seq[GroundValue],
       argMetas: Seq[SemValue]
   ): CompilerIO[Option[GroundValue]] =
-    getFactIfProduced(CompilerMonomorphicValue.Key(vfqn, typeArguments)).flatMap {
-      case Some(CompilerMonomorphicValue(_, _, _, _, Some(reduced), _)) =>
+    ReducedBindingClosure.linkedInstance(vfqn, typeArguments).flatMap {
+      case Some(linked) =>
         // Every callee is linked reduced at its own instantiation from the start, so there is nothing left to
         // escalate to.
-        ReducedBindingClosure.collectBindings(reduced.value, vfqn, Platform.Compiler, deep = true).flatMap { linked =>
-          def evalWith(extra: Map[ValueFQN, SemValue]): SemValue = {
-            val lookup  = linked.lookup(extra)
-            val body    =
-              new MonomorphicEvaluator(lookup).eval(Env.empty, MonomorphicExpression(GroundValue.Type, linked.body))
-            val applied = argMetas.foldLeft(body)(Evaluator.applyValue)
-            Evaluator.renormalize(applied, FlexStore.empty, lookup, deep = true)
-          }
-          escalatingLoop(
-            FlexStore.empty,
-            evalWith,
-            _ => Map.empty[ValueFQN, SemValue].pure[CompilerIO],
-            channelStuck
-          ).map(result => Quoter.quote(0, result, FlexStore.empty).toOption.filterNot(isAbstractAbilityStructure))
+        def evalWith(extra: Map[ValueFQN, SemValue]): SemValue = {
+          val lookup  = linked.lookup(extra)
+          val body    =
+            new MonomorphicEvaluator(lookup).eval(Env.empty, MonomorphicExpression(GroundValue.Type, linked.body))
+          val applied = argMetas.foldLeft(body)(Evaluator.applyValue)
+          Evaluator.renormalize(applied, FlexStore.empty, lookup, deep = true)
         }
-      case _                                                         => none[GroundValue].pure[CompilerIO]
+        escalatingLoop(
+          FlexStore.empty,
+          evalWith,
+          _ => Map.empty[ValueFQN, SemValue].pure[CompilerIO],
+          channelStuck
+        ).map(result => Quoter.quote(0, result, FlexStore.empty).toOption.filterNot(isAbstractAbilityStructure))
+      case None         => none[GroundValue].pure[CompilerIO]
     }
 
   /** The channel instantiation of [[escalatingLoop]]'s stuck predicate: [[reducibleStuck]] *plus* a stuck abstract-

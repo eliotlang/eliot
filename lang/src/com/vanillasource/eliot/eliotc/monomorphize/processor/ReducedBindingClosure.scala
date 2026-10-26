@@ -9,7 +9,8 @@ import com.vanillasource.eliot.eliotc.monomorphize.fact.{
   CompilerMonomorphicValue,
   GroundValue,
   MonomorphicExpression,
-  NativeBinding
+  NativeBinding,
+  ReducedInstance
 }
 import com.vanillasource.eliot.eliotc.platform.Platform
 import com.vanillasource.eliot.eliotc.processor.CompilerIO.*
@@ -39,22 +40,98 @@ object ReducedBindingClosure {
     * escalation shared by [[com.vanillasource.eliot.eliotc.monomorphize.check.PostDrainQuoter]] and
     * [[EscalatingReducer]] fetches this for each value reference that blocks a signature/body read-back.
     *
-    * It always reduces **deep** ([[collectBindings]] with `deep = true`): each dependency is itself taken reduced at
-    * its own instantiation — a reduced *function* body (`else`, `catch`) keeps its impl-dispatch dependencies
-    * structural (they close over its runtime value parameters), and applying it to concrete arguments must reach those
-    * dependencies already reduced rather than a still-abstract raw binding. It is driven by
-    * [[EscalatingReducer.escalatingLoop]]'s laziness (a *stuck* term escalates). Always the compiler track: a
-    * compile-time reduction never reaches a runtime target.
+    * It always reduces **deep**: each dependency is itself taken reduced at its own instantiation — a reduced *function*
+    * body (`else`, `catch`) keeps its impl-dispatch dependencies structural (they close over its runtime value
+    * parameters), and applying it to concrete arguments must reach those dependencies already reduced rather than a
+    * still-abstract raw binding. It is driven by [[EscalatingReducer.escalatingLoop]]'s laziness (a *stuck* term
+    * escalates). Always the compiler track: a compile-time reduction never reaches a runtime target.
+    *
+    * The instance is linked once, as its [[ReducedInstance]] fact; only a link that met the request chain is linked
+    * again here, in the reader's own context.
     */
   def reduceInstance(
       vfqn: ValueFQN,
       typeArguments: Seq[GroundValue]
   ): CompilerIO[Option[SemValue]] =
-    getFactIfProduced(CompilerMonomorphicValue.Key(vfqn, typeArguments)).flatMap {
-      case Some(cmv) =>
-        cmv.reduced.traverse(r => buildBinding(vfqn, r.value, Platform.Compiler, deep = true))
-      case None      => None.pure[CompilerIO]
+    instance(vfqn, typeArguments).map(_.map(_._2))
+
+  /** The linked reduced body of `vfqn` at `typeArguments`, as [[reduceInstance]] links it, for a reader that evaluates
+    * the body itself ([[EscalatingReducer.reduceApplied]]).
+    */
+  def linkedInstance(
+      vfqn: ValueFQN,
+      typeArguments: Seq[GroundValue]
+  ): CompilerIO[Option[ReducedInstance.Linked]] =
+    instance(vfqn, typeArguments).map(_.map(_._1))
+
+  /** The shared link if there is one, else this reader's own. A read refused because the instance is itself being
+    * linked up the chain is linked afresh too, as it was before the fact.
+    */
+  private def instance(
+      vfqn: ValueFQN,
+      typeArguments: Seq[GroundValue]
+  ): CompilerIO[Option[(ReducedInstance.Linked, SemValue)]] =
+    getFactIfProduced(ReducedInstance.Key(vfqn, typeArguments)).flatMap {
+      case Some(ReducedInstance(_, _, ReducedInstance.Link.Shared(linked, binding))) => (linked, binding).some.pure[CompilerIO]
+      case Some(ReducedInstance(_, _, ReducedInstance.Link.Absent))                  =>
+        none[(ReducedInstance.Linked, SemValue)].pure[CompilerIO]
+      case _                                                                         =>
+        getFactIfProduced(CompilerMonomorphicValue.Key(vfqn, typeArguments)).flatMap {
+          case Some(cmv) =>
+            cmv.reduced.traverse(r =>
+              collectBindings(r.value, vfqn, Platform.Compiler, deep = true).map(linked =>
+                (linked, bindingOf(vfqn, linked))
+              )
+            )
+          case None      => none[(ReducedInstance.Linked, SemValue)].pure[CompilerIO]
+        }
     }
+
+  /** Link `vfqn`'s reduced body for every reader: [[collectBindings]] with `deep`, except that a reference whose binding
+    * is in progress on the request chain, or a dependency whose own link is not shared, makes the whole link
+    * [[None]], since what it would bind there depends on who asked.
+    */
+  private[processor] def linkShared(
+      reduced: MonomorphicExpression.Expression,
+      selfFqn: ValueFQN
+  ): CompilerIO[Option[ReducedInstance.Linked]] = {
+    val (body, instances) = instanceNamed(reduced)
+    val references        = valueReferences(body).toList.map { case (name, typeArgs) =>
+      (name, instances.getOrElse(name, (name, typeArgs)))
+    }
+    activeFactKeys.flatMap { ancestors =>
+      references
+        .filterNot(_._2._1 == selfFqn)
+        .foldLeftM(Option(Map.empty[ValueFQN, SemValue])) {
+          case (None, _)                                                                             => none[Map[ValueFQN, SemValue]].pure[CompilerIO]
+          case (Some(_), (_, (fqn, _))) if ancestors.contains(NativeBinding.Key(fqn, Platform.Compiler)) =>
+            none[Map[ValueFQN, SemValue]].pure[CompilerIO]
+          case (Some(acc), (name, (fqn, typeArgs)))                                                  =>
+            getFactIfProduced(ReducedInstance.Key(fqn, typeArgs)).flatMap {
+              case Some(ReducedInstance(_, _, ReducedInstance.Link.Shared(_, binding))) =>
+                (acc + (name -> binding)).some.pure[CompilerIO]
+              case Some(ReducedInstance(_, _, ReducedInstance.Link.Absent))             =>
+                getFactIfProduced(NativeBinding.Key(fqn, Platform.Compiler)).map {
+                  case Some(binding) => Some(binding.semValue.fold(acc)(sv => acc + (name -> sv)))
+                  case None          => Some(acc)
+                }
+              case _                                                                    => none[Map[ValueFQN, SemValue]].pure[CompilerIO]
+            }
+        }
+        .map(_.map(ReducedInstance.Linked(body, _, instances)))
+    }
+  }
+
+  /** The binding of a linked body: a `VTopDef` whose thunk evaluates it. */
+  private[processor] def bindingOf(vfqn: ValueFQN, linked: ReducedInstance.Linked): SemValue =
+    VTopDef(
+      vfqn,
+      Some(Lazy {
+        val evaluator = new MonomorphicEvaluator(linked.lookup(Map.empty))
+        evaluator.eval(Env.empty, MonomorphicExpression(GroundValue.Type, linked.body))
+      }),
+      Spine.SNil
+    )
 
   /** Build the NbE binding for `vfqn` from its reduced compile-time body, resolving each dependency's binding in the
     * given `platform` pool. The dependencies are resolved once here; the resulting `VTopDef` thunk is self-contained,
@@ -66,44 +143,7 @@ object ReducedBindingClosure {
       platform: Platform,
       deep: Boolean = false
   ): CompilerIO[SemValue] =
-    for {
-      linked <- collectBindings(reduced, vfqn, platform, deep)
-    } yield VTopDef(
-      vfqn,
-      Some(Lazy {
-        val evaluator = new MonomorphicEvaluator(linked.lookup(Map.empty))
-        evaluator.eval(Env.empty, MonomorphicExpression(GroundValue.Type, linked.body))
-      }),
-      Spine.SNil
-    )
-
-  /** A reduced body with the bindings of its value references, ready to evaluate. A [[MonomorphicEvaluator]] looks a
-    * reference up by its FQN alone, so when [[collectBindings]] links a callee reduced at two instantiations, each
-    * instantiation's references are renamed apart in `body` (`f#0`, `f#1`) and `instances` answers each new name with
-    * the reference it stands for — the scheme `PostDrainQuoter.reduceThreaded` uses for the same reason.
-    *
-    * @param bindings
-    *   The binding of each reference in `body`, by the name it has there.
-    * @param instances
-    *   Each renamed reference's original FQN and ground type arguments.
-    */
-  case class Linked(
-      body: MonomorphicExpression.Expression,
-      bindings: Map[ValueFQN, SemValue],
-      instances: Map[ValueFQN, (ValueFQN, Seq[GroundValue])]
-  ) {
-
-    /** The lookup evaluating `body`: `extra` first, then the linked bindings. A renamed reference left unlinked (an
-      * ancestor on the fact chain) is the stuck definition of its original name, exactly what the evaluator makes of an
-      * unbound reference — never a definition named after the instance.
-      */
-    def lookup(extra: Map[ValueFQN, SemValue]): ValueFQN => Option[SemValue] =
-      name =>
-        extra
-          .get(name)
-          .orElse(bindings.get(name))
-          .orElse(instances.get(name).map { case (original, _) => VTopDef(original, None, Spine.SNil) })
-  }
+    collectBindings(reduced, vfqn, platform, deep).map(bindingOf(vfqn, _))
 
   /** Collect the binding of every value reference in the reduced body, skipping the value's own FQN and any FQN already
     * an ancestor on the active fact-request chain (the same mutual-recursion guard [[BindingClosure]] uses). By default
@@ -117,7 +157,7 @@ object ReducedBindingClosure {
     * arguments, so the already-instantiated reduced dependency is used directly with no re-application. A dependency
     * with no reduced form (a native leaf, a `data` constructor) falls back to its raw [[NativeBinding]] body.
     *
-    * A deep callee referenced at two instantiations is two bindings, so its references are renamed apart ([[Linked]]):
+    * A deep callee referenced at two instantiations is two bindings, so its references are renamed apart ([[ReducedInstance.Linked]]):
     * keyed by FQN, `pickOf[BigInteger]` and `pickOf[String]` were one binding, the last linked, and a `where` over both
     * read the wrong implementation for one of them (`docs/effects.md` §8 item 49).
     */
@@ -126,7 +166,7 @@ object ReducedBindingClosure {
       selfFqn: ValueFQN,
       platform: Platform,
       deep: Boolean
-  ): CompilerIO[Linked] = {
+  ): CompilerIO[ReducedInstance.Linked] = {
     val (body, instances) =
       if (deep) instanceNamed(reduced)
       else (reduced, Map.empty[ValueFQN, (ValueFQN, Seq[GroundValue])])
@@ -153,10 +193,10 @@ object ReducedBindingClosure {
           }
         }
       }
-      .map(Linked(body, _, instances))
+      .map(ReducedInstance.Linked(body, _, instances))
   }
 
-  /** Rename apart the references to every FQN `expr` references at more than one instantiation, as [[Linked]]
+  /** Rename apart the references to every FQN `expr` references at more than one instantiation, as [[ReducedInstance.Linked]]
     * describes. A reference to an FQN at a single instantiation keeps its name.
     */
   private def instanceNamed(
