@@ -23,7 +23,9 @@ from 17.9 s to 10.9 s cold. §15 starts parallel compilation (I3): the plan — 
 processor hints what it will read instead of forking — and its first step, built: **no processor reads the request
 chain any more**. Four did, each to answer differently inside a cycle, and none of them fired anywhere; the one cycle
 a user can write, two instances constrained by each other, is now an error instead of an answer that depended on who
-asked first.
+asked first. §15.3 measures the ceiling from one recorded run: the fact graph allows **8.5–9.7×** (8.7–8.9× on twenty
+cores), but hints that name only what a processor can know give **3.4–4.5×**, because the derived metas are one serial
+chain of interpretation, 807 ms long. A warm JVM now halves a cold build.
 
 The goal (Robert, 2026-10-24): *"A cold compile of the build project should not take 1 minute. It should take a
 couple of seconds actually. We need some very fundamental ideas to break through here."* eliot-build's launcher is
@@ -1382,3 +1384,100 @@ Verified: every suite green (`./mill __.test`, 2 306 tests: two that observed `a
 the example sweep identical to the baseline, md5s included; eliot-build's jar `a74475df…`.
 
 Next is step 2 of §15.1: the ceiling, from one sequential run's self times and edges.
+
+### 15.3 Step 2, measured: the ceiling (2026-10-27)
+
+**The probe.** For one sequential run, the engine recorded every generation's start, end and nesting, and every read
+and push with its offset into the reading generation's *self* time: wall time minus the generations nested inside it.
+A simulator then replays the run as a parallel schedule: each generation is its recorded sequence of self work, reads
+and pushes; a read waits until its fact exists; a pushed fact exists from the moment of its push; and `P` workers run
+whatever is not waiting. Scheduling, latches and contention cost nothing in it. The probe changes nothing it measures:
+eliot-build's jar is `a74475df…` in every probed run, and it costs about 5% (9.98 → 10.52 s cold). It was reverted
+afterwards and kept in the stash "perf probe: ceiling (§15.3)", simulator included (`scripts/perf/ceiling.py`).
+
+Two recordings, because JIT warm-up turned out to be half of a cold build (below): a cold JVM (the CLI as it is), and
+the fourth of four compiles in one JVM (the JIT warm, the algorithm alone).
+
+**The ceiling.** If every generation may start as soon as its inputs exist, the critical path is the longest chain
+of self work through the reads:
+
+| | work (Σ self) | critical path | ∞ cores | 20 | 8 | 4 |
+|---|---|---|---|---|---|---|
+| cold JVM | 8.46 s | 0.94 s | 9.0× | 8.9× | 6.5× | 3.6× |
+| JIT warm | 4.24 s | 0.44 s | 9.7× | 8.7× | 5.6× | 3.4× |
+
+So §3's 4–8× is there in the graph. The cold critical path starts with one file's tokens and AST, 315 ms of it,
+because the first file is lexed by the interpreter; later files take about 3 ms each. With the JIT warm, almost half of
+it is the jar: `GenerateExecutableJar` is **200 ms of self time** at the very end, one fact, with nothing beside it.
+The rest of the chain is one module's bytecode (77 ms) and a few single checks that a GC pause landed in.
+
+**The ceiling needs nothing but each generation knowing its reads when it starts.** In the demand-driven model, a
+generation starts only when something reads it. If every generation hints all its reads when it starts, the
+simulation reaches the ceiling exactly (0.486 against 0.485 s, JIT warm, 20 cores). How close a real schedule gets is
+therefore a question of how early each processor can name what it will read.
+
+**A hint at every `traverse` gives nothing.** Treating reads with less than ε of self work between them as one
+prefetched batch gives 1.0× for ε ≤ 1 µs, 1.4× for 10 µs, and 3.9× only at 100 µs. A fan-out's reads are spread
+out by the work done on each answer before the next read. §15.1's hint is the right shape. Placing one at every
+`traverse` is not.
+
+**Where to hint: four kinds of fact.** Greedy search over "this kind of generation hints all its reads at its start",
+with 20 cores, picks the same sites in both recordings: `UsedNames` (1.6–1.85× on its own), `DerivedMeta`,
+`GenerateExecutableJar` and `GeneratedModule`. Together they give 7.2× JIT warm and 8.0× cold, against ceilings of
+8.7× and 8.9×. The front end per file adds nothing measurable: what reads a file's facts is already parallel once the
+values above it are.
+
+**What a hint can actually know.** The greedy search is an oracle about *what* each site reads. For three of the four
+sites the oracle is honest. Bytecode and the jar know their reads from the used names. The `used` walk was given the
+hint it would really make: the probe recorded, at each woven body the walk reads, the `WovenValue` keys of the
+references in it (4 276 hints). `DerivedMeta` is the exception. Its key holds the argument metas and the store (§13,
+decision S), and those come out of interpreting the caller, so a derivation can name its callees' derived metas only
+as it reaches them. What it can name at its start is everything keyed by callee and type arguments alone: the checked
+bodies and companions on the compile track, the bindings and the runtime bodies. The realistic rows hint exactly those:
+
+| hints (20 cores) | cold JVM | JIT warm |
+|---|---|---|
+| none | 1.0× | 1.0× |
+| the `used` walk's real hint, bytecode, jar | 3.0× | 2.2× |
+| + `DerivedMeta` hints its reads keyed by callee and type arguments | 4.3× | 3.4× |
+| + the same for the derived metas it calls, one level down | 4.5× | 3.5× |
+| + `DerivedMeta` knows its callees' derived metas too (oracle) | 7.6× | 8.8× |
+| ceiling | 8.5× | 9.7× |
+
+(These two recordings ran beside another simulation, so their work is 10.2 and 5.0 s rather than 8.5 and 4.2 s. The
+ratios agree with the clean recordings; the absolute times are not comparable.)
+
+**The derived metas are one serial chain.** In the best realistic schedule (JIT warm, 1.40 s), the critical path is
+14 804 generations long, and 10 270 of them are `DerivedMeta`: **807 ms of derived-meta self time**, almost all the
+derivation the build does. Beside it are the jar's 200 ms and 195 ms of compile-track checks. Only 69 derivations are
+started from outside (by `RefinementTable`); the other 5 475 are started by a derivation one level up, nested up to 93
+deep. Each calls the next with metas it has just computed, and each first call of a callee reaches that callee's
+compile-track check and front end. Without that chain the rest of the build parallelizes to about the ceiling (the
+oracle row). Within it, a hint cannot help, because the next key does not exist until the call before it has been
+interpreted.
+
+**JIT warm-up is half of a cold build.** The same compile four times in one JVM: 10.4, 5.9, 5.2, 5.1 s, all with the
+jar `a74475df…`. On 2026-10-24, at 52–59 s a build, a warm JVM saved 14% (§1), and §5 set a daemon and a native
+image aside on that figure. Now that the administration is gone, a warm JVM saves half. This is not a parallelism
+finding, but it reopens that question.
+In a parallel run, warm-up happens on many threads at once, so the cold row above is the less certain one.
+
+### 15.4 What it means
+
+- **The parallelism is real, but it is behind the derived metas.** With hints that only name what they can know,
+  20 cores give **3.4–4.5×**. Most of that comes from four sites: the `used` walk, `DerivedMeta`'s statically keyed
+  reads, and the jar and bytecode. The ceiling of 8.5–9.7× needs the meta derivation to stop being one chain.
+- **The chain is a property of the derivation, not of the engine.** Getting past it means either a derivation that
+  forks: calls whose argument metas do not depend on one another, interpreted in parallel, which is parallelism
+  *inside* one generation and against §15.1's rule. Or derivations that start before their caller reaches them:
+  each used value's derivation demanded at its own entry metas from the `used` walk, which is a different set of
+  keys and not something a schedule can produce. Both are design questions for Robert, not engine work, and neither
+  is needed for the first 3–4×.
+- **Eight cores take what is there.** In every realistic row, 8 cores are within 10–15% of 20.
+- **The jar is the critical path's largest single fact** once the derivation is out of the way: 200 ms, serial, at the
+  end. Writing its entries in parallel, or less compression, is a separate, local lever.
+- **For the plan (§15.1):** step 3, the latch engine with `prefetch` a no-op, is unchanged. Step 4 starts with the
+  `used` walk (hint a woven body's references), then bytecode per module and the jar, then `DerivedMeta`'s statically
+  keyed reads, each measured against the sequential mode. The front end per file is not worth a hint of its own.
+  A real run should land below these figures, because contention, GC and JIT warm-up on many threads are not in the
+  model.
