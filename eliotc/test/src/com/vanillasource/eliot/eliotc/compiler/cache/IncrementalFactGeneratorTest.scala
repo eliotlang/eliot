@@ -408,26 +408,6 @@ class IncrementalFactGeneratorTest extends AsyncFlatSpec with AsyncIOSpec with M
     test.asserting(_ shouldBe (Some(NumberFact("db", 20)), 1))
   }
 
-  it should "maintain the ancestor request chain in activeFactKeys during generation" in {
-    // chain d -> b -> a; when generating 'a' the chain is [a, b, d] (innermost first).
-    val test = for {
-      src     <- Ref.of[IO, Int](10)
-      counts  <- counters("a", "b", "d")
-      capture <- Ref.of[IO, Map[String, List[CompilerFactKey[?]]]](Map.empty)
-      proc     = graph(
-                   Map("a" -> Leaf(src), "b" -> Derived("a", _ + 1), "d" -> Derived("b", _ + 1)),
-                   counts,
-                   Some(capture)
-                 )
-      _       <- runBuild(proc, None)(_.getFact(NumberKey("d")))
-      chains  <- capture.get
-    } yield chains
-    test.asserting { chains =>
-      chains("a") shouldBe List(NumberKey("a"), NumberKey("b"), NumberKey("d"))
-      chains("d") shouldBe List(NumberKey("d"))
-    }
-  }
-
   it should "error on a self-cyclic fact demand instead of hanging" in {
     val test = for {
       counts <- counters("a")
@@ -444,6 +424,17 @@ class IncrementalFactGeneratorTest extends AsyncFlatSpec with AsyncIOSpec with M
       run    <- runBuild(proc, None)(g => g.getFact(NumberKey("a")).product(g.currentErrors()))
     } yield (run._1._1, run._1._2.map(_.message))
     test.asserting(_ shouldBe (None, Seq("Cyclic fact demand: NumberKey(a) <- NumberKey(b) <- NumberKey(a)")))
+  }
+
+  it should "refuse a cycle that closes several generations up the request chain" in {
+    val test = for {
+      counts <- counters("a", "b", "c")
+      proc    = graph(Map("a" -> Derived("b", identity), "b" -> Derived("c", identity), "c" -> Derived("a", identity)), counts)
+      run    <- runBuild(proc, None)(g => g.getFact(NumberKey("a")).product(g.currentErrors()))
+    } yield (run._1._1, run._1._2.map(_.message))
+    test.asserting(
+      _ shouldBe (None, Seq("Cyclic fact demand: NumberKey(a) <- NumberKey(c) <- NumberKey(b) <- NumberKey(a)"))
+    )
   }
 
   it should "give a pushed fact the pushing generation's dependency set in the cache" in {
@@ -653,9 +644,8 @@ object IncrementalFactGeneratorTest {
 
   def graph(
       defs: Map[String, Node],
-      counts: Map[String, Ref[IO, Int]],
-      capture: Option[Ref[IO, Map[String, List[CompilerFactKey[?]]]]] = None
-  ): CompilerProcessor = new GraphProcessor(defs, counts, capture)
+      counts: Map[String, Ref[IO, Int]]
+  ): CompilerProcessor = new GraphProcessor(defs, counts)
 
   def runBuild[A](processor: CompilerProcessor, prior: Option[FactCacheData])(
       body: Build => IO[A]
@@ -677,15 +667,11 @@ object IncrementalFactGeneratorTest {
 
   class GraphProcessor(
       defs: Map[String, Node],
-      counts: Map[String, Ref[IO, Int]],
-      capture: Option[Ref[IO, Map[String, List[CompilerFactKey[?]]]]]
+      counts: Map[String, Ref[IO, Int]]
   ) extends SingleFactProcessor[NumberKey] {
     override protected def generateSingleFact(key: NumberKey): CompilerIO[NumberFact] = {
       val tick = counts.get(key.name).fold(().pure[CompilerIO])(_.update(_ + 1).to[CompilerIO])
-      val rec  = capture.fold(().pure[CompilerIO])(ref =>
-        activeFactKeys.flatMap(keys => ref.update(_ + (key.name -> keys)).to[CompilerIO])
-      )
-      tick >> rec >> produce(key)
+      tick >> produce(key)
     }
 
     private def produce(key: NumberKey): CompilerIO[NumberFact] =

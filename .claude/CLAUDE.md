@@ -269,8 +269,10 @@ subset of its data.
     row), where selection is structural (pattern match) and then filtered twice: by the candidate's `where` guard, and by
     **constraint-aware declination** — a candidate whose `~` constraints have no implementation at the matched bindings
     declines. Every step of the check is fail-safe *towards keeping*, so it can only remove a candidate that could not
-    have worked. A constraint probe that leads back to a resolution already in progress is answered "satisfied" off
-    `activeFactKeys`, never demanded.
+    have worked. A constraint probe that leads back to a resolution already in progress is a **cycle** the engine
+    refuses, failing the build; a probe with no fact aborts the resolution. **No processor sees the request chain**
+    (`activeFactKeys` is deleted): an answer read off it depends on who asked first and is cached for everyone, and a
+    generation that had a read refused as cyclic registers nothing after it (`docs/compiler-performance.md` §15.2).
 13. **monomorphize** — the NbE monomorphic type checker: evaluates data and value definitions into typed
     structures and checks all types at every instantiated usage, with the single evaluator. (It absorbed the
     former standalone `eval` phase.) It produces `MonomorphicValue` (and `CompilerMonomorphicValue` on the compile

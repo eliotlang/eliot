@@ -23,7 +23,7 @@ import scala.annotation.tailrec
   * It is also the home of the **non-convergence backstop** (Deliverable A of the monomorphization-keying plan): because
   * `used` is the codegen driver that walks the *breadth* of the monomorphic fact graph, a divergent type-level
   * computation could make this DFS materialise specializations without bound — a hang/OOM. The breadth lives in this
-  * processor's own `processValue` descent (not in the global `activeFactKeys` chain, which only reflects *depth* across
+  * processor's own `processValue` descent (not in the engine's fact-request chain, which only reflects *depth* across
   * fact generations and stays flat here, since every [[com.vanillasource.eliot.eliotc.monomorphize.channel.WovenValue]]
   * is requested as a sibling of `used`), so the backstop tracks the chain of enclosing `processValue` frames
   * (`ancestors`) and, when more than [[maxNestedRepeats]] of them share the same `vfqn` with differing type arguments,

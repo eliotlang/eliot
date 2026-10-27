@@ -164,8 +164,10 @@ class AbilityResolver(
     * [[AbilityImplementation.Resolution]] outcome on the fact instead of erroring — the position belongs to the
     * demander, and this saturation pass is the demander: it holds the demanding reference, so the failure is reported
     * *here*, at the use site, and the value's monomorphization aborts (the hard error at the manifest instantiation,
-    * ability-guards §3). An **absent** fact means the resolution itself aborted on an upstream error already reported
-    * at its own definition, so nothing is added and the reference stays silently pending. A `Resolved` outcome cannot
+    * ability-guards §3). An **absent** fact means the resolution itself failed on an error already reported elsewhere —
+    * at the implementation's definition, or a cyclic constraint the engine refused — so nothing is added and the value's
+    * monomorphization aborts: an absent fact stays absent, and carrying on with the abstract method only reported a
+    * second, misleading error about it. A `Resolved` outcome cannot
     * reach this method (the `resolveAbility` callback returns it), but is left pending for the next round rather than
     * treated as an error, keeping the match total and fail-safe.
     */
@@ -177,7 +179,7 @@ class AbilityResolver(
     liftF(getFactIfProduced(AbilityImplementation.Key(ref.value, groundArgs, platform))).flatMap { factOpt =>
       val argsShown = groundArgs.map(GroundValueRenderer.render).mkString("[", ", ", "]")
       factOpt.map(_.resolution) match {
-        case None                                                      => pure(false)
+        case None                                                      => liftF(abort[Boolean])
         case Some(AbilityImplementation.Resolution.Resolved(_, _))     => pure(false)
         case Some(AbilityImplementation.Resolution.NoImplementation)   =>
           liftF(

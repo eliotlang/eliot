@@ -34,8 +34,6 @@ final class TimedCompilationProcess(underlying: CompilationProcess) extends Comp
     underlying.registerFact(value)
   }
 
-  override def activeFactKeys: List[CompilerFactKey[?]] = underlying.activeFactKeys
-
   def waited: FiniteDuration = FiniteDuration(waitedNanos.get(), NANOSECONDS)
 
   /** Whether the generation touched the compilation process at all — the infrastructure-level signal that the processor

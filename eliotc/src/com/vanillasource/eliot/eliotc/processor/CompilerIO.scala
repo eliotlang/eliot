@@ -109,13 +109,6 @@ object CompilerIO {
   def getFactIfProduced[V <: CompilerFact, K <: CompilerFactKey[V]](key: K): CompilerIO[Option[V]] =
     context => context.process.getFact(key)
 
-  /** The keys of the fact computations currently in progress on this request chain (the ancestors of the fact being
-    * generated now). See [[CompilationProcess.activeFactKeys]]; a processor reads this to detect a cyclic fact-request
-    * chain before the engine refuses it.
-    */
-  def activeFactKeys: CompilerIO[List[CompilerFactKey[?]]] =
-    context => context.process.activeFactKeys
-
   /** Register an error.
     */
   def registerCompilerError(error: CompilerError): CompilerIO[Unit] =

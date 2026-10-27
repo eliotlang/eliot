@@ -259,8 +259,9 @@ pattern arguments are not real value parameters (they need not be of kind `Type`
    platform* — the first user `Some`, else abort (no binding; the evaluator stalls at the use site). The Compiler track
    never consults the user pool (native-leaf boundary). For a selected `Body` it runs `BindingClosure`, closing the body
    over its dependencies' `NativeBinding`s. The dependency walk lives **here** (the merger is the sole owner of the
-   `NativeBinding` recursion); suppliers never read back the fact they feed. The mutual-recursion guard is the runtime's
-   active fact-request chain (`activeFactKeys`), not mutable state. Reified generic binders are wrapped as leading
+   `NativeBinding` recursion); suppliers never read back the fact they feed. There is no mutual-recursion guard: a body
+   is bound only once the recursion gate admitted it, so a chain of bindings cannot cycle, and a cycle anyway is the
+   engine's refusal, which fails the build (`docs/compiler-performance.md` §15.2). Reified generic binders are wrapped as leading
    lambdas via `BindingClosure.reifyingWrap`, driven by the precomputed `SaturatedValue.binderRoles` (D6).
 
 ### TypeStackLoop — the signature kind-check
@@ -513,7 +514,7 @@ quiet-probe pattern.
   limitation** (surfaced, not silently miscompiled — a `data`-carrier `?F := Box` *does* decompose). See
   `MonomorphicTypeCheckTest`'s "surface (not silently miscompile) a two-arg HKT carrier over the Function type".
 - **Infinite loop / stack overflow.** Likely `force` unfolding a self-referential `VTopDef` whose spine never grows.
-  `BindingClosure` guards fact-level mutual recursion via `activeFactKeys`; `force` itself has no depth limit, so ensure
+  A fact-level cycle is refused by the engine (no processor sees the request chain); `force` itself has no depth limit, so ensure
   it only unfolds when the cached body is `Some`. The unifier's occurs-check prevents cyclic meta solutions.
 - **`data` type declared only in the compiler pool has no constructor/match native.** Check `DeclaringPool.of` finds the
   compiler pool (name must be in the compiler `UnifiedModuleNames`).

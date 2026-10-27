@@ -20,7 +20,7 @@ import com.vanillasource.eliot.eliotc.processor.CompilerIO.*
   * in-checker read-back ([[com.vanillasource.eliot.eliotc.monomorphize.check.PostDrainQuoter]]) and this channel-facing
   * executor share: each instantiates it with its own (eval function, escalation fetch), so they are one mechanism, not
   * siblings. Each fetched reduced form was itself produced by a read-back that ran this same loop, so the recursion
-  * lives in the cached, `activeFactKeys`-guarded fact graph rather than in a closure-composition flag.
+  * lives in the cached fact graph rather than in a closure-composition flag.
   *
   * '''Not the only seam for §1's invariant.''' [[CompilerNativesProcessor]] enforces the same "monomorphized bodies
   * only" invariant *eagerly*, at a different seam: it contributes a refinement artifact's reduced
@@ -170,8 +170,10 @@ object EscalatingReducer {
     case _                                    => false
   }
 
-  /** Fetch the *reduced-at-instantiation* binding for each `candidate` value reference not yet escalated (`already`)
-    * and not an ancestor on the active fact-request chain (would dead-lock). Each fetched form is post-processed by
+  /** Fetch the *reduced-at-instantiation* binding for each `candidate` value reference not yet escalated (`already`).
+    * A reference whose reduced form is being generated up the request chain is not skipped: that is a cycle, which the
+    * engine refuses and which fails the build, while skipping it made the result depend on who asked first
+    * (`docs/compiler-performance.md` §15.2). Each fetched form is post-processed by
     * `wrap` (the in-checker read-back wraps in ignore-lambdas to absorb the reference's type arguments; the
     * [[MonomorphicEvaluator]] path drops type arguments already, so it passes the reduced form through unchanged).
     * Keyed by FQN; one instantiation per FQN.
@@ -182,7 +184,7 @@ object EscalatingReducer {
     * `CompilerNativesProcessor` `Leaf` and must be linked at its own `CompilerMonomorphicValue(fqn, [])`. This is
     * sound: escalation only ever fires on a [[reducibleStuck]] term (splicing more reduced bodies can make it quote,
     * never change an already-quoting result), a native leaf / `data` constructor still returns `None` (unchanged), and
-    * the `CompilerMonomorphicValue.Key(fqn, [])` ancestor check still guards cycles.
+    * a cycle through `CompilerMonomorphicValue.Key(fqn, [])` is still the engine's to refuse.
     *
     * '''Ambiguous-FQN decline (§2.3).''' The binding map and both evaluators' lookups are keyed by **FQN only**, so an
     * FQN referenced at ≥2 *distinct* ground-arg vectors cannot be served correctly — one instantiation's reduced body
@@ -197,16 +199,13 @@ object EscalatingReducer {
       reduceInstance: (ValueFQN, Seq[GroundValue]) => CompilerIO[Option[SemValue]],
       wrap: (Int, SemValue) => SemValue
   ): CompilerIO[Map[ValueFQN, SemValue]] =
-    activeFactKeys.flatMap { ancestors =>
-      val unambiguous = candidates.distinct.groupBy(_._1).collect { case (_, Seq(single)) => single }.toSeq
-      unambiguous.foldLeftM(Map.empty[ValueFQN, SemValue]) { case (acc, (fqn, groundArgs)) =>
-        if (already.contains(fqn) || ancestors.contains(CompilerMonomorphicValue.Key(fqn, groundArgs)))
-          acc.pure[CompilerIO]
-        else
-          reduceInstance(fqn, groundArgs).map {
-            case Some(sem) => acc + (fqn -> wrap(groundArgs.size, sem))
-            case None      => acc
-          }
-      }
+    val unambiguous = candidates.distinct.groupBy(_._1).collect { case (_, Seq(single)) => single }.toSeq
+    unambiguous.foldLeftM(Map.empty[ValueFQN, SemValue]) { case (acc, (fqn, groundArgs)) =>
+      if (already.contains(fqn)) acc.pure[CompilerIO]
+      else
+        reduceInstance(fqn, groundArgs).map {
+          case Some(sem) => acc + (fqn -> wrap(groundArgs.size, sem))
+          case None      => acc
+        }
     }
 }

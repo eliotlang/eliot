@@ -15,16 +15,19 @@ import scala.collection.mutable
   * fresh wrapper is used per generation, so recording is per generation.
   *
   * This wrapper is also the explicit home of the **active fact-request chain**: built once per generation with `key`
-  * and the `ancestors` it was requested under, it precomputes `chain = key :: ancestors` (innermost first). It serves
-  * that chain as [[activeFactKeys]] and threads it as the `ancestors` of every read it forwards, so the next generation
-  * down sees `key` as its ancestor. The chain therefore flows explicitly through ordinary values — no ambient
+  * and the `ancestors` it was requested under, it precomputes `chain = key :: ancestors` (innermost first) and threads
+  * it as the `ancestors` of every read it forwards, so the next generation down sees `key` as its ancestor. The chain therefore flows explicitly through ordinary values — no ambient
   * thread-local state.
   *
   * The chain is enforced here, not just published: a read of a key **already on the chain** asks for a fact the reading
   * computation is itself in the middle of generating, so such a read is refused — a "cyclic fact demand" error is recorded and `None` is returned, which the demanding processor's
-  * `getFactOrAbort` turns into an abort. Processors that legitimately walk potentially-cyclic graphs still consult
-  * [[activeFactKeys]] *before* demanding, so they can report a domain-specific error; this refusal is the engine-level
-  * backstop for the unguarded case. The refused edge is deliberately **not** recorded as a dependency, so a cyclic edge
+  * `getFactOrAbort` turns into an abort. The chain is never shown to the processor: a processor that could read it
+  * could answer differently depending on who asked, and the first answer would be cached for every later reader. A
+  * cycle is therefore always this refusal, which fails the build, whichever key of it was asked for first. What the
+  * generation registers **after** a refused read is dropped: it may be built on the missing input, and the input is
+  * missing only because of where this generation was asked from, so such a fact would depend on who asked first and be
+  * cached for everyone (`docs/compiler-performance.md` §15.2). The generation then ends without its fact, which the read
+  * that came back empty accounts for. The refused edge is deliberately **not** recorded as a dependency, so a cyclic edge
   * can never enter the persisted cache (where it would dead-lock validation).
   *
   * Facts a processor **pushes** — registered for keys other than the one being generated (e.g. one file-parse
@@ -49,6 +52,9 @@ final class DependencyTrackingProcess(
   /** Whether a read of this generation came back empty, including a refused cyclic read. */
   var sawMissing: Boolean = false
 
+  /** Whether a read of this generation was refused as cyclic, after which it registers nothing. */
+  private var refused: Boolean = false
+
   /** The active fact-request chain for the generation this wrapper tracks: `key` plus its ancestors, innermost first.
     */
   private val chain: List[CompilerFactKey[?]] = key :: ancestors
@@ -66,6 +72,7 @@ final class DependencyTrackingProcess(
     if (onChain(dependency)) {
       errors = errors :+ CompilerError.global(cyclicDemandMessage(dependency))
       sawMissing = true
+      refused = true
       None
     } else {
       dependencies += dependency
@@ -86,10 +93,9 @@ final class DependencyTrackingProcess(
   private def cyclicDemandMessage(dependency: CompilerFactKey[?]): String =
     s"Cyclic fact demand: ${(dependency :: chain.takeWhile(_ != dependency) ::: List(dependency)).mkString(" <- ")}"
 
-  override def registerFact(value: CompilerFact): Unit = {
-    if (value.key() != key && !producedDuring.contains(value.key())) producedDuring(value.key()) = key
-    underlying.registerFact(value)
-  }
-
-  override def activeFactKeys: List[CompilerFactKey[?]] = chain
+  override def registerFact(value: CompilerFact): Unit =
+    if (!refused) {
+      if (value.key() != key && !producedDuring.contains(value.key())) producedDuring(value.key()) = key
+      underlying.registerFact(value)
+    }
 }

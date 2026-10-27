@@ -19,7 +19,11 @@ and **reverted it**: the gain does not pay for a second path to a signature whos
 sizes I2 and finds, on the way, that cats-effect's **twenty worker threads handing each fact's fiber to one another**
 cost a quarter of a cold build: one worker makes it **23% faster**, with no other change. §14.4 builds I2 as a
 synchronous engine with `CompilerIO` a plain function: another **16% faster**, adopted. Both together take eliot-build
-from 17.9 s to 10.9 s cold.
+from 17.9 s to 10.9 s cold. §15 starts parallel compilation (I3): the plan — a fact must be a function of its key, and a
+processor hints what it will read instead of forking — and its first step, built: **no processor reads the request
+chain any more**. Four did, each to answer differently inside a cycle, and none of them fired anywhere; the one cycle
+a user can write, two instances constrained by each other, is now an error instead of an answer that depended on who
+asked first.
 
 The goal (Robert, 2026-10-24): *"A cold compile of the build project should not take 1 minute. It should take a
 couple of seconds actually. We need some very fundamental ideas to break through here."* eliot-build's launcher is
@@ -1262,3 +1266,119 @@ treats the thread whose `getId()` is 1 as the main thread, and JDK 25's main thr
 "not forked" path, warns that `main` runs on another thread, and never calls `System.exit` with the code. The same
 build exits 1 on JDK 21. Every compiler before today behaves the same way on this machine. Open.
 
+
+## 15. Parallel compilation: the plan, and facts that depended on who asked (2026-10-27)
+
+Robert, 2026-10-27: the serial levers are into diminishing returns, so I3 starts. His plan was to parallelize inside
+processors on demand: wherever several facts are asked for, or a `traverse` reads facts, read them in parallel. §15.1
+is the plan this became, §15.2 its first step, built.
+
+### 15.1 The plan
+
+**A fact must be a function of its key.** In a parallel engine, whichever reader reaches a fact first computes it, and
+every later reader is handed that result. So a fact whose value depends on *who asked* — on the request chain —
+changes from run to run, and two threads that each wait for a fact the other is computing deadlock, because neither is
+on the other's chain. Neither depends on where the forks are placed. Four sites read the chain (§15.2), and making
+them independent of it comes before any parallelism, as single-threaded work measured on its own.
+
+**A hint, not `parTraverse`.** One primitive, `prefetch(keys): CompilerIO[Unit]`: "I will need these". The engine may
+start them on other threads, and it returns at once; the processor then reads them in order, as it does today. So
+`parTraverse(keys)(getFactOrAbort)` becomes `prefetch(keys) >> keys.traverse(getFactOrAbort)`: the same parallelism
+for fact reads, and
+
+- **a generation stays on one thread.** `Context.errors` is a plain field because nothing inside one computation
+  forks, and an abort is an exception; parallel branches of one generation would share both, and `CheckIO`'s
+  `StateT` too. A prefetched fact is a generation of its own, with its own `Context`;
+- **the reads are recorded in the same order**, so the cache's dependency edges are the sequential build's;
+- **the sequential mode is the same binary** with `prefetch` doing nothing, so the alternated A/B of every step so far
+  stays possible (§12, Robert's condition for I3);
+- **an abort means what it means today.** A prefetched fact that aborts has no fact, and the read in order sees that
+  as it does now; there is no sibling to cancel and no race over which error comes first.
+
+**A few hints near the top, not one at every `traverse`.** A fact missing at a read is generated on the reader's
+thread, so one parallel fan-out near the top parallelizes everything beneath it, and inner sites add mostly overhead.
+The candidates: the front end per file (the path scan knows every file), the `used` walk (hint every reference of a
+body before descending into it: that walk is the "chain of discoveries" of §3, I3), and bytecode per class.
+
+**The ceiling before the engine.** One sequential run has what the ceiling needs: each fact's self time and its
+dependency edges (the progress tracker's `started`/`ended`/requester events, the visualizer's graph). Total work over
+the longest weighted path is the most any schedule can gain, and the path says which fan-outs are worth a hint. It
+decides whether §3's 4–8× is there before the engine changes.
+
+**What the engine needs.** The `Slot` becomes a latch and the maps concurrent; the engine's map and set work is 22% of
+a build (§14.4), so key equality (I1) becomes contention as well as cost. A read that finds a fact in progress on
+another thread waits for it, after checking the waits-for graph: a cycle across threads is reported as the cyclic
+demand it is. The `registerFact` push pattern needs an audit, since a pushed sibling can race a direct generation of
+the same key. Errors are reported sorted. `--statistics` stays sequential-only, since self time is CPU time only when
+nothing else runs. Open: virtual threads, or a `ForkJoinPool` of platform threads with large stacks and `managedBlock`
+— a mounted virtual thread runs on its carrier's stack, eliot-build needs 256–512 KB of it, and `CompileThread`
+reserves 1 GB.
+
+**The order.** (1) Facts independent of the chain (§15.2). (2) The ceiling, measured. (3) The latch engine with
+`prefetch` a no-op: byte-identical, and timed against today's. (4) The hints, one fan-out at a time, each measured
+against the sequential mode.
+
+### 15.2 Step 1, built: no processor reads the request chain
+
+The engine has always threaded the request chain through each generation, to refuse a read of a fact the reader is
+itself generating. `CompilerIO.activeFactKeys` also showed it to processors, and four used it to decide a value:
+
+- `AbilityImplementationProcessor.hasImplementation` answered a constraint probe "satisfied" when the probe was an
+  ancestor;
+- `BindingClosure.collectBindings` and `ReducedBindingClosure.collectBindings` left out the binding of a value whose
+  `NativeBinding` was an ancestor;
+- `EscalatingReducer.escalate` left out a callee whose `CompilerMonomorphicValue` was an ancestor.
+
+Each answer was computed once and cached for every later reader, so a fact depended on which reader got there first.
+Robert's question was how that could work at all. **It worked because it never happened**: instrumented, none of the
+four branches fired in any of the 2 303 tests, the 50 examples, or eliot-build. They guarded cycles the pipeline no
+longer has: a body is bound only once the recursion gate (`termination`) admitted it, so a chain of bindings is a
+chain of body references, which has no cycle. The comments still named a covariant `data` cycle and a
+monad-transformer lift, which date from before the gate.
+
+The ability guard is the one a user can reach: two instances, each constrained by the other at the same arguments.
+
+```eliot
+implement[A ~ Bar] Foo[A] { def foo(a: A): String = "foo" }
+implement[A ~ Foo] Bar[A] { def bar(a: A): String = "bar" }
+def main uses Console: Unit = printLine(foo(Hello("World")))
+```
+
+It compiled and ran: `Foo[Hello]` was resolved by assuming `Bar[Hello]`, and `Bar[Hello]` by assuming `Foo[Hello]`.
+Whichever of the two was asked for second was answered under that assumption, and the answer was cached for every
+later reader. (With the bodies calling each other it is refused anyway, as a cyclic demand of the instances'
+`MonomorphicValue`s, so it was never a hole in the recursion rule.)
+
+What changed:
+
+- **`activeFactKeys` is deleted** from `CompilerIO` and `CompilationProcess` and from the three process wrappers. The
+  chain is the engine's alone, which `DependencyTrackingProcess` says, so a processor cannot answer by who asked
+  again.
+- **The four guards are deleted.** A cycle is the engine's refusal, a "Cyclic fact demand" error that fails the
+  build, whichever of its keys was asked for first.
+- **A generation registers nothing after a read was refused as cyclic.** A refused read returns `None`, and a
+  processor may carry on past it (`getFactIfProduced`, `recover`); whatever it then registers may be built on the
+  missing input, which is missing only because of where it was asked from. Dropping it makes the outcome of a cycle
+  the same from every entry: no fact, and the error. The generation's empty read accounts for the missing fact.
+- **An absent constraint probe aborts the resolution** instead of answering "satisfied". The processor reports no
+  resolution errors, so a probe produces no fact only on an internal error or a cycle. Answered "satisfied", the
+  candidate was kept and the program above was written to a jar beside the error that failed the build — the
+  artefact invariant's failure, fixed here the way the failing `where` was (`664d166d`).
+- **An absent resolution aborts the demanding value's check** (`AbilityResolver.reportFailedDemand`). It used to leave
+  the reference pending, which an absent fact never stops being, and the value then reported a second, misleading
+  error about the abstract method stating no meta transfer.
+
+So **the program above is now an error** ("Cyclic fact demand: …", exit 1, no jar). That is the one change of
+language behaviour, and it is deliberate: a cycle of constraints at the same arguments has no finite derivation, and
+in a language with no recursion there is no recursive dictionary for it to stand for. The message is the engine's,
+naming fact keys; a diagnostic in the user's terms is a follow-up, if such programs turn up. `BuildArtifactTest`
+holds the program (no jar, the cycle reported), and `DependencyTrackingProcessTest` the registrations dropped after a
+refusal.
+
+Not chain reads, and left alone: `UsedNamesProcessor`'s `ancestors` is the processor's own descent within one
+computation, a function of its key. The progress tracker's requester is reporting, never a value.
+
+Verified: every suite green (`./mill __.test`, 2 306 tests: two that observed `activeFactKeys` removed, five added);
+the example sweep identical to the baseline, md5s included; eliot-build's jar `a74475df…`.
+
+Next is step 2 of §15.1: the ceiling, from one sequential run's self times and edges.

@@ -31,6 +31,27 @@ class BuildArtifactTest extends FullIntegrationTest {
        |def main uses Console: Unit = printLine(show(long(5)))""".stripMargin
   }
 
+  /** Fails only as a cycle: each instance exists only if the other does, so resolving either asks for the resolution in
+    * progress. The engine refuses the read; the probe that was refused used to be answered "satisfied" off the request
+    * chain, and later one that had no fact was, so the jar was written beside the error (`docs/compiler-performance.md`
+    * §15.2).
+    */
+  private val cyclicConstraints =
+    """ability Foo[A] {
+      |   def foo(a: A): String
+      |}
+      |ability Bar[A] {
+      |   def bar(a: A): String
+      |}
+      |data Hello(name: String)
+      |implement[A ~ Bar] Foo[A] {
+      |   def foo(a: A): String = "foo"
+      |}
+      |implement[A ~ Foo] Bar[A] {
+      |   def bar(a: A): String = "bar"
+      |}
+      |def main uses Console: Unit = printLine(foo(Hello("World")))""".stripMargin
+
   "a failed compilation" should "leave no jar behind" in {
     (compileAndRun(working) >> compileForErrors(broken) >> exists(jarPath)).asserting(_ shouldBe false)
   }
@@ -49,6 +70,14 @@ class BuildArtifactTest extends FullIntegrationTest {
 
   "a derivation out of its step budget" should "leave no jar behind" in {
     (compileAndRun(working) >> compileForErrors(outOfBudget) >> exists(jarPath)).asserting(_ shouldBe false)
+  }
+
+  "a cycle of ability constraints" should "leave no jar behind" in {
+    (compileAndRun(working) >> compileForErrors(cyclicConstraints) >> exists(jarPath)).asserting(_ shouldBe false)
+  }
+
+  it should "be reported as a cycle" in {
+    compileForErrors(cyclicConstraints).asserting(_ should include("Cyclic fact demand"))
   }
 
   "a fixed compilation" should "produce the jar again" in {

@@ -23,6 +23,4 @@ final class TrackedCompilationProcess(
     tracker.recordFactProduction(processorName, value.key())
     underlying.registerFact(value)
   }
-
-  override def activeFactKeys: List[CompilerFactKey[?]] = underlying.activeFactKeys
 }

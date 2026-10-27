@@ -23,9 +23,7 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced
   * consumes, and its leading binders line up with the type arguments the checker applies (saturation may prepend
   * binders for omittable `auto` parameters) — keeping the wrap's binder indices aligned (D6).
   *
-  * The subtle, error-prone parts live here once: the mutual-recursion guard (via the runtime's active fact-request
-  * chain, [[com.vanillasource.eliot.eliotc.processor.CompilerIO.activeFactKeys]] — never per-processor mutable state,
-  * so it stays a pure function of the facts it reads), and the transitive dependency collection. Dependencies are
+  * The subtle, error-prone part lives here once: the dependency collection. Dependencies are
   * always resolved via [[NativeBinding]] (the checker's semantics, the bindings the bodies were type-checked against);
   * only the top-level value's own body selection differs between callers.
   */
@@ -92,15 +90,14 @@ object BindingClosure {
       }
       .value
 
-  /** Collect [[NativeBinding]]s for every ValueReference transitively reachable from `ore`, skipping FQNs already
-    * accumulated in this walk, the value's own FQN (`selfFqn`), and any FQN whose [[NativeBinding]] is already an
-    * ancestor on the active fact-request chain
-    * ([[com.vanillasource.eliot.eliotc.processor.CompilerIO.activeFactKeys]]). The ancestor check is what breaks
-    * mutual-recursion deadlocks (a covariant `data` cycle, a monad-transformer lift): fetching a [[NativeBinding]] that
-    * is currently being generated up this chain asks for a fact this very request is in the middle of generating, which
-    * the engine refuses. Using the request's own chain — rather than a shared mutable "currently generating" set — keeps
-    * the scope correct (only *this* request's ancestors are skipped, not values generating in an unrelated chain) and
-    * keeps the collection pure.
+  /** Collect the [[NativeBinding]] of every ValueReference in `ore`, skipping FQNs already accumulated in this walk and
+    * the value's own FQN (`selfFqn`). Each binding closes over its own dependencies' bindings in turn, so the closure is
+    * transitive.
+    *
+    * Nothing here can cycle: a body is only bound once the recursion gate admitted it, so a chain of bindings is a chain
+    * of body references, which has no cycle. Should one appear anyway, the engine refuses the read as a cyclic fact
+    * demand and fails the build. Skipping a binding that is being generated up the request chain, as this did once,
+    * made a binding's value depend on which value was bound first (`docs/compiler-performance.md` §15.2).
     */
   private def collectBindings(
       ore: OperatorResolvedExpression,
@@ -109,17 +106,11 @@ object BindingClosure {
   ): CompilerIO[Map[ValueFQN, SemValue]] =
     OperatorResolvedExpression
       .foldValueReferences[CompilerIO, Map[ValueFQN, SemValue]](ore, Map.empty) { (acc, vfqn) =>
-        activeFactKeys.flatMap { ancestors =>
-          if (
-            acc.contains(vfqn.value) || vfqn.value == selfFqn ||
-            ancestors.contains(NativeBinding.Key(vfqn.value, platform))
-          )
-            acc.pure[CompilerIO]
-          else
-            getFactIfProduced(NativeBinding.Key(vfqn.value, platform)).map {
-              case Some(binding) => binding.semValue.fold(acc)(sv => acc + (vfqn.value -> sv))
-              case None          => acc
-            }
-        }
+        if (acc.contains(vfqn.value) || vfqn.value == selfFqn) acc.pure[CompilerIO]
+        else
+          getFactIfProduced(NativeBinding.Key(vfqn.value, platform)).map {
+            case Some(binding) => binding.semValue.fold(acc)(sv => acc + (vfqn.value -> sv))
+            case None          => acc
+          }
       }
 }

@@ -50,16 +50,26 @@ class DependencyTrackingProcessTest extends AsyncFlatSpec with AsyncIOSpec with 
     }.asserting(_ shouldBe (Set.empty, List(Fact("x"))))
   }
 
-  it should "expose its own key prepended to the ancestor chain as the active fact keys" in {
-    tracked(Map.empty, ancestors = List(Key("ancestor"))) { ctx =>
-      ctx.process.activeFactKeys
-    }.asserting(_ shouldBe List(owner, Key("ancestor")))
-  }
-
   it should "refuse a read of a key already on the request chain with None" in {
     tracked(Map(owner -> Fact("owner")), ancestors = List(Key("ancestor"))) { ctx =>
       ctx.process.getFact(Key("ancestor"))
     }.asserting(_ shouldBe None)
+  }
+
+  it should "keep what it registered before refusing an on-chain read" in {
+    tracked(Map.empty) { ctx =>
+      ctx.process.registerFact(Fact("before"))
+      ctx.process.getFact(owner)
+      ctx.registered.toList
+    }.asserting(_ shouldBe List(Fact("before")))
+  }
+
+  it should "drop what it registers after refusing an on-chain read" in {
+    tracked(Map.empty) { ctx =>
+      ctx.process.getFact(owner)
+      ctx.process.registerFact(Fact("owner"))
+      ctx.registered.toList
+    }.asserting(_ shouldBe List.empty)
   }
 
   it should "record a cyclic fact demand error when refusing an on-chain read" in {

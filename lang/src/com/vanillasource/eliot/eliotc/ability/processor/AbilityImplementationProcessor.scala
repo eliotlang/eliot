@@ -179,8 +179,9 @@ class AbilityImplementationProcessor extends SingleKeyTypeProcessor[AbilityImple
     * Every step is **fail-safe towards keeping**: the constraint is only allowed to decline a candidate when its
     * ability arguments are known exactly. An untraced match (a `flexToGround`-collapsed binding, the same operand
     * unreliability [[dischargeGuard]] refuses a guard over), a binding that is the defaulted universe, an argument
-    * shape this cannot ground, an unreadable ability arity, an absent probe (its resolution aborted on an error
-    * reported at its own definition) and a cyclic probe all answer "satisfied". So this never *creates* a resolution
+    * shape this cannot ground and an unreadable ability arity all answer "satisfied". An absent probe is not
+    * undecidable but a failure — this processor reports no resolution errors, so a probe produces no fact only on an
+    * internal error or a cycle — and aborts this resolution too ([[hasImplementation]]). So this never *creates* a resolution
     * failure that the pattern match alone would not have had — it only ever removes a candidate that could not have
     * worked.
     */
@@ -272,10 +273,14 @@ class AbilityImplementationProcessor extends SingleKeyTypeProcessor[AbilityImple
     * ambiguity is a separate failure, reported at the site that demands the ability itself), and `Rejected` keeps the
     * instance author's message answerable at that same site rather than degrading it to a silent decline here.
     *
-    * A **cyclic** probe — a constraint that leads back to a resolution already in progress up this request chain, as a
-    * mutually-constrained pair of instances would — is answered "satisfied" instead of demanded: the read would be
-    * refused by the engine as a dead-lock (and recorded as a global cyclic-demand error), and a candidate must not be
-    * declined for a question we chose not to ask.
+    * A **cyclic** probe — a constraint that leads back to the resolution asking it, as a mutually-constrained pair of
+    * instances does — is refused by the engine as a cyclic fact demand, which fails the build. It is not answered here:
+    * an answer read off the request chain would depend on which instance was asked for first, and would be cached for
+    * every later reader (`docs/compiler-performance.md` §15.2). A cycle of constraints at the same arguments has no
+    * finite derivation, so there is nothing for it to answer.
+    *
+    * A probe that produced no fact aborts this resolution rather than answering "satisfied": a candidate kept on an
+    * answer nobody computed would let the build go on to write a program next to the error that fails it.
     */
   private def hasImplementation(
       abilityFQN: AbilityFQN,
@@ -283,10 +288,7 @@ class AbilityImplementationProcessor extends SingleKeyTypeProcessor[AbilityImple
       platform: Platform
   ): CompilerIO[Boolean] = {
     val probe = AbilityImplementation.Key(abilityMarkerFqnFor(abilityFQN), groundArgs, platform)
-    activeFactKeys.flatMap { ancestors =>
-      if (ancestors.contains(probe)) true.pure[CompilerIO]
-      else getFactIfProduced(probe).map(!_.map(_.resolution).contains(Resolution.NoImplementation))
-    }
+    getFactOrAbort(probe).map(_.resolution != Resolution.NoImplementation)
   }
 
   /** The synthetic marker value an `ability` block mints beside its methods: same local name as the ability, in the

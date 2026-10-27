@@ -21,7 +21,7 @@ import scala.collection.mutable
   * [[com.vanillasource.eliot.eliotc.monomorphize.fact.CompilerMonomorphicValue]]) into a self-contained
   * [[NativeBinding]] value (a `VTopDef` carrying a lazy thunk), closing the reduced body over its dependencies'
   * [[NativeBinding]]s. The [[MonomorphicExpression]] analogue of [[BindingClosure]] — same shape (a lazy self-contained
-  * thunk over one-hop dependency bindings, mutual-recursion-guarded via the active fact-request chain), over the
+  * thunk over one-hop dependency bindings), over the
   * reduced compile-time tree instead of the raw operator-resolved body.
   *
   * Used by [[CompilerNativesProcessor]] for a compiler-platform value whose body performs ability dispatch: its raw
@@ -93,8 +93,8 @@ object ReducedBindingClosure {
       instances: Map[ValueFQN, (ValueFQN, Seq[GroundValue])]
   ) {
 
-    /** The lookup evaluating `body`: `extra` first, then the linked bindings. A renamed reference left unlinked (an
-      * ancestor on the fact chain) is the stuck definition of its original name, exactly what the evaluator makes of an
+    /** The lookup evaluating `body`: `extra` first, then the linked bindings. A renamed reference left unlinked (its
+      * binding was not produced) is the stuck definition of its original name, exactly what the evaluator makes of an
       * unbound reference — never a definition named after the instance.
       */
     def lookup(extra: Map[ValueFQN, SemValue]): ValueFQN => Option[SemValue] =
@@ -105,8 +105,9 @@ object ReducedBindingClosure {
           .orElse(instances.get(name).map { case (original, _) => VTopDef(original, None, Spine.SNil) })
   }
 
-  /** Collect the binding of every value reference in the reduced body, skipping the value's own FQN and any FQN already
-    * an ancestor on the active fact-request chain (the same mutual-recursion guard [[BindingClosure]] uses). By default
+  /** Collect the binding of every value reference in the reduced body, skipping the value's own FQN. As in
+    * [[BindingClosure]], nothing skips a binding being generated up the request chain: a cycle is the engine's to
+    * refuse, and fails the build (`docs/compiler-performance.md` §15.2). By default
     * each dependency is its raw [[NativeBinding]] body (a one-hop closure), which is the same at every instantiation.
     *
     * When `deep` (the escalation fetch), a dependency is instead taken **reduced at its own instantiation**
@@ -136,22 +137,17 @@ object ReducedBindingClosure {
     references
       .filterNot(_._2._1 == selfFqn)
       .foldLeftM(Map.empty[ValueFQN, SemValue]) { case (acc, (name, (fqn, typeArgs))) =>
-        activeFactKeys.flatMap { ancestors =>
-          if (ancestors.contains(NativeBinding.Key(fqn, platform))) acc.pure[CompilerIO]
-          else {
-            def raw: CompilerIO[Map[ValueFQN, SemValue]] =
-              getFactIfProduced(NativeBinding.Key(fqn, platform)).map {
-                case Some(binding) => binding.semValue.fold(acc)(sv => acc + (name -> sv))
-                case None          => acc
-              }
-            if (deep)
-              reduceInstance(fqn, typeArgs).flatMap {
-                case Some(reduced) => (acc + (name -> reduced)).pure[CompilerIO]
-                case None          => raw
-              }
-            else raw
+        def raw: CompilerIO[Map[ValueFQN, SemValue]] =
+          getFactIfProduced(NativeBinding.Key(fqn, platform)).map {
+            case Some(binding) => binding.semValue.fold(acc)(sv => acc + (name -> sv))
+            case None          => acc
           }
-        }
+        if (deep)
+          reduceInstance(fqn, typeArgs).flatMap {
+            case Some(reduced) => (acc + (name -> reduced)).pure[CompilerIO]
+            case None          => raw
+          }
+        else raw
       }
       .map(Linked(body, _, instances))
   }
