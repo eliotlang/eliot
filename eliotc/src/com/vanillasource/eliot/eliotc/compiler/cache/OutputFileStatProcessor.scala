@@ -1,6 +1,6 @@
 package com.vanillasource.eliot.eliotc.compiler.cache
 
-import cats.effect.IO
+import cats.effect.Sync
 import com.vanillasource.eliot.eliotc.feedback.Logging
 import com.vanillasource.eliot.eliotc.processor.CompilerIO.CompilerIO
 import com.vanillasource.eliot.eliotc.processor.common.SingleFactProcessor
@@ -14,7 +14,7 @@ import java.security.{DigestInputStream, MessageDigest}
   */
 class OutputFileStatProcessor extends SingleFactProcessor[OutputFileStat.Key] with Logging {
   override protected def generateSingleFact(key: OutputFileStat.Key): CompilerIO[OutputFileStat] =
-    IO.blocking(OutputFileStat(key.file, digestOf(key.file))).to[CompilerIO]
+    Sync[CompilerIO].blocking(OutputFileStat(key.file, digestOf(key.file)))
 
   /** Any failure to read reads as "no usable content", which forces a rewrite — the fail-safe direction. */
   private def digestOf(file: File): Option[String] =

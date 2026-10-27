@@ -33,6 +33,8 @@ class ModuleValueProcessor(systemModules: Seq[ModuleName] = defaultSystemModules
       // or an explicitly imported name is silently skipped — locals and explicit imports always win, so the prelude
       // can grow without breaking existing code. Explicit imports keep the strict shadowing errors below.
       ambientModules  = systemModules.filter(m => m =!= key.vfqn.moduleName && !explicitImports.exists(_.value === m))
+      // Each imported module's names are its files' parses, read one module after another below.
+      _              <- prefetch((explicitImports.map(_.value) ++ ambientModules).map(UnifiedModuleNames.Key(_, key.platform)))
       importResult   <- extractImportedNames(explicitImports, moduleNames.names.value.keySet, key.platform)
       systemResult   <- extractSystemNames(
                           ambientModules.map(sourcedImports.as(_)),

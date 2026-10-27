@@ -56,6 +56,8 @@ class RowElaborationProcessor
   ): CompilerIO[RowElaboratedValue] = {
     val value = checked.value
     for {
+      // Every callee's own write is read below ([[calleesWritten]]), each to the bottom of its call graph before the next.
+      _        <- prefetch(callees(value).map(RowElaboratedValue.Key(_, key.platform)))
       universe <- universeFor(value, key.platform)
       written   = BindingWriter.write(value, universe)
       _        <- implementationKind(value, key.platform) >> report(written, value, key.platform)
@@ -274,13 +276,17 @@ class RowElaborationProcessor
     * body references are acyclic, which the recursion gate guarantees before this phase.
     */
   private def calleesWritten(value: OperatorResolvedValue, platform: Platform): CompilerIO[Boolean] =
+    callees(value)
+      .traverse(fqn => getFactIfProduced(RowElaboratedValue.Key(fqn, platform)))
+      .map(_.forall(_.isDefined))
+
+  /** The values this one's body calls, itself and types left out ([[calleesWritten]]). */
+  private def callees(value: OperatorResolvedValue): Seq[ValueFQN] =
     value.runtime.toSeq
       .flatMap(body =>
         OperatorResolvedExpression.foldValueReferences[Id, Set[ValueFQN]](body.value, Set.empty)(_ + _.value)
       )
       .filterNot(fqn => fqn == value.vfqn || fqn.name.qualifier == Qualifier.Type)
-      .traverse(fqn => getFactIfProduced(RowElaboratedValue.Key(fqn, platform)))
-      .map(_.forall(_.isDefined))
 
   /** The complete declared world for writing this one value: fetch what the write misses, re-run, repeat. Terminates
     * because each round strictly grows the set of names already attempted, over the finite set reachable from the
@@ -303,10 +309,12 @@ class RowElaborationProcessor
       if (fresh.isEmpty && freshClauses.isEmpty) universe.pure[CompilerIO]
       else
         for {
-          fetched <- fresh.toSeq.traverse(fqn => declared(fqn, platform).flatMap(present =>
-                       if (present) getFactIfProduced(OperatorResolvedValue.Key(fqn, platform)).map(fqn -> _)
+          present <- fresh.toSeq.filterA(declared(_, platform))
+          _       <- prefetch(present.map(OperatorResolvedValue.Key(_, platform)))
+          fetched <- fresh.toSeq.traverse(fqn =>
+                       if (present.contains(fqn)) getFactIfProduced(OperatorResolvedValue.Key(fqn, platform)).map(fqn -> _)
                        else (fqn -> Option.empty[OperatorResolvedValue]).pure[CompilerIO]
-                     ))
+                     )
           clauses <- freshClauses.toSeq.traverse(marker => clausesOf(marker, platform).map(marker -> _))
           result  <- loop(
                        universe.copy(

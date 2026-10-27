@@ -1,6 +1,6 @@
 package com.vanillasource.eliot.eliotc.source.file
 
-import cats.effect.{IO, Resource}
+import cats.effect.{Resource, Sync}
 import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.feedback.{CompilerError, Logging}
 import com.vanillasource.eliot.eliotc.pos.PositionRange
@@ -20,14 +20,9 @@ import scala.io.Source
 class FileContentReader extends SingleFactProcessor[FileContent.Key] with Logging {
   override protected def generateSingleFact(key: FileContent.Key): CompilerIO[FileContent] =
     getFactOrAbort(FileStat.Key(key.file)) >> Resource
-      .make(IO(Source.fromFile(key.file)))(source => IO.blocking(source.close()))
-      .use { source =>
-        IO.blocking(source.getLines()).map { contentLines =>
-          FileContent(key.file, contentLines.mkString("\n"))
-        }
-      }
+      .make(Sync[CompilerIO].blocking(Source.fromFile(key.file)))(source => Sync[CompilerIO].blocking(source.close()))
+      .use(source => Sync[CompilerIO].blocking(FileContent(key.file, source.getLines().mkString("\n"))))
       .attempt
-      .to[CompilerIO]
       .flatMap {
         case Right(fact) => fact.pure[CompilerIO]
         case Left(_)     =>

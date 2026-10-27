@@ -36,6 +36,7 @@ class MonomorphicTypeCheckProcessor
     // pattern-argument types are not real value parameters, so they are stripped to leave binders + guard return.
     val value = MarkerGuardSignature.strippedForGuard(saturatedValue.value)
     for {
+      _                 <- BindingHints.hint(value.runtime, Platform.Runtime)
       // Read the value's *own* signature reduced to ground from its signature twin's compiler-track mono (types are
       // compile-time, so the signature is authoritative there) rather than walking it in place — the twin is
       // **mandatory** at every arity (signature-unification C1/C2): a partial-arity key reads a *parametric* signature

@@ -13,7 +13,6 @@ import com.vanillasource.eliot.eliotc.source.content.Sourced.compilerAbort
 import com.vanillasource.eliot.eliotc.used.UsedNamesState.*
 
 import scala.annotation.tailrec
-import scala.collection.mutable
 
 /** Processor that collects all reachable named values from a given root named value.
   *
@@ -118,32 +117,8 @@ class UsedNamesProcessor(maxNestedRepeats: Int = UsedNamesProcessor.DefaultMaxNe
       )
     )
 
-  /** Walk a woven body, after hinting the woven value of every reference in it: the walk descends into them one by
-    * one, each to the bottom before the next, so a parallel run generates the rest of the body's callees meanwhile
-    * (`docs/compiler-performance.md` §15.3). A hinted key the walk then skips, its projection visited already under
-    * other type arguments, is generated for nothing; nothing reads it, so nothing reports it.
-    */
   private def processMonomorphicValue(mv: WovenValue, ancestors: List[ValueFQN]): UsedNamesIO[Unit] =
-    prefetch(mv.runtime.toSeq.flatMap(body => referencesOf(body.value))).liftToUsedNames >>
-      mv.runtime.traverse_(sourcedExpr => processExpression(sourcedExpr.value, ancestors))
-
-  /** The woven value of each distinct value reference in `expression`, in the order the walk meets them. */
-  private def referencesOf(expression: MonomorphicExpression.Expression): Seq[WovenValue.Key] = {
-    val keys = mutable.LinkedHashSet.empty[WovenValue.Key]
-
-    def collect(expr: MonomorphicExpression.Expression): Unit =
-      expr match {
-        case MonomorphicExpression.FunctionApplication(target, argument)     =>
-          collect(target.value.expression)
-          collect(argument.value.expression)
-        case MonomorphicExpression.MonomorphicValueReference(vfqn, typeArgs) => keys += WovenValue.Key(vfqn.value, typeArgs)
-        case MonomorphicExpression.FunctionLiteral(_, _, body)               => collect(body.value.expression)
-        case _                                                               => ()
-      }
-
-    collect(expression)
-    keys.toSeq
-  }
+    mv.runtime.traverse_(sourcedExpr => processExpression(sourcedExpr.value, ancestors))
 
   @tailrec
   private def processExpression(expr: MonomorphicExpression.Expression, ancestors: List[ValueFQN]): UsedNamesIO[Unit] =

@@ -324,7 +324,10 @@ and with `-Deliot.parallel=true` the engine starts each on a **virtual thread** 
 JDK's scheduler is the pool, a blocked one costs nothing, do not write a worker pool) while the generation reads them in
 order as before, so it stays on one thread and records the same edges. A slot is a latch with an owner thread; a wait
 across threads is cycle-checked first. Without the property a hint does nothing, and that sequential run is what
-every parallel step is measured against (§15.6). No processor hints yet (step 4).
+every parallel step is measured against (§15.6). The hints sit where the program is discovered (§15.8): the recursion
+check's search, a file's imports, row elaboration's callees, a check's bindings, a woven value's references, the jar's
+modules. A world read in a processor is `Sync[CompilerIO].blocking`, never `IO.blocking`, which `syncStep` hands to the
+one-thread cats runtime and so serializes every fact thread on it.
 
 ## Testing
 

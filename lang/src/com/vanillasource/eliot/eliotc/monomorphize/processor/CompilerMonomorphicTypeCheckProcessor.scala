@@ -98,6 +98,7 @@ class CompilerMonomorphicTypeCheckProcessor
     // rides `key.vfqn`, so the input `SaturatedValue` is already the role-appropriate twin's.
     val signatureOnly = key.vfqn.name.role == Role.Signature
     for {
+      _                 <- BindingHints.hint(if (signatureOnly) Some(value.signature) else value.runtime, Platform.Compiler)
       // §2.2 fail-safe: the refinement channel demands `where` preconditions only over runtime bodies, so a
       // `where`-guarded callee reached from this compile-time body would escape its precondition — reject it loudly.
       // Only the real body reduction (a `Runtime`-role key) is scanned; a `Signature`-role key reduces the signature.

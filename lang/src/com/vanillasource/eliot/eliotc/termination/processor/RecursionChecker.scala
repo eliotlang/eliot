@@ -43,7 +43,8 @@ class RecursionChecker {
     * fact, gating it out of the rest of the pipeline.
     */
   def check(value: OperatorResolvedValue, platform: Platform): CompilerIO[Unit] =
-    reachesSelf(value.vfqn, directCallees(value).toList, Set(value.vfqn), platform).flatMap { recursive =>
+    (hint(directCallees(value), platform) >>
+      reachesSelf(value.vfqn, directCallees(value).toList, Set(value.vfqn), platform)).flatMap { recursive =>
       compilerError(
         value.name.as(s"Value '${value.name.value.name}' is defined recursively."),
         Seq(
@@ -68,8 +69,17 @@ class RecursionChecker {
       case (fqn :: rest, seen) =>
         if (fqn == target) true.asRight[(List[ValueFQN], Set[ValueFQN])].pure[CompilerIO]
         else if (seen.contains(fqn)) (rest, seen).asLeft[Boolean].pure[CompilerIO]
-        else calleesOf(fqn, platform).map(cs => (rest ++ cs.toList, seen + fqn).asLeft[Boolean])
+        else
+          calleesOf(fqn, platform).flatMap(cs =>
+            hint(cs.filterNot(seen.contains), platform).as((rest ++ cs.toList, seen + fqn).asLeft[Boolean])
+          )
     }
+
+  /** The search reads the callees of each value it reaches one by one, and each read is that value's whole front end
+    * (and its file's, the first time): so a parallel run starts the ones just found while it works through the rest.
+    */
+  private def hint(callees: Set[ValueFQN], platform: Platform): CompilerIO[Unit] =
+    prefetch(callees.toSeq.map(NamedValuesRewrittenValue.Key(_, platform)))
 
   /** The body callees of an already-resolved value, or the empty set when it is body-less (a native) or cannot be
     * resolved (conservative: a leaf, so the search just stops there).

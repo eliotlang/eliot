@@ -7,6 +7,8 @@ import com.vanillasource.eliot.eliotc.processor.common.TransformationProcessor
 import com.vanillasource.eliot.eliotc.source.content.Sourced
 import com.vanillasource.eliot.eliotc.source.content.Sourced.compilerAbort
 
+import scala.collection.mutable
+
 /** The **`WovenValue` codegen seam** — the step between checking and code generation that everything downstream (`used`
   * / `uncurry` / the jvm backend) reads instead of [[MonomorphicValue]].
   *
@@ -40,6 +42,7 @@ class WovenValueProcessor
       // channel's one remaining source of untotality.
       _     <- getFactOrAbort(MetaTransferAccounting.Key(mv.vfqn, mv.typeArguments))
       woven <- HandleErasure.erase(mv)
+      _     <- prefetch(woven.runtime.toSeq.flatMap(body => WovenValueProcessor.referencesOf(body.value)))
       // The **woven re-check**: the body that leaves this seam is type-checked once more, on ground types, with no
       // metavariables and no unification — after erasure, so a rewrite that disagreed with itself is caught here.
       _     <- assertWovenRechecks(mv, woven.signature, woven.runtime)
@@ -56,5 +59,33 @@ class WovenValueProcessor
   ): CompilerIO[Unit] = {
     val problems = WovenRecheck.check(signature, body)
     problems.headOption.traverse_(problem => compilerAbort[Unit](problem.at.as(problem.message)))
+  }
+}
+
+object WovenValueProcessor {
+
+  /** The woven value of each distinct value reference in `expression`, in the order code generation's walk meets them.
+    *
+    * A woven value hints them as soon as it has its body: the walk (`used`) descends into its callees one by one, and
+    * each callee's own callees are known only once its body is woven, so a parallel run discovers the program as a
+    * cascade instead of in the walk's order (`docs/compiler-performance.md` §15.8). A hinted key the walk then skips,
+    * its projection visited already under other type arguments, is generated for nothing; nothing reads it, so nothing
+    * reports it.
+    */
+  def referencesOf(expression: MonomorphicExpression.Expression): Seq[WovenValue.Key] = {
+    val keys = mutable.LinkedHashSet.empty[WovenValue.Key]
+
+    def collect(expr: MonomorphicExpression.Expression): Unit =
+      expr match {
+        case MonomorphicExpression.FunctionApplication(target, argument)     =>
+          collect(target.value.expression)
+          collect(argument.value.expression)
+        case MonomorphicExpression.MonomorphicValueReference(vfqn, typeArgs) => keys += WovenValue.Key(vfqn.value, typeArgs)
+        case MonomorphicExpression.FunctionLiteral(_, _, body)               => collect(body.value.expression)
+        case _                                                               => ()
+      }
+
+    collect(expression)
+    keys.toSeq
   }
 }

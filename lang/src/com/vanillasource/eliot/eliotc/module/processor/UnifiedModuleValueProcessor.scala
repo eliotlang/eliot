@@ -18,6 +18,7 @@ class UnifiedModuleValueProcessor extends SingleFactProcessor[UnifiedModuleValue
   override protected def generateSingleFact(key: UnifiedModuleValue.Key): CompilerIO[UnifiedModuleValue] =
     for {
       pathScan     <- getFactOrAbort(PathScan.Key(key.vfqn.moduleName.toPath, key.platform))
+      _            <- prefetch(pathScan.files.map(ModuleNames.Key(_)))
       allNames     <- pathScan.files.traverse(file => getFactOrAbort(ModuleNames.Key(file)).map(file -> _))
       filesWithName = allNames.collect { case (file, names) if names.names.value.contains(key.vfqn.name) => file }
       allValues    <- filesWithName.traverse(file => getFactOrAbort(ModuleValue.Key(file, key.vfqn, key.platform)))

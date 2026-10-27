@@ -1,6 +1,6 @@
 package com.vanillasource.eliot.eliotc.source.stat
 
-import cats.effect.IO
+import cats.effect.Sync
 import cats.syntax.all.*
 import com.vanillasource.eliot.eliotc.feedback.Logging
 import com.vanillasource.eliot.eliotc.processor.CompilerIO.CompilerIO
@@ -32,19 +32,19 @@ class FileStatProcessor(settleMargin: Duration = FileStatProcessor.defaultSettle
     extends SingleFactProcessor[FileStat.Key]
     with Logging {
   override protected def generateSingleFact(key: FileStat.Key): CompilerIO[FileStat] =
-    (for {
-      now          <- IO.realTimeInstant // before the stat: see class doc
-      lastModified <- IO
+    for {
+      now          <- Sync[CompilerIO].realTimeInstant // before the stat: see class doc
+      lastModified <- Sync[CompilerIO]
                         .blocking(Files.readAttributes(key.file.toPath, classOf[BasicFileAttributes]))
                         .attempt
                         .map(_.toOption.map(_.lastModifiedTime.toInstant).filter(_.toEpochMilli > 0L))
       unsettled    <- lastModified.filter(_.plus(settleMargin).isAfter(now)).traverse(_ => nonce)
-    } yield FileStat(key.file, lastModified, unsettled)).to[CompilerIO]
+    } yield FileStat(key.file, lastModified, unsettled)
 
   /** A value unique to this observation, marking a stat that identifies nothing (see [[FileStat.unsettled]] for why it
     * is not a timestamp).
     */
-  private val nonce: IO[String] = IO(UUID.randomUUID().toString)
+  private val nonce: CompilerIO[String] = Sync[CompilerIO].delay(UUID.randomUUID().toString)
 }
 
 object FileStatProcessor {

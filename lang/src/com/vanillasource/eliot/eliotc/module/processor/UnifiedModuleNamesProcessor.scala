@@ -18,8 +18,9 @@ class UnifiedModuleNamesProcessor extends SingleFactProcessor[UnifiedModuleNames
       case None           =>
         UnifiedModuleNames(key.moduleName, Map.empty, present = false, key.platform).pure[CompilerIO]
       case Some(pathScan) =>
-        pathScan.files
-          .traverse(uri => getFactOrAbort(ModuleNames.Key(uri)))
+        val keys = pathScan.files.map(ModuleNames.Key(_))
+        // Each file's names are its parse: a parallel run parses them all at once.
+        (prefetch(keys) >> keys.traverse(getFactOrAbort))
           .map(allNames =>
             UnifiedModuleNames(key.moduleName, allNames.flatMap(_.names.value).toMap, present = true, key.platform)
           )

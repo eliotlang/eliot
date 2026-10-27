@@ -1785,3 +1785,70 @@ measured 5.7 s begins.
   keyed by name alone.
 - The last 3.9 s is the meta chain of §15.4, which needs Robert's design decision (forking the interpretation, or
   per-value entry derivations) before any hint can help.
+
+### 15.8 Hints where the program is discovered: −20% cold (2026-10-27)
+
+Robert asked for the first 3.8 s of §15.7 to be broken down, and for the parallelization needed to get near 4×.
+
+**The probe** (temporary, in a scratch class directory; the source is unchanged). Every generation's start, end,
+thread, nesting and self time, every cross-thread wait (who, for which key, from when to when), and every fact thread's
+creator. Two readings of it: the busy threads per time window, and the **critical path**, followed backwards from the
+end through a thread's own work, and at each wait over to the generation that produced the awaited fact.
+
+**What the first 3.8 s was** (sequential run): front end, not checks. Per file: tokens, AST, core and module values
+for 99 files, about 1.7 s. Per value: resolve through row elaboration for about 1 300 values, about 1.3 s. Checks: about
+0.1 s. All of it was serial, because three walks read their facts one by one, each to the bottom before the next:
+`main`'s recursion check over the reference graph, a file's imports, and row elaboration's callees (§15.7).
+
+**The hints, built.** Each hint names keys its generation can compute from its own key and inputs:
+
+- `RecursionChecker`: each step of the search hints the `NamedValuesRewrittenValue` of the callees it just found.
+- `ModuleValueProcessor`: a file hints the `UnifiedModuleNames` of every module it imports, explicit and ambient.
+- `UnifiedModuleNamesProcessor`, `UnifiedModuleValueProcessor`: a module hints each of its files' `ModuleNames`.
+- `RowElaborationProcessor`: hints every callee's `RowElaboratedValue` at its start (`calleesWritten` reads them all
+  later, each to the bottom of its call graph), and each round of the universe hints its fresh declarations.
+- `MonomorphicTypeCheckProcessor`, `CompilerMonomorphicTypeCheckProcessor`: a check hints the `NativeBinding` of every
+  reference in what it walks (`BindingHints`).
+- `WovenValueProcessor`: a woven value hints its references' woven values as soon as it has its body, so the
+  program is discovered as a cascade. This replaces §15.7's hint in the walk.
+- §15.7's jar hint stays.
+
+**A serialization found on the way.** A world read written as `IO.blocking` is something `syncStep` does not run in
+place: it hands it back (measured: `IO.blocking(...).syncStep` is `Left`), and `CompilerIO.runIO` then runs it on the
+cats runtime, whose compute pool has one thread (§14.1). Sequentially that is a cheap round trip. With 20 fact threads,
+every `FileStat` queued on that one thread: 4.5 s of busy time in the first second, against 0.1 s for the whole of a
+sequential run. `FileStatProcessor`, `FileContentReader` and `OutputFileStatProcessor` now use `Sync[CompilerIO]`, whose
+`blocking` runs on the calling thread. They make the same system calls, and change detection is unchanged. The jar's
+writes are still `IO.blocking`; they are few and at the end.
+
+**Measured** (eliot-build cold, one pair, jar `a74475df…`): **11.05 s sequential, 8.84 s parallel (−20%)**. User CPU 51 s
+and 66 s; GC pauses 0.32 s and 0.34 s. Suites green (2 311); the example sweep identical to the baseline.
+
+**Where the parallel run is now** (busy threads per window, from the probe):
+
+| window | busy threads | what |
+|---|---|---|
+| 0 – 0.5 s | 1 | the first file, lexed and parsed while the JIT is cold |
+| 0.5 – 4 s | 8 – 12 | front end, checks, the walk, bytecode |
+| 4 – 7 s | 1.0 | one derivation: `eliot.build.Launcher.answer`'s `DerivedMeta`, 3.4–6.9 s |
+
+The tail is a single tree of 5 401 derivations. On the path, 1.5 s is the derivation's own work. About 1.0–1.4 s is
+compile-track checks the derivation reaches for the first time: callee companions (`X$Payload`, `X`'s `Meta`
+companion, `X$Handed$…`), keyed by the callee and its type arguments, and meta-library functions (`joined`, `join` at a
+meta type, `widened`, `never`, `reached`), keyed by meta types. The rest is their front end.
+
+"Busy" overcounts in a parallel run: it includes virtual threads that are runnable but waiting for a core, or blocked
+on a monitor. JFR sampled only 30% more CPU samples (842 against 647). So the busy counts show where the run is
+parallel, not how much work it does.
+
+**Next.**
+
+1. **The companion checks, one level ahead.** A derivation of Y knows each callee X and its type arguments from Y's
+   monomorphic body. It can hint X's companion checks at the keys seen in the probe (`X$Payload`, `X`'s `Meta`
+   companion and `X$Handed$…`, at X's type arguments) before it interprets. That takes up to about 1.4 s off the
+   tail; the meta-library functions are few and are hits after their first use.
+2. **The derivation's own 1.5 s** stays serial without the design decision of §15.4.
+3. **Then, honestly, 4×:** the parallel part is at 8–12 threads for about 3.5 s and the cold JIT's first file is
+   0.5 s. With the tail at its own 1.5 s, the compile is about 5.5 s of the 8.8 s, and the CLI about 7 s. Getting the
+   build near 3 s needs the derivation to parallelize too (§15.4), and probably a warm JVM, since JIT warm-up is half
+   of a cold build (§15.3).
