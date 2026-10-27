@@ -1852,3 +1852,60 @@ parallel, not how much work it does.
    0.5 s. With the tail at its own 1.5 s, the compile is about 5.5 s of the 8.8 s, and the CLI about 7 s. Getting the
    build near 3 s needs the derivation to parallelize too (§15.4), and probably a warm JVM, since JIT warm-up is half
    of a cold build (§15.3).
+
+### 15.9 The companion hints, measured: no gain, and why the tail does not move (2026-10-27)
+
+§15.8's next step was to hint, one level ahead, the compile-track checks a derivation reaches for the first time. Before
+placing it, a fresh probe of the parallel run (master at `cb4754a8`, compile 7.98 s) broke the tail down further.
+
+**What the tail is.** It is one generation: `RefinementTable` of `eliot.build.Launcher::main`, 3.78–7.72 s, whose
+`DerivedMeta` of `answer` holds the tree. It starts that late because every `RefinementTable` is first read by
+`ReconciledMonomorphicValue`, under a `GeneratedModule`, which the jar hints only once the walk is done (tables start
+at 3.30 s; woven values run from 0.46 to 3.56 s). On the critical path between 3.5 and 8.0 s (4.4 s):
+
+| | ms on the path | keys |
+|---|---|---|
+| the derivation's own interpretation (`DerivedMeta` self) | 1 975 | |
+| compile-track checks it reaches first, self | 1 195 | |
+| their front end (resolve to row elaboration on the compiler pool) and ability resolution | ~700 | |
+| of the checks: `eliot.compiler.Meta::joined` at a meta type | 400 | 118 |
+| payload signatures `X$Payload` at the callee's type arguments | 384 | 471 |
+| `^Meta` companions at the callee's type arguments plus meta types | 363 | 312 |
+| `Meta` instances' `join` at a meta type | 269 | 177 |
+| eliminators and handed statements | ~170 | ~210 |
+
+Only the payloads are keyed by what a body names statically. A companion's key holds the meta types the payload
+reduces to, and `joined`/`join` are keyed by meta types, so naming them needs the reduction the derivation itself does.
+A single `joined` check was 42 ms, 41 of them in `AbilityImplementationCheck`. That was the cold JIT: in the next run the
+largest resolution in the tail took 3 ms.
+
+**Three hints, built, measured, reverted.** All were cold eliot-build builds, alternated pairs, `-Deliot.parallel=true`,
+jar `a74475df…` every time. The machine was loaded (load average about 7, other processes), so only the differences
+within a set count:
+
+| hint | base | with it |
+|---|---|---|
+| a woven value hints its own `RefinementTable` (5 pairs) | 9.41 s | 9.53 s |
+| every derivation hints its body's callees' payloads (4 pairs) | 9.68 s | 10.15 s |
+| meta-transfer accounting hints its value's payload, once per instance (4 pairs) | 9.95 s | 10.13 s |
+
+- **The table hint does what it says and gains nothing.** In the probe `main`'s table started at 2.20 s instead of
+  3.78 s, but took 5.2 s instead of 3.9 s and ended at 7.37 s (compile 7.61 s against 7.98 s, inside the A/B noise). The
+  tree is the critical path wherever it starts. Started early, it overlaps the parallel phase: it competes for cores and
+  waits for checks other threads are making.
+- **One level ahead is on the serial path.** A hint inside the derivation runs in each of its ~5 400 generations. The
+  body walk and name-set reads it adds land on the one thread the tail is.
+- **Ahead of time is not free either.** Hinting payloads in the parallel phase adds work to a phase that is busier
+  than the busy-thread counts suggest. A sequential build uses 56.5 s of user CPU in 12.6 s of wall time and a parallel
+  one 78 s in 10.0 s. So the JIT and the collector already keep several cores busy beside a single compile thread.
+
+**What it means.**
+
+- **The tail is the derivation's serial length, about 4 s alone:** half its own interpretation, half the first check
+  of what it reaches. Hints can only start that work earlier, and earlier makes it slower. Two things shorten it: the
+  derivation running in parallel, which is §15.4's design question (interpreter forking, or each used value's
+  derivation at its own entry metas), or each step getting cheaper.
+- **§15.8's estimate of up to 1.4 s from the companion hints does not hold.** The 1.4 s is real time on the path, but
+  only the payloads (0.4 s) can be named ahead, and naming them costs more than it saves.
+- **Do not re-propose** hinting the tree's root earlier or one level ahead inside the derivation without a change that
+  shortens the derivation itself.
