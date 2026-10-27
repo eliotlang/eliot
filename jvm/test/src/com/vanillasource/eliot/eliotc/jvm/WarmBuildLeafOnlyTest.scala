@@ -13,8 +13,8 @@ import java.nio.file.{Files, Path}
 
 /** The standing warm-build metric assertion (`docs/incremental-compilation.md` §6 Step 6, §8): a warm compilation over
   * an unchanged source tree must regenerate **only world leaves** — the facts that form the boundary with the external
-  * world and are therefore always re-run (every `FileStat`, the `OutputFileStat` digest, the `UpToDate` anchor
-  * constant, the synthetic-main `SourceContent`). Everything else — every native contributor's `ContributedBinding`,
+  * world and are therefore always re-run (every `FileStat`, the `UpToDate` anchor constant, the synthetic-main
+  * `SourceContent`). Everything else — every native contributor's `ContributedBinding`,
   * every `NativeBinding`, and above all every `MonomorphicValue` — must validate structurally and be accepted from the
   * warm in-memory cache without re-running its processor.
   *

@@ -16,7 +16,7 @@ import com.vanillasource.eliot.eliotc.jvm.jargen.{
   SyntheticMainSourceProcessor
 }
 import com.vanillasource.eliot.eliotc.compiler.Compiler
-import com.vanillasource.eliot.eliotc.compiler.cache.OutputFileStatProcessor
+import com.vanillasource.eliot.eliotc.jvm.classgen.fact.GeneratedModule
 import com.vanillasource.eliot.eliotc.jvm.classgen.processor.JvmClassGenerator
 import com.vanillasource.eliot.eliotc.module.fact.{ModuleName, ValueFQN}
 import com.vanillasource.eliot.eliotc.plugin.Configuration.{demandScopedKey, diagnosticKey}
@@ -25,6 +25,7 @@ import com.vanillasource.eliot.eliotc.processor.common.SequentialCompilerProcess
 import com.vanillasource.eliot.eliotc.processor.{CompilerProcessor, FactDemand}
 import com.vanillasource.eliot.eliotc.progress.{ProgressDescriber, ProgressMeasure}
 import com.vanillasource.eliot.eliotc.source.scan.PathScanner
+import com.vanillasource.eliot.eliotc.used.UsedNames
 import scopt.{OParser, OParserBuilder}
 
 import java.nio.file.{Files, Path}
@@ -115,7 +116,6 @@ class JvmPlugin extends CompilerPlugin {
         SequentialCompilerProcessors(
           Seq(
             superProcessor,
-            OutputFileStatProcessor(),
             JvmClassGenerator(),
             JvmProgramGenerator(configuration.get(Compiler.targetPathKey).get)
           ) ++ configuration
@@ -132,8 +132,41 @@ class JvmPlugin extends CompilerPlugin {
     classOf[StdlibPlugin]
   )
 
-  override def run(configuration: Configuration, compilation: FactDemand): IO[Boolean] =
-    compilation.getFact(GenerateExecutableJar.Key(configuration.get(mainKey).get)).map(_.isDefined)
+  /** Demand the jar, then check that the file is the one the fact says was written, and write it again if it is not.
+    *
+    * A fact accepted from the cache proves the program unchanged, not the file: the jar may have been deleted, truncated
+    * or replaced since. The check cannot be a dependency of the fact, because a world leaf is read once per run, and the
+    * read that decided the jar must be generated saw the file before the write: it recorded a deleted jar as absent, so
+    * the next deletion compared equal and the build succeeded without a jar. Nor can the rewrite be a fact: what the
+    * file holds is not a function of anything a key can name. So it happens here, from the facts the jar is made of,
+    * which the cached fact has just proven unchanged.
+    */
+  override def run(configuration: Configuration, compilation: FactDemand): IO[Boolean] = {
+    val main      = configuration.get(mainKey).get
+    val targetDir = configuration.get(Compiler.targetPathKey).get
+
+    compilation.getFact(GenerateExecutableJar.Key(main)).flatMap {
+      case Some(written) =>
+        IO.blocking(JvmProgramGenerator.digestOf(JvmProgramGenerator.jarFilePath(targetDir, main))).flatMap { onDisk =>
+          if (onDisk.contains(written.digest)) IO.pure(true) else rewriteJar(compilation, targetDir, main)
+        }
+      case None          => IO.pure(false)
+    }
+  }
+
+  private def rewriteJar(compilation: FactDemand, targetDir: Path, main: ValueFQN): IO[Boolean] = {
+    val root = SyntheticMainSourceProcessor.syntheticMainVfqn
+
+    compilation.getFact(UsedNames.Key(root)).flatMap {
+      case Some(usedNames) =>
+        JvmProgramGenerator
+          .moduleKeys(root, usedNames)
+          .traverse(key => compilation.getFact[GeneratedModule, GeneratedModule.Key](key))
+          .flatMap(_.sequence.traverse(JvmProgramGenerator.writeJar(targetDir, main, _)))
+          .map(_.isDefined)
+      case None            => IO.pure(false)
+    }
+  }
 
   /** The `run` mode: `java -jar` on the jar this compilation produced, with this process's streams and working
     * directory, answering the program's own exit code. The JVM is the one running the compiler, so a program is run by

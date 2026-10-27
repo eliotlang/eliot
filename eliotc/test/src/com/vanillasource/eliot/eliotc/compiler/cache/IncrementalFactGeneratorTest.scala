@@ -661,7 +661,7 @@ class IncrementalFactGeneratorTest extends AsyncFlatSpec with AsyncIOSpec with M
   }
 
   "incremental generation" should "rebuild a deleted output and then stabilize (presence-leaf behavior)" in {
-    // Models OutputFileStat: 'present' leaf reads a 0/1 presence flag; 'jar' depends on it and 'writes'
+    // A writer depending on a world leaf: 'present' reads a 0/1 presence flag; 'jar' depends on it and 'writes'
     // (sets the flag to 1 and bumps the write counter). Deleting the output (flag -> 0) forces a rebuild.
     val test = for {
       present <- Ref.of[IO, Int](0) // 0 = output missing

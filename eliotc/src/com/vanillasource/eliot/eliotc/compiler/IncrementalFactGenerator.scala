@@ -482,7 +482,7 @@ final class IncrementalFactGenerator(
 
   /** The keys this run regenerated (ran a processor for from scratch) rather than accepting from the prior cache. On a
     * warm build over an unchanged tree this is exactly the set of world leaves — facts with no recorded dependencies,
-    * e.g. every `FileStat`, the `OutputFileStat` digest, and the `UpToDate` anchor constant — which are always
+    * e.g. every `FileStat` and the `UpToDate` anchor constant — which are always
     * regenerated as the boundary with the external world.
     */
   def regeneratedKeys(): IO[Set[CompilerFactKey[?]]] = IO.delay(regeneratedKeysSet.asScala.toSet)

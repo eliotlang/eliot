@@ -52,17 +52,17 @@ invalidates nothing downstream. The structural drill is what lets a fact that ca
 itself unchanged, by reaching the leaves through its edges.
 
 **Leaves are the boundary with the world.** An entry with no dependencies is always regenerated — that is how a
-`FileStat` re-stats its file every run. Two facts exist purely to give that boundary the right shape:
+`FileStat` re-stats its file every run. `UpToDate` exists purely to give that boundary the right shape: a constant
+with no inputs. A processor that is an *input-less compiler constant* would otherwise look exactly like a source leaf;
+depending on `UpToDate` turns it into a non-leaf whose drill terminates at a leaf that always compares equal.
 
-- `UpToDate` — a constant with no inputs. A processor that is an *input-less compiler constant* would otherwise
-  look exactly like a source leaf; depending on `UpToDate` turns it into a non-leaf whose drill terminates at a
-  leaf that always compares equal.
-- `OutputFileStat` — the content digest, not the mtime, of a written artefact. An mtime would self-invalidate on
-  every write; a digest is stable across a rewrite of the same bytes (which is what makes deterministic output a
-  prerequisite, not a nicety) and still differs when the output is deleted, truncated or replaced. It is read
-  *after* the write, so it records what the run actually left on disk. This dependency is the only thing tying an
-  accepted-from-cache writer to the file's real state — presence alone, its earlier shape, let a corrupted jar
-  survive a build that reported success.
+**A written artefact is not a leaf of its writer.** `GenerateExecutableJar` records the digest of the jar it wrote,
+read back after the write, and the jvm plugin compares it with the file after the demand, writing the jar again from
+its (cached) modules when they differ. A digest rather than an mtime, because a digest is stable across a rewrite of
+the same bytes (which makes deterministic output a prerequisite, not a nicety) and still differs when the output is
+deleted, truncated or replaced. It used to be a dependency on a leaf, `OutputFileStat`, read after the write, and that
+cannot work: a leaf is read once per run, and the read that decided the writer must run saw the file before the write,
+so a deleted jar was recorded as absent, and the next deletion compared equal and the build succeeded without a jar.
 
 **Fingerprints guard reuse.** `CacheFingerprint.compiler` digests every entry on the running compiler's
 classpath (path, size, mtime; recursively for directories), so even an uncommitted recompile of the compiler

@@ -191,8 +191,8 @@ value**: values change 2,500 times a second, modules a few times a second. As bu
 saturation, the binding suppliers and the ability checks, and `lowering` covers reconciliation; `apidoc` describes
 nothing yet, so its own work shows as `working`.
 
-`input` marks a fact that *is* one of the program's inputs — lang's `FileContent`, jvm's `OutputFileStat` (the jar on
-disk) — so that its change is reported (trigger 3). It is not the world leaf `FileStat`: a file written within the
+`input` marks a fact that *is* one of the program's inputs — lang's `FileContent` — so that its change is reported
+(trigger 3). It is not the world leaf `FileStat`: a file written within the
 settle margin carries a nonce and never compares equal to itself (`FileStat.unsettled`), so every recently saved file
 would be reported changed whether it was or not. Its content, one level up, compares honestly.
 
@@ -378,8 +378,8 @@ failed 3 errors · first at eliot/build/model/Version.els:56 · 4.1s · nothing 
   above it, one `size` line each. As built, a measure reads `name value[ / limit] (±delta)` — `Launcher.jar 412 KB
   (+88 B)`, `flash 2.14 KB / 256 KB (+12 B)`, a value over its limit painted as a failure — in binary units to three
   digits. There is no delta without a previous value of that name, and a run of class `unchanged` says `up to date`
-  in its place: nothing was recomputed differently, so the artefact is the one the last run wrote (a deleted jar is a
-  changed `OutputFileStat`, which makes the run `changed`). The profile keeps only the last successful run's measures,
+  in its place: nothing was recomputed differently, so the artefact is the one the last run wrote (a jar deleted or
+  replaced since is written again by the plugin, from facts that did not change, so the run stays `unchanged`). The profile keeps only the last successful run's measures,
   as `measure <value> <name>` lines, the name last so it may hold spaces. Measuring is fail-safe: a measure that cannot
   be taken is logged and the `ok` line goes without it.
 

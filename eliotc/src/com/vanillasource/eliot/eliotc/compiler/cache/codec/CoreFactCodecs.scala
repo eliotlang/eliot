@@ -8,10 +8,6 @@ object CoreFactCodecs {
     FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_pos_PositionRange
       : FactCodec[com.vanillasource.eliot.eliotc.pos.PositionRange] = FactCodec.derived
-  given codec_com_vanillasource_eliot_eliotc_compiler_cache_OutputFileStat
-      : FactCodec[com.vanillasource.eliot.eliotc.compiler.cache.OutputFileStat] = FactCodec.derived
-  given codec_com_vanillasource_eliot_eliotc_compiler_cache_OutputFileStat_Key
-      : FactCodec[com.vanillasource.eliot.eliotc.compiler.cache.OutputFileStat.Key] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_compiler_cache_UpToDate
       : FactCodec[com.vanillasource.eliot.eliotc.compiler.cache.UpToDate] = FactCodec.derived
   given codec_com_vanillasource_eliot_eliotc_compiler_cache_UpToDate_Key
@@ -20,14 +16,11 @@ object CoreFactCodecs {
       : FactCodec[com.vanillasource.eliot.eliotc.feedback.CompilerError] = FactCodec.derived
 
   // Aliases the fact keys use to state their own persistence decision.
-  val outputFileStatCodec: FactCodec[com.vanillasource.eliot.eliotc.compiler.cache.OutputFileStat] =
-    codec_com_vanillasource_eliot_eliotc_compiler_cache_OutputFileStat
-  val upToDateCodec: FactCodec[com.vanillasource.eliot.eliotc.compiler.cache.UpToDate]             =
+  val upToDateCodec: FactCodec[com.vanillasource.eliot.eliotc.compiler.cache.UpToDate] =
     codec_com_vanillasource_eliot_eliotc_compiler_cache_UpToDate
 
   /** This layer's contribution to the key tag table; see [[FactKeyCodecs]]. */
   val keyCodecs: FactKeyCodecs.Registry = Map(
-    FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_compiler_cache_OutputFileStat_Key),
     FactKeyCodecs.of(codec_com_vanillasource_eliot_eliotc_compiler_cache_UpToDate_Key)
   )
 }

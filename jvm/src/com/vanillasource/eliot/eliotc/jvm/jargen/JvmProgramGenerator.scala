@@ -2,7 +2,6 @@ package com.vanillasource.eliot.eliotc.jvm.jargen
 
 import cats.effect.{IO, Resource}
 import cats.syntax.all.*
-import com.vanillasource.eliot.eliotc.compiler.cache.OutputFileStat
 import com.vanillasource.eliot.eliotc.feedback.{CompilerError, Logging}
 import com.vanillasource.eliot.eliotc.feedback.User.*
 import com.vanillasource.eliot.eliotc.jvm.classgen.fact.GeneratedModule
@@ -12,10 +11,12 @@ import com.vanillasource.eliot.eliotc.processor.CompilerIO.*
 import com.vanillasource.eliot.eliotc.processor.common.SingleFactProcessor
 import com.vanillasource.eliot.eliotc.used.UsedNames
 
+import java.io.{IOException, InputStream}
 import java.nio.charset.StandardCharsets
 import java.nio.file.StandardCopyOption.ATOMIC_MOVE
 import java.nio.file.StandardOpenOption.*
 import java.nio.file.{Files, Path}
+import java.security.{DigestInputStream, MessageDigest}
 import java.time.LocalDateTime
 import java.util.jar.{JarEntry, JarOutputStream}
 
@@ -36,13 +37,10 @@ class JvmProgramGenerator(targetDir: Path) extends SingleFactProcessor[GenerateE
       // Unit`), each a handle type parameter, so demanding it as a standalone root would leave those neutral; the
       // wrapper binds each with a `with`.
       allModules <- generateModulesFrom(SyntheticMainSourceProcessor.syntheticMainVfqn)
-      _          <- generateJarFile(key.vfqn, allModules).to[CompilerIO]
-      // Depend on the output JAR's presence (a leaf), so a deleted JAR forces a rewrite under incremental compilation.
-      // Read *after* the write, so the recorded value is the state this run actually left on disk. Reading it before
-      // would record "absent" (this generation just deleted it) against a next-run "present", and the JAR would then
-      // regenerate on every single build, forever.
-      _          <- getFactOrAbort(OutputFileStat.Key(jarFilePath(key.vfqn).toFile))
-    } yield GenerateExecutableJar(key.vfqn)
+      digest     <- (JvmProgramGenerator.writeJar(targetDir, key.vfqn, allModules) <*
+                      info[IO](s"Generated executable jar: ${JvmProgramGenerator.jarFilePath(targetDir, key.vfqn)}."))
+                      .to[CompilerIO]
+    } yield GenerateExecutableJar(key.vfqn, digest)
 
   /** Delete what a previous run wrote, before this generation reads anything.
     *
@@ -52,8 +50,8 @@ class JvmProgramGenerator(targetDir: Path) extends SingleFactProcessor[GenerateE
     */
   private def discardPreviousJar(mainValue: ValueFQN): IO[Unit] =
     IO.blocking {
-      Files.deleteIfExists(jarFilePath(mainValue))
-      Files.deleteIfExists(temporaryJarFilePath(mainValue))
+      Files.deleteIfExists(JvmProgramGenerator.jarFilePath(targetDir, mainValue))
+      Files.deleteIfExists(JvmProgramGenerator.temporaryJarFilePath(targetDir, mainValue))
     }.void
 
   /** Pre-flight for the configured entry point: fail with a plain, attributable message when the `-m` module — or its
@@ -78,81 +76,10 @@ class JvmProgramGenerator(targetDir: Path) extends SingleFactProcessor[GenerateE
   private def generateModulesFrom(vfqn: ValueFQN): CompilerIO[Seq[GeneratedModule]] =
     for {
       usedNames <- getFactOrAbort(UsedNames.Key(vfqn))
-      modules   <- generateModules(vfqn, usedNames)
+      moduleKeys = JvmProgramGenerator.moduleKeys(vfqn, usedNames)
+      // Every module's bytecode is independent of every other's: a parallel run generates them all at once.
+      modules   <- prefetch(moduleKeys) >> moduleKeys.traverse(getFactOrAbort)
     } yield modules
-
-  private def generateModules(vfqn: ValueFQN, usedNames: UsedNames): CompilerIO[Seq[GeneratedModule]] = {
-    val moduleKeys = usedNames.usedNames.keys.map(_.moduleName).toSeq.distinct.map(GeneratedModule.Key(_, vfqn))
-
-    // Every module's bytecode is independent of every other's: a parallel run generates them all at once.
-    prefetch(moduleKeys) >> moduleKeys.traverse(getFactOrAbort)
-  }
-
-  /** Write the JAR to a temporary file beside its destination and move it into place once complete, so the destination
-    * path only ever holds a whole JAR: a build that dies mid-write leaves nothing runnable behind, rather than a
-    * truncated file that looks present. The temporary is removed on any non-success (error or cancellation); after a
-    * successful move it is already gone, so the cleanup is a no-op.
-    */
-  private def generateJarFile(mainValue: ValueFQN, allClasses: Seq[GeneratedModule]): IO[Unit] =
-    (jarOutputStream(mainValue).use { jos =>
-      IO.blocking {
-        generateManifest(jos)
-        generateClasses(jos, allClasses)
-      }
-    } >> IO.blocking(Files.move(temporaryJarFilePath(mainValue), jarFilePath(mainValue), ATOMIC_MOVE)).void)
-      .guarantee(IO.blocking(Files.deleteIfExists(temporaryJarFilePath(mainValue))).void) >>
-      info(s"Generated executable jar: ${jarFilePath(mainValue)}.")
-
-  /** Entries are written in name order, not in the order the modules were generated in. The module sequence comes from
-    * the keys of a `Map`, whose iteration order is not a function of the program alone — sorting is what makes the same
-    * program produce the same JAR (see [[timestamped]]).
-    */
-  private def generateClasses(jos: JarOutputStream, allClasses: Seq[GeneratedModule]): Unit = {
-    val classFiles = allClasses.flatMap(_.classFiles).sortBy(_.fileName)
-
-    classFiles.foreach { classFile =>
-      jos.putNextEntry(timestamped(classFile.fileName))
-      jos.write(classFile.bytecode)
-      jos.closeEntry()
-    }
-  }
-
-  private def jarOutputStream(mainValue: ValueFQN): Resource[IO, JarOutputStream] =
-    for {
-      _   <- Resource.eval(IO.blocking(Files.createDirectories(targetDir)))
-      os  <- Resource.fromAutoCloseable(
-               IO.blocking(Files.newOutputStream(temporaryJarFilePath(mainValue), CREATE, TRUNCATE_EXISTING))
-             )
-      jos <- Resource.fromAutoCloseable(IO.blocking(new JarOutputStream(os)))
-    } yield jos
-
-  private def jarFilePath(mainValue: ValueFQN): Path = JvmProgramGenerator.jarFilePath(targetDir, mainValue)
-
-  /** Beside the destination, so the completing move stays within one directory (and one filesystem) and is atomic. */
-  private def temporaryJarFilePath(mainValue: ValueFQN): Path = targetDir.resolve(jarFileName(mainValue) + ".tmp")
-
-  def jarFileName(mainValue: ValueFQN): String = JvmProgramGenerator.jarFileName(mainValue)
-
-  private def generateManifest(jos: JarOutputStream): Unit = {
-    jos.putNextEntry(timestamped("META-INF/MANIFEST.MF"))
-    jos.write("Manifest-Version: 1.0\nMain-Class: main\n".getBytes(StandardCharsets.UTF_8))
-    jos.closeEntry()
-  }
-
-  /** An entry stamped with a fixed local time instead of "now", so the same program compiles to the same bytes.
-    *
-    * Without it every build produces a different JAR, which costs two things: a JAR cannot be compared byte for byte
-    * against one built from the same sources — the cheapest oracle there is for "did this change alter codegen?" — and
-    * every rewrite changes the artefact's digest ([[OutputFileStat]]) even when the program did not change at all.
-    *
-    * `setTimeLocal` writes the DOS field directly, where `setTime` would convert from the default time zone (making the
-    * bytes depend on where the build runs) and, outside the DOS range, add an extended-timestamp extra field.
-    */
-  private def timestamped(name: String): JarEntry = {
-    val entry = new JarEntry(name)
-    entry.setTimeLocal(JvmProgramGenerator.epoch)
-    entry
-  }
 }
 
 object JvmProgramGenerator {
@@ -168,4 +95,96 @@ object JvmProgramGenerator {
   def jarFilePath(targetDir: Path, mainValue: ValueFQN): Path = targetDir.resolve(jarFileName(mainValue))
 
   def jarFileName(mainValue: ValueFQN): String = mainValue.moduleName.name + ".jar"
+
+  /** The modules whose classes make up the jar of the program `root` reaches. */
+  def moduleKeys(root: ValueFQN, usedNames: UsedNames): Seq[GeneratedModule.Key] =
+    usedNames.usedNames.keys.map(_.moduleName).toSeq.distinct.map(GeneratedModule.Key(_, root))
+
+  /** Write the jar of `modules` for `mainValue` and answer the digest of what the file then holds — the generator's
+    * write, and the jvm plugin's when the file is not what a cached [[GenerateExecutableJar]] says was written.
+    *
+    * The jar goes to a temporary file beside its destination and is moved into place once complete, so the destination
+    * path only ever holds a whole jar: a build that dies mid-write leaves nothing runnable behind, rather than a
+    * truncated file that looks present. The temporary is removed on any non-success (error or cancellation); after a
+    * successful move it is already gone, so the cleanup is a no-op. The digest is read back from the file, not taken
+    * from the bytes written, so it is the state this run left on disk.
+    */
+  def writeJar(targetDir: Path, mainValue: ValueFQN, modules: Seq[GeneratedModule]): IO[String] = {
+    val jar       = jarFilePath(targetDir, mainValue)
+    val temporary = temporaryJarFilePath(targetDir, mainValue)
+
+    (jarOutputStream(targetDir, temporary).use { jos =>
+      IO.blocking {
+        generateManifest(jos)
+        generateClasses(jos, modules)
+      }
+    } >> IO.blocking(Files.move(temporary, jar, ATOMIC_MOVE)).void)
+      .guarantee(IO.blocking(Files.deleteIfExists(temporary)).void) >>
+      IO.blocking(digestOf(jar)).flatMap(IO.fromOption(_)(new IOException(s"The jar $jar could not be read back.")))
+  }
+
+  /** The SHA-256 of the file at `path` as it stands, `None` if it is not there or cannot be read — which compares unequal
+    * to any digest written, and so forces a rewrite: the fail-safe direction. Streamed, so the size of a jar does not
+    * decide how much memory a build takes.
+    */
+  def digestOf(path: Path): Option[String] =
+    try Option.when(Files.isRegularFile(path))(digestOf(Files.newInputStream(path)))
+    catch { case _: Exception => None }
+
+  /** Beside the destination, so the completing move stays within one directory (and one filesystem) and is atomic. */
+  private def temporaryJarFilePath(targetDir: Path, mainValue: ValueFQN): Path =
+    targetDir.resolve(jarFileName(mainValue) + ".tmp")
+
+  private def jarOutputStream(targetDir: Path, temporary: Path): Resource[IO, JarOutputStream] =
+    for {
+      _   <- Resource.eval(IO.blocking(Files.createDirectories(targetDir)))
+      os  <- Resource.fromAutoCloseable(IO.blocking(Files.newOutputStream(temporary, CREATE, TRUNCATE_EXISTING)))
+      jos <- Resource.fromAutoCloseable(IO.blocking(new JarOutputStream(os)))
+    } yield jos
+
+  private def generateManifest(jos: JarOutputStream): Unit = {
+    jos.putNextEntry(timestamped("META-INF/MANIFEST.MF"))
+    jos.write("Manifest-Version: 1.0\nMain-Class: main\n".getBytes(StandardCharsets.UTF_8))
+    jos.closeEntry()
+  }
+
+  /** Entries are written in name order, not in the order the modules were generated in. The module sequence comes from
+    * the keys of a `Map`, whose iteration order is not a function of the program alone — sorting is what makes the same
+    * program produce the same JAR (see [[timestamped]]).
+    */
+  private def generateClasses(jos: JarOutputStream, modules: Seq[GeneratedModule]): Unit = {
+    val classFiles = modules.flatMap(_.classFiles).sortBy(_.fileName)
+
+    classFiles.foreach { classFile =>
+      jos.putNextEntry(timestamped(classFile.fileName))
+      jos.write(classFile.bytecode)
+      jos.closeEntry()
+    }
+  }
+
+  /** An entry stamped with a fixed local time instead of "now", so the same program compiles to the same bytes.
+    *
+    * Without it every build produces a different JAR, which costs two things: a JAR cannot be compared byte for byte
+    * against one built from the same sources — the cheapest oracle there is for "did this change alter codegen?" — and
+    * every rewrite changes the artefact's digest ([[GenerateExecutableJar.digest]]) even when the program did not change
+    * at all.
+    *
+    * `setTimeLocal` writes the DOS field directly, where `setTime` would convert from the default time zone (making the
+    * bytes depend on where the build runs) and, outside the DOS range, add an extended-timestamp extra field.
+    */
+  private def timestamped(name: String): JarEntry = {
+    val entry = new JarEntry(name)
+    entry.setTimeLocal(epoch)
+    entry
+  }
+
+  private def digestOf(stream: InputStream): String = {
+    val digest = MessageDigest.getInstance("SHA-256")
+    val in     = new DigestInputStream(stream, digest)
+    try {
+      val buffer = new Array[Byte](64 * 1024)
+      while (in.read(buffer) >= 0) ()
+    } finally in.close()
+    digest.digest().map(byte => f"$byte%02x").mkString
+  }
 }

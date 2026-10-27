@@ -90,6 +90,24 @@ class BuildArtifactTest extends FullIntegrationTest {
     (compileAndRun(working) >> corruptJar >> compileAndRun(working)).asserting(_ shouldBe "working")
   }
 
+  it should "be rewritten every time, not only the first" in {
+    // The first rewrite used to record the jar as the check before it saw it — absent — so the next deletion compared
+    // equal and the build reported success without a jar.
+    (compileAndRun(working) >> corruptJar >> compileAndRun(working) >> corruptJar >> compileAndRun(working))
+      .asserting(_ shouldBe "working")
+  }
+
+  "a deleted jar" should "be rewritten every time, not only the first" in {
+    (compileAndRun(working) >> deleteJar >> compileAndRun(working) >> deleteJar >> compileAndRun(working))
+      .asserting(_ shouldBe "working")
+  }
+
+  "a rewritten jar" should "not be rewritten again by the next unchanged build" in {
+    (compileAndRun(working) >> deleteJar >> compileAndRun(working) >> modifiedAt(jarPath).flatMap(before =>
+      compileAndRun(working) >> modifiedAt(jarPath).map(_ === before)
+    )).asserting(_ shouldBe true)
+  }
+
   "the same program" should "compile to byte-identical jars" in {
     // Deterministic output is what lets the content digest above settle, and what makes a jar comparable byte for byte
     // against one built from the same sources.
@@ -99,9 +117,8 @@ class BuildArtifactTest extends FullIntegrationTest {
   }
 
   "an unchanged recompilation" should "not rewrite the jar" in {
-    // Guards the ordering the artefact invariant rests on: the jar is discarded at the start of a regeneration, so the
-    // output-presence dependency must be read *after* the write. Read before, it would record "absent" against a
-    // next-run "present" and the jar would regenerate on every build, forever.
+    // The jar is discarded at the start of a regeneration, so the digest it records must be read *after* the write.
+    // Read before, it would never match the file and the jar would be rewritten on every build, forever.
     (compileAndRun(working) >> modifiedAt(jarPath).flatMap(before =>
       compileAndRun(working) >> modifiedAt(jarPath).map(_ === before)
     )).asserting(_ shouldBe true)
@@ -112,6 +129,8 @@ class BuildArtifactTest extends FullIntegrationTest {
   private def bytesOf(path: Path): IO[Seq[Byte]] = IO.blocking(Files.readAllBytes(path).toSeq)
 
   private def corruptJar: IO[Unit] = IO.blocking(Files.writeString(jarPath, "not a jar")).void
+
+  private def deleteJar: IO[Unit] = IO.blocking(Files.delete(jarPath))
 
   private def modifiedAt(path: Path): IO[Long] = IO.blocking(Files.getLastModifiedTime(path).toMillis)
 
