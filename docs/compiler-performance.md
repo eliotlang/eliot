@@ -1422,10 +1422,12 @@ out by the work done on each answer before the next read. §15.1's hint is the r
 `traverse` is not.
 
 **Where to hint: four kinds of fact.** Greedy search over "this kind of generation hints all its reads at its start",
-with 20 cores, picks the same sites in both recordings: `UsedNames` (1.6–1.85× on its own), `DerivedMeta`,
-`GenerateExecutableJar` and `GeneratedModule`. Together they give 7.2× JIT warm and 8.0× cold, against ceilings of
-8.7× and 8.9×. The front end per file adds nothing measurable: what reads a file's facts is already parallel once the
-values above it are.
+with 20 cores, picks the same first three sites in both recordings: `UsedNames` (1.6–1.85× on its own), then
+`DerivedMeta`, then `GenerateExecutableJar`, for 7.0× cold and 7.2× JIT warm. The fourth pick differs:
+`GeneratedModule` cold (8.0×, and `MonomorphicValue` fifth, 8.5×), `ModuleValue` warm (7.9×), against ceilings of 8.9×
+and 8.7×. No per-file front-end fact is picked (`PathScan` 1.00×, `UnifiedModuleNames` 1.01–1.02×, `ResolvedValue`
+1.04–1.05× on their own): a file's facts are already read in parallel once the values that read them are. The full
+search is in §15.5.
 
 **What a hint can actually know.** The greedy search is an oracle about *what* each site reads. For three of the four
 sites the oracle is honest. Bytecode and the jar know their reads from the used names. The `used` walk was given the
@@ -1481,3 +1483,185 @@ In a parallel run, warm-up happens on many threads at once, so the cold row abov
   keyed reads, each measured against the sequential mode. The front end per file is not worth a hint of its own.
   A real run should land below these figures, because contention, GC and JIT warm-up on many threads are not in the
   model.
+
+### 15.5 The record
+
+Everything §15.3 rests on, so that nothing has to be measured again to be read. eliot-build at `d0e6b3a`, compiler at
+`e5943890` plus the probe, `jvm exe-jar -m eliot.build.Launcher src/` with the three layers on `--path`, a fresh
+`-o` each run. The jar is `a74475df…` in every run below.
+
+**The probe** (stash "perf probe: ceiling (§15.3)"). `CeilingProbe` (eliotc), enabled by `-Deliot.ceiling=<file>`, one
+per `IncrementalFactGenerator`, its dump numbered by the generator's place in the JVM and written by a shutdown hook.
+It hooks `computed` (a generation starts and ends; nesting from a stack of frames; self time = elapsed minus the
+children's elapsed), `getFact` (a read, attributed to the innermost running generation; the validation path's reads
+are not seen, and a cold run has none), `registerFact` (a push, when the key is not the generation's own), and
+`UsedNamesProcessor.processMonomorphicValue` (a hint: the `WovenValue.Key` of every value reference in the woven body
+just read). A read's and a push's time is its offset into the generation's self time. The dump is one line per key
+(class name), generation (key, parent, start, end, self) and event (kind, generation, offset, key).
+
+**The simulator** (`scripts/perf/ceiling.py` in the stash; `plan3.py`, `greedy.py`, `crit.py` drive it). A generation is
+its recorded sequence: self work, then reads, pushes and hints at their offsets, then the rest of its self work. A fact
+exists at the earliest of its generation's end and any push of it. A read of a fact that does not exist yet blocks the
+generation and frees its worker, as a virtual thread would; it is woken when the fact appears. Ready generations run
+in order of their sequential start time. Keys with neither a generation nor a push (injected facts) exist from the
+start. The root's time after its last read (the save, shutdown) is left out. Modes:
+
+- *dataflow*: every generation is ready at time 0. With infinite workers this is the critical path.
+- *demand*: a generation starts when first read, or when a hint names it. Optional *batches* (consecutive reads less
+  than ε of self work apart start together), *lookahead* (a kind of generation starts all its reads when it starts),
+  *hints* (the recorded `used`-walk hints start their facts), *static* (a `DerivedMeta` starts every read that is not a
+  `DerivedMeta`, its own and, at depth 1, those of the derived metas it will read). A read of a pushed-only fact
+  starts its producer if nobody has.
+- The *critical path* follows each generation back to what it last waited for (the generation that produced it), or
+  to whoever started it.
+
+Sanity: the demand mode on one worker with no hints gives 8.56 s against 8.46 s of work (cold), 1% above it.
+
+What the model leaves out: scheduling and latch cost, contention on the engine's maps (22% of a build is their
+hashing and equality, §14.4), allocation and GC across cores, and JIT warm-up on many threads at once. Self time is
+wall time on the compile thread, so it includes the GC pauses and interpreted code that landed in it. A depth-unbounded
+*static* row (every derived meta below, not one level) never finished, because the simulator walks each subtree at
+each start, which is quadratic. It was dropped, and the oracle row bounds it.
+
+**The runs.**
+
+| recording | how | compile | work Σ self | generations | reads | pushes | hints |
+|---|---|---|---|---|---|---|---|
+| A, cold | the CLI, one compile | 10.52 s (9.98 s without the probe) | 8.46 s | 67 065 | 951 981 | 7 097 | — |
+| B, JIT warm | 4th of 4 in one JVM: 10.44, 5.89, 5.18, 5.07 s | 5.07 s | 4.24 s | 67 065 | 951 981 | 7 097 | — |
+| C, cold, hints | 1st of 4 in one JVM: 12.30, 6.58, 6.04, 5.92 s | 12.30 s | 10.22 s | 67 065 | 951 981 | 7 097 | 4 276 |
+| D, warm, hints | 4th of the same | 5.92 s | 4.97 s | 67 065 | 951 981 | 7 097 | 4 276 |
+
+C and D ran beside recording A's greedy search, a single-threaded Python process, which is why their times are higher.
+74 162 key instances were recorded. The deepest generation stack was 98, and the deepest nesting of `DerivedMeta`
+generations 93.
+
+**Self time by kind** (recording A, the largest 30 of 42):
+
+| kind | generations | self | reads | | kind | generations | self | reads |
+|---|---|---|---|---|---|---|---|---|
+| CompilerMonomorphicValue | 7 519 | 1.254 s | 126 245 | | AbilityImplementationCheck | 268 | 0.125 s | 49 390 |
+| DerivedMeta | 5 544 | 1.123 s | 415 177 | | ContributedBinding | 6 640 | 0.115 s | 9 072 |
+| MonomorphicValue | 2 303 | 0.691 s | 66 816 | | UsedNames | 1 | 0.105 s | 4 839 |
+| GeneratedModule | 50 | 0.691 s | 14 992 | | UnifiedModuleValue | 3 999 | 0.098 s | 13 821 |
+| RowElaboratedValue | 2 814 | 0.614 s | 36 925 | | FileStat | 549 | 0.097 s | 0 |
+| SourceAST | 99 | 0.578 s | 99 | | MetaDemands | 1 274 | 0.087 s | 30 607 |
+| ResolvedValue | 3 554 | 0.529 s | 24 058 | | MetaTransferAccounting | 2 146 | 0.083 s | 8 198 |
+| SourceTokens | 99 | 0.388 s | 99 | | AbilityImplementation | 425 | 0.079 s | 24 803 |
+| GenerateExecutableJar | 1 | 0.227 s | 53 | | BlockDesugaredValue | 3 554 | 0.072 s | 3 572 |
+| ModuleValue | 172 | 0.215 s | 5 159 | | NativeBinding | 1 468 | 0.071 s | 10 454 |
+| CoreAST | 99 | 0.210 s | 99 | | NamedValuesRewrittenValue | 2 814 | 0.051 s | 2 814 |
+| OperatorResolvedValue | 3 554 | 0.200 s | 8 860 | | FileContent | 98 | 0.050 s | 98 |
+| RecursionCheckedValue | 2 814 | 0.161 s | 36 486 | | RefinementTable | 1 254 | 0.049 s | 8 257 |
+| WovenValue | 2 146 | 0.151 s | 30 374 | | UncurriedMonomorphicValue | 2 026 | 0.039 s | 2 026 |
+| MatchDesugaredValue | 3 554 | 0.133 s | 8 267 | | PathScan | 130 | 0.029 s | 780 |
+
+**Dataflow, all core counts** (time, speedup over work):
+
+| | ∞ | 64 | 20 | 8 | 4 |
+|---|---|---|---|---|---|
+| A, cold | 0.940 s, 9.00× | 0.940 s, 9.00× | 0.950 s, 8.90× | 1.292 s, 6.55× | 2.327 s, 3.64× |
+| B, JIT warm | 0.438 s, 9.66× | | 0.485 s, 8.73× | 0.760 s, 5.58× | 1.250 s, 3.39× |
+| C, cold | 1.190 s, 8.59× | | 1.201 s, 8.50× | 1.583 s, 6.46× | 2.832 s, 3.61× |
+| D, warm | 0.453 s, 10.96× | | 0.515 s, 9.65× | 0.856 s, 5.80× | 1.422 s, 3.49× |
+
+**Dataflow critical paths.** A (0.940 s, 32 generations), from the leaf up: `FileStat` 1.0 ms, `FileContent` 9.9,
+`SourceContent` 2.0, `SourceTokens` 145.0, `SourceAST` 169.0, `CoreAST` 42.6, `ModuleNames` 2.1, `ModuleValue` 20.4,
+`UnifiedModuleValue` 1.3, `ResolvedValue` 32.0, then a second file's front end (`SourceContent` 2.1 … `ModuleValue` 1.0)
+and one value's whole front end (`ResolvedValue` 3.6 … `RecursionCheckedValue` 15.8, `RowElaboratedValue` 52.1),
+`MonomorphicValue` 36.7, `WovenValue` 10.0, `UsedNames` 101.7, `GeneratedModule` 70.5, `GenerateExecutableJar` 208.6.
+By kind: jar 208.5 ms, `SourceAST` 169.4, `SourceTokens` 146.5, `UsedNames` 101.8, `GeneratedModule` 70.5,
+`RowElaboratedValue` 52.0, `CoreAST` 42.7, `MonomorphicValue` 36.7, `ResolvedValue` 35.6, `ModuleValue` 21.4.
+B (0.438 s, 26 generations), by kind: jar 195.6 ms, `ModuleValue` 78.4, `GeneratedModule` 76.6, `MonomorphicValue` 66.2,
+`UsedNames` 14.7, `SourceAST` 4.5, and under 1 ms each for the rest. A single `ModuleValue` or `MonomorphicValue` taking
+70 ms with the JIT warm is most likely a GC pause landing in it.
+
+**Batches at consecutive reads** (recording A, demand mode, no other hints):
+
+| ε | ∞ | 20 | 8 | 4 |
+|---|---|---|---|---|
+| no batches | 8.561 s, 0.99× | 8.561 s | 8.561 s | 8.561 s |
+| 1 µs | 8.513 s, 0.99× | 8.513 s | 8.513 s | 8.514 s |
+| 10 µs | 6.102 s, 1.39× | 6.112 s, 1.38× | 6.176 s, 1.37× | 6.350 s, 1.33× |
+| 100 µs | 2.191 s, 3.86× | 2.286 s, 3.70× | 2.651 s, 3.19× | 3.379 s, 2.50× |
+
+**Lookahead per kind, alone** (20 cores; a kind is a candidate when its generations read at least two generated facts
+each on average, 25 kinds):
+
+| kind | A, cold (no hints 8.561 s) | B, warm (no hints 4.304 s) |
+|---|---|---|
+| UsedNames | 4.573 s, 1.85× | 2.623 s, 1.61× |
+| DerivedMeta | 6.367 s, 1.33× | 2.730 s, 1.55× |
+| MonomorphicValue | 5.865 s, 1.44× | 3.254 s, 1.30× |
+| RowElaboratedValue | 6.275 s, 1.35× | 3.384 s, 1.25× |
+| RecursionCheckedValue | 6.909 s, 1.22× | 3.604 s, 1.18× |
+| GenerateExecutableJar | 7.322 s, 1.16× | 3.781 s, 1.12× |
+| ModuleValue | 7.727 s, 1.09× | 3.922 s, 1.08× |
+| WovenValue | 7.700 s, 1.10× | 3.985 s, 1.06× |
+| ResolvedValue | 8.065 s, 1.05× | 4.085 s, 1.04× |
+| GeneratedModule | 8.151 s, 1.04× | 4.151 s, 1.02× |
+| CompilerMonomorphicValue | 8.329 s, 1.02× | 4.159 s, 1.02× |
+| UnifiedModuleNames | 8.255 s, 1.02× | 4.186 s, 1.01× |
+| NativeBinding | 8.393 s, 1.01× | 4.216 s, 1.00× |
+| PathScan | 8.444 s, 1.00× | 4.226 s, 1.00× |
+
+**Greedy, cumulative** (20 cores; each step adds the kind that helps most among the 14 best alone, stopping below a 3%
+gain): A: `UsedNames` 4.573 s (1.85×), `DerivedMeta` 2.379 s (3.56×), `GenerateExecutableJar` 1.211 s (6.99×),
+`GeneratedModule` 1.061 s (7.97×), `MonomorphicValue` 0.990 s (8.54×); every generation 0.954 s, dataflow 0.950 s.
+B: `UsedNames` 2.623 s (1.61×), `DerivedMeta` 1.050 s (4.04×), `GenerateExecutableJar` 0.585 s (7.24×), `ModuleValue`
+0.536 s (7.91×); every generation 0.486 s, dataflow 0.485 s. The final sets at other core counts:
+
+| | ∞ | 20 | 8 | 4 |
+|---|---|---|---|---|
+| A's five kinds | 0.974 s, 8.68× | 0.990 s, 8.54× | 1.296 s, 6.53× | 2.329 s, 3.63× |
+| A, every generation | 0.944 s | 0.954 s | 1.296 s | 2.329 s |
+| B's four kinds | 0.496 s, 8.55× | 0.536 s, 7.91× | 0.810 s, 5.23× | 1.251 s, 3.39× |
+| B, every generation | 0.439 s | 0.486 s | 0.760 s | 1.250 s |
+
+**The realistic rows, all core counts** (J = `GenerateExecutableJar` and `GeneratedModule` look ahead):
+
+| C, cold | ∞ | 20 | 8 | 4 |
+|---|---|---|---|---|
+| every generation knows its reads | 1.190 s, 8.59× | 1.201 s, 8.50× | 1.583 s, 6.46× | 2.832 s, 3.61× |
+| no hints | 10.359 s, 0.99× | 10.359 s | 10.359 s | 10.359 s |
+| `used` hints + J | 3.417 s, 2.99× | 3.418 s, 2.99× | 3.628 s, 2.82× | 4.563 s, 2.24× |
+| + `DerivedMeta` static | 2.362 s, 4.33× | 2.367 s, 4.32× | 2.590 s, 3.94× | 3.544 s, 2.88× |
+| + static, one level down | 2.270 s, 4.50× | 2.275 s, 4.49× | 2.498 s, 4.09× | 3.441 s, 2.97× |
+| + `DerivedMeta` knows all its reads | 1.331 s, 7.68× | 1.344 s, 7.60× | 1.583 s, 6.46× | 2.832 s, 3.61× |
+
+| D, warm | ∞ | 20 | 8 | 4 |
+|---|---|---|---|---|
+| every generation knows its reads | 0.453 s, 10.96× | 0.515 s, 9.65× | 0.856 s, 5.80× | 1.422 s, 3.49× |
+| no hints | 5.030 s, 0.99× | 5.030 s | 5.030 s | 5.030 s |
+| `used` hints + J | 2.207 s, 2.25× | 2.219 s, 2.24× | 2.387 s, 2.08× | 2.701 s, 1.84× |
+| + `DerivedMeta` static | 1.470 s, 3.38× | 1.479 s, 3.36× | 1.653 s, 3.00× | 1.999 s, 2.49× |
+| + static, one level down | 1.403 s, 3.54× | 1.412 s, 3.52× | 1.584 s, 3.14× | 1.922 s, 2.58× |
+| + `DerivedMeta` knows all its reads | 0.512 s, 9.70× | 0.563 s, 8.82× | 0.875 s, 5.68× | 1.422 s, 3.49× |
+
+The `used` walk's real hints alone, without J, give 1.12× (D: 4.426 s at every core count); assumed to know all its
+reads at its start it gives 1.61× (B). Both differences are the walk's discovery: the real hint names one body's
+references when that body is read.
+
+**Realistic critical paths** (D, infinite cores). `used` hints + J (2.207 s): 43 437 generations; `DerivedMeta`
+843.3 ms, `CompilerMonomorphicValue` 653.5, jar 199.6, `ResolvedValue` 136.7, `AbilityImplementationCheck` 78.3,
+`RowElaboratedValue` 68.3, `AbilityImplementation` 46.3, `ContributedBinding` 25.9, `MatchDesugaredValue` 17.9,
+`SourceTokens` 15.8, `SourceAST` 15.8, `FileStat` 13.6, `OperatorResolvedValue` 12.1, `NativeBinding` 10.8. The chain
+alternates derivations with the compile-track checks and front ends their first calls pull in (`DerivedMeta` 7 837
+steps by waiting and 5 413 by being started; `CompilerMonomorphicValue` 3 499 and 4 564; one value's front end per
+callee, about 990 steps of each per-value stage). With `DerivedMeta`'s static reads hinted one level down (1.403 s):
+14 804 generations, 10 270 of them `DerivedMeta`; `DerivedMeta` 806.7 ms, jar 199.6, `CompilerMonomorphicValue` 195.2,
+`ResolvedValue` 88.4, `RowElaboratedValue` 23.2, `SourceTokens` 15.8, `SourceAST` 15.8, `FileStat` 13.6,
+`MonomorphicValue` 5.9, `GeneratedModule` 4.9.
+
+**What the two hinted walks read** (D). `DerivedMeta` generations: 169 736 reads of `CompilerMonomorphicValue`
+(3 117 of them the first demand of their fact, 337.7 ms of its self time), 121 581 of `NativeBinding` (332, 3.2 ms),
+95 339 of `UnifiedModuleNames` (none first), 11 032 of `MonomorphicValue` (none first), 8 505 of `DerivedMeta`
+(5 489 first, 753.4 ms), 5 122 of `UnifiedModuleValue` (13), 3 862 of `OperatorResolvedValue` (168). Of the 5 544
+`DerivedMeta` generations, 5 475 were started by another `DerivedMeta` and 69 by a `RefinementTable`. `UsedNames`:
+2 906 reads of `SaturatedValue` (290 first), 1 933 of `WovenValue` (all first, 55.1 ms of their own self time, the rest
+of the program beneath them).
+
+**Harness.** `scripts/perf/Repeat.java` in the stash calls `Compiler$.MODULE$.runCompiler(...)` N times in one JVM
+with a fresh `-o` each, with `-Dcats.effect.tracing.mode=none`. The classpath is `./mill show jvm.runClasspath`, with
+the four modules' `compile.dest/classes` copied aside so a rebuild does not change a run. eliot-build is a `git archive`
+of its `HEAD`, so no stale `target/` takes part.
