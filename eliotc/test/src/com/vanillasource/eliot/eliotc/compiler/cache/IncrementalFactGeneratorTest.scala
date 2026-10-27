@@ -14,6 +14,9 @@ import com.vanillasource.eliot.eliotc.processor.{CompilerFact, CompilerFactKey, 
 import org.scalatest.flatspec.AsyncFlatSpec
 import org.scalatest.matchers.should.Matchers
 
+import java.util.concurrent.{CyclicBarrier, TimeUnit}
+import scala.concurrent.duration.*
+
 /** Exhaustive behavioral tests for the incremental, backward-pull fact generator. Each test drives one or more
   * compilation "runs" — a run is a fresh [[IncrementalFactGenerator]] seeded with the previous run's persisted cache —
   * over a small graph of synthetic facts, asserting on generation counts (how many times a processor actually ran),
@@ -587,7 +590,77 @@ class IncrementalFactGeneratorTest extends AsyncFlatSpec with AsyncIOSpec with M
     test.asserting(_ shouldBe Seq.empty)
   }
 
-  it should "rebuild a deleted output and then stabilize (presence-leaf behavior)" in {
+  "a parallel run" should "start nothing for a hint when it is sequential" in {
+    val test = for {
+      src    <- Ref.of[IO, Int](10)
+      counts <- counters("a", "b")
+      proc    = graph(Map("a" -> Leaf(src), "b" -> Leaf(src), "root" -> Hinting(List("a", "b"), List("a"))), counts)
+      _      <- runBuild(proc, None)(_.getFact(NumberKey("root")))
+      bN     <- counts("b").get
+    } yield bN
+    test.asserting(_ shouldBe 0)
+  }
+
+  it should "generate hinted facts at the same time" in {
+    // Each hinted fact waits for the other at a barrier: they can only both pass if they run at once.
+    val barrier = CyclicBarrier(2)
+    val test    = for {
+      counts <- counters()
+      proc    = graph(
+                  Map("a" -> Rendezvous(barrier), "b" -> Rendezvous(barrier), "root" -> Hinting(List("a", "b"), List("a", "b"))),
+                  counts
+                )
+      run    <- runBuild(proc, None, parallel = true)(_.getFact(NumberKey("root")))
+    } yield run._1
+    test.timeout(30.seconds).asserting(_ shouldBe Some(NumberFact("root", 2)))
+  }
+
+  it should "settle every hinted fact before the demand returns" in {
+    val test = for {
+      src    <- Ref.of[IO, Int](10)
+      counts <- counters("a", "b")
+      proc    = graph(Map("a" -> Leaf(src), "b" -> Leaf(src), "root" -> Hinting(List("a", "b"), List("a"))), counts)
+      run    <- runBuild(proc, None, parallel = true)(_.getFact(NumberKey("root")))
+      bN     <- counts("b").get
+    } yield (bN, run._2.entries.get(NumberKey("b")).flatMap(_.value))
+    test.asserting(_ shouldBe (1, Some(NumberFact("b", 10))))
+  }
+
+  it should "record the dependencies a sequential run records" in {
+    def build(parallel: Boolean) = for {
+      src    <- Ref.of[IO, Int](10)
+      counts <- counters()
+      proc    = graph(
+                  Map(
+                    "leaf" -> Leaf(src),
+                    "a"    -> Derived("leaf", _ + 1),
+                    "b"    -> Derived2("leaf", "a", _ + _),
+                    "c"    -> Derived("b", _ * 2),
+                    "root" -> Hinting(List("c", "b", "a"), List("a", "b", "c"))
+                  ),
+                  counts
+                )
+      run    <- runBuild(proc, None, parallel)(_.getFact(NumberKey("root")))
+    } yield (run._1, run._2.entries.view.mapValues(entry => (entry.value, entry.directDeps)).toMap)
+    (build(parallel = false), build(parallel = true)).tupled.asserting { case (sequential, parallel) =>
+      parallel shouldBe sequential
+    }
+  }
+
+  it should "refuse a cycle between threads rather than wait for it forever" in {
+    val test = for {
+      counts <- counters()
+      proc    = graph(
+                  Map("x" -> Derived("y", identity), "y" -> Derived("x", identity), "root" -> Hinting(List("x", "y"), List("x"))),
+                  counts
+                )
+      run    <- runBuild(proc, None, parallel = true)(g => (g.getFact(NumberKey("root")), g.currentErrors()).tupled)
+    } yield (run._1._1, run._1._2.map(_.message.startsWith("Cyclic fact demand")).distinct)
+    // Refused by whichever comes first: the chain, if one thread generates both, or the wait, if each has its own.
+    test.timeout(30.seconds).asserting(_ shouldBe (None, Seq(true)))
+  }
+
+  "incremental generation" should "rebuild a deleted output and then stabilize (presence-leaf behavior)" in {
     // Models OutputFileStat: 'present' leaf reads a 0/1 presence flag; 'jar' depends on it and 'writes'
     // (sets the flag to 1 and bumps the write counter). Deleting the output (flag -> 0) forces a rebuild.
     val test = for {
@@ -635,6 +708,10 @@ object IncrementalFactGeneratorTest {
   case class Pushing(dep: String, sibling: String, f: Int => Int)      extends Node
   /** Succeeds echoing its dependency's value while it is non-negative; errors and declines once it goes negative. */
   case class Checked(dep: String)                                      extends Node
+  /** Hints `hinted`, then reads `reads` in order and sums their values. */
+  case class Hinting(hinted: List[String], reads: List[String])        extends Node
+  /** Waits at `barrier` for the other parties, then is 1: generated only alongside another of its kind. */
+  case class Rendezvous(barrier: CyclicBarrier)                         extends Node
 
   private def err(message: String): CompilerError =
     CompilerError(message, Seq.empty, "", "", PositionRange.zero)
@@ -647,11 +724,11 @@ object IncrementalFactGeneratorTest {
       counts: Map[String, Ref[IO, Int]]
   ): CompilerProcessor = new GraphProcessor(defs, counts)
 
-  def runBuild[A](processor: CompilerProcessor, prior: Option[FactCacheData])(
+  def runBuild[A](processor: CompilerProcessor, prior: Option[FactCacheData], parallel: Boolean = false)(
       body: Build => IO[A]
   ): IO[(A, FactCacheData)] =
     for {
-      generator <- IncrementalFactGenerator.create(processor, prior, strictAccounting = true)
+      generator <- IncrementalFactGenerator.create(processor, prior, strictAccounting = true, parallel = parallel)
       a         <- body(Build(generator))
       cache     <- generator.buildCacheData()
     } yield (a, cache)
@@ -694,6 +771,11 @@ object IncrementalFactGeneratorTest {
             if (d.value >= 0) NumberFact(key.name, d.value).pure[CompilerIO]
             else registerCompilerError(err("negative")) >> abort[NumberFact]
           )
+        case Some(Hinting(hinted, reads)) =>
+          prefetch(hinted.map(NumberKey(_))) >>
+            reads.traverse(dep => getFactOrAbort(NumberKey(dep))).map(facts => NumberFact(key.name, facts.map(_.value).sum))
+        case Some(Rendezvous(barrier)) =>
+          IO.blocking(barrier.await(10, TimeUnit.SECONDS)).to[CompilerIO].as(NumberFact(key.name, 1))
         case None                      => abort[NumberFact]
       }
   }

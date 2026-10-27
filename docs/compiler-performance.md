@@ -1665,3 +1665,71 @@ of the program beneath them).
 with a fresh `-o` each, with `-Dcats.effect.tracing.mode=none`. The classpath is `./mill show jvm.runClasspath`, with
 the four modules' `compile.dest/classes` copied aside so a rebuild does not change a run. eliot-build is a `git archive`
 of its `HEAD`, so no stale `target/` takes part.
+
+### 15.6 Step 3, built: an engine that can run facts on threads (2026-10-27)
+
+**What a hint does.** `prefetch(keys)` (`CompilerIO.prefetch`, `CompilationProcess.prefetch`) hints that a generation
+will read `keys`. In a parallel run, the engine starts each hinted fact that has not started yet on a **virtual
+thread** of its own (`FactThreads`), with the hinting generation's chain as its ancestors, and returns at once. In a
+sequential run a hint does nothing. Nothing in the pipeline hints yet. Only a hint can start a thread, so with no hints
+a parallel run is the sequential run. The switch is the system property `-Deliot.parallel=true` (`Compiler`,
+`CompilationSession.compileOnce(parallel = …)`), not a flag: a flag is a promise of the command line, and the
+sequential run stays the default. The LSP stays sequential.
+
+**Why virtual threads, and no pool of our own.** The JDK's scheduler already runs virtual threads on a work-stealing
+pool sized to the cores, and a blocked one costs nothing: it unmounts, and since JDK 24 that includes blocking inside
+`synchronized`. So a read that finds a fact running on another thread just blocks on its slot, which is what a fiber
+waiting on a `Deferred` did before §14.4. Stack depth was the open question of §15.1. Measured on this JDK 25, a
+virtual thread goes as deep as a platform thread, and `-Xss` bounds both: about 21 000 small frames at the default,
+44 million at `-Xss1g`. A root demand keeps `CompileThread`'s 1 GB. A prefetched chain gets the JVM's default, 1 MB,
+which covers eliot-build's 256–512 KB (§14.4). An overflow fails the build either way. If some program needs more, the
+fix is an `-Xss` on the JVM's command line, which the launcher's side owns.
+
+**What changed in the engine** (`IncrementalFactGenerator`):
+
+- **A slot is a latch with an owner.** `Slot` has a volatile `done`, `complete` notifies whoever waits, and `owner` is
+  the thread computing it. A prefetched slot names its virtual thread before the thread starts. A read of a slot that
+  is not done blocks, unless its owner is the reading thread. That case is the one sequential runs already had: an
+  internal error, because waiting would never end.
+- **A wait across threads is checked for a cycle first** (`FactThreads.await`): from the slot to its owner, to the slot
+  that owner waits for, and on. A wait that comes back to the waiting thread is refused. Inside a generation the
+  refusal is the same as a refused cyclic read (`DependencyTrackingProcess`): a "Cyclic fact demand between threads"
+  error, no edge recorded, and nothing registered afterwards. A validation check that would wait in a cycle answers
+  "changed", the fail-safe answer it already gave for a check in progress on its own thread.
+- **The maps are concurrent** (`ConcurrentHashMap`), and the errors are appended under a lock. A generation still runs
+  on one thread, so its own dependency set is a plain set.
+- **A demand settles** (`FactThreads.settled`): it returns only once every thread started under it has ended, so the
+  cache and the diagnostics are read from complete maps. A hinted fact that nobody reads is still computed, and it
+  enters the cache like any other. A thread that fails with what the engine does not catch (an overflow) fails the
+  demand. A cancelled demand interrupts every thread it started and waits for them.
+- The progress tracker was already concurrent from the fiber days. A wait across threads is reported to it as
+  `waiting`/`resumed` of the reader. A prefetched generation has no parent in it, since the hinting generation does
+  not wait for it until it reads it.
+
+Not done yet, needed only once hints exist: errors are reported in the order the generations finish, which in a
+parallel run is not the same from run to run, so they are still to be **sorted** (§15.1). `--statistics` reads self
+time as wall time minus time waiting; in a parallel run that is no longer CPU time.
+
+**Tests** (`IncrementalFactGeneratorTest`, "a parallel run"): a hint does nothing when the run is sequential; two
+hinted facts that each wait for the other at a barrier both pass, so they really run at once; a demand returns only
+after a hinted fact nobody read has ended, and that fact is in the cache; a parallel run records the same values and
+dependencies as a sequential one; and two hinted facts that read each other are refused as a cycle instead of
+hanging. Depending on timing, either the chain refuses it (one thread generates both) or the wait does (each has its
+own). Fifteen repeated runs of the module passed.
+
+**Verified:** every suite green (`./mill __.test`, 2 311 tests: 2 306 plus the five above); the example sweep identical
+to a pristine baseline's, all 47 md5s included; eliot-build's jar `a74475df…` cold and warm, sequential and parallel.
+
+**Measured** (eliot-build cold, five alternated rounds, jar `a74475df…` in all fifteen runs):
+
+| | runs | mean |
+|---|---|---|
+| master (`36e38fee`) | 12.00, 12.16, 12.68, 12.71, 13.74 | 12.66 s |
+| this engine, sequential | 12.18, 12.22, 12.46, 11.87, 13.77 | 12.50 s |
+| this engine, `-Deliot.parallel=true` | 12.28, 12.67, 12.37, 11.97, 12.85 | 12.43 s |
+
+The concurrent engine costs nothing measurable. (The machine was busier than in §14.4, whose 10.9 s is not
+comparable; only alternated rows are.) Warm builds: 2.47 s sequential, 2.53–2.73 s parallel, in one pair each.
+
+Next is step 4: the hints, one site at a time, each measured against the sequential run. In §15.4's order: the `used`
+walk, then bytecode per module and the jar, then `DerivedMeta`'s reads keyed by callee and type arguments.

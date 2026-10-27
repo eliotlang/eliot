@@ -29,4 +29,12 @@ trait CompilationProcess {
   ): Option[V]
 
   def registerFact(value: CompilerFact): Unit
+
+  /** Hint that the facts of `keys` will be read: the engine may start generating them elsewhere, and returns at once.
+    * The reads still have to be made, in the order the processor needs them, and only they are dependencies. A process
+    * that cannot start a fact ahead ignores the hint, which is what a sequential run does.
+    *
+    * `ancestors` is threaded as for [[getFact]]: processors never pass it.
+    */
+  def prefetch(keys: Seq[CompilerFactKey[?]], ancestors: List[CompilerFactKey[?]] = Nil): Unit = ()
 }

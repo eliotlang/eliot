@@ -319,8 +319,12 @@ fact on the reader's own stack, the whole compilation runs on one big-stack thre
 outside asks through `FactDemand` (`generator.demand`), an `IO` that runs on that thread and whose cancellation
 interrupts it. It replaced a reader over `IO` (§14.3) and before that a `ReaderT[StateT[EitherT[IO]]]` stack
 (`docs/compiler-performance.md` §7), so do not put `IO` or transformers back under it; a processor's own `StateT` over
-it is fine. Parallel generation (I3), when it comes, is a latch per key and a virtual thread per parallel request over
-this direct style.
+it is fine. **Parallel generation (I3) is a hint, never a fork**: `prefetch(keys)` says a generation will read `keys`,
+and with `-Deliot.parallel=true` the engine starts each on a **virtual thread** of its own (`compiler/FactThreads`; the
+JDK's scheduler is the pool, a blocked one costs nothing, do not write a worker pool) while the generation reads them in
+order as before, so it stays on one thread and records the same edges. A slot is a latch with an owner thread; a wait
+across threads is cycle-checked first. Without the property a hint does nothing, and that sequential run is what
+every parallel step is measured against (§15.6). No processor hints yet (step 4).
 
 ## Testing
 

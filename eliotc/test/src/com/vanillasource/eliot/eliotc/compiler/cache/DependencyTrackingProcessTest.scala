@@ -8,7 +8,9 @@ import com.vanillasource.eliot.eliotc.processor.{CompilationProcess, CompilerFac
 import org.scalatest.flatspec.AsyncFlatSpec
 import org.scalatest.matchers.should.Matchers
 
+import java.util.concurrent.{ConcurrentHashMap, ConcurrentMap}
 import scala.collection.mutable
+import scala.jdk.CollectionConverters.*
 
 class DependencyTrackingProcessTest extends AsyncFlatSpec with AsyncIOSpec with Matchers {
   import DependencyTrackingProcessTest.*
@@ -89,14 +91,14 @@ class DependencyTrackingProcessTest extends AsyncFlatSpec with AsyncIOSpec with 
   it should "attribute a pushed fact to the generating key" in {
     tracked(Map.empty) { ctx =>
       ctx.process.registerFact(Fact("pushed"))
-      ctx.producedDuring.toMap
+      ctx.producedDuring.asScala.toMap
     }.asserting(_ shouldBe Map(Key("pushed") -> owner))
   }
 
   it should "not attribute a fact registered for the generated key itself" in {
     tracked(Map.empty) { ctx =>
       ctx.process.registerFact(Fact("owner"))
-      ctx.producedDuring.toMap
+      ctx.producedDuring.asScala.toMap
     }.asserting(_ shouldBe Map.empty)
   }
 
@@ -135,7 +137,7 @@ class DependencyTrackingProcessTest extends AsyncFlatSpec with AsyncIOSpec with 
         override def registerFact(value: CompilerFact): Unit = ()
       }
       val process                        =
-        new DependencyTrackingProcess(underlying, owner, mutable.Set.empty, mutable.Map.empty, List(Key("ancestor")))
+        new DependencyTrackingProcess(underlying, owner, mutable.Set.empty, ConcurrentHashMap(), List(Key("ancestor")))
       process.getFact(Key("a"))
       seen
     }
@@ -149,7 +151,7 @@ class DependencyTrackingProcessTest extends AsyncFlatSpec with AsyncIOSpec with 
   ): IO[A] =
     IO.delay {
       val deps           = mutable.Set.empty[CompilerFactKey[?]]
-      val producedDuring = mutable.Map.empty[CompilerFactKey[?], CompilerFactKey[?]]
+      val producedDuring = ConcurrentHashMap[CompilerFactKey[?], CompilerFactKey[?]]()
       val registered     = mutable.ListBuffer.empty[CompilerFact]
       val underlying     = new CompilationProcess {
         override def getFact[V <: CompilerFact, K <: CompilerFactKey[V]](
@@ -166,7 +168,7 @@ class DependencyTrackingProcessTest extends AsyncFlatSpec with AsyncIOSpec with 
   private case class TrackedContext(
       process: DependencyTrackingProcess,
       deps: mutable.Set[CompilerFactKey[?]],
-      producedDuring: mutable.Map[CompilerFactKey[?], CompilerFactKey[?]],
+      producedDuring: ConcurrentMap[CompilerFactKey[?], CompilerFactKey[?]],
       registered: mutable.ListBuffer[CompilerFact]
   )
 }

@@ -23,4 +23,7 @@ final class TrackedCompilationProcess(
     tracker.recordFactProduction(processorName, value.key())
     underlying.registerFact(value)
   }
+
+  override def prefetch(keys: Seq[CompilerFactKey[?]], ancestors: List[CompilerFactKey[?]]): Unit =
+    underlying.prefetch(keys, ancestors)
 }

@@ -219,6 +219,13 @@ object Compiler extends Logging {
       .progressMeasures()
       .handleErrorWith(t => warn[IO]("Could not measure what the run produced.", t).as(Seq.empty))
 
+  /** Whether the compilation starts the facts its generations hint on threads of their own
+    * (`docs/compiler-performance.md` §15). It is a system property, `-Deliot.parallel=true`, and not a flag, while the
+    * parallel engine is being measured: a flag is a promise of the command line, and the sequential run stays the
+    * default either way.
+    */
+  private def parallelAsked: Boolean = java.lang.Boolean.getBoolean("eliot.parallel")
+
   /** A session's single compilation, with the instrumentation it ran under. */
   private case class Compiled(
       session: CompilationSession,
@@ -238,7 +245,7 @@ object Compiler extends Logging {
       tracker    <- visualizationPath.traverse(_ => FactVisualizationTracker.create())
       statistics <- Option.when(statisticsAsked)(ProcessorStatistics.create()).sequence
       _          <- debug[IO]("Compiler starting...")
-      result     <- session.compileOnce(tracker, statistics, progress, writeBehind = true)
+      result     <- session.compileOnce(tracker, statistics, progress, writeBehind = true, parallel = parallelAsked)
       _          <- session.persist()
     } yield Compiled(session, result, tracker, statistics)
   }

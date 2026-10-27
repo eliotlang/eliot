@@ -58,6 +58,9 @@ final class CompilationSession private (
     *   encode the cache on another core while the compilation runs, for the [[persist]] that follows it. Only for a
     *   compilation that is persisted next, as the CLI's is: a server persists once, on shutdown, and would encode every
     *   run for the last one's save.
+    * @param parallel
+    *   start the facts a generation hints on threads of their own ([[IncrementalFactGenerator]]); the run is
+    *   sequential without it.
     * @return
     *   the live generator (queryable for LSP features) plus the run's diagnostics.
     */
@@ -65,7 +68,8 @@ final class CompilationSession private (
       tracker: Option[FactVisualizationTracker] = None,
       statistics: Option[ProcessorStatistics] = None,
       progress: Option[ProgressTracker] = None,
-      writeBehind: Boolean = false
+      writeBehind: Boolean = false,
+      parallel: Boolean = false
   ): IO[CompilationResult] =
     compileLock.lock.surround {
       for {
@@ -77,7 +81,8 @@ final class CompilationSession private (
                        prior,
                        strictAccounting = true,
                        progress,
-                       behind.fold((_: CompilerFact) => ())(_.offer)
+                       behind.fold((_: CompilerFact) => ())(_.offer),
+                       parallel
                      )
         _         <- progress.traverse_(_.enter(ProgressPhase.Working))
         produced  <- targetPlugin

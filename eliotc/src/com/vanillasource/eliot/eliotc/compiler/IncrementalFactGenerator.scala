@@ -9,8 +9,10 @@ import com.vanillasource.eliot.eliotc.processor.CompilerIO.runCompilerIO
 import com.vanillasource.eliot.eliotc.processor.*
 import com.vanillasource.eliot.eliotc.progress.ProgressTracker
 
+import java.util.concurrent.ConcurrentHashMap
 import scala.annotation.tailrec
 import scala.collection.mutable
+import scala.jdk.CollectionConverters.*
 import scala.util.control.NonFatal
 
 /** Cache-aware fact generator implementing incremental compilation by backward, demand-driven validation.
@@ -58,29 +60,37 @@ import scala.util.control.NonFatal
   * which is every value [[buildCacheData]] will hold: a cache written behind the compilation encodes them as they come.
 
   *
-  * **It is synchronous and sequential.** A fact not yet there is generated on the stack of the read that asks for it,
-  * and the read returns when it is done; a whole compilation runs on one thread ([[CompileThread]]), so the state is
-  * plain mutable maps, confined to that thread. What is outside the compilation asks through [[demand]], which runs the
-  * compilation on such a thread, and reads the results with the `IO` queries below once the compilation has ended. A
-  * fact found *in progress* by a read is a cycle the chain did not show — a validation read starts a fresh chain — and
-  * is reported as an internal error rather than waited for, which with one thread would never end.
+  * **It is synchronous.** A fact not yet there is generated on the stack of the read that asks for it, and the read
+  * returns when it is done. What is outside the compilation asks through [[demand]], which runs the compilation on a
+  * thread of its own ([[CompileThread]]), and reads the results with the `IO` queries below once the compilation has
+  * ended. A fact found *in progress on the reading thread* is a cycle the chain did not show — a validation read starts
+  * a fresh chain — and is reported as an internal error rather than waited for, which would never end.
+  *
+  * **It may be parallel.** A generation can hint the facts it will read ([[prefetch]]); when `parallel` is set, each
+  * hinted fact not yet started is started on a virtual thread of its own ([[FactThreads]]), and a read that finds a fact
+  * running on another thread waits for it. A generation itself never forks, so its reads are recorded in the order it
+  * makes them, as in a sequential run. Without `parallel` a hint does nothing, and the run is the sequential one, step for
+  * step — what every parallel run is measured against (`docs/compiler-performance.md` §15.1). The maps are concurrent
+  * either way.
   */
 final class IncrementalFactGenerator(
     generator: CompilerProcessor,
     prior: Map[CompilerFactKey[?], CacheEntry],
     strictAccounting: Boolean,
     progress: Option[ProgressTracker],
-    registered: CompilerFact => Unit
+    registered: CompilerFact => Unit,
+    parallel: Boolean
 ) extends CompilationProcess
     with Logging {
-  private val errors             = mutable.ArrayBuffer.empty[AttributedError]
-  private val facts              = mutable.HashMap.empty[CompilerFactKey[?], Slot[Option[CompilerFact]]]
-  private val directDependencies = mutable.HashMap.empty[CompilerFactKey[?], mutable.Set[CompilerFactKey[?]]]
-  private val producedDuring     = mutable.HashMap.empty[CompilerFactKey[?], CompilerFactKey[?]]
-  private val carriedForward     = mutable.HashMap.empty[CompilerFactKey[?], CacheEntry]
-  private val unchangedChecks    = mutable.HashMap.empty[CompilerFactKey[?], Slot[Boolean]]
-  private val regeneratedKeysSet = mutable.HashSet.empty[CompilerFactKey[?]]
-  private val demandedRoots      = mutable.HashSet.empty[CompilerFactKey[?]]
+  private val errors             = mutable.ArrayBuffer.empty[AttributedError] // guarded by itself
+  private val facts              = new ConcurrentHashMap[CompilerFactKey[?], Slot[Option[CompilerFact]]]()
+  private val directDependencies = new ConcurrentHashMap[CompilerFactKey[?], mutable.Set[CompilerFactKey[?]]]()
+  private val producedDuring     = new ConcurrentHashMap[CompilerFactKey[?], CompilerFactKey[?]]()
+  private val carriedForward     = new ConcurrentHashMap[CompilerFactKey[?], CacheEntry]()
+  private val unchangedChecks    = new ConcurrentHashMap[CompilerFactKey[?], Slot[Boolean]]()
+  private val regeneratedKeysSet = ConcurrentHashMap.newKeySet[CompilerFactKey[?]]()
+  private val demandedRoots      = ConcurrentHashMap.newKeySet[CompilerFactKey[?]]()
+  private val threads            = new FactThreads
 
   /** A demand from outside any generation — the target plugin asking for its artefact, a host (LSP, a test harness)
     * querying a fact — is a **root** of this run's graph. Everything else reaches a fact through a recorded dependency
@@ -92,17 +102,39 @@ final class IncrementalFactGenerator(
   override def getFact[V <: CompilerFact, K <: CompilerFactKey[V]](
       key: K,
       ancestors: List[CompilerFactKey[?]]
-  ): Option[V] = {
-    if (ancestors.isEmpty) demandedRoots += key
-    request(key, ancestors, ancestors.headOption).map(_.asInstanceOf[V])
-  }
+  ): Option[V] =
+    if (ancestors.isEmpty) {
+      demandedRoots.add(key)
+      try request(key, ancestors, None).map(_.asInstanceOf[V])
+      catch {
+        case cycle: FactThreads.CyclicWait =>
+          report(AttributedError(None, CompilerError.global(cycle.message)))
+          None
+      }
+    } else request(key, ancestors, ancestors.headOption).map(_.asInstanceOf[V])
+
+  /** Start the generation of each of `keys` not yet started, each on a virtual thread of its own, when the run is
+    * parallel; do nothing otherwise. A started one runs under `ancestors`, the chain of the generation that hinted it,
+    * which is the chain it would have had if that generation had read it first. Its requester is not that generation:
+    * the hinting generation does not wait for it until it reads it.
+    */
+  override def prefetch(keys: Seq[CompilerFactKey[?]], ancestors: List[CompilerFactKey[?]]): Unit =
+    if (parallel)
+      keys.foreach { key =>
+        if (!facts.containsKey(key)) {
+          val slot   = new Slot[Option[CompilerFact]](key, null)
+          val thread = threads.unstarted(() => computed(key, None, slot, resolve(key, slot, ancestors)))
+          slot.owner = thread
+          if (facts.putIfAbsent(key, slot) == null) threads.start(thread)
+        }
+      }
 
   /** What is outside the compilation asks for facts through: each demand is a root ([[getFact]] with no ancestors), run
-    * on a compilation thread.
+    * on a compilation thread, and it returns once every fact it caused to be started has ended.
     */
   val demand: FactDemand = new FactDemand {
     override def getFact[V <: CompilerFact, K <: CompilerFactKey[V]](key: K): IO[Option[V]] =
-      CompileThread.run(IncrementalFactGenerator.this.getFact(key, Nil))
+      CompileThread.run(threads.settled(IncrementalFactGenerator.this.getFact(key, Nil)))
   }
 
   /** Answer `key` for `requester`, the generation asking (if any). The requester is the head of `ancestors` for a
@@ -114,18 +146,37 @@ final class IncrementalFactGenerator(
       requester: Option[CompilerFactKey[?]]
   ): Option[CompilerFact] = {
     CompileThread.stopIfInterrupted()
-    val result = facts.get(key) match {
-      case Some(slot) if slot.done => slot.value
-      case Some(_)                 => inProgress(key)
-      case None                    =>
-        val slot = new Slot[Option[CompilerFact]]
-        facts(key) = slot
-        computed(key, requester, slot, resolve(key, slot, ancestors))
-        slot.value
-    }
+    val existing = facts.get(key)
+    val result   =
+      if (existing != null) awaited(existing, requester)
+      else {
+        val slot  = new Slot[Option[CompilerFact]](key, Thread.currentThread())
+        val raced = facts.putIfAbsent(key, slot)
+        if (raced != null) awaited(raced, requester)
+        else {
+          computed(key, requester, slot, resolve(key, slot, ancestors))
+          slot.value
+        }
+      }
     if (result.isDefined) delivered(key, fromCache = false)
     result
   }
+
+  /** The fact of a slot someone else made: at once if it is done, an internal error if this very thread is generating
+    * it ([[inProgress]]), and otherwise once the thread generating it is done. Waiting throws a
+    * [[FactThreads.CyclicWait]] if that thread waits for this one.
+    */
+  private def awaited(slot: Slot[Option[CompilerFact]], requester: Option[CompilerFactKey[?]]): Option[CompilerFact] =
+    if (slot.done) slot.value
+    else if (slot.owner eq Thread.currentThread()) inProgress(slot.key)
+    else {
+      requester.foreach(r => progress.foreach(_.waiting(r)))
+      try threads.await(slot)
+      finally requester.foreach(r => progress.foreach(_.resumed(r)))
+      slot.value
+    }
+
+  private def report(error: AttributedError): Unit = errors.synchronized { errors += error }: Unit
 
   /** Run `computation` of `key`'s fact, which is generated by the time it returns. The tracker, if there is one, is told
     * when the computation starts, for `requester`, and when it ends; without one, nothing else happens. A computation
@@ -151,9 +202,11 @@ final class IncrementalFactGenerator(
     * as missing.
     */
   private def inProgress(key: CompilerFactKey[?]): Option[CompilerFact] = {
-    errors += AttributedError(
-      None, // an engine invariant, not a diagnostic about the program: always reported
-      CompilerError.global(s"Internal error: fact $key was demanded while it was being generated.")
+    report(
+      AttributedError(
+        None, // an engine invariant, not a diagnostic about the program: always reported
+        CompilerError.global(s"Internal error: fact $key was demanded while it was being generated.")
+      )
     )
     None
   }
@@ -164,21 +217,25 @@ final class IncrementalFactGenerator(
     * key already concluded empty — and is reported as an internal error instead of being silently dropped.
     */
   override def registerFact(fact: CompilerFact): Unit = {
-    val slot = facts.getOrElseUpdate(fact.key(), new Slot[Option[CompilerFact]])
+    val slot = facts.computeIfAbsent(fact.key(), key => new Slot[Option[CompilerFact]](key, null))
     if (slot.complete(Some(fact))) registered(fact)
     else
       slot.value match {
         case Some(existing) if (existing eq fact) || existing == fact => ()
         case Some(_)                                                  =>
-          errors += AttributedError(
-            None, // an engine invariant, not a diagnostic about the program: always reported
-            CompilerError.global(s"Internal error: fact ${fact.key()} was produced twice with different values.")
+          report(
+            AttributedError(
+              None, // an engine invariant, not a diagnostic about the program: always reported
+              CompilerError.global(s"Internal error: fact ${fact.key()} was produced twice with different values.")
+            )
           )
         case None                                                     =>
-          errors += AttributedError(
-            None, // an engine invariant, not a diagnostic about the program: always reported
-            CompilerError.global(
-              s"Internal error: fact ${fact.key()} was registered after its generation already concluded without it."
+          report(
+            AttributedError(
+              None, // an engine invariant, not a diagnostic about the program: always reported
+              CompilerError.global(
+                s"Internal error: fact ${fact.key()} was registered after its generation already concluded without it."
+              )
             )
           )
       }
@@ -205,21 +262,35 @@ final class IncrementalFactGenerator(
 
   /** Whether `key`'s value is unchanged since last run, memoized once per run. The validity oracle a parent uses for
     * each of its dependencies; it never materialises a value-less fact (see class doc). `resolving` is the fact whose
-    * validation asks, which is what any work done here is done for. A check still running is one this very drill is
-    * inside of, a cycle the previous run's graph cannot hold, and answers "changed", the fail-safe answer.
+    * validation asks, which is what any work done here is done for. A check still running on this thread is one this
+    * very drill is inside of, a cycle the previous run's graph cannot hold, and answers "changed", the fail-safe answer;
+    * one running on another thread is waited for, unless that thread waits for this one, which answers "changed" too.
     */
-  private def depUnchanged(key: CompilerFactKey[?], resolving: CompilerFactKey[?]): Boolean =
-    unchangedChecks.get(key) match {
-      case Some(check) => check.done && check.value
-      case None        =>
-        val check     = new Slot[Boolean]
-        unchangedChecks(key) = check
+  private def depUnchanged(key: CompilerFactKey[?], resolving: CompilerFactKey[?]): Boolean = {
+    val existing = unchangedChecks.get(key)
+    if (existing != null) verdictOf(existing)
+    else {
+      val check = new Slot[Boolean](key, Thread.currentThread())
+      val raced = unchangedChecks.putIfAbsent(key, check)
+      if (raced != null) verdictOf(raced)
+      else {
         val unchanged =
           try computeUnchanged(key, resolving)
           catch { case NonFatal(_) => false } // any failure ⇒ treat as changed (regenerate); fail-safe
         check.complete(unchanged)
         unchanged
+      }
     }
+  }
+
+  private def verdictOf(check: Slot[Boolean]): Boolean =
+    if (check.done) check.value
+    else if (check.owner eq Thread.currentThread()) false
+    else
+      try {
+        threads.await(check)
+        check.value
+      } catch { case _: FactThreads.CyclicWait => false }
 
   /** Whether the prior entry for `key` still stands, decided the cheapest way that is sound for its shape.
     *
@@ -242,7 +313,7 @@ final class IncrementalFactGenerator(
       case Some(entry) if entry.directDeps.isEmpty => recomputeAndCompare(key, entry, resolving)
       case Some(entry)                             =>
         if (entry.directDeps.forall(depUnchanged(_, resolving))) {
-          if (!entry.hasValue) carriedForward(key) = entry
+          if (!entry.hasValue) carriedForward.put(key, entry): Unit
           delivered(key, fromCache = true)
           true
         } else recomputeAndCompare(key, entry, resolving)
@@ -267,7 +338,7 @@ final class IncrementalFactGenerator(
     * recomputed one matches it — is answerable without materialising.
     */
   private def acceptPrior(key: CompilerFactKey[?], entry: CacheEntry, slot: Slot[Option[CompilerFact]]): Unit = {
-    directDependencies(key) = mutable.HashSet.from(entry.directDeps)
+    directDependencies.put(key, mutable.HashSet.from(entry.directDeps)): Unit
     delivered(key, fromCache = true)
     if (slot.complete(entry.value)) entry.value.foreach(registered)
   }
@@ -291,14 +362,14 @@ final class IncrementalFactGenerator(
     * — is reported as an internal error instead of being indistinguishable from a legitimate decline.
     */
   private def regenerate(key: CompilerFactKey[?], ancestors: List[CompilerFactKey[?]]): Unit = {
-    regeneratedKeysSet += key
-    val recorded = directDependencies.getOrElseUpdate(key, mutable.HashSet.empty)
+    regeneratedKeysSet.add(key)
+    val recorded = directDependencies.computeIfAbsent(key, _ => mutable.HashSet.empty)
     val tracking = new DependencyTrackingProcess(this, key, recorded, producedDuring, ancestors)
     val outcome  = runCompilerIO(tracking)(generator.generate(key)).map(_._1)
     val es       = outcome.fold(identity, identity)
     // The engine-level diagnostics the tracking wrapper records (a refused cyclic read) belong to this generation
     // exactly as the processor's own do, so they are attributed with them.
-    errors ++= (tracking.errors ++ es).map(AttributedError(Some(key), _)).iterator
+    errors.synchronized { errors ++= (tracking.errors ++ es).map(AttributedError(Some(key), _)).iterator }: Unit
     if (strictAccounting && outcome.isRight && es.isEmpty) reportUnaccountedOutcome(key, tracking.sawMissing)
   }
 
@@ -312,11 +383,13 @@ final class IncrementalFactGenerator(
     * not an engine fault. Reachability then tells the two apart: a demand the compilation actually made is live.
     */
   private def reportUnaccountedOutcome(key: CompilerFactKey[?], missing: Boolean): Unit = {
-    val registeredFact = facts.get(key).exists(slot => slot.done && slot.value.isDefined)
+    val registeredFact = Option(facts.get(key)).exists(slot => slot.done && slot.value.isDefined)
     if (!missing && !registeredFact)
-      errors += AttributedError(
-        Some(key),
-        CompilerError.global(s"Internal error: no processor produced a fact, an error, or a decline for $key.")
+      report(
+        AttributedError(
+          Some(key),
+          CompilerError.global(s"Internal error: no processor produced a fact, an error, or a decline for $key.")
+        )
       )
   }
 
@@ -330,7 +403,7 @@ final class IncrementalFactGenerator(
   def currentFacts(): IO[Map[CompilerFactKey[?], CompilerFact]] = IO.delay(materialisedFacts)
 
   private def materialisedFacts: Map[CompilerFactKey[?], CompilerFact] =
-    facts.valuesIterator.flatMap(slot => if (slot.done) slot.value else None).map(fact => fact.key() -> fact).toMap
+    facts.values.asScala.iterator.flatMap(slot => if (slot.done) slot.value else None).map(f => f.key() -> f).toMap
 
   /** The facts this run built *or proved still current*, among the keys `wanted` accepts.
     *
@@ -371,9 +444,9 @@ final class IncrementalFactGenerator(
     */
   def currentErrors(): IO[Seq[CompilerError]] =
     IO.delay {
-      val live = reachableFrom(demandedRoots.toSet, dependencyGraph)
+      val live = reachableFrom(demandedRoots.asScala.toSet, dependencyGraph)
 
-      errors.filter(_.source.forall(live.contains)).map(_.error).toList
+      errors.synchronized(errors.filter(_.source.forall(live.contains)).map(_.error).toList)
     }
 
   /** The keys reachable from `roots` through `deps` — this run's live fact graph. */
@@ -398,7 +471,7 @@ final class IncrementalFactGenerator(
     * e.g. every `FileStat`, the `OutputFileStat` digest, and the `UpToDate` anchor constant — which are always
     * regenerated as the boundary with the external world.
     */
-  def regeneratedKeys(): IO[Set[CompilerFactKey[?]]] = IO.delay(regeneratedKeysSet.toSet)
+  def regeneratedKeys(): IO[Set[CompilerFactKey[?]]] = IO.delay(regeneratedKeysSet.asScala.toSet)
 
   /** The regenerated keys that were **not** world leaves in the prior cache — facts re-run from scratch despite having
     * recorded dependencies (or being newly seen this run). On a warm build over an unchanged tree this MUST be empty:
@@ -408,7 +481,7 @@ final class IncrementalFactGenerator(
     * `docs/incremental-compilation.md` §3 and §8.
     */
   def nonLeafRegenerations(): IO[Set[CompilerFactKey[?]]] =
-    IO.delay(regeneratedKeysSet.toSet.filterNot(key => prior.get(key).exists(_.directDeps.isEmpty)))
+    IO.delay(regeneratedKeysSet.asScala.toSet.filterNot(key => prior.get(key).exists(_.directDeps.isEmpty)))
 
   /** Build the cache to persist after this run. Three sources are merged, later winning on key collision:
     *
@@ -447,8 +520,8 @@ final class IncrementalFactGenerator(
     ) >> IO.delay {
       val factMap  = materialisedFacts
       val deps     = dependencyGraph
-      val pushedBy = producedDuring
-      val carried  = carriedForward.toMap
+      val pushedBy = producedDuring.asScala
+      val carried  = carriedForward.asScala.toMap
       val drilled  = provenUnchanged
 
       val fresh    = factMap.map { case (key, fact) =>
@@ -507,11 +580,11 @@ final class IncrementalFactGenerator(
 
   /** Every key this run resolved, with the dependencies recorded for it so far. */
   private def dependencyGraph: Map[CompilerFactKey[?], Set[CompilerFactKey[?]]] =
-    directDependencies.view.mapValues(_.toSet).toMap
+    directDependencies.asScala.view.mapValues(_.toSet).toMap
 
   /** The keys this run's validation proved unchanged. A check still pending proves nothing. */
   private def provenUnchanged: Set[CompilerFactKey[?]] =
-    unchangedChecks.collect { case (key, check) if check.done && check.value => key }.toSet
+    unchangedChecks.asScala.collect { case (key, check) if check.done && check.value => key }.toSet
 }
 
 object IncrementalFactGenerator {
@@ -526,14 +599,19 @@ object IncrementalFactGenerator {
     *   told each fact the run comes to have, for `--progress`.
     * @param registered
     *   handed each fact the moment it has its value, for a cache written behind the compilation. It runs on the
-    *   compilation's thread, so it must only hand the fact on.
+    *   compilation's thread, so it must only hand the fact on. In a parallel run it is handed facts from several
+    *   threads at once.
+    * @param parallel
+    *   start the facts a generation hints ([[IncrementalFactGenerator.prefetch]]) on threads of their own; without it, a
+    *   hint does nothing and the run is sequential.
     */
   def create(
       generator: CompilerProcessor,
       prior: Option[FactCacheData],
       strictAccounting: Boolean = false,
       progress: Option[ProgressTracker] = None,
-      registered: CompilerFact => Unit = _ => ()
+      registered: CompilerFact => Unit = _ => (),
+      parallel: Boolean = false
   ): IO[IncrementalFactGenerator] =
     IO.delay(
       new IncrementalFactGenerator(
@@ -541,24 +619,36 @@ object IncrementalFactGenerator {
         prior.map(_.entries).getOrElse(Map.empty),
         strictAccounting,
         progress,
-        registered
+        registered,
+        parallel
       )
     )
 
   /** What a key's computation will have once it is done: its fact (or that it has none), or a validation's verdict. It
-    * is completed once; the first completion wins, as a `Deferred`'s did.
+    * is completed once; the first completion wins, as a `Deferred`'s did, and a thread on another computation may wait
+    * for it ([[await]]).
+    *
+    * @param owner
+    *   the thread computing it, which is what a wait follows to find a cycle ([[FactThreads.await]]); `null` for a slot a
+    *   push completes as it makes it. A prefetched slot names its thread before the thread starts.
     */
-  private[compiler] final class Slot[A] {
-    var done: Boolean = false
-    var value: A      = scala.compiletime.uninitialized
+  private[compiler] final class Slot[A](val key: CompilerFactKey[?], @volatile var owner: Thread) {
+    @volatile var done: Boolean = false
+    var value: A                = scala.compiletime.uninitialized // written before `done`, read after it
 
     /** Complete it with `result`, answering whether this completion was the one that counted. */
     def complete(result: A): Boolean =
-      if (done) false
-      else {
-        value = result
-        done = true
-        true
+      synchronized {
+        if (done) false
+        else {
+          value = result
+          done = true
+          notifyAll()
+          true
+        }
       }
+
+    /** Block until it is completed. */
+    def await(): Unit = synchronized { while (!done) wait() }
   }
 }

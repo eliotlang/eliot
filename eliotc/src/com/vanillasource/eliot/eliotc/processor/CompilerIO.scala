@@ -109,6 +109,14 @@ object CompilerIO {
   def getFactIfProduced[V <: CompilerFact, K <: CompilerFactKey[V]](key: K): CompilerIO[Option[V]] =
     context => context.process.getFact(key)
 
+  /** Hint that the facts of `keys` will be read, so a parallel run may start them now; a sequential one ignores it.
+    * It is not a read: read each fact as before, after it. `prefetch(keys) >> keys.traverse(getFactOrAbort)` reads in
+    * parallel what `keys.traverse(getFactOrAbort)` reads one by one, and records the same dependencies in the same
+    * order (`docs/compiler-performance.md` §15.1).
+    */
+  def prefetch(keys: Seq[CompilerFactKey[?]]): CompilerIO[Unit] =
+    context => context.process.prefetch(keys)
+
   /** Register an error.
     */
   def registerCompilerError(error: CompilerError): CompilerIO[Unit] =

@@ -42,4 +42,7 @@ final class TimedCompilationProcess(underlying: CompilationProcess) extends Comp
   def wasActive: Boolean = requests.get() > 0 || registrations.get() > 0
 
   def factsRegistered: Long = registrations.get()
+
+  override def prefetch(keys: Seq[CompilerFactKey[?]], ancestors: List[CompilerFactKey[?]]): Unit =
+    underlying.prefetch(keys, ancestors)
 }

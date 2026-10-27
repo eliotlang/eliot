@@ -1,9 +1,11 @@
 package com.vanillasource.eliot.eliotc.compiler.cache
 
 import cats.data.Chain
+import com.vanillasource.eliot.eliotc.compiler.FactThreads
 import com.vanillasource.eliot.eliotc.feedback.CompilerError
 import com.vanillasource.eliot.eliotc.processor.{CompilationProcess, CompilerFact, CompilerFactKey}
 
+import java.util.concurrent.ConcurrentMap
 import scala.collection.mutable
 
 /** Wraps a [[CompilationProcess]] so that every fact read via `getFact` while `key` is being generated is recorded into
@@ -28,7 +30,11 @@ import scala.collection.mutable
   * missing only because of where this generation was asked from, so such a fact would depend on who asked first and be
   * cached for everyone (`docs/compiler-performance.md` §15.2). The generation then ends without its fact, which the read
   * that came back empty accounts for. The refused edge is deliberately **not** recorded as a dependency, so a cyclic edge
-  * can never enter the persisted cache (where it would dead-lock validation).
+  * can never enter the persisted cache (where it would dead-lock validation). A cycle across threads in a parallel run
+  * is the same refusal, made by the engine when the wait would never end ([[FactThreads.CyclicWait]]).
+  *
+  * A generation's hints ([[prefetch]]) are forwarded with the chain, so a fact a hint starts elsewhere is refused the
+  * same reads as when this generation reads it first. A hint is not a dependency: only the reads are.
   *
   * Facts a processor **pushes** — registered for keys other than the one being generated (e.g. one file-parse
   * registering every name's value) — are recorded in `producedDuring` as produced by this generation. The cache build
@@ -42,7 +48,7 @@ final class DependencyTrackingProcess(
     underlying: CompilationProcess,
     key: CompilerFactKey[?],
     dependencies: mutable.Set[CompilerFactKey[?]],
-    producedDuring: mutable.Map[CompilerFactKey[?], CompilerFactKey[?]],
+    producedDuring: ConcurrentMap[CompilerFactKey[?], CompilerFactKey[?]],
     ancestors: List[CompilerFactKey[?]]
 ) extends CompilationProcess {
 
@@ -69,17 +75,29 @@ final class DependencyTrackingProcess(
       dependency: K,
       ancestors: List[CompilerFactKey[?]]
   ): Option[V] =
-    if (onChain(dependency)) {
-      errors = errors :+ CompilerError.global(cyclicDemandMessage(dependency))
-      sawMissing = true
-      refused = true
-      None
-    } else {
-      dependencies += dependency
-      val result = underlying.getFact(dependency, chain)
-      if (result.isEmpty) sawMissing = true
-      result
+    if (onChain(dependency)) refuse(cyclicDemandMessage(dependency))
+    else {
+      val added = dependencies.add(dependency)
+      try {
+        val result = underlying.getFact(dependency, chain)
+        if (result.isEmpty) sawMissing = true
+        result
+      } catch {
+        case cycle: FactThreads.CyclicWait =>
+          if (added) dependencies -= dependency
+          refuse(cycle.message)
+      }
     }
+
+  override def prefetch(keys: Seq[CompilerFactKey[?]], ancestors: List[CompilerFactKey[?]]): Unit =
+    if (!refused) underlying.prefetch(keys, chain)
+
+  private def refuse[V](message: String): Option[V] = {
+    errors = errors :+ CompilerError.global(message)
+    sawMissing = true
+    refused = true
+    None
+  }
 
   /** Whether `dependency` is on the chain, comparing a key's remembered hash before its structure: the chain can be
     * hundreds of keys deep, and most of them are of the same kind as the dependency and differ only deep inside.
@@ -95,7 +113,7 @@ final class DependencyTrackingProcess(
 
   override def registerFact(value: CompilerFact): Unit =
     if (!refused) {
-      if (value.key() != key && !producedDuring.contains(value.key())) producedDuring(value.key()) = key
+      if (value.key() != key) producedDuring.putIfAbsent(value.key(), key): Unit
       underlying.registerFact(value)
     }
 }
