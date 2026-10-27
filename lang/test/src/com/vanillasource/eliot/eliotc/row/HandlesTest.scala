@@ -174,8 +174,8 @@ class HandlesTest extends ProcessorTest(LangProcessors()*) {
           |""".stripMargin
     ).asserting(
       _ shouldBe Seq(
-        "Which handle answers 'Fail[String]' depends on type arguments nothing here decides." at "two(one)",
-        "Which handle answers 'Fail[Num]' depends on type arguments nothing here decides." at "two(one)"
+        "Which handle answers 'Fail[Num]' depends on type arguments nothing here decides." at "two(one)",
+        "Which handle answers 'Fail[String]' depends on type arguments nothing here decides." at "two(one)"
       )
     )
   }

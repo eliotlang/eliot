@@ -320,11 +320,13 @@ outside asks through `FactDemand` (`generator.demand`), an `IO` that runs on tha
 interrupts it. It replaced a reader over `IO` (§14.3) and before that a `ReaderT[StateT[EitherT[IO]]]` stack
 (`docs/compiler-performance.md` §7), so do not put `IO` or transformers back under it; a processor's own `StateT` over
 it is fine. **Parallel generation (I3) is a hint, never a fork**: `prefetch(keys)` says a generation will read `keys`,
-and with `-Deliot.parallel=true` the engine starts each on a **virtual thread** of its own (`compiler/FactThreads`; the
+and in a parallel run — the CLI's default — the engine starts each on a **virtual thread** of its own (`compiler/FactThreads`; the
 JDK's scheduler is the pool, a blocked one costs nothing, do not write a worker pool) while the generation reads them in
 order as before, so it stays on one thread and records the same edges. A slot is a latch with an owner thread; a wait
-across threads is cycle-checked first. Without the property a hint does nothing, and that sequential run is what
-every parallel step is measured against (§15.6). The hints sit where the program is discovered (§15.8): the recursion
+across threads is cycle-checked first. With `-Deliot.parallel=false` (and always under `--statistics`, whose self time
+is CPU time only then) a hint does nothing, and that sequential run is what every parallel step is measured against
+(§15.6); the LSP and the test harnesses' `compileOnce()` stay sequential. Diagnostics are reported **sorted** (source,
+position, message), so a report never depends on the schedule. The hints sit where the program is discovered (§15.8): the recursion
 check's search, a file's imports, row elaboration's callees, a check's bindings, a woven value's references, the jar's
 modules. A world read in a processor is `Sync[CompilerIO].blocking`, never `IO.blocking`, which `syncStep` hands to the
 one-thread cats runtime and so serializes every fact thread on it.

@@ -441,12 +441,26 @@ final class IncrementalFactGenerator(
     * this run recorded ([[AttributedError]]). This hides nothing a compilation reached: a fact the program genuinely
     * needs is read by its dependent, which records the edge before the read — including a read that comes back empty
     * because the generation failed.
+    *
+    * They are **sorted** by source, position and message: a parallel run appends them in the order its generations
+    * finish, which differs from run to run, and a build's report must not depend on the schedule.
     */
   def currentErrors(): IO[Seq[CompilerError]] =
     IO.delay {
       val live = reachableFrom(demandedRoots.asScala.toSet, dependencyGraph)
 
-      errors.synchronized(errors.filter(_.source.forall(live.contains)).map(_.error).toList)
+      errors
+        .synchronized(errors.filter(_.source.forall(live.contains)).map(_.error).toList)
+        .sortBy(error =>
+          (
+            error.contentSource,
+            error.sourceRange.from.line,
+            error.sourceRange.from.col,
+            error.sourceRange.to.line,
+            error.sourceRange.to.col,
+            error.message
+          )
+        )
     }
 
   /** The keys reachable from `roots` through `deps` — this run's live fact graph. */

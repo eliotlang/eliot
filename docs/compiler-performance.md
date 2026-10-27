@@ -1909,3 +1909,19 @@ within a set count:
   only the payloads (0.4 s) can be named ahead, and naming them costs more than it saves.
 - **Do not re-propose** hinting the tree's root earlier or one level ahead inside the derivation without a change that
   shortens the derivation itself.
+
+### 15.10 Parallel by default (2026-10-27)
+
+Since the remaining cold-build levers are small (§15.9) and the parallel engine is built, the CLI now runs parallel
+by default (`Compiler.parallel`). `-Deliot.parallel=false` gives the sequential run, the baseline every parallel step
+is measured against, and `--statistics` always runs sequentially, because its self time is CPU time only when nothing
+else runs. The LSP's `CompilationServer` and the test harnesses' `compileOnce()` stay sequential.
+
+The item §15.6 left open is closed: `IncrementalFactGenerator.currentErrors` returns the diagnostics **sorted** by
+source, position and message, so a report does not depend on the order generations finish in. This applies to the
+sequential run too, so there is one order. The one test asserting two errors at the same position now expects them in
+message order.
+
+**Measured:** all suites green. The example sweep (671 lines: jars, exit codes, stdout) is identical to pristine
+master's. eliot-build cold with the new default 10.20 / 11.10 s against 12.94 / 13.64 s with `-Deliot.parallel=false`
+(alternated, load average 7–10 from other processes, jar `a74475df…`), about −20%, as in §15.8.
