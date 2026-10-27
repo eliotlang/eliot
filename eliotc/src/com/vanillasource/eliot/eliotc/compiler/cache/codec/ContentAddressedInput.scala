@@ -16,6 +16,12 @@ import scala.collection.mutable
   * types whose encodings coincide legitimately share one stored object, and `Sourced[String]` / `Sourced[Token]` are
   * enough to make that routine rather than exotic.
   *
+  * **One input serves every thread that materialises a stored fact**, and a parallel run materialises many at once (a
+  * warm build whose jar is gone reads every module's bytecode back on threads of their own). Its cursor and memo are
+  * plain mutable state, so a top-level [[read]] holds the input's monitor for the whole decode; the nested reads it
+  * makes are on the same thread and re-enter. A decode reads only bytes, never a fact, so it waits on no other thread
+  * while holding it.
+  *
   * @param bodies
   *   the whole body region; offsets index into it directly
   */
@@ -35,7 +41,7 @@ final class ContentAddressedInput(bodies: Array[Byte]) extends FactCodec.Input {
   /** Decode the object stored at `offset` — the store's entry point, as opposed to [[FactCodec.Input.shared]], which is
     * what codecs call on their way down.
     */
-  def read[A](offset: Int)(using codec: FactCodec[A]): A = at(offset)(codec.read(this))
+  def read[A](offset: Int)(using codec: FactCodec[A]): A = synchronized(at(offset)(codec.read(this)))
 
   /** Not `getOrElseUpdate`: decoding an object decodes its children, which inserts into this very map, and a
     * `mutable.HashMap` may not be modified while it is deciding where to put an entry.
