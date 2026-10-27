@@ -82,9 +82,10 @@ class JvmProgramGenerator(targetDir: Path) extends SingleFactProcessor[GenerateE
     } yield modules
 
   private def generateModules(vfqn: ValueFQN, usedNames: UsedNames): CompilerIO[Seq[GeneratedModule]] = {
-    val moduleNames = usedNames.usedNames.keys.map(_.moduleName).toSeq.distinct
+    val moduleKeys = usedNames.usedNames.keys.map(_.moduleName).toSeq.distinct.map(GeneratedModule.Key(_, vfqn))
 
-    moduleNames.traverse(moduleName => getFactOrAbort(GeneratedModule.Key(moduleName, vfqn)))
+    // Every module's bytecode is independent of every other's: a parallel run generates them all at once.
+    prefetch(moduleKeys) >> moduleKeys.traverse(getFactOrAbort)
   }
 
   /** Write the JAR to a temporary file beside its destination and move it into place once complete, so the destination

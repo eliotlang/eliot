@@ -1733,3 +1733,55 @@ comparable; only alternated rows are.) Warm builds: 2.47 s sequential, 2.53–2.
 
 Next is step 4: the hints, one site at a time, each measured against the sequential run. In §15.4's order: the `used`
 walk, then bytecode per module and the jar, then `DerivedMeta`'s reads keyed by callee and type arguments.
+
+### 15.7 Step 4, the first two hints: measured at about 3%, and why (2026-10-27)
+
+Two hints, built:
+
+- **The `used` walk** (`UsedNamesProcessor.processMonomorphicValue`) hints the woven value of every distinct reference
+  in a woven body before it descends into them. That is the probe's hint of §15.3, keyed by exact type arguments. A
+  key whose projection the walk has already visited under other type arguments is generated for nothing, and nothing
+  reads or reports it.
+- **The jar** (`JvmProgramGenerator.generateModules`) hints every used module's `GeneratedModule` before reading them
+  in order.
+
+In a sequential run both do nothing. Suites green (2 311); eliot-build's jar `a74475df…` in every run below.
+
+**Measured** (eliot-build cold, alternated, sequential against `-Deliot.parallel=true` of the same classes):
+
+| hints | sequential | parallel |
+|---|---|---|
+| the walk (5 rounds) | 12.13 s | 12.42 s |
+| the walk + the jar (4 rounds) | 12.93 s | 12.56 s (−3%) |
+
+§15.3 put the walk alone at 1.12× and the walk with J at 3.0× cold. The walk alone is inside the noise. The pair is
+about 3%.
+
+**Where a parallel run spends its time** (an instrumented parallel run; the probe was reverted). It started 1 982
+fact threads. Sampled every 20 ms, about 390 of the run's ~480 samples had no fact thread running beside the root.
+By the clock, from the start of the compilation (9.6 s):
+
+| from – to | what runs | parallel? |
+|---|---|---|
+| 0 – 3.8 s | everything before the walk's first hint: the front end and the checks that `main`'s woven value pulls in | no: nothing hints there |
+| 3.8 – 5.7 s | the walk; the root waits 1.9 s in all for 1 024 woven values started elsewhere | partly |
+| 5.7 – 9.6 s | bytecode per module, all hinted by the jar at once; the root waits 3.8 s for 4 of them | little: fact threads wait 1.8 s on `MetaDemands` (20 waits) |
+
+**A correction to §15.3.** Its "J" row let `GenerateExecutableJar` and `GeneratedModule` hint *all* their reads when
+they start. A module's reads beyond `UsedNames` are the `UncurriedMonomorphicValue`s of the values it emits, and
+which values those are is known only once the walk has ended. In the simulation they started while the walk was
+still running, so the checks and derived metas beneath them ran beside the walk. That is an oracle, and §15.3's
+"realistic" 3.0–4.5× rests on it. A real hint names a module's reads only after `UsedNames`, which is where the
+measured 5.7 s begins.
+
+**What it means.**
+
+- Hints placed after the program is discovered (the walk, the jar) find little left to do in parallel. Most of the
+  build happens while the program is being discovered: before the walk, inside the checks, and under codegen, in the
+  meta chain.
+- The first 3.8 s is the largest serial block, and it is not yet broken down: which facts `main`'s woven value pulls
+  in, and in what order. That is the next measurement. If those facts are the front end and the checks of each value
+  `main` reaches, the place for a hint is where a body's references first become known: the front end per value is
+  keyed by name alone.
+- The last 3.9 s is the meta chain of §15.4, which needs Robert's design decision (forking the interpretation, or
+  per-value entry derivations) before any hint can help.
